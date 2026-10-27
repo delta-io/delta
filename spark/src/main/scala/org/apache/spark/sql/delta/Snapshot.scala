@@ -719,7 +719,9 @@ class Snapshot(
             col("add.defaultRowCommitVersion"),
             col("add.clusteringProvider"),
             col("add.backReference"),
-            col("add.amtPassthrough")
+            col("add.amtPassthrough"),
+            col("add.snapshotId"),
+            col("add.modifiedSnapshotId")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,

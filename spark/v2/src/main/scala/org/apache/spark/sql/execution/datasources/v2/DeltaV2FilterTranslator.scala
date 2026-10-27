@@ -25,7 +25,7 @@ import org.apache.spark.sql.sources.Filter
  *
  * Lives in the `org.apache.spark.sql.execution.datasources.v2` package so it can reach
  * `DataSourceStrategy.translateFilter`, which is `protected[sql]` and therefore not callable from
- * the connector's `io.delta.spark.internal.v2.read` package (nor from Java).
+ * the connector's `org.apache.spark.sql.delta.v2.read` package (nor from Java).
  *
  * TODO: Revisit both call sites once the scan implements the file-source Scan interface. Use (a)
  * below exists only to serve `DeltaV2Scan.toBatch`, which becomes unreachable at that point (see

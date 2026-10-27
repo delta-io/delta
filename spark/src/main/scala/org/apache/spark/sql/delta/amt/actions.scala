@@ -16,8 +16,10 @@
 
 package org.apache.spark.sql.delta.amt
 
+import java.util.UUID
+
 import org.apache.spark.sql.delta.DeltaColumnMapping
-import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.core.JsonParser
@@ -36,7 +38,6 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  * of entry (data file or data-manifest pointer).
  *
  * @param content_type Entry-kind discriminator (0=DATA, 3=DATA_MANIFEST).
- * @param format_version Iceberg writer format version; 4 for V4.
  * @param location Path of the file relative to the table root, or an absolute URI.
  * @param file_format Physical format of `location` (currently always "parquet").
  * @param tracking Lineage envelope: status plus snapshot/sequence numbers and DV positions.
@@ -47,6 +48,8 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  * @param record_count Rows in the file, or rows the manifest summarizes (for pointers).
  * @param file_size_in_bytes On-disk size of `location` in bytes.
  * @param content_stats Column-level statistics for the file.
+ * @param tight_stats Whether `content_stats` are exact for the file's live rows; absent means not
+ *                    tight. AMT always sets it, as `false` for now.
  * @param manifest_info Manifest stats plus inline DV; set iff content_type is DATA_MANIFEST.
  * @param key_metadata Encryption key metadata for the file, if encrypted.
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
@@ -58,7 +61,6 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  */
 case class AMTSingleAction(
     content_type: Int,                          // ID: 134, required.
-    format_version: Int,                        // ID: 157, required.
     location: String,                           // ID: 100, required.
     file_format: String,                        // ID: 101, required ("parquet" for now).
     tracking: Tracking,                         // ID: 147, required.
@@ -69,6 +71,7 @@ case class AMTSingleAction(
     record_count: Long,                         // ID: 103, required.
     file_size_in_bytes: Long,                   // ID: 104, required.
     content_stats: Option[String],              // ID: 146, optional.
+    tight_stats: Option[Boolean],               // ID: 151, optional.
     manifest_info: Option[ManifestInfo],        // ID: 150, required for DATA_MANIFEST.
     key_metadata: Option[Array[Byte]],          // ID: 131, optional.
     split_offsets: Option[Seq[Long]],           // ID: 132, optional.
@@ -94,10 +97,10 @@ case class AMTSingleAction(
         spec_id = spec_id,
         sort_order_id = sort_order_id,
         content_stats = content_stats,
+        tight_stats = tight_stats,
         key_metadata = key_metadata,
         split_offsets = split_offsets,
-        tags = tags,
-        format_version = format_version)
+        tags = tags)
     case AMTSingleAction.ContentType.Type.DataManifest =>
       DataManifestEntry(
         location = location,
@@ -109,9 +112,9 @@ case class AMTSingleAction(
         partition = partition,
         spec_id = spec_id,
         content_stats = content_stats,
+        tight_stats = tight_stats,
         key_metadata = key_metadata,
-        split_offsets = split_offsets,
-        format_version = format_version)
+        split_offsets = split_offsets)
     case other =>
       throw new IllegalStateException(s"Unsupported content_type: $other.")
   }
@@ -218,7 +221,6 @@ object AMTSingleAction {
   /** Iceberg V4 field specs for the top-level [[AMTSingleAction]] fields. */
   private val topLevelFields: Seq[AMTFieldSpec] = Seq(
     required(134L, "content_type"),
-    required(157L, "format_version"),
     required(100L, "location"),
     required(101L, "file_format"),
     required(147L, "tracking"),
@@ -229,6 +231,7 @@ object AMTSingleAction {
     required(103L, "record_count"),
     required(104L, "file_size_in_bytes"),
     optional(146L, "content_stats"),
+    optional(151L, "tight_stats"),
     optional(150L, "manifest_info"),
     optional(131L, "key_metadata"),
     optional(132L, "split_offsets"),
@@ -240,7 +243,7 @@ object AMTSingleAction {
     optional(1L, "snapshot_id"),
     optional(3L, "sequence_number"),
     optional(4L, "file_sequence_number"),
-    optional(5L, "dv_snapshot_id"),
+    optional(5L, "modified_snapshot_id"),
     optional(142L, "first_row_id"),
     optional(6L, "deleted_positions"),
     optional(7L, "replaced_positions"))
@@ -254,19 +257,19 @@ object AMTSingleAction {
 
   /** Iceberg V4 field specs for the scalar fields of the nested [[ManifestInfo]] struct. */
   private val manifestInfoFields: Seq[AMTFieldSpec] = Seq(
+    required(521L, "format_version"),
     required(504L, "added_files_count"),
     required(505L, "existing_files_count"),
     required(506L, "deleted_files_count"),
-    required(520L, "replaced_files_count"),
-    required(524L, "modified_files_count"),
+    required(523L, "replaced_files_count"),
+    required(525L, "modified_files_count"),
     required(512L, "added_rows_count"),
     required(513L, "existing_rows_count"),
     required(514L, "deleted_rows_count"),
-    required(521L, "replaced_rows_count"),
-    required(525L, "modified_rows_count"),
+    required(524L, "replaced_rows_count"),
+    required(526L, "modified_rows_count"),
     required(516L, "min_sequence_number"),
-    optional(522L, "dv"),
-    optional(523L, "dv_cardinality"))
+    optional(522L, "dv"))
 
   /** Nested-struct field specs, keyed by the top-level field name that carries the struct. */
   private val nestedStructFields: Map[String, Seq[AMTFieldSpec]] = Map(
@@ -441,12 +444,13 @@ sealed trait AMTAction {
  * @param spec_id Id of the partition spec the file was written under.
  * @param sort_order_id Id of the sort order the file was written with.
  * @param content_stats Column-level statistics for the file.
+ * @param tight_stats Whether `content_stats` are exact for the file's live rows; absent means not
+ *                    tight. AMT always sets it, as `false` for now.
  * @param key_metadata Encryption key metadata for the file, if encrypted.
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
  * @param tags Delta [[AddFile]] tags, preserved verbatim across the manifest round trip.
- * @param format_version Iceberg writer format version; 4 for V4.
  */
 case class DataEntry(
     location: String,
@@ -459,17 +463,16 @@ case class DataEntry(
     spec_id: Option[Int] = None,
     sort_order_id: Option[Int] = None,
     content_stats: Option[String] = None,
+    tight_stats: Option[Boolean] = Some(false),
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
-    tags: Option[Map[String, String]] = None,
-    format_version: Int = AMTSingleAction.FormatVersionV4)
+    tags: Option[Map[String, String]] = None)
   extends AMTAction {
 
   override protected def content_type: Int = AMTSingleAction.ContentType.Type.Data
 
   override def wrap: AMTSingleAction = AMTSingleAction(
     content_type = content_type,
-    format_version = format_version,
     location = location,
     file_format = file_format,
     tracking = tracking,
@@ -480,6 +483,7 @@ case class DataEntry(
     record_count = record_count,
     file_size_in_bytes = file_size_in_bytes,
     content_stats = content_stats,
+    tight_stats = tight_stats,
     manifest_info = None,
     key_metadata = key_metadata,
     split_offsets = split_offsets,
@@ -487,7 +491,7 @@ case class DataEntry(
 
   def toAddFile(tableRoot: Path): AddFile = {
     val dv = deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
-    val stats = AMTContentStats.toStatsJson(content_stats, record_count)
+    val stats = AMTContentStats.toStatsJson(content_stats, record_count, tight_stats)
     AddFile(
       // RFC-2396 encoding used by Delta.
       path = SparkPath.fromPathString(location).urlEncoded,
@@ -499,6 +503,8 @@ case class DataEntry(
       deletionVector = dv,
       baseRowId = tracking.first_row_id,
       defaultRowCommitVersion = tracking.file_sequence_number,
+      snapshotId = tracking.snapshot_id,
+      modifiedSnapshotId = tracking.modified_snapshot_id,
       tags = tags.orNull,
       amtPassthrough = AMTPassthrough.fromDataEntry(this))
   }
@@ -508,6 +514,7 @@ object DataEntry {
   /** Creates [[DataEntry]] from AddFile. */
   def fromAddFile(add: AddFile, tracking: Tracking, tableRoot: Path): DataEntry = {
     val passthrough = add.amtPassthrough
+    val deletionVector = Option(add.deletionVector).map(DeletionVector.fromDescriptor(_, tableRoot))
     DataEntry(
       // RFC-2396 to Iceberg raw path conversion.
       location = AMTUtils.relativizeLocation(
@@ -516,6 +523,8 @@ object DataEntry {
       // Round-trip the AddFile's row-tracking fields through the Iceberg tracking envelope so a
       // rowTracking-enabled table can reconstruct them on read.
       tracking = tracking.copy(
+        snapshot_id = add.snapshotId,
+        modified_snapshot_id = add.modifiedSnapshotId,
         first_row_id = add.baseRowId,
         sequence_number = add.defaultRowCommitVersion,
         file_sequence_number = add.effectiveFileSequenceNumber),
@@ -526,8 +535,7 @@ object DataEntry {
           s"Cannot build AMT entry: AddFile has no record count (missing stats): ${add.path}.")),
       file_size_in_bytes = add.size,
       partition = Option(add.partitionValues).filter(_.nonEmpty),
-      deletion_vector =
-        Option(add.deletionVector).map(DeletionVector.fromDescriptor(_, tableRoot)),
+      deletion_vector = deletionVector,
       spec_id = passthrough.flatMap(_.spec_id),
       sort_order_id = passthrough.flatMap(_.sort_order_id),
       key_metadata = passthrough.flatMap(_.key_metadata),
@@ -535,6 +543,26 @@ object DataEntry {
       tags = Option(add.tags).map(_.toMap).filter(_.nonEmpty),
       content_stats = AMTContentStats.fromStatsJson(add.stats))
   }
+
+  /**
+   * Creates a terminal [[DataEntry]] using the prior AddFile's complete content metadata and the
+   * RemoveFile's snapshot provenance.
+   */
+  // scalastyle:off removeFile // This is a DataEntry factory, not a RemoveFile constructor.
+  def fromRemoveFile(
+      priorAdd: AddFile,
+      remove: RemoveFile,
+      tracking: Tracking,
+      tableRoot: Path): DataEntry = {
+    require(
+      tracking.status == Tracking.Status.Deleted ||
+        tracking.status == Tracking.Status.Replaced,
+      s"Removed data entry must be DELETED or REPLACED, got ${tracking.status}.")
+    fromAddFile(priorAdd.copy(
+      snapshotId = remove.snapshotId,
+      modifiedSnapshotId = remove.modifiedSnapshotId), tracking, tableRoot)
+  }
+  // scalastyle:on removeFile
 }
 
 /**
@@ -644,16 +672,76 @@ object AMTPassthrough {
    */
   def fromDataEntry(entry: DataEntry): Option[AMTPassthrough] = {
     require(
-      entry.file_format == AMTSingleAction.FileFormatParquet &&
-        entry.format_version == AMTSingleAction.FormatVersionV4,
-      s"amtPassthrough only supports parquet/v4. got " +
-        s"${entry.file_format}/${entry.format_version}.")
+      entry.file_format == AMTSingleAction.FileFormatParquet,
+      s"amtPassthrough only supports parquet. got ${entry.file_format}.")
     val passthrough = AMTPassthrough(
       spec_id = entry.spec_id,
       sort_order_id = entry.sort_order_id,
       key_metadata = entry.key_metadata,
       split_offsets = entry.split_offsets)
     if (passthrough == AMTPassthrough()) None else Some(passthrough)
+  }
+}
+
+/**
+ * Assigns AMT snapshot provenance at the commit-attempt boundary.
+ *
+ * Commands preserve an ID when the corresponding lifecycle is unchanged and clear it to request
+ * a new ID.
+ */
+object AMTSnapshotId {
+
+  // scalastyle:off line.size.limit
+  /**
+   * Generates a non-negative random ID using the same algorithm as Apache Iceberg:
+   * https://github.com/apache/iceberg/blob/main/core/src/main/java/org/apache/iceberg/SnapshotIdGeneratorUtil.java
+   */
+  // scalastyle:on line.size.limit
+  def generate(): Long = {
+    val uuid = UUID.randomUUID()
+    (uuid.getMostSignificantBits ^ uuid.getLeastSignificantBits) & Long.MaxValue
+  }
+
+  private def hasModificationMetadata(add: AddFile): Boolean = {
+    val hasDeletionVector = add.deletionVector != null
+    hasDeletionVector
+  }
+
+  private def hasModificationMetadata(remove: RemoveFile): Boolean = {
+    val hasDeletionVector = remove.deletionVector != null
+    hasDeletionVector
+  }
+
+  def assignIfMissing(
+      metadata: Metadata,
+      protocol: Protocol,
+      actions: Iterator[Action],
+      snapshotId: Long): Iterator[Action] = {
+    require(snapshotId >= 0L, s"AMT snapshot ID must be non-negative: $snapshotId.")
+    if (!AMTUtils.amtEnabled(metadata, protocol)) {
+      return actions
+    }
+
+    actions.map {
+      case add: AddFile =>
+        // If an AddFile carries modification metadata (for example, a DV or column updates) and
+        // both snapshot IDs are missing, initialize both to the current snapshotId. This can happen
+        // in RESTORE / CLONE when a file is introduced with an existing DV or column file.
+        add.copy(
+          snapshotId = add.snapshotId.orElse(Some(snapshotId)),
+          modifiedSnapshotId =
+            add.modifiedSnapshotId.orElse(
+              if (hasModificationMetadata(add)) Some(snapshotId) else None))
+
+      case remove: RemoveFile =>
+        remove.copy(
+          snapshotId = remove.snapshotId.orElse(Some(snapshotId)),
+          modifiedSnapshotId =
+            remove.modifiedSnapshotId.orElse(
+              if (hasModificationMetadata(remove)) Some(snapshotId) else None))
+
+      case action => action
+    }
   }
 }
 
@@ -669,11 +757,12 @@ object AMTPassthrough {
  * @param partition Partition values.
  * @param spec_id Id of the partition spec the manifest was written under.
  * @param content_stats Column-level statistics.
+ * @param tight_stats Whether `content_stats` are exact for the manifest's live rows; absent means
+ *                    not tight. AMT always sets it, as `false` for now.
  * @param key_metadata Encryption key metadata for the manifest, if encrypted.
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
  *                      for tables written by both Delta and Iceberg.
- * @param format_version Iceberg writer format version; 4 for V4.
  */
 case class DataManifestEntry(
     location: String,
@@ -685,16 +774,16 @@ case class DataManifestEntry(
     partition: Option[Map[String, String]] = None,
     spec_id: Option[Int] = None,
     content_stats: Option[String] = None,
+    tight_stats: Option[Boolean] = Some(false),
     key_metadata: Option[Array[Byte]] = None,
-    split_offsets: Option[Seq[Long]] = None,
-    format_version: Int = AMTSingleAction.FormatVersionV4)
+    @JsonDeserialize(contentUsing = classOf[AMTSplitOffsetsDeserializer])
+    split_offsets: Option[Seq[Long]] = None)
   extends AMTAction {
 
   override protected def content_type: Int = AMTSingleAction.ContentType.Type.DataManifest
 
   override def wrap: AMTSingleAction = AMTSingleAction(
     content_type = content_type,
-    format_version = format_version,
     location = location,
     file_format = file_format,
     tracking = tracking,
@@ -705,6 +794,7 @@ case class DataManifestEntry(
     record_count = record_count,
     file_size_in_bytes = file_size_in_bytes,
     content_stats = content_stats,
+    tight_stats = tight_stats,
     manifest_info = Some(manifest_info),
     key_metadata = key_metadata,
     split_offsets = split_offsets,
@@ -730,26 +820,11 @@ case class DataManifestEntry(
 
   /**
    * The inline manifest deletion vector on this leaf, if any, as (bitmap bytes, cardinality).
-   * Per the V4 spec, `dv` and `dv_cardinality` must both be set or both unset; a partially
-   * populated pair is malformed and rejected.
+   * The cardinality is derived by decoding the bitmap.
    */
   @JsonIgnore
-  def manifestDV: Option[(Array[Byte], Long)] = {
-    AMTUtils.invariantCheckWithLogging(
-      checkInvariant = manifest_info.dv.isDefined == manifest_info.dv_cardinality.isDefined,
-      opTypeSuffix = AMTUsageLogs.ALERT_MALFORMED_MANIFEST_DV,
-      message =
-        s"Malformed manifest DV on leaf $location: dv and dv_cardinality must both be set or " +
-          s"both unset (dv.isDefined=${manifest_info.dv.isDefined}, " +
-          s"dv_cardinality=${manifest_info.dv_cardinality}).",
-      data = Map(
-        "leafLocation" -> location,
-        "dvIsDefined" -> manifest_info.dv.isDefined,
-        "dvCardinalityIsDefined" -> manifest_info.dv_cardinality.isDefined))
-    manifest_info.dv.flatMap { dv =>
-      manifest_info.dv_cardinality.map(cardinality => (dv, cardinality))
-    }
-  }
+  def manifestDV: Option[(Array[Byte], Long)] =
+    manifest_info.dv.map(dv => (dv, manifest_info.dvCardinality))
 }
 
 /**
@@ -757,20 +832,26 @@ case class DataManifestEntry(
  * `tracking` struct in the V4 spec (field IDs in comments).
  *
  * @param status Entry status (0=existing, 1=added, 2=deleted, 3=replaced, 4=modified).
- * @param snapshot_id Snapshot the file was added/deleted/replaced in; inherited from root.
- * @param dv_snapshot_id Snapshot the DV was added in; null when the entry has no DV.
+ * @param snapshot_id Snapshot the file was added/deleted/replaced in; inherited from root when
+ *                    null on an ADDED entry.
+ * @param modified_snapshot_id Snapshot where the file's modification metadata last changed.
  * @param sequence_number Data sequence number of the file.
  * @param file_sequence_number File sequence number (when the file was added).
  * @param first_row_id Id of the first row in the data file.
- * @param deleted_positions Bitmap of positions deleted in this snapshot.
- * @param replaced_positions Bitmap of positions replaced in this snapshot.
+ * @param deleted_positions Bitmap of positions deleted in the `modified_snapshot_id` snapshot.
+ * @param replaced_positions Bitmap of positions replaced in the `modified_snapshot_id` snapshot.
  */
 case class Tracking(
     status: Int,                            // ID: 0, required.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     snapshot_id: Option[Long],              // ID: 1, optional.
-    dv_snapshot_id: Option[Long],           // ID: 5, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    modified_snapshot_id: Option[Long],     // ID: 5, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     sequence_number: Option[Long],          // ID: 3, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     file_sequence_number: Option[Long],     // ID: 4, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     first_row_id: Option[Long],             // ID: 142, optional.
     deleted_positions: Option[Array[Byte]], // ID: 6, optional (bitmap).
     replaced_positions: Option[Array[Byte]] // ID: 7, optional (bitmap).
@@ -789,6 +870,7 @@ case class Tracking(
  * Every `status` named below is the child [[DataEntry]]'s status, not the parent
  * `DATA_MANIFEST` entry's status. The inheritable fields are:
  *
+ *  - `snapshot_id` (1): inherited when null and the status is `ADDED`.
  *  - `sequence_number` (3): inherited when null and the status is `ADDED`.
  *  - `file_sequence_number` (4): inherited when null and the status is `ADDED`.
  *  - `first_row_id` (142): inherited when null and the status is `ADDED`, but not by simply
@@ -796,7 +878,8 @@ case class Tracking(
  *    `record_count` of the preceding `ADDED` entries in the same leaf that were themselves null.
  *
  * The `ADDED` restriction keeps the inherited fields correct. Leaf entries with any other status
- * must materialize all three values instead of inheriting them.
+ * must materialize all four values instead of inheriting them. `modified_snapshot_id` is never
+ * inherited.
  */
 object Tracking {
   /**
@@ -858,6 +941,12 @@ object Tracking {
       prefixSumRecordCountForNullFirstRowId: Long,
       childEntryLocationForLogging: String): Tracking =
     childTracking.copy(
+      snapshot_id = inheritTrackingValueOnAdded(
+        fieldName = "snapshot_id",
+        fieldValueInChild = childTracking.snapshot_id,
+        inheritedFieldValue = parentTracking.snapshot_id,
+        dataEntryStatus = childTracking.status,
+        childEntryLocationForLogging = childEntryLocationForLogging),
       sequence_number = inheritTrackingValueOnAdded(
         fieldName = "sequence_number",
         fieldValueInChild = childTracking.sequence_number,
@@ -909,11 +998,13 @@ object Tracking {
  * Projecting the parent down to these values keeps the per-leaf parent map small enough
  * to capture in a scan closure.
  *
+ * @param snapshot_id Parent's required snapshot ID.
  * @param sequence_number Parent's required data sequence number.
  * @param file_sequence_number Parent's required file sequence number.
  * @param first_row_id Required row id where the leaf's row-id assignment starts.
  */
 case class InheritableTracking(
+    snapshot_id: Long,
     sequence_number: Long,
     file_sequence_number: Long,
     first_row_id: Long)
@@ -921,6 +1012,7 @@ case class InheritableTracking(
 object InheritableTracking {
   /** Projects the required inheritable fields of a root `DATA_MANIFEST` entry. */
   def apply(parent: DataManifestEntry): InheritableTracking = InheritableTracking(
+    snapshot_id = requiredParentValue(parent, "snapshot_id", parent.tracking.snapshot_id),
     sequence_number = requiredParentValue(parent, "sequence_number",
       parent.tracking.sequence_number),
     file_sequence_number = requiredParentValue(parent, "file_sequence_number",
@@ -1011,10 +1103,9 @@ object DeletionVector {
  * Field IDs and required/optional match the V4 `manifest_info` struct verbatim.
  *
  * `dv` carries the inline manifest deletion-vector bitmap over leaf row
- * positions; `dv_cardinality` is its count. Manifest DVs live INSIDE
- * `manifest_info`, not as separate root rows -- a deliberate choice in
- * the Combined Data + DV Entry model.
+ * positions; its cardinality is derived on demand via [[ManifestInfo.dvCardinality]]
  *
+ * @param format_version Format version of the referenced manifest (0=PRE-V4, 4=V4).
  * @param added_files_count Count of ADDED file entries in the referenced manifest.
  * @param existing_files_count Count of EXISTING file entries.
  * @param deleted_files_count Count of DELETED file entries.
@@ -1027,26 +1118,33 @@ object DeletionVector {
  * @param modified_rows_count Rows across MODIFIED files.
  * @param min_sequence_number Minimum data sequence number across the manifest's live entries.
  * @param dv Inline manifest deletion-vector bitmap over leaf row positions.
- * @param dv_cardinality Number of positions the inline manifest DV marks.
  */
 case class ManifestInfo(
+    format_version: Int,              // ID: 521, required.
     added_files_count: Int,           // ID: 504, required.
     existing_files_count: Int,        // ID: 505, required.
     deleted_files_count: Int,         // ID: 506, required.
-    replaced_files_count: Int,        // ID: 520, required.
-    modified_files_count: Int,        // ID: 524, required.
+    replaced_files_count: Int,        // ID: 523, required.
+    modified_files_count: Int,        // ID: 525, required.
     added_rows_count: Long,           // ID: 512, required.
     existing_rows_count: Long,        // ID: 513, required.
     deleted_rows_count: Long,         // ID: 514, required.
-    replaced_rows_count: Long,        // ID: 521, required.
-    modified_rows_count: Long,        // ID: 525, required.
+    replaced_rows_count: Long,        // ID: 524, required.
+    modified_rows_count: Long,        // ID: 526, required.
     min_sequence_number: Long,        // ID: 516, required.
-    dv: Option[Array[Byte]],          // ID: 522, optional (inline manifest DV bitmap).
-    dv_cardinality: Option[Long]) {   // ID: 523, optional.
+    dv: Option[Array[Byte]]) {        // ID: 522, optional (inline manifest DV bitmap).
 
   /** Live (non-tombstone) file entries: ADDED, EXISTING and MODIFIED are all live. */
   def liveFilesCount: Int = added_files_count + existing_files_count + modified_files_count
 
   /** Tombstone file entries: DELETED and REPLACED. */
   def tombstoneFilesCount: Int = deleted_files_count + replaced_files_count
+
+  /**
+   * Cardinality of the inline manifest DV, derived by decoding `dv` (0 when absent).
+   *
+   * TODO: A follow-on may deserialize MDVs more selectively, possibly eliminating this function.
+   */
+  @JsonIgnore
+  def dvCardinality: Long = dv.map(AMTUtils.deserializeMdv(_).cardinality).getOrElse(0L)
 }

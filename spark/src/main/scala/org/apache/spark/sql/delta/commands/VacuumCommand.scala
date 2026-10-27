@@ -744,7 +744,7 @@ trait VacuumCommandImpl extends DeltaCommand {
 
     dv match {
       case Some(dv) if dv.isOnDisk =>
-        if (dv.isUuidRelative) {
+        if (dv.isUuidRelative || dv.isUnencodedRelative) {
           // We actually want a relative path here.
           Some((pathToUrlEncodedString(dv.absolutePath(new Path("."))), dv.sizeInBytes))
         } else {

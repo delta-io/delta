@@ -216,7 +216,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
 {
   "checkpoint": [
     { "checkpointMetadata": { "version": 42 } },
-    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42, "tags": {} } },
+    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42, "commitTimestamp": 1234567890000, "tags": {} } },
     { "protocol": { "minReaderVersion": 3, "minWriterVersion": 7, "readerFeatures": ["columnMapping", "deletionVectors", "adaptiveMetadata"], "writerFeatures": ["columnMapping", "deletionVectors", "domainMetadata", "rowTracking", "adaptiveMetadata"] } },
     { "metaData": { "id": "af23c9d7-fff1-4a5a-a2c8-55c59bd782aa", "name": "my_table", "schemaString": "{...}", "partitionColumns": [], "configuration": {}, "createdTime": 1234567890000 } },
     { "domainMetadata": { "domain": "delta.rowTracking", "configuration": "{\"rowIdHighWaterMark\": 1000000}", "removed": false } },
@@ -235,7 +235,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 | Action | Description |
 |--------|-------------|
 | `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
-| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, `commitTimestamp`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). A metadata tree can only be produced as of a version at which In-Commit Timestamps are enabled. `commitTimestamp` is the in-commit timestamp (milliseconds since the Unix epoch) of the commit at `version`. `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
 | `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
@@ -424,7 +424,7 @@ Summary information for `content_type` = DATA_MANIFEST entries. Includes file/ro
 
 ### Manifest Deletion Vectors (MDVs)
 
-MDVs track which entries in a leaf manifest have been deleted or replaced. The `dv` field in `manifest_info` contains a Roaring bitmap of all invalidated positions (cumulative, used for reading).  The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF):
+MDVs track which entries in a leaf manifest have been deleted or replaced. The `dv` field in `manifest_info` contains all invalidated positions (cumulative, used for reading). The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF). All three bitmaps are encoded using the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec:
 
 - **`manifest_info.dv`**: Cumulative set of all invalidated positions. Grows
   monotonically. Used by readers to skip entries.
@@ -758,4 +758,4 @@ When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint m
   will fail fast when encountering the feature in the protocol, as expected for reader features.
 
 - **Iceberg interoperability**: This feature uses Iceberg V4's manifest
-  format internally but does not enable Iceberg reader/writer access to the table. Iceberg interoperability requires the separate `icebergNativeV4` feature (not covered in this RFC).
+  format internally but does not enable Iceberg reader/writer access to the table. Iceberg interoperability [requires the separate `icebergNativeV4` feature](https://github.com/delta-io/delta/pull/7374/).

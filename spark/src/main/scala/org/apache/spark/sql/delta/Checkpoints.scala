@@ -29,7 +29,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CheckpointMetadata, CommitInfo, LastManifestCommit, Metadata, SidecarFile, SingleAction}
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTTriggerMode, AMTUtils, AMTWriteResult, AMTWriterManager, DataManifestEntry}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTTriggerMode, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager, DataManifestEntry}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -429,17 +429,41 @@ trait Checkpoints extends DeltaLogging {
       .toSeq ++ instanceFromOldCheckpointProvider
   }
 
-  /** Starts an async read of the last commit's CommitInfo if needed and flag enabled. */
+  /** Whether reading the last commit's CommitInfo is needed. */
+  protected def shouldReadLastCommitInfoAsync(
+      checksumOpt: Option[VersionChecksum],
+      shouldReconcileAMTCheckpointProvider: Boolean): Boolean = {
+    // If the checksum is available, we don't need to fall back to CommitInfo.
+    if (checksumOpt.isDefined) {
+      return false
+    }
+    shouldReconcileAMTCheckpointProvider &&
+      spark.conf.get(DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED)
+  }
+
+  /** Starts an async read of the last commit's CommitInfo if needed. */
   protected def maybeReadLastCommitInfoAsync(
       logSegment: LogSegment,
+      checksumOpt: Option[VersionChecksum] = None,
       shouldReconcileAMTCheckpointProvider: Boolean): Option[Future[Option[CommitInfo]]] = {
-    val shouldKickOffAsyncCommitInfoRead = shouldReconcileAMTCheckpointProvider &&
-      spark.conf.get(DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED)
+    val shouldKickOffAsyncCommitInfoRead = shouldReadLastCommitInfoAsync(
+      checksumOpt,
+      shouldReconcileAMTCheckpointProvider)
     Option.when(shouldKickOffAsyncCommitInfoRead) {
       SnapshotManagement.checkpointThreadPool.submit(spark) {
-        readLastCommitInfo(
-          deltaCommitFileProvider = DeltaCommitFileProvider(logSegment.logPath, logSegment),
-          version = logSegment.version)
+        val (lastCommitInfoOpt, durationMs) = Utils.timeTakenMs {
+          readLastCommitInfo(
+            deltaCommitFileProvider = DeltaCommitFileProvider(logSegment.logPath, logSegment),
+            version = logSegment.version)
+        }
+        recordDeltaEvent(
+          this,
+          opType = AMTUsageLogs.SNAPSHOT_DISCOVERY_READ_LAST_COMMIT_INFO_ASYNC,
+          data = Map(
+            "durationMs" -> durationMs,
+            "version" -> logSegment.version)
+        )
+        lastCommitInfoOpt
       }
     }
   }
@@ -949,6 +973,10 @@ object Checkpoints
   /** The name of the last checkpoint file */
   val LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint"
 
+  /** RemoveFile fields intentionally omitted from classic and V2 checkpoints. */
+  private[delta] val REMOVE_FILE_EXCLUDED_FROM_CHECKPOINT_FIELDS =
+    Seq("tags", "stats", "snapshotId", "modifiedSnapshotId")
+
   /**
    * Determines the V2 checkpoint format to use for the given snapshot, if applicable.
    *
@@ -1121,7 +1149,9 @@ object Checkpoints
         // separately after sidecar files are written.
         repartitioned
           .select("add", "remove")
-          .withColumn("remove", col("remove").dropFields("tags", "stats"))
+          .withColumn(
+            "remove",
+            col("remove").dropFields(REMOVE_FILE_EXCLUDED_FROM_CHECKPOINT_FIELDS: _*))
           .where("add is not null or remove is not null")
       } else {
         // When V2 Checkpoint is disabled, the baseCheckpoint refers to the main classic checkpoint
@@ -1129,7 +1159,9 @@ object Checkpoints
         // "checkpoint".
         repartitioned
           .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar", "checkpoint")
-          .withColumn("remove", col("remove").dropFields("tags", "stats"))
+          .withColumn(
+            "remove",
+            col("remove").dropFields(REMOVE_FILE_EXCLUDED_FROM_CHECKPOINT_FIELDS: _*))
       }
     }
 
@@ -1651,8 +1683,8 @@ object Checkpoints
       additionalCols ++= partitionValues
       additionalCols ++= Checkpoints.extractStats(snapshot.statsSchema, "add.stats")
     }
-    // amtResidue and backReference are dropped on purpose here: V1/V2 checkpoints are incompatible
-    // with AMT, so these AMT-era extras do not belong in the checkpoint `add` struct.
+    // amtPassthrough, backReference, and snapshot IDs are dropped on purpose here: V1/V2
+    // checkpoints are incompatible with AMT, so these extras do not belong in the `add` struct.
     val withAdd = state.withColumn("add",
       when(col("add").isNotNull, struct(Seq(
         col("add.path"),
