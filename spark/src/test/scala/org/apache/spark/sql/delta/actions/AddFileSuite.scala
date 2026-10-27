@@ -264,22 +264,25 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
           DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key ->
             enableNormalization.toString,
           "spark.sql.session.timeZone" -> "UTC") {
-          withTempDir { tempDir =>
-            val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
-            val partitionSchema = StructType(Seq(StructField("tsCol", TimestampType)))
-            val unnormalizedFiles = Seq("2000-01-01 12:00:00", "2000-01-02 12:00:00")
-              .map(value => createAddFileWithPartitionValue(Map("tsCol" -> value)))
+          withTempDir { firstTableDir =>
+            withTempDir { secondTableDir =>
+              val snapshots = Seq(firstTableDir, secondTableDir)
+                .map(tableDir => DeltaLog.forTable(spark, tableDir.getCanonicalPath).update())
+              val partitionSchema = StructType(Seq(StructField("tsCol", TimestampType)))
+              val unnormalizedFiles = Seq("2000-01-01 12:00:00", "2000-01-02 12:00:00")
+                .map(value => createAddFileWithPartitionValue(Map("tsCol" -> value)))
 
-            val usageRecords = Log4jUsageLogger.track {
-              for (file <- unnormalizedFiles) {
-                file.normalizedPartitionValues(spark, partitionSchema, Some(deltaTxn))
+              val usageRecords = Log4jUsageLogger.track {
+                for (snapshot <- snapshots; file <- unnormalizedFiles) {
+                  file.normalizedPartitionValues(spark, partitionSchema, snapshot)
+                }
               }
-            }
 
-            val numUnnormalizedValuesEvents = usageRecords.count(_.tags.get("opType").contains(
-              "delta.normalizedPartitionValues.unnormalizedValuesExist"))
-            val expectedNumUnnormalizedValuesEvents = if (enableNormalization) 1 else 0
-            assert(numUnnormalizedValuesEvents === expectedNumUnnormalizedValuesEvents)
+              val numUnnormalizedValuesEvents = usageRecords.count(_.tags.get("opType").contains(
+                "delta.normalizedPartitionValues.unnormalizedValuesExist"))
+              val expectedNumUnnormalizedValuesEvents = if (enableNormalization) 2 else 0
+              assert(numUnnormalizedValuesEvents === expectedNumUnnormalizedValuesEvents)
+            }
           }
         }
       }

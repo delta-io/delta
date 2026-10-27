@@ -1176,7 +1176,19 @@ case class AddFile(
   def normalizedPartitionValues(
       spark: SparkSession,
       deltaTxn: OptimisticTransaction): Map[String, Literal] = {
-    normalizedPartitionValues(spark, deltaTxn.metadata.physicalPartitionSchema, Some(deltaTxn))
+    normalizedPartitionValues(
+      spark,
+      deltaTxn.metadata.physicalPartitionSchema,
+      parseToTypedLiterals =
+        spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ),
+      deltaLog = deltaTxn.deltaLog,
+      errorOpType = "delta.normalizedPartitionValues",
+      errorData = Map(
+        "readSnapshotMetadata" -> deltaTxn.snapshot.metadata,
+        "txnMetadata" -> deltaTxn.metadata,
+        "commitInfo" -> deltaTxn.getCommitInfo,
+        "readSnapshotVersion" -> deltaTxn.snapshot.version)
+    )
   }
 
   /**
@@ -1188,19 +1200,19 @@ case class AddFile(
   def normalizedPartitionValues(
       spark: SparkSession,
       partitionSchema: StructType,
-      deltaTxn: Option[OptimisticTransaction] = None): Map[String, Literal] = {
+      snapshot: Snapshot): Map[String, Literal] = {
     normalizedPartitionValues(
       spark,
       partitionSchema,
       parseToTypedLiterals =
         spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ),
-      deltaLog = deltaTxn.map(_.deltaLog).orNull,
+      deltaLog = snapshot.deltaLog,
       errorOpType = "delta.normalizedPartitionValues",
       errorData = Map(
-        "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
-        "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
-        "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull,
-        "readSnapshotVersion" -> deltaTxn.map(_.snapshot.version).getOrElse(-1L))
+        "readSnapshotMetadata" -> snapshot.metadata,
+        "txnMetadata" -> null,
+        "commitInfo" -> null,
+        "readSnapshotVersion" -> snapshot.version)
     )
   }
 

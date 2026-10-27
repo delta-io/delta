@@ -130,12 +130,8 @@ trait DeltaLogging
         val tableTags = provider.getCommonTags
         val tableIdentity = tableTags.get(TAG_TAHOE_ID).flatMap(Option(_))
           .orElse(tableTags.get(TAG_TAHOE_PATH).flatMap(Option(_)))
-        tableIdentity match {
-          case Some(identity) =>
-            if (DeltaLogging.markLoggedOncePerTable(identity, opType)) {
-              recordDeltaEvent(provider, opType, data = data)
-            }
-          case None => ()
+        if (tableIdentity.exists(DeltaLogging.markLoggedOncePerTable(_, opType))) {
+          recordDeltaEvent(provider, opType, data = data)
         }
       }
     } catch {
@@ -346,7 +342,9 @@ object DeltaLogging {
 
   /** Remembers `tableIdentity` and `opType`, returning true if the pair was not remembered yet. */
   private def markLoggedOncePerTable(tableIdentity: String, opType: String): Boolean = {
-    eventsLoggedOncePerTable.asMap().putIfAbsent((tableIdentity, opType), JavaBoolean.TRUE) == null
+    val key = (tableIdentity, opType)
+    eventsLoggedOncePerTable.getIfPresent(key) == null &&
+      eventsLoggedOncePerTable.asMap().putIfAbsent(key, JavaBoolean.TRUE) == null
   }
 }
 
