@@ -81,13 +81,14 @@ The write location can be set by a system-controlled domain, **`delta.fileType.w
 Delta does not treat referenced bytes as table data, except when a table reuses another table's data files:
 
 - **`VACUUM` does not delete them.** `VACUUM` **must not** delete files under the `_files` directory of the table root, except under reachability-based cleanup (see below).
-- **Copying another table's data files.** A writer that creates a table by copying another table's data files to the new table root **must** also copy the bytes each relative `uri` in them refers to, as of the source snapshot, to the same relative path under the new table root. The copied data files are not rewritten.
+- **Copying another table's data files.** A writer that copies another table's data files to a table root, whether it creates that table or the table already exists, **must** also copy the bytes each relative `uri` in them refers to, as of the source snapshot, to the same relative path under the target table root. The copied data files are not rewritten.
   - The bytes are found from the `uri` values in the data, not from the write location, which may have changed.
-  - Absolute `uri`s are not copied; the new table shares those bytes with the source.
+  - Absolute `uri`s are not copied; the target shares those bytes with the source.
   - The bytes are copied unchanged, so checksums of the bytes stay valid; an `ETAG`, which identifies the source object, may not match the copy.
   - Missing source bytes are not an error.
-  - The new table does not inherit an absolute `delta.fileType.writeLocation`.
-- **Referencing another table's data files in place.** A writer **must not** add another table's data file to a table without copying it if the data file contains relative `uri`s, because they would resolve against the new table's root rather than the root they were written for. A writer that cannot tell may refuse any such data file that has a `file` column.
+  - The writer **must not** overwrite a different file that already exists at that path in the target; it **must** fail the copy instead.
+  - The target keeps its own `delta.fileType.writeLocation`; a new table does not inherit an absolute one from the source.
+- **Referencing another table's data files in place.** A writer **must not** add another table's data file to a table without copying it if the data file contains relative `uri`s, because they would resolve against the target table's root rather than the root they were written for. A writer that cannot tell may refuse any such data file that has a `file` column.
 
 Delta does not otherwise manage the contents of the write location: creating, retaining, and reclaiming those bytes is the responsibility of the writer or an external system. (A higher layer may add managed semantics — for example lifecycle/garbage collection or access brokering — on top of this location, but that is out of scope for this protocol.)
 
