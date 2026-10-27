@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.junit.jupiter.api.Test;
 
 /** Unit tests for {@link IndexedFile}. */
@@ -76,7 +77,8 @@ public class IndexedFileTest {
 
   @Test
   public void testAddFile() {
-    AddFile addFile = createTestAddFile("file.parquet", 4096);
+    org.apache.spark.sql.delta.actions.AddFile addFile =
+        KernelActionUtils$.MODULE$.addFileFromKernel(createTestAddFile("file.parquet", 4096));
     IndexedFile indexed = IndexedFile.addFile(/* version= */ 3L, /* index= */ 7L, addFile);
 
     assertEquals(3L, indexed.getVersion());
@@ -88,7 +90,7 @@ public class IndexedFileTest {
     assertEquals(4096, indexed.getFileSize());
 
     String str = indexed.toString();
-    assertTrue(str.startsWith("IndexedFile{version=3, index=7, addFile=AddFile{"));
+    assertTrue(str.startsWith("IndexedFile{version=3, index=7, addFile=AddFile("));
   }
 
   @Test
