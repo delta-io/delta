@@ -15,7 +15,7 @@
  */
 package org.apache.spark.sql.delta.v2.interop
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit}
+import org.apache.spark.sql.delta.DeltaSingleCommit
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
@@ -45,10 +45,7 @@ private[interop] class DeltaV2SingleCommit(
 
   override def getActionsIterator(
       maxInMemoryFileSizeBytes: Long): ClosableIterator[Action] with SupportsRewinding[Action] = {
-    if (maxInMemoryFileSizeBytes != 0) {
-      throw DeltaErrors.assertionFailedError(
-        "getActionsIterator only supports maxInMemoryFileSizeBytes = 0")
-    }
+    // Actions are already materialized, so the file-size threshold does not affect rewinds.
     new ClosableIterator[Action] with SupportsRewinding[Action] {
       private var delegatedIterator = actions.iterator
       override def hasNext: Boolean = delegatedIterator.hasNext
