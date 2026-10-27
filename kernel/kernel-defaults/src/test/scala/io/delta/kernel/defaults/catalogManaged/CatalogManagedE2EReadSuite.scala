@@ -24,21 +24,22 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.{CommitRange, Operation, SnapshotBuilder, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
-import io.delta.kernel.data.Row
+import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.MetricsEngine
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.internal.json.JsonUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.{KernelException, MaxCatalogVersionException, UnsupportedTableFeatureException}
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl}
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
-import io.delta.kernel.internal.actions.Protocol
-import io.delta.kernel.internal.actions.SingleAction.createProtocolSingleAction
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
+import io.delta.kernel.internal.actions.SingleAction.{createMetadataSingleAction, createProtocolSingleAction}
 import io.delta.kernel.internal.commitrange.CommitRangeImpl
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{isCatalogManagedSupported, CATALOG_MANAGED_RW_FEATURE, IN_COMMIT_TIMESTAMP_W_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{isCatalogManagedSupported, CATALOG_MANAGED_RW_FEATURE, CHECKPOINT_PROTECTION_W_FEATURE, IN_COMMIT_TIMESTAMP_W_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import io.delta.kernel.utils.FileStatus
@@ -383,20 +384,22 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
   }
 
   /**
-   * Writes a commit containing only commitInfo and an optional protocol. When `publish` is false,
-   * the commit is written to _staged_commits and returned as ratified log data.
+   * Writes a commit containing only commitInfo and an optional protocol and metadata. When
+   * `publish` is false, the commit is written to _staged_commits and returned as ratified log data.
    */
   private def writeCommit(
       tablePath: String,
       version: Long,
       inCommitTimestamp: Long,
       protocolOpt: Option[Protocol] = None,
+      metadataOpt: Option[Metadata] = None,
       publish: Boolean = true): List[ParsedLogData] = {
     val logPath = new Path(tablePath, "_delta_log")
     val commitInfo =
       s"""{"commitInfo":{"inCommitTimestamp":$inCommitTimestamp,"timestamp":$inCommitTimestamp}}"""
     val protocolActions =
-      protocolOpt.map(p => JsonUtils.rowToJson(createProtocolSingleAction(p.toRow))).toSeq
+      protocolOpt.map(p => JsonUtils.rowToJson(createProtocolSingleAction(p.toRow))).toSeq ++
+        metadataOpt.map(m => JsonUtils.rowToJson(createMetadataSingleAction(m.toRow)))
     val commitFile = if (publish) {
       FileNames.deltaFile(logPath, version)
     } else {
@@ -489,25 +492,48 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
 
   /**
    * Writes a commit at `version` that removes catalogManaged from the protocol of the previous
-   * version.
+   * version. With `withCheckpointProtection`, the commit also adds checkpointProtection and sets
+   * delta.requireCheckpointProtectionBeforeVersion to `version`, as Delta's DROP FEATURE does.
    */
   private def downgradeFromCatalogManaged(
       tablePath: String,
       version: Long,
-      parsedLogData: List[ParsedLogData] = Nil): Unit = {
+      parsedLogData: List[ParsedLogData] = Nil,
+      withCheckpointProtection: Boolean = false): Unit = {
     val previousSnapshot = snapshotAt(tablePath, version - 1, parsedLogData)
+    val protocol = withoutCatalogManaged(previousSnapshot.getProtocol)
+    val (protocolOpt, metadataOpt) = if (withCheckpointProtection) {
+      val protocolWithCheckpointProtection = new Protocol(
+        protocol.getMinReaderVersion,
+        protocol.getMinWriterVersion,
+        protocol.getReaderFeatures,
+        (protocol.getWriterFeatures.asScala + CHECKPOINT_PROTECTION_W_FEATURE.featureName).asJava)
+      val metadata = previousSnapshot.getMetadata.withMergedConfiguration(
+        Map(REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION -> version.toString).asJava)
+      (Some(protocolWithCheckpointProtection), Some(metadata))
+    } else {
+      (Some(protocol), None)
+    }
     writeCommit(
       tablePath,
       version,
       inCommitTimestamp = previousSnapshot.getTimestamp(defaultEngine) + 1,
-      protocolOpt = Some(withoutCatalogManaged(previousSnapshot.getProtocol)))
+      protocolOpt = protocolOpt,
+      metadataOpt = metadataOpt)
   }
 
+  private val REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION =
+    "delta.requireCheckpointProtectionBeforeVersion"
+
   /**
-   * Appends `seqOfUnpartitionedDataBatch1` to the latest version. Pass `maxCatalogVersionOpt` when
-   * the latest version is catalogManaged.
+   * Appends `data` to the latest version. Pass `maxCatalogVersionOpt` when the latest version is
+   * catalogManaged.
    */
-  private def appendRows(tablePath: String, maxCatalogVersionOpt: Option[Long] = None): Unit = {
+  private def appendRows(
+      tablePath: String,
+      maxCatalogVersionOpt: Option[Long] = None,
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] =
+        seqOfUnpartitionedDataBatch1): Unit = {
     val snapshotBuilder = TableManager.loadSnapshot(tablePath)
     val snapshot = maxCatalogVersionOpt
       .map(snapshotBuilder.withMaxCatalogVersion(_).withCommitter(customCatalogCommitter))
@@ -516,7 +542,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
     val txn = snapshot
       .buildUpdateTableTransaction("engineInfo", Operation.WRITE)
       .build(defaultEngine)
-    commitAppendData(defaultEngine, txn, seqOfUnpartitionedDataBatch1)
+    commitAppendData(defaultEngine, txn, data)
   }
 
   /**
@@ -956,6 +982,61 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .withEndBoundary(CommitBoundary.atVersion(4))
         .build(defaultEngine)
       assert(commitVersions(fullRange) === Seq(0, 1, 2, 3, 4))
+    }
+  }
+
+  test("time travel across a catalogManaged downgrade with checkpoint protection") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      createEmptyTable(
+        tablePath = tablePath,
+        schema = testSchema,
+        tableProperties = Map("delta.enableInCommitTimestamps" -> "true"))
+      upgradeToCatalogManaged(tablePath)
+      appendRows(tablePath, maxCatalogVersionOpt = Some(1))
+      // Like Delta's DROP FEATURE, write barrier checkpoints on empty commits before the downgrade
+      // and a protected checkpoint at the downgrade version.
+      (3 to 5).foreach { version =>
+        appendRows(tablePath, maxCatalogVersionOpt = Some(version - 1), data = Seq.empty)
+        snapshotAt(tablePath, version).writeCheckpoint(defaultEngine)
+      }
+      downgradeFromCatalogManaged(tablePath, version = 6, withCheckpointProtection = true)
+      TableManager.loadSnapshot(tablePath).build(defaultEngine).writeCheckpoint(defaultEngine)
+      appendRows(tablePath)
+
+      val appendedRows = dataBatches1.flatMap(_.toTestRows)
+      val expectedRows = Seq.fill(2)(Seq.empty[TestRow]) ++ Seq.fill(5)(appendedRows) :+
+        (appendedRows ++ appendedRows)
+      val expectedCheckpointVersions =
+        Seq(None, None, None, Some(3L), Some(4L), Some(5L), Some(6L), Some(6L))
+
+      val latestSnapshot =
+        TableManager.loadSnapshot(tablePath).build(defaultEngine).asInstanceOf[SnapshotImpl]
+      assert(latestSnapshot.getVersion === 7)
+      assert(!isCatalogManagedSupported(latestSnapshot.getProtocol))
+      assert(latestSnapshot.getProtocol.getWriterFeatures
+        .contains(CHECKPOINT_PROTECTION_W_FEATURE.featureName))
+      assert(latestSnapshot.getMetadata.getConfiguration
+        .get(REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION) === "6")
+      assert(latestSnapshot.getSchema === testSchema)
+      checkAnswer(readSnapshot(latestSnapshot), expectedRows(7))
+
+      // Versions 1 through 5 are catalogManaged but predate the downgrade, so they can be read by
+      // path
+      (0 to 7).foreach { version =>
+        val versionSnapshot = TableManager
+          .loadSnapshot(tablePath)
+          .atVersion(version)
+          .build(defaultEngine)
+          .asInstanceOf[SnapshotImpl]
+        assert(versionSnapshot.getVersion === version)
+        assert(
+          isCatalogManagedSupported(versionSnapshot.getProtocol) === (1 to 5).contains(version))
+        assert(versionSnapshot.getLogSegment.getCheckpointVersionOpt.toScala ===
+          expectedCheckpointVersions(version))
+        assert(versionSnapshot.getSchema === testSchema)
+        checkAnswer(readSnapshot(versionSnapshot), expectedRows(version))
+      }
     }
   }
 
