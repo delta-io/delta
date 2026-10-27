@@ -191,46 +191,48 @@ class DeltaV2TableManagerImplSuite
     }
   }
 
-  gridTest("V1 and V2 commit timestamps agree across ICT enablement")(
-    Seq((false, false), (true, true), (false, true))) {
+  Seq((false, false), (true, true), (false, true)).foreach {
     case (enableICTInitially, enableICTLater) =>
-      withSQLConf(
-          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false") {
-        withTempDir { dir =>
-          val path = dir.getCanonicalPath
-          spark.range(1).write.format("delta")
-            .option(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, enableICTInitially.toString)
-            .save(path)
-          if (!enableICTInitially && enableICTLater) {
-            sql(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES " +
-              s"('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
-          }
-          spark.range(1, 2).write.format("delta").mode("append").save(path)
-          spark.range(2, 3).write.format("delta").mode("append").save(path)
+      test("V1 and V2 commit timestamps agree across ICT enablement " +
+          s"(enableICTInitially=$enableICTInitially, enableICTLater=$enableICTLater)") {
+        withSQLConf(
+            DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
+            DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false") {
+          withTempDir { dir =>
+            val path = dir.getCanonicalPath
+            spark.range(1).write.format("delta")
+              .option(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, enableICTInitially.toString)
+              .save(path)
+            if (!enableICTInitially && enableICTLater) {
+              sql(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES " +
+                s"('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+            }
+            spark.range(1, 2).write.format("delta").mode("append").save(path)
+            spark.range(2, 3).write.format("delta").mode("append").save(path)
 
-          val deltaLog = DeltaLog.forTable(spark, path)
-          val hadoopConf = deltaLog.newDeltaHadoopConf()
-          val fileTimestamp = 3000L
-          // Equal mtimes expose accidental monotonization and differ from all persisted ICTs.
-          deltaLog.getChangeLogFiles(startVersion = 0).foreach { case (_, status) =>
-            status.getPath.getFileSystem(hadoopConf).setTimes(status.getPath, fileTimestamp, -1L)
-          }
-          val expected = deltaLog.getChanges(startVersion = 0).map { case (version, actions) =>
-            val ict = actions.collectFirst { case info: CommitInfo => info }
-              .flatMap(_.inCommitTimestamp)
-            val expectsICT = enableICTInitially || (enableICTLater && version > 0)
-            assert(ict.isDefined === expectsICT, s"version $version")
-            version -> (if (expectsICT) ict.get else fileTimestamp)
-          }.toList
-          val v1Commits = deltaLog.getChangesIterator(startVersion = 0)
-            .map(commit => commit.version -> commit.timestamp).toList
-          assert(v1Commits === expected)
+            val deltaLog = DeltaLog.forTable(spark, path)
+            val hadoopConf = deltaLog.newDeltaHadoopConf()
+            val fileTimestamp = 3000L
+            // Equal mtimes expose accidental monotonization and differ from all persisted ICTs.
+            deltaLog.getChangeLogFiles(startVersion = 0).foreach { case (_, status) =>
+              status.getPath.getFileSystem(hadoopConf).setTimes(status.getPath, fileTimestamp, -1L)
+            }
+            val expected = deltaLog.getChanges(startVersion = 0).map { case (version, actions) =>
+              val ict = actions.collectFirst { case info: CommitInfo => info }
+                .flatMap(_.inCommitTimestamp)
+              val expectsICT = enableICTInitially || (enableICTLater && version > 0)
+              assert(ict.isDefined === expectsICT, s"version $version")
+              version -> (if (expectsICT) ict.get else fileTimestamp)
+            }.toList
+            val v1Commits = deltaLog.getChangesIterator(startVersion = 0)
+              .map(commit => commit.version -> commit.timestamp).toList
+            assert(v1Commits === expected)
 
-          forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-            val v2Commits = manager.getChangesIterator(0L, None, catalogTableOpt)
-              .processAndClose(_.map(commit => commit.version -> commit.timestamp).toList)
-            assert(v2Commits === expected)
+            forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
+              val v2Commits = manager.getChangesIterator(0L, None, catalogTableOpt)
+                .processAndClose(_.map(commit => commit.version -> commit.timestamp).toList)
+              assert(v2Commits === expected)
+            }
           }
         }
       }

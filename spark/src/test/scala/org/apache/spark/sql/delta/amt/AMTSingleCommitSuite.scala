@@ -21,13 +21,14 @@ import java.sql.Timestamp
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaFileProviderUtils, DeltaLog, DeltaOperations, DeltaSingleCommit, SingleCommit}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
+import org.apache.spark.sql.delta.test.shims.GridTestShim
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
 /**
  * Tests for DeltaSingleCommit handling with log and manifest commits.
  */
-class AMTSingleCommitSuite extends AMTCheckpointTestBase {
+class AMTSingleCommitSuite extends AMTCheckpointTestBase with GridTestShim {
 
   /**
    * Create an AMT-featured table with `numVersions` plain INSERT commits that all stay classic log
