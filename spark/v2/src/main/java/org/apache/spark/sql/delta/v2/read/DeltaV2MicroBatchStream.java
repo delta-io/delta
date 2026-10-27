@@ -230,7 +230,7 @@ class DeltaV2MicroBatchStream
       Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog,
       String metadataPath) {
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
-    this.streamingBackend = new KernelStreamingBackend(snapshotManager);
+    this.streamingBackend = new DeltaV2StreamingBackend(snapshotManager);
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
     this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = KernelEngineFactory.createDefaultEngine(hadoopConf);

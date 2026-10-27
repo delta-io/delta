@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.{DeltaHistoryManager, Snapshot}
 /**
  * The Delta log operations that the Delta streaming sources use to discover offsets. Source logic
  * that reads the table through this interface runs on either backend: [[DeltaLogStreamingBackend]]
- * (V1, `DeltaLog`) or `KernelStreamingBackend` (V2, Kernel). Snapshots are always V1
+ * (V1, `DeltaLog`) or `DeltaV2StreamingBackend` (V2, Kernel). Snapshots are always V1
  * [[Snapshot]]s.
  */
 trait DeltaStreamingBackend {
