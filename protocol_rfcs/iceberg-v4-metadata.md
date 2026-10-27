@@ -168,7 +168,7 @@ This design enables:
 
 | Name | Description |
 | - | - |
-| <ins>tightStats</ins> | <ins>Whether per-column statistics (`minValues`, `maxValues`, `nullCount`) are currently **tight** or **wide** across all columns on which statistics are collected, *other than* `string` columns.</ins> |
+| <ins>tightStats</ins> | <ins>Whether per-column statistics (`minValues`, `maxValues`, `nullCount`) are currently **tight** or **wide**. `nullCount` is covered for every column on which statistics are collected. `minValues` and `maxValues` are covered for every such column *other than* `string` columns.</ins> |
 
 <ins>Unlike `tightBounds`, which excludes both `string` and timestamp columns (because timestamp bounds are truncated down to milliseconds), `tightStats` includes `timestamp` and `timestamp without time zone` columns. When the `adaptiveMetadata` table feature is enabled, writers must write `tightStats` on newly added or updated files. When `tightStats` is explicitly present in `stats` (whether `true` or `false`), `minValues` and `maxValues` of `timestamp` and `timestamp without time zone` columns must not be truncated down to milliseconds and must represent valid lower and upper bounds on the values in the file. Under `tightStats`, `minValues`, `maxValues`, and `nullCount` follow the same tight (`tightStats=true`) and wide (`tightStats=false`) semantics defined for `tightBounds`, except that `timestamp` and `timestamp without time zone` columns are included in the tightness evaluation.</ins>
 
@@ -354,6 +354,7 @@ The root manifest contains entries of the following types:
 | 104 | `file_size_in_bytes` | Long | Required | All | Total file size in bytes |
 | 141 | `spec_id` | Int | Optional | All | Partition spec ID used for this entry |
 | 146 | `content_stats` | Struct ([Content Stats](#content-stats)) | Optional | All | Per-column statistics |
+| 151 | `tight_stats` | Boolean | Optional | All | When true, the entry's `content_stats` are tight (see [Content Stats](#content-stats)). When absent, readers must assume the stats are not tight. |
 | 140 | `sort_order_id` | Int | Optional | DATA | Sort order ID for this file |
 | 148 | `deletion_vector` | Struct ([Deletion Vector](#deletion-vector)) | Optional | DATA | Deletion vector for the data file |
 | 150 | `manifest_info` | Struct ([Manifest Info](#manifest-info)) | Optional | DATA_MANIFEST | Manifest-level summary and MDV |
@@ -449,7 +450,7 @@ MDVs track which entries in a leaf manifest have been deleted or replaced. The `
 
 A position cannot be set in both `deleted_positions` and `replaced_positions` simultaneously.
 
-When a `DATA_MANIFEST` entry has a non-null MDV, its `content_stats` are stale: aggregate bounds and counts still include values from invalidated entries. Writers must set `tight_bounds = false` on the manifest-level stats when an MDV is present. After compaction clears the MDV, stats are recomputed from live entries only and `tight_bounds` can be true again.
+When a `DATA_MANIFEST` entry has a non-null MDV, its `content_stats` are stale: aggregate bounds and counts still include values from invalidated entries. Writers must set `tight_stats = false` on the `DATA_MANIFEST` entry when an MDV is present. After compaction clears the MDV, stats are recomputed from live entries only and `tight_stats` can be true again.
 
 ### Content Stats
 
@@ -472,13 +473,14 @@ Each per-column stats struct contains:
 |--------|------------|------------|--------------|-------------|
 | +1 | `lower_bound` | (typed) | all primitives | Lower bound, type matches the table column type |
 | +2 | `upper_bound` | (typed) | all primitives | Upper bound, type matches the table column type |
-| +3 | `tight_bounds` | Boolean | all primitives | When true, bounds are exact min/max |
-| +4 | `value_count` | Long | all | Number of values (including nulls and NaN) |
-| +5 | `null_value_count` | Long | optional fields | Number of null values |
-| +6 | `nan_value_count` | Long | float, double | Number of NaN values |
-| +7 | `avg_value_size_in_bytes` | Int | string, binary | Avg uncompressed value size in bytes |
+| +3 | `value_count` | Long | all | Number of values (including nulls and NaN) |
+| +4 | `null_value_count` | Long | optional fields | Number of null values |
+| +5 | `nan_value_count` | Long | float, double | Number of NaN values |
+| +6 | `total_bytes` | Long | string, binary, variant | Estimated uncompressed in-memory bytes of non-null values |
 
 Implementations are not required to write a stats struct for every table field. If any field is missing from the struct, readers must assume it is unknown.
+
+**Stats tightness.** Tightness is tracked per entry by `tight_stats` (field 151), not per column, following [Stats Tightness](https://iceberg.apache.org/spec/#stats-tightness) in the Iceberg V4 specification. An entry's stats are tight when, over its live rows, `lower_bound` and `upper_bound` equal the minimum and maximum values, and `value_count`, `null_value_count`, and `nan_value_count` equal the counts. Bounds of `string` and `binary` columns are never tight, whatever the value of `tight_stats`, because they may be truncated. No other stats field is covered by tightness. When `tight_stats` is `false` or absent, `lower_bound` must be less than or equal to every live value and `upper_bound` must be greater than or equal to every live value.
 
 **Aggregation rules** (for manifest-level stats in root manifest `DATA_MANIFEST` entries, computed over constituent leaf entries):
 
@@ -487,8 +489,9 @@ If any child entry is missing a stats field, the aggregate for that field must b
 - `value_count`, `null_value_count`, `nan_value_count`: sum
 - `lower_bound`: min of non-null child values
 - `upper_bound`: max of non-null child values
-- `tight_bounds`: AND (false if any constituent is false)
-- `avg_value_size_in_bytes`: must be null at the manifest level
+- `total_bytes`: must be null at the manifest level
+
+A `DATA_MANIFEST` entry's `tight_stats` may be `true` only if every constituent entry has `tight_stats = true` and the entry has no MDV.
 
 ### Stats Reconciliation
 
@@ -502,9 +505,11 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 | `nullCount[col]` | `null_value_count` |
 | `minValues[col]` | `lower_bound` |
 | `maxValues[col]` | `upper_bound` |
-| `tightStats` | `tight_bounds` |
+| `tightStats` | `tight_stats` |
 
-`value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightStats` carries Delta's wide-bounds-under-deletion-vectors semantics to `tight_bounds`, consistent with manifest-level stats being `tight_bounds = false` when an MDV is present.
+`value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightStats` carries Delta's wide-stats-under-deletion-vectors semantics to `tight_stats`, consistent with `DATA_MANIFEST` entries having `tight_stats = false` when an MDV is present. Both flags cover the bounds and null counts of every column, and neither covers `string` bounds.
+
+For a `DATA` entry whose `tight_stats` is `false` or absent, `null_value_count` has the same meaning as a wide `nullCount` (see [Per-file Statistics](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics)). A value of 0 means that no live row is null in that column, and a value equal to `record_count` means that every live row is null. Any other value carries no information, and readers must treat it as absent.
 
 ## Snapshot ID Generation
 
