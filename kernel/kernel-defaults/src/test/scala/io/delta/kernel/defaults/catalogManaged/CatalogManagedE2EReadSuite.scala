@@ -491,39 +491,39 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
   }
 
   /**
-   * Writes a commit at `version` that removes catalogManaged from the protocol of the previous
-   * version. With `withCheckpointProtection`, the commit also adds checkpointProtection and sets
-   * delta.requireCheckpointProtectionBeforeVersion to `version`, as Delta's DROP FEATURE does.
-   * When `publish` is false, the downgrade commit is written to _staged_commits and returned as
-   * ratified log data.
+   * Downgrades from catalogManaged at `version` the way DBR's DROP FEATURE does: the commit
+   * removes catalogManaged, adds checkpointProtection, and sets
+   * delta.requireCheckpointProtectionBeforeVersion to `version`, and a protected checkpoint is
+   * written at `version` once the commit is published. When `publish` is false, the downgrade
+   * commit is written to _staged_commits and returned as ratified log data.
    */
   private def downgradeFromCatalogManaged(
       tablePath: String,
       version: Long,
       parsedLogData: List[ParsedLogData] = Nil,
-      withCheckpointProtection: Boolean = false,
       publish: Boolean = true): List[ParsedLogData] = {
     val previousSnapshot = snapshotAt(tablePath, version - 1, parsedLogData)
     val protocol = withoutCatalogManaged(previousSnapshot.getProtocol)
-    val (protocolOpt, metadataOpt) = if (withCheckpointProtection) {
-      val protocolWithCheckpointProtection = new Protocol(
-        protocol.getMinReaderVersion,
-        protocol.getMinWriterVersion,
-        protocol.getReaderFeatures,
-        (protocol.getWriterFeatures.asScala + CHECKPOINT_PROTECTION_W_FEATURE.featureName).asJava)
-      val metadata = previousSnapshot.getMetadata.withMergedConfiguration(
-        Map(REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION -> version.toString).asJava)
-      (Some(protocolWithCheckpointProtection), Some(metadata))
-    } else {
-      (Some(protocol), None)
-    }
-    writeCommit(
+    val downgradeLogData = writeCommit(
       tablePath,
       version,
       inCommitTimestamp = previousSnapshot.getTimestamp(defaultEngine) + 1,
-      protocolOpt = protocolOpt,
-      metadataOpt = metadataOpt,
+      protocolOpt = Some(new Protocol(
+        protocol.getMinReaderVersion,
+        protocol.getMinWriterVersion,
+        protocol.getReaderFeatures,
+        (protocol.getWriterFeatures.asScala + CHECKPOINT_PROTECTION_W_FEATURE.featureName).asJava)),
+      metadataOpt = Some(previousSnapshot.getMetadata.withMergedConfiguration(
+        Map(REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION -> version.toString).asJava)),
       publish = publish)
+    if (publish) {
+      TableManager
+        .loadSnapshot(tablePath)
+        .atVersion(version)
+        .build(defaultEngine)
+        .writeCheckpoint(defaultEngine)
+    }
+    downgradeLogData
   }
 
   private val REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION =
@@ -612,12 +612,8 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
       val tablePath = tempDir.getCanonicalPath
       // inCommitTimestamp of the catalog-owned-preview table's version 0
       val v0Timestamp = 1749830855993L
-      val parsedLogData = writeCommit(
-        tablePath,
-        version = 1,
-        inCommitTimestamp = v0Timestamp + 1,
-        protocolOpt = Some(withoutCatalogManaged(protocolAt(tablePath, 0))),
-        publish = publishDowngrade)
+      val parsedLogData =
+        downgradeFromCatalogManaged(tablePath, version = 1, publish = publishDowngrade)
       testFx(tablePath, v0Timestamp, parsedLogData)
     }
   }
@@ -744,11 +740,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
 
   test("time travel below maxCatalogVersion when a later version downgrades the table") {
     withUpgradedToCatalogManagedTable(publishUpgrade = true) { (tablePath, _, _) =>
-      writeCommit(
-        tablePath,
-        version = 2,
-        System.currentTimeMillis(),
-        protocolOpt = Some(withoutCatalogManaged(protocolAt(tablePath, 1))))
+      downgradeFromCatalogManaged(tablePath, version = 2)
 
       val versionSnapshot = TableManager
         .loadSnapshot(tablePath)
@@ -996,14 +988,12 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
     withTempDir { tempDir =>
       val tablePath = tempDir.getCanonicalPath
       createUpgradedTable(tablePath)
-      // Like Delta's DROP FEATURE, write barrier checkpoints on empty commits before the downgrade
-      // and a protected checkpoint at the downgrade version.
+      // Like DROP FEATURE, write barrier checkpoints on empty commits before the downgrade
       (3 to 5).foreach { version =>
         appendRows(tablePath, maxCatalogVersionOpt = Some(version - 1), data = Seq.empty)
         snapshotAt(tablePath, version).writeCheckpoint(defaultEngine)
       }
-      downgradeFromCatalogManaged(tablePath, version = 6, withCheckpointProtection = true)
-      TableManager.loadSnapshot(tablePath).build(defaultEngine).writeCheckpoint(defaultEngine)
+      downgradeFromCatalogManaged(tablePath, version = 6)
       appendRows(tablePath)
 
       val appendedRows = dataBatches1.flatMap(_.toTestRows)
@@ -1046,12 +1036,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
     withUpgradedToCatalogManagedTable(publishUpgrade = true) { (tablePath, _, _) =>
       appendRows(tablePath, maxCatalogVersionOpt = Some(1))
       // The downgrade commit was staged but never ratified, so the catalog does not provide it
-      writeCommit(
-        tablePath,
-        version = 3,
-        System.currentTimeMillis(),
-        protocolOpt = Some(withoutCatalogManaged(protocolAt(tablePath, 2))),
-        publish = false)
+      downgradeFromCatalogManaged(tablePath, version = 3, publish = false)
 
       Seq(Some(1L), Some(2L), None).foreach { versionOpt =>
         val snapshotBuilder = TableManager.loadSnapshot(tablePath)
