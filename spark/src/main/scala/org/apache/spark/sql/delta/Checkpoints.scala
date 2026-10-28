@@ -753,10 +753,24 @@ trait Checkpoints extends DeltaLogging {
     }
   }
 
-  protected def writeCheckpointFiles(
+  protected[delta] def writeCheckpointFiles(
       snapshotToCheckpoint: Snapshot,
       catalogTableOpt: Option[CatalogTable] = None): LastCheckpointInfo = {
+    assertNonAMTCheckpointAllowed(snapshotToCheckpoint)
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint, catalogTableOpt)
+  }
+
+  /**
+   * Throws if `snapshot` belongs to an AMT table. An AMT table keeps its checkpoint in the
+   * manifest tree and must never get a classic or V2 checkpoint: one newer than the AMT content
+   * root makes snapshot discovery reject the table.
+   */
+  protected def assertNonAMTCheckpointAllowed(snapshot: Snapshot): Unit = {
+    if (AMTUtils.amtEnabled(snapshot)) {
+      throw new IllegalStateException(
+        s"Cannot write a non-AMT checkpoint at version ${snapshot.version} for AMT table " +
+          s"$logPath.")
+    }
   }
 
   /** Returns information about the most recent checkpoint. */
