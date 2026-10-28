@@ -749,11 +749,15 @@ class AMTWriterManager(
       preCommitLogSegment: LogSegment,
       oldAMTVersion: Long): Seq[FileStatus] = {
     val nonCompactedDeltas = preCommitLogSegment.nonCompactedDeltasOpt.getOrElse {
-      AMTUtils.logAndThrowMissingNonCompactedDeltasInLogSegment(
+      AMTUtils.failWithLogging(
+        opTypeSuffix = AMTUsageLogs.INCREMENTAL_LOG_SELECTION_MISSING_NON_COMPACTED_DELTAS,
+        message = s"nonCompactedDeltas are absent in an AMT log segment: $preCommitLogSegment",
         deltaLog = deltaLog,
-        logSegment = preCommitLogSegment,
-        eventData = Map("oldAMTVersion" -> oldAMTVersion))
-      throw new IllegalStateException("should not reach here")
+        data = Map(
+          "oldAMTVersion" -> oldAMTVersion,
+          "preCommitLogSegmentVersion" -> preCommitLogSegment.version,
+          "preCommitCheckpointVersion" -> preCommitLogSegment.checkpointProvider.version)
+      )
     }
     val deltasAndCompactedDeltas =
       (preCommitLogSegment.deltas ++ nonCompactedDeltas).distinct.sortBy(_.getPath.getName)
