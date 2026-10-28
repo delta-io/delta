@@ -79,7 +79,6 @@ import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils;
 import org.apache.spark.sql.delta.v2.utils.PartitionValueCaster;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
-import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
@@ -941,8 +940,7 @@ class DeltaV2MicroBatchStream
       }
     }
     // TODO: Replace the Kernel startSnapshot with a V1 snapshot to remove this conversion.
-    if (!isCDFEnabled(
-        KernelActionUtils$.MODULE$.metadataFromKernel(startSnapshot.getMetadata()))) {
+    if (!isCDFEnabled(KernelActionUtils$.MODULE$.metadataFromKernel(startSnapshot.getMetadata()))) {
       throw new RuntimeException(
           DeltaErrors.changeDataNotRecordedException(startVersion, startVersion, startVersion));
     }
@@ -1133,22 +1131,23 @@ class DeltaV2MicroBatchStream
     ClosableIterator<Action> actions =
         commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L);
     // TODO: Remove this adapter when the streaming source uses V1 ClosableIterator.
-    CloseableIterator<Action> actionIterator = new CloseableIterator<Action>() {
-      @Override
-      public boolean hasNext() {
-        return actions.hasNext();
-      }
+    CloseableIterator<Action> actionIterator =
+        new CloseableIterator<Action>() {
+          @Override
+          public boolean hasNext() {
+            return actions.hasNext();
+          }
 
-      @Override
-      public Action next() {
-        return actions.next();
-      }
+          @Override
+          public Action next() {
+            return actions.next();
+          }
 
-      @Override
-      public void close() throws IOException {
-        actions.close();
-      }
-    };
+          @Override
+          public void close() throws IOException {
+            actions.close();
+          }
+        };
     // Assign each IndexedFile a unique index within the commit. We use a mutable array
     // because variables captured by a lambda must be effectively final (never reassigned).
     long[] fileIndex = {0};
@@ -1249,12 +1248,13 @@ class DeltaV2MicroBatchStream
           protocolAction = (Protocol) action;
         } else if (action instanceof CommitInfo) {
           CommitInfo commitInfo = (CommitInfo) action;
-          operation = commitInfo.operation() == null
-              ? null
-              : String.format(
-                  "%s (%s)",
-                  commitInfo.operation(),
-                  CollectionConverters.asJava(commitInfo.operationParameters()));
+          operation =
+              commitInfo.operation() == null
+                  ? null
+                  : String.format(
+                      "%s (%s)",
+                      commitInfo.operation(),
+                      CollectionConverters.asJava(commitInfo.operationParameters()));
         }
       }
     } catch (IOException e) {
@@ -1318,8 +1318,7 @@ class DeltaV2MicroBatchStream
     // Table ID has changed during streaming
     if (!Objects.equals(newMetadata.id(), oldMetadata.id())) {
       throw (RuntimeException)
-          DeltaErrors.differentDeltaTableReadByStreamingSource(
-              newMetadata.id(), oldMetadata.id());
+          DeltaErrors.differentDeltaTableReadByStreamingSource(newMetadata.id(), oldMetadata.id());
     }
 
     // Partition column change will be ignored if user enable the unsafe flag
@@ -1374,9 +1373,7 @@ class DeltaV2MicroBatchStream
   // When schema tracking is enabled, this method is NOT called — the MetadataEvolutionHandler
   // manages these changes through the barrier protocol instead.
   private void checkNonAdditiveSchemaChanges(
-      Metadata oldMetadata,
-      Metadata newMetadata,
-      boolean validatedDuringStreamStart) {
+      Metadata oldMetadata, Metadata newMetadata, boolean validatedDuringStreamStart) {
     boolean shouldTrackSchema;
     if (schemaReadOptions.typeWideningEnabled()
         && schemaReadOptions.enableSchemaTrackingForTypeWidening()
@@ -1504,8 +1501,7 @@ class DeltaV2MicroBatchStream
             long version = entry.getKey();
             // TODO: Replace StreamingHelper's Kernel metadata range scan with V1 action
             // iteration to remove this conversion.
-            Metadata metadata =
-                KernelActionUtils$.MODULE$.metadataFromKernel(entry.getValue());
+            Metadata metadata = KernelActionUtils$.MODULE$.metadataFromKernel(entry.getValue());
             checkReadIncompatibleSchemaChanges(
                 metadata,
                 version,
@@ -1824,8 +1820,7 @@ class DeltaV2MicroBatchStream
       // DV-based deletes reuse the same parquet file (marking rows in the DV instead of rewriting),
       // so both the Remove and Add reference the same path.
       Map<String, io.delta.kernel.internal.actions.AddFile> addByPath = new HashMap<>();
-      Map<String, io.delta.kernel.internal.actions.RemoveFile> removeByPath =
-          new HashMap<>();
+      Map<String, io.delta.kernel.internal.actions.RemoveFile> removeByPath = new HashMap<>();
       for (CDCDataFile cdc : inferredCdcFiles) {
         if (cdc.getAddFile() != null) {
           io.delta.kernel.internal.actions.AddFile prev =
@@ -1859,8 +1854,7 @@ class DeltaV2MicroBatchStream
         } else if (emittedPairs.add(path)) {
           // First occurrence of a same-path pair: emit the consolidated pair entries.
           io.delta.kernel.internal.actions.AddFile add = addByPath.get(path);
-          io.delta.kernel.internal.actions.RemoveFile remove =
-              removeByPath.get(path);
+          io.delta.kernel.internal.actions.RemoveFile remove = removeByPath.get(path);
           if (add.getDeletionVector().isPresent() || remove.getDeletionVector().isPresent()) {
             // DV-based delete/restore: compute the bitmap diff and emit one CDC file per diff
             // entry. Path.toString() avoids percent-encoding that breaks DV file resolution.
