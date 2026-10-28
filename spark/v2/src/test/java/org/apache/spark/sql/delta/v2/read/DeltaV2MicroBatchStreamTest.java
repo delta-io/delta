@@ -15,6 +15,10 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
+import static org.apache.spark.sql.delta.v2.read.DeltaSourceTestUtils.dsv1FileChanges;
+import static org.apache.spark.sql.delta.v2.read.DeltaSourceTestUtils.dsv1FileChangesWithRateLimit;
+import static org.apache.spark.sql.delta.v2.read.DeltaSourceTestUtils.sourceOffset;
+import static org.apache.spark.sql.delta.v2.read.DeltaSourceTestUtils.updateSnapshot;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.CommitActions;
@@ -122,7 +126,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     // Get the latest version
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+    long latestVersion = updateSnapshot(deltaLog).version();
 
     // Call initialOffset - should create initial snapshot at latest version
     Offset initialOffset = stream.initialOffset();
@@ -200,7 +204,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
     String tableId = deltaLog.tableId();
-    DeltaSourceOffset expected = new DeltaSourceOffset(tableId, 5L, 10L, false);
+    DeltaSourceOffset expected = sourceOffset(tableId, 5L, 10L, false);
     String json = org.apache.spark.sql.delta.util.JsonUtils.mapper().writeValueAsString(expected);
 
     Offset result = stream.deserializeOffset(json);
@@ -219,7 +223,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // Create offset with wrong tableId
     String wrongTableId = "wrong-table-id";
     DeltaSourceOffset offset =
-        new DeltaSourceOffset(
+        sourceOffset(
             wrongTableId,
             /* reservoirVersion= */ 1L,
             /* index= */ 0L,
@@ -250,8 +254,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     String tableId = deltaLog.tableId();
     long baseIndex = DeltaSourceOffset.BASE_INDEX();
     DeltaSourceOffset expected =
-        new DeltaSourceOffset(
-            tableId, /* reservoirVersion= */ 0L, baseIndex, /* isInitialSnapshot= */ true);
+        sourceOffset(tableId, /* reservoirVersion= */ 0L, baseIndex, /* isInitialSnapshot= */ true);
     String json = org.apache.spark.sql.delta.util.JsonUtils.mapper().writeValueAsString(expected);
 
     Offset result = stream.deserializeOffset(json);
@@ -269,7 +272,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
     String tableId = deltaLog.tableId();
-    DeltaSourceOffset offset = new DeltaSourceOffset(tableId, 1L, 0L, false);
+    DeltaSourceOffset offset = sourceOffset(tableId, 1L, 0L, false);
 
     assertDoesNotThrow(() -> stream.commit(offset));
   }
@@ -398,11 +401,11 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       long offsetIndex = endIndex.orElse(DeltaSourceOffset.END_INDEX());
       scalaEndOffset =
           Option.apply(
-              new DeltaSourceOffset(
-                  deltaLog.tableId(), endVersion.get(), offsetIndex, isInitialSnapshot));
+              sourceOffset(deltaLog.tableId(), endVersion.get(), offsetIndex, isInitialSnapshot));
     }
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-        deltaSource.getFileChanges(
+        dsv1FileChanges(
+            deltaSource,
             fromVersion,
             fromIndex,
             isInitialSnapshot,
@@ -588,7 +591,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
 
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-        deltaSource.getFileChangesWithRateLimit(
+        dsv1FileChangesWithRateLimit(
+            deltaSource,
             fromVersion,
             DeltaSourceOffset.BASE_INDEX(),
             isInitialSnapshot,
@@ -774,8 +778,13 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-        deltaSource.getFileChanges(
-            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+        dsv1FileChanges(
+            deltaSource,
+            fromVersion,
+            fromIndex,
+            isInitialSnapshot,
+            endOffset,
+            /* verifyMetadataAction= */ true);
     List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
     while (deltaChanges.hasNext()) {
       deltaFilesList.add(deltaChanges.next());
@@ -934,7 +943,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             UnsupportedOperationException.class,
             () -> {
               ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-                  deltaSource.getFileChanges(
+                  dsv1FileChanges(
+                      deltaSource,
                       fromVersion,
                       fromIndex,
                       isInitialSnapshot,
@@ -1127,8 +1137,13 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
     Option<DeltaSourceOffset> endOffset = Option.empty();
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-        deltaSource.getFileChanges(
-            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+        dsv1FileChanges(
+            deltaSource,
+            fromVersion,
+            fromIndex,
+            isInitialSnapshot,
+            endOffset,
+            /* verifyMetadataAction= */ true);
     List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
     while (deltaChanges.hasNext()) {
       deltaFilesList.add(deltaChanges.next());
@@ -1184,7 +1199,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             UnsupportedOperationException.class,
             () -> {
               ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-                  deltaSource.getFileChanges(
+                  dsv1FileChanges(
+                      deltaSource,
                       fromVersion,
                       fromIndex,
                       isInitialSnapshot,
@@ -1611,7 +1627,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     String tableId = deltaLog.tableId();
     Offset startOffset =
-        new DeltaSourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
+        sourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
     ReadLimit readLimit = limitConfig.toReadLimit();
 
     // dsv1
@@ -1729,7 +1745,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     String tableId = deltaLog.tableId();
 
     DeltaSourceOffset startOffset =
-        new DeltaSourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
+        sourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
 
     // dsv1
     ReadLimit readLimit = limitConfig.toReadLimit();
@@ -1846,16 +1862,10 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     String tableId = deltaLog.tableId();
-    long latestVersion =
-        deltaLog
-            .update(
-                /* isForce= */ false,
-                /* timestamp= */ scala.Option.empty(),
-                /* version= */ scala.Option.empty())
-            .version();
+    long latestVersion = updateSnapshot(deltaLog).version();
 
     DeltaSourceOffset startOffset =
-        new DeltaSourceOffset(tableId, latestVersion, startIndex, /* isInitialSnapshot= */ false);
+        sourceOffset(tableId, latestVersion, startIndex, /* isInitialSnapshot= */ false);
     ReadLimit readLimit = ReadLimit.allAvailable();
 
     // dsv1
@@ -1943,7 +1953,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     String tableId = deltaLog.tableId();
 
     DeltaSourceOffset startOffset =
-        new DeltaSourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
+        sourceOffset(tableId, startVersion, startIndex, /* isInitialSnapshot= */ false);
     ReadLimit readLimit = limitConfig.toReadLimit();
 
     // dsv1 source
@@ -2075,13 +2085,13 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSourceOffset startOffset =
-        new DeltaSourceOffset(
+        sourceOffset(
             deltaLog.tableId(),
             fromVersion,
             DeltaSourceOffset.BASE_INDEX(),
             /* isInitialSnapshot= */ false);
     DeltaSourceOffset planPartitionsEndOffset =
-        new DeltaSourceOffset(
+        sourceOffset(
             deltaLog.tableId(),
             toVersion,
             DeltaSourceOffset.END_INDEX(),
@@ -2269,10 +2279,10 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSourceOffset startOffset =
-        new DeltaSourceOffset(
+        sourceOffset(
             deltaLog.tableId(), fromVersion, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
     DeltaSourceOffset endOffset =
-        new DeltaSourceOffset(
+        sourceOffset(
             deltaLog.tableId(), toVersion, DeltaSourceOffset.END_INDEX(), isInitialSnapshot);
 
     DeltaOptions options = createDeltaOptions("excludeRegex", excludeRegexPattern);
@@ -2890,7 +2900,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
               DeltaIllegalStateException.class,
               () -> {
                 ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-                    deltaSource.getFileChanges(
+                    dsv1FileChanges(
+                        deltaSource,
                         fromVersion,
                         fromIndex,
                         isInitialSnapshot,
@@ -2984,7 +2995,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
       DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
       ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-          deltaSource.getFileChanges(
+          dsv1FileChanges(
+              deltaSource,
               fromVersion,
               fromIndex,
               isInitialSnapshot,
@@ -3067,7 +3079,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
               DeltaUnsupportedOperationException.class,
               () -> {
                 ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-                    deltaSource.getFileChanges(
+                    dsv1FileChanges(
+                        deltaSource,
                         fromVersion,
                         fromIndex,
                         isInitialSnapshot,
@@ -3173,7 +3186,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
               DeltaUnsupportedOperationException.class,
               () -> {
                 ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-                    deltaSource.getFileChanges(
+                    dsv1FileChanges(
+                        deltaSource,
                         fromVersion,
                         fromIndex,
                         isInitialSnapshot,
@@ -3258,9 +3272,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             testTableName));
     // Record the version prior to reverting schema change
     long incompatibleSchemaVersion =
-        DeltaLog.forTable(spark, new Path(testTablePath))
-            .update(false, Option.empty(), Option.empty())
-            .version();
+        updateSnapshot(DeltaLog.forTable(spark, new Path(testTablePath))).version();
     // Revert the schema change
     spark.sql(String.format("ALTER table %s RENAME COLUMN userId TO id", testTableName));
     spark.sql(
@@ -3272,7 +3284,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     String tableId = deltaLog.tableId();
     // Try to read from version 0 without readLimit to check all commits
     DeltaSourceOffset startOffset =
-        new DeltaSourceOffset(
+        sourceOffset(
             tableId,
             incompatibleSchemaVersion,
             DeltaSourceOffset.BASE_INDEX(),
@@ -3357,7 +3369,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
       createSchemaEvolutionTestTable(testTablePath, testTableName);
       DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-      long startVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+      long startVersion = updateSnapshot(deltaLog).version();
       // createSchemaEvolutionTestTable inserts 2 rows.
       long preChangeRowCount = 2L;
 
@@ -3386,7 +3398,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
       // Apply non-additive schema change AFTER stream init.
       scenarioSetup.setup(testTableName, tempDir);
-      long schemaChangeVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+      long schemaChangeVersion = updateSnapshot(deltaLog).version();
 
       Offset startOffset = streamPreChange.initialOffset();
       DeltaSourceOffset startDelta = (DeltaSourceOffset) startOffset;
@@ -3491,12 +3503,12 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
       createSchemaEvolutionTestTable(testTablePath, testTableName);
       DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-      long startVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+      long startVersion = updateSnapshot(deltaLog).version();
       long preChangeRowCount = 2L;
 
       // Apply non-additive schema change BEFORE stream construction.
       scenarioSetup.setup(testTableName, tempDir);
-      long schemaChangeVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+      long schemaChangeVersion = updateSnapshot(deltaLog).version();
 
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
@@ -3982,7 +3994,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Changes =
-        deltaSource.getFileChanges(
+        dsv1FileChanges(
+            deltaSource,
             fromVersion,
             fromIndex,
             /* isInitialSnapshot= */ false,
@@ -4039,7 +4052,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             DeltaIllegalStateException.class,
             () -> {
               ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
-                  deltaSource.getFileChanges(
+                  dsv1FileChanges(
+                      deltaSource,
                       fromVersion,
                       fromIndex,
                       /* isInitialSnapshot= */ false,
@@ -4334,7 +4348,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
   private DeltaSource createDeltaSource(DeltaLog deltaLog, String tablePath, DeltaOptions options) {
     Seq<Expression> emptySeq = JavaConverters.asScalaBuffer(new ArrayList<Expression>()).toList();
-    Snapshot snapshot = deltaLog.update(false, Option.empty(), Option.empty());
+    Snapshot snapshot = updateSnapshot(deltaLog);
     return new DeltaSource(
         spark,
         deltaLog,
@@ -4974,7 +4988,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       assertSame(initialSnapshot, getInitialSnapshot(stream));
 
       DeltaSourceOffset incrementalOffset =
-          DeltaSourceOffset.apply(
+          sourceOffset(
               initialOffset.reservoirId(),
               initialOffset.reservoirVersion() + 1,
               DeltaSourceOffset.BASE_INDEX(),
