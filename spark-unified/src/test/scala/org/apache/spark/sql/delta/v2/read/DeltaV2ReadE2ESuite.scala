@@ -17,11 +17,13 @@
 package org.apache.spark.sql.delta.v2.read
 
 import java.io.File
-import java.sql.Timestamp
+import java.sql.{Date, Timestamp}
 
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.internal.SQLConf
 
 private[read] trait DeltaV2ReadE2ETests {
@@ -480,6 +482,65 @@ private[read] trait DeltaV2ReadE2ETests {
         sql(s"SELECT id, renamed_col FROM $table WHERE renamed_part = 20")
       } { df =>
         checkAnswer(df, Seq(Row(2L, 200)))
+      }
+    }
+  }
+
+  // Streaming and CDC reads build partition rows with the same PartitionValueCaster, so batch
+  // reads cover them here; PartitionUtilsTest pins the per-type values.
+  test("malformed partition values in the log read as V1 does") {
+    val table = "v2_scan_e2e_malformed_partition_values"
+    withTable(table) {
+      withV1Mode {
+        sql(
+          s"CREATE TABLE $table " +
+            "(id INT, p_int INT, p_byte TINYINT, p_bool BOOLEAN, p_date DATE, " +
+            s"p_dec DECIMAL(10, 1)) USING $tableProvider " +
+            "PARTITIONED BY (p_int, p_byte, p_bool, p_date, p_dec)")
+        sql(
+          s"INSERT INTO $table VALUES " +
+            "(1, 1, 1, true, DATE'2024-01-01', 1.0), (2, 2, 2, false, DATE'2024-01-02', 2.0)")
+        // Re-add one file with partition values that do not parse as the column types, as a log
+        // written by another writer may contain. Log replay keeps the latest add for the path.
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
+        val file = deltaLog.update().allFiles.collect().find(_.partitionValues("p_int") == "1").get
+        val malformed = Map(
+          "p_int" -> "abc",
+          "p_byte" -> "300",
+          "p_bool" -> "yes",
+          "p_date" -> "2024-13-45",
+          "p_dec" -> "1.55")
+        deltaLog.startTransaction().commit(
+          Seq(file.copy(partitionValues = malformed)),
+          DeltaOperations.ManualUpdate)
+        DeltaLog.clearCache()
+      }
+
+      val partitionFilterQueries = Seq(
+        s"SELECT id, p_int FROM $table WHERE p_int IS NULL",
+        s"SELECT id FROM $table WHERE p_int = 2",
+        s"SELECT id, p_dec FROM $table WHERE p_bool")
+      for (ansiEnabled <- Seq("true", "false")) {
+        // TODO(#7930): partition filters are still evaluated on the raw strings with the
+        // session's cast, so with ANSI on they fail in both V1 and V2. Compare them with ANSI off.
+        val queries = s"SELECT * FROM $table" +:
+          (if (ansiEnabled == "false") partitionFilterQueries else Nil)
+        withSQLConf(SQLConf.ANSI_ENABLED.key -> ansiEnabled) {
+          val expected = withV1Mode {
+            queries.map(query => sql(query).collect().toSeq)
+          }
+          assert(expected.head.toSet === Set(
+            Row(1, null, null, true, null, new java.math.BigDecimal("1.6")),
+            Row(2, 2, 2, false, Date.valueOf("2024-01-02"), new java.math.BigDecimal("2.0"))))
+          DeltaLog.clearCache()
+          queries.zip(expected).foreach { case (query, rows) =>
+            withClue(s"ansi=$ansiEnabled, query=$query: ") {
+              checkRead("malformed partition values read")(sql(query)) { df =>
+                checkAnswer(df, rows)
+              }
+            }
+          }
+        }
       }
     }
   }

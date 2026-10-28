@@ -74,6 +74,7 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils;
+import org.apache.spark.sql.delta.v2.utils.PartitionValueCaster;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
@@ -565,6 +566,7 @@ class DeltaV2MicroBatchStream
     long totalBytesToRead = 0;
     boolean isCDC = options.readChangeFeed();
     ZoneId zoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone());
+    PartitionValueCaster caster = new PartitionValueCaster(partitionSchema, zoneId);
 
     try (CloseableIterator<IndexedFile> fileChanges =
         isCDC
@@ -576,7 +578,7 @@ class DeltaV2MicroBatchStream
                 Optional.of(endOffset))
             : getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
       while (fileChanges.hasNext()) {
-        PartitionedFile pf = buildPartitionedFile(fileChanges.next(), isCDC, zoneId);
+        PartitionedFile pf = buildPartitionedFile(fileChanges.next(), isCDC, caster);
         if (pf == null) continue;
         totalBytesToRead += pf.fileSize();
         partitionedFiles.add(pf);
@@ -622,17 +624,17 @@ class DeltaV2MicroBatchStream
    * file should be skipped (no AddFile/CDC payload, or path matches the excludeRegex).
    */
   private PartitionedFile buildPartitionedFile(
-      IndexedFile indexedFile, boolean isCDC, ZoneId zoneId) {
+      IndexedFile indexedFile, boolean isCDC, PartitionValueCaster caster) {
     if (indexedFile.getAddFile() != null) {
       AddFile addFile = indexedFile.getAddFile();
       if (isExcludedPath(addFile.path())) return null;
-      return PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
+      return PartitionUtils.buildPartitionedFile(addFile, caster, tablePath);
     }
     if (isCDC && indexedFile.getCDCDataFile() != null) {
       CDCDataFile cdcFile = indexedFile.getCDCDataFile();
       if (isExcludedPath(cdcFile.getPath())) return null;
       return PartitionUtils.buildCDCPartitionedFile(
-          cdcFile, indexedFile.getVersion(), partitionSchema, tablePath, zoneId);
+          cdcFile, indexedFile.getVersion(), caster, tablePath);
     }
     return null;
   }
