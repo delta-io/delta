@@ -602,34 +602,36 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
 
   /**
    * Copies the catalogManaged catalog-owned-preview table and downgrades it to file-system managed
-   * at version 1. When `publishDowngrade` is false, the downgrade commit is written to
-   * _staged_commits and passed to `testFx` as ratified log data.
+   * at version 1.
    */
-  private def withDowngradedFromCatalogManagedTable(publishDowngrade: Boolean)(
-      testFx: (String, Long, List[ParsedLogData]) => Unit): Unit = {
+  private def withDowngradedFromCatalogManagedTable(testFx: (String, Long) => Unit): Unit = {
     withTempDir { tempDir =>
       FileUtils.copyDirectory(new File(getTestResourceFilePath("catalog-owned-preview")), tempDir)
       val tablePath = tempDir.getCanonicalPath
       // inCommitTimestamp of the catalog-owned-preview table's version 0
       val v0Timestamp = 1749830855993L
-      val parsedLogData =
-        downgradeFromCatalogManaged(tablePath, version = 1, publish = publishDowngrade)
-      testFx(tablePath, v0Timestamp, parsedLogData)
+      downgradeFromCatalogManaged(tablePath, version = 1)
+      testFx(tablePath, v0Timestamp)
     }
   }
 
   test("time travel across catalogManaged upgrade") {
     withUpgradedToCatalogManagedTable(publishUpgrade = true) { (tablePath, v0Timestamp, _) =>
+      appendRows(tablePath, maxCatalogVersionOpt = Some(1))
       val latestSnapshot = TableManager
         .loadSnapshot(tablePath)
-        .withMaxCatalogVersion(1)
+        .withMaxCatalogVersion(2)
         .build(defaultEngine)
       assert(isCatalogManagedSupported(latestSnapshot.asInstanceOf[SnapshotImpl].getProtocol))
+      val latestError = intercept[MaxCatalogVersionException] {
+        TableManager.loadSnapshot(tablePath).build(defaultEngine)
+      }
+      assert(latestError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
 
       val versionSnapshot = TableManager
         .loadSnapshot(tablePath)
         .atVersion(0)
-        .withMaxCatalogVersion(1)
+        .withMaxCatalogVersion(2)
         .build(defaultEngine)
       assert(versionSnapshot.getVersion === 0)
 
@@ -641,28 +643,31 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .build(defaultEngine)
       assert(pathBasedVersionSnapshot.getVersion === 0)
 
-      val e1 = intercept[MaxCatalogVersionException] {
-        TableManager
-          .loadSnapshot(tablePath)
-          .atVersion(1)
-          .build(defaultEngine)
+      Seq(1, 2).foreach { version =>
+        val e = intercept[MaxCatalogVersionException] {
+          TableManager
+            .loadSnapshot(tablePath)
+            .atVersion(version)
+            .build(defaultEngine)
+        }
+        assert(e.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
       }
-      assert(e1.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
 
       val timestampSnapshot = TableManager
         .loadSnapshot(tablePath)
         .atTimestamp(v0Timestamp, latestSnapshot)
-        .withMaxCatalogVersion(1)
+        .withMaxCatalogVersion(2)
         .build(defaultEngine)
       assert(timestampSnapshot.getVersion === 0)
 
-      val e2 = intercept[MaxCatalogVersionException] {
+      val timestampError = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
           .atTimestamp(v0Timestamp, latestSnapshot)
           .build(defaultEngine)
       }
-      assert(e2.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
+      assert(
+        timestampError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
     }
   }
 
@@ -677,18 +682,6 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
       }
       assert(e.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
 
-      val versionSnapshot = TableManager
-        .loadSnapshot(tablePath)
-        .atVersion(0)
-        .withLogData(parsedLogData.asJava)
-        .withMaxCatalogVersion(1)
-        .build(defaultEngine)
-      assert(versionSnapshot.getVersion === 0)
-    }
-  }
-
-  test("time travel to a published version with only the catalog commits it needs") {
-    withUpgradedToCatalogManagedTable(publishUpgrade = false) { (tablePath, _, parsedLogData) =>
       // Version 2 is ratified but neither published nor provided, like a catalog client that only
       // fetches commits up to the requested version.
       writeCommit(tablePath, version = 2, System.currentTimeMillis(), publish = false)
@@ -738,29 +731,9 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
     }
   }
 
-  test("time travel below maxCatalogVersion when a later version downgrades the table") {
-    withUpgradedToCatalogManagedTable(publishUpgrade = true) { (tablePath, _, _) =>
-      downgradeFromCatalogManaged(tablePath, version = 2)
-
-      val versionSnapshot = TableManager
-        .loadSnapshot(tablePath)
-        .atVersion(0)
-        .withMaxCatalogVersion(1)
-        .build(defaultEngine)
-      assert(versionSnapshot.getVersion === 0)
-
-      // Version 1 is catalogManaged but predates the downgrade, so it can be read by path
-      val pathBasedVersionSnapshot = TableManager
-        .loadSnapshot(tablePath)
-        .atVersion(1)
-        .build(defaultEngine)
-      assert(pathBasedVersionSnapshot.getVersion === 1)
-    }
-  }
-
   test("time travel across catalogManaged downgrade") {
-    withDowngradedFromCatalogManagedTable(publishDowngrade = true) {
-      (tablePath, v0Timestamp, _) =>
+    withDowngradedFromCatalogManagedTable {
+      (tablePath, v0Timestamp) =>
         val pathBasedVersionSnapshot = TableManager
           .loadSnapshot(tablePath)
           .atVersion(0)
@@ -797,30 +770,9 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
     }
   }
 
-  test("time travel across unpublished catalogManaged downgrade") {
-    withDowngradedFromCatalogManagedTable(publishDowngrade = false) {
-      (tablePath, _, parsedLogData) =>
-        // The ratified downgrade is only visible through the provided catalog commits
-        val e = intercept[MaxCatalogVersionException] {
-          TableManager
-            .loadSnapshot(tablePath)
-            .atVersion(0)
-            .build(defaultEngine)
-        }
-        assert(e.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
-
-        val versionSnapshot = TableManager
-          .loadSnapshot(tablePath)
-          .atVersion(0)
-          .withLogData(parsedLogData.asJava)
-          .build(defaultEngine)
-        assert(versionSnapshot.getVersion === 0)
-    }
-  }
-
   test("time travel to a version before a downgrade when the latest version is unreadable") {
-    withDowngradedFromCatalogManagedTable(publishDowngrade = true) {
-      (tablePath, v0Timestamp, _) =>
+    withDowngradedFromCatalogManagedTable {
+      (tablePath, v0Timestamp) =>
         writeCommit(
           tablePath,
           version = 2,
@@ -839,12 +791,24 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
     }
   }
 
-  test("time travel across a catalogManaged upgrade and a later downgrade") {
+  test("reads across a catalogManaged upgrade and a later downgrade") {
     withTempDir { tempDir =>
       val tablePath = tempDir.getCanonicalPath
       createUpgradedThenDowngradedTable(tablePath)
       val timestamps = (0L to 4L).map(snapshotAt(tablePath, _).getTimestamp(defaultEngine))
       val latestSnapshot = TableManager.loadSnapshot(tablePath).build(defaultEngine)
+
+      // A caller with a stale catalog routing hint passes the downgrade version, or a later one
+      Seq(3L, 4L).foreach { maxCatalogVersion =>
+        val e = intercept[MaxCatalogVersionException] {
+          TableManager
+            .loadSnapshot(tablePath)
+            .withMaxCatalogVersion(maxCatalogVersion)
+            .build(defaultEngine)
+        }
+        assert(
+          e.getMessage === "Should not provide maxCatalogVersion for file-system managed tables")
+      }
 
       (0 to 4).foreach { version =>
         // Versions 1 and 2 are catalogManaged but predate the downgrade, so they can be read by path
@@ -854,6 +818,16 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           .build(defaultEngine)
         assert(versionSnapshot.getVersion === version)
         assert(readSnapshot(versionSnapshot).size === upgradedThenDowngradedTableNumRows(version))
+
+        // A catalog-based caller may pass the last catalogManaged version or the downgrade version
+        Seq(2L, 3L).filter(_ >= version).foreach { maxCatalogVersion =>
+          val catalogBasedVersionSnapshot = TableManager
+            .loadSnapshot(tablePath)
+            .atVersion(version)
+            .withMaxCatalogVersion(maxCatalogVersion)
+            .build(defaultEngine)
+          assert(catalogBasedVersionSnapshot.getVersion === version)
+        }
 
         val timestampSnapshot = TableManager
           .loadSnapshot(tablePath)
@@ -949,6 +923,19 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .toSeq
         .map(_.getVersion)
     }
+    def protocolsByVersion(commitRange: CommitRange): Seq[(Long, Protocol)] = {
+      commitRange
+        .getCommitActions(defaultEngine, Set(DeltaAction.PROTOCOL).asJava)
+        .toSeq
+        .flatMap { commit =>
+          commit.getActions.toSeq.flatMap { batch =>
+            val protocolVector = batch.getColumnVector(batch.getSchema.indexOf("protocol"))
+            (0 until batch.getSize)
+              .filterNot(protocolVector.isNullAt)
+              .map(rowId => commit.getVersion -> Protocol.fromColumnVector(protocolVector, rowId))
+          }
+        }
+    }
 
     withTempDir { tempDir =>
       val tablePath = tempDir.getCanonicalPath
@@ -976,11 +963,21 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .build(defaultEngine)
       assert(commitVersions(postDowngradeRange) === Seq(3, 4))
 
-      val fullRange = TableManager
+      val pathBasedRange = TableManager
         .loadCommitRange(tablePath, CommitBoundary.atVersion(0))
-        .withEndBoundary(CommitBoundary.atVersion(4))
         .build(defaultEngine)
-      assert(commitVersions(fullRange) === Seq(0, 1, 2, 3, 4))
+      assert(commitVersions(pathBasedRange) === Seq(0, 1, 2, 3, 4))
+
+      // A catalog-based caller passes the last catalog version, the downgrade at version 3, so the
+      // range stops there even though version 4 is published
+      val catalogBasedRange = TableManager
+        .loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+        .withMaxCatalogVersion(3)
+        .build(defaultEngine)
+      assert(catalogBasedRange.getEndVersion === 3)
+      val protocols = protocolsByVersion(catalogBasedRange)
+      assert(protocols.map(_._1) === Seq(0, 1, 3))
+      assert(protocols.map(p => isCatalogManagedSupported(p._2)) === Seq(false, true, false))
     }
   }
 
@@ -1057,118 +1054,6 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
     }
   }
 
-  test("catalog-based reads after a downgrade fail with MaxCatalogVersionException") {
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getCanonicalPath
-      createUpgradedThenDowngradedTable(tablePath)
-      val v2Timestamp = snapshotAt(tablePath, 2).getTimestamp(defaultEngine)
-      val latestSnapshot = TableManager.loadSnapshot(tablePath).build(defaultEngine)
-
-      // A caller with a stale catalog routing hint passes the downgrade version, or a later one
-      Seq(3L, 4L).foreach { maxCatalogVersion =>
-        val e = intercept[MaxCatalogVersionException] {
-          TableManager
-            .loadSnapshot(tablePath)
-            .withMaxCatalogVersion(maxCatalogVersion)
-            .build(defaultEngine)
-        }
-        assert(
-          e.getMessage === "Should not provide maxCatalogVersion for file-system managed tables")
-      }
-
-      val timestampError = intercept[MaxCatalogVersionException] {
-        TableManager
-          .loadSnapshot(tablePath)
-          .atTimestamp(v2Timestamp, latestSnapshot)
-          .withMaxCatalogVersion(4)
-          .build(defaultEngine)
-      }
-      assert(timestampError.getMessage ===
-        "Should not provide maxCatalogVersion for file-system managed tables")
-
-      (0 to 3).foreach { version =>
-        val versionSnapshot = TableManager
-          .loadSnapshot(tablePath)
-          .atVersion(version)
-          .withMaxCatalogVersion(3)
-          .build(defaultEngine)
-        assert(versionSnapshot.getVersion === version)
-      }
-    }
-  }
-
-  test("path-based reads after an upgrade fail with MaxCatalogVersionException") {
-    withUpgradedToCatalogManagedTable(publishUpgrade = true) { (tablePath, v0Timestamp, _) =>
-      appendRows(tablePath, maxCatalogVersionOpt = Some(1))
-      val latestSnapshot = TableManager
-        .loadSnapshot(tablePath)
-        .withMaxCatalogVersion(2)
-        .build(defaultEngine)
-
-      val latestError = intercept[MaxCatalogVersionException] {
-        TableManager.loadSnapshot(tablePath).build(defaultEngine)
-      }
-      assert(latestError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
-
-      Seq(1, 2).foreach { version =>
-        val e = intercept[MaxCatalogVersionException] {
-          TableManager.loadSnapshot(tablePath).atVersion(version).build(defaultEngine)
-        }
-        assert(e.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
-      }
-
-      val timestampError = intercept[MaxCatalogVersionException] {
-        TableManager
-          .loadSnapshot(tablePath)
-          .atTimestamp(v0Timestamp, latestSnapshot)
-          .build(defaultEngine)
-      }
-      assert(
-        timestampError.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
-
-      val preUpgradeSnapshot =
-        TableManager.loadSnapshot(tablePath).atVersion(0).build(defaultEngine)
-      assert(preUpgradeSnapshot.getVersion === 0)
-    }
-  }
-
-  test("a catalog-based commit range ends at the downgrade, which removes catalogManaged") {
-    def protocolsByVersion(commitRange: CommitRange): Seq[(Long, Protocol)] = {
-      commitRange
-        .getCommitActions(defaultEngine, Set(DeltaAction.PROTOCOL).asJava)
-        .toSeq
-        .flatMap { commit =>
-          commit.getActions.toSeq.flatMap { batch =>
-            val protocolVector = batch.getColumnVector(batch.getSchema.indexOf("protocol"))
-            (0 until batch.getSize)
-              .filterNot(protocolVector.isNullAt)
-              .map(rowId => commit.getVersion -> Protocol.fromColumnVector(protocolVector, rowId))
-          }
-        }
-    }
-
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getCanonicalPath
-      createUpgradedThenDowngradedTable(tablePath)
-
-      // A catalog-based caller passes the last catalog version, the downgrade at version 3, so the
-      // range stops there even though version 4 is published
-      val catalogBasedRange = TableManager
-        .loadCommitRange(tablePath, CommitBoundary.atVersion(0))
-        .withMaxCatalogVersion(3)
-        .build(defaultEngine)
-      assert(catalogBasedRange.getEndVersion === 3)
-      val protocols = protocolsByVersion(catalogBasedRange)
-      assert(protocols.map(_._1) === Seq(0, 1, 3))
-      assert(protocols.map(p => isCatalogManagedSupported(p._2)) === Seq(false, true, false))
-
-      val pathBasedRange = TableManager
-        .loadCommitRange(tablePath, CommitBoundary.atVersion(0))
-        .build(defaultEngine)
-      assert(pathBasedRange.getEndVersion === 4)
-    }
-  }
-
   test("reads while a ratified catalogManaged downgrade is not yet published") {
     withTempDir { tempDir =>
       val tablePath = tempDir.getCanonicalPath
@@ -1229,6 +1114,13 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           .build(defaultEngine)
         assert(versionSnapshot.getVersion === version)
       }
+      // Providing the ratified downgrade lets the latest version check see it
+      val logDataVersionSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atVersion(2)
+        .withLogData(downgradeLogData.asJava)
+        .build(defaultEngine)
+      assert(logDataVersionSnapshot.getVersion === 2)
 
       // A path-based caller cannot see the downgrade yet
       val pathBasedVersionError = intercept[MaxCatalogVersionException] {
