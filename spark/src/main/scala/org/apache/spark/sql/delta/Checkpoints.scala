@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.FileNotFoundException
 import java.util.UUID
-import java.util.concurrent.Future
+import java.util.concurrent.{Future, TimeUnit}
 
 import scala.collection.mutable
 import scala.concurrent.duration.Duration
@@ -27,6 +27,7 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.AMTCheckpoint.AMTCheckpointProviderUpdateMetrics
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CheckpointMetadata, CommitInfo, LastManifestCommit, Metadata, SidecarFile, SingleAction}
 import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTTriggerMode, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager, DataManifestEntry}
@@ -631,7 +632,7 @@ trait Checkpoints extends DeltaLogging {
    * Reads the Checkpoint action from the manifest commit and builds the AMT checkpoint provider.
    * Returns the updated log segment with the new AMT checkpoint provider and trimmed deltas.
    *
-   * One I/O is performed.
+   * Two I/Os: one reads the manifest commit; another reads the content root.
    */
   private def readManifestCommitAndUpdateAMTCheckpointProvider(
       logSegment: LogSegment,
@@ -640,11 +641,31 @@ trait Checkpoints extends DeltaLogging {
       val LastManifestCommit(manifestCommitVersion, contentRootVersion) = lastManifestCommit
       // The initial log segment must have all the deltas after the content root version.
       require(logSegment.checkpointProvider.version <= contentRootVersion)
-      val commitFileProvider = DeltaCommitFileProvider(logPath, logSegment)
-      val checkpoint = readCheckpointActionFromCommit(commitFileProvider, lastManifestCommit)
-      val newCheckpointProvider = AMTCheckpointProvider.fromCheckpoint(
-        this, checkpoint, manifestCommitVersion)
-      trimLogSegmentToAMTCheckpoint(logSegment, newCheckpointProvider)
+      val startTimeNs = System.nanoTime()
+      val (checkpoint, manifestCommitReadDurationMs) = Utils.timeTakenMs {
+        val commitFileProvider = DeltaCommitFileProvider(logPath, logSegment)
+        readCheckpointActionFromCommit(commitFileProvider, lastManifestCommit)
+      }
+      val (newCheckpointProvider, checkpointProviderInitializationDurationMs) = Utils.timeTakenMs {
+        AMTCheckpointProvider.fromCheckpoint(this, checkpoint, manifestCommitVersion)
+      }
+      val trimmedSegment = trimLogSegmentToAMTCheckpoint(logSegment, newCheckpointProvider)
+      val updateMetrics = AMTCheckpointProviderUpdateMetrics(
+        totalDurationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
+        manifestCommitReadDurationMs = manifestCommitReadDurationMs,
+        checkpointProviderInitializationDurationMs = checkpointProviderInitializationDurationMs,
+        initialCheckpointProviderVersion = logSegment.checkpointProvider.version,
+        initialCheckpointProviderType = logSegment.checkpointProvider.getClass.getSimpleName,
+        newCheckpointProviderVersion = newCheckpointProvider.version,
+        manifestCommitVersion = manifestCommitVersion,
+        contentRootVersion = contentRootVersion,
+        contentRootSizeInBytes = checkpoint.contentRoot.sizeInBytes,
+        numLeaves = newCheckpointProvider.leaves.size.toLong)
+      recordDeltaEvent(
+        this,
+        opType = AMTUsageLogs.SNAPSHOT_DISCOVERY_UPDATE_CHECKPOINT_PROVIDER,
+        data = updateMetrics.toEventData)
+      trimmedSegment
     }
   }
 
@@ -732,10 +753,24 @@ trait Checkpoints extends DeltaLogging {
     }
   }
 
-  protected def writeCheckpointFiles(
+  protected[delta] def writeCheckpointFiles(
       snapshotToCheckpoint: Snapshot,
       catalogTableOpt: Option[CatalogTable] = None): LastCheckpointInfo = {
+    assertNonAMTCheckpointAllowed(snapshotToCheckpoint)
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint, catalogTableOpt)
+  }
+
+  /**
+   * Throws if `snapshot` belongs to an AMT table. An AMT table keeps its checkpoint in the
+   * manifest tree and must never get a classic or V2 checkpoint: one newer than the AMT content
+   * root makes snapshot discovery reject the table.
+   */
+  protected def assertNonAMTCheckpointAllowed(snapshot: Snapshot): Unit = {
+    if (AMTUtils.amtEnabled(snapshot)) {
+      throw new IllegalStateException(
+        s"Cannot write a non-AMT checkpoint at version ${snapshot.version} for AMT table " +
+          s"$logPath.")
+    }
   }
 
   /** Returns information about the most recent checkpoint. */
@@ -1808,6 +1843,38 @@ object V2Checkpoint {
 
     /** The string representations of all the valid formats. */
     val ALL_AS_STRINGS: Set[String] = ALL.map(_.name)
+  }
+}
+
+/** Metrics and outcomes for AMT checkpoint reconciliation. */
+object AMTCheckpoint {
+  /**
+   * Metrics for reading the manifest commit, initializing the AMT checkpoint provider, and updating
+   * the checkpoint provider of the log segment.
+   */
+  case class AMTCheckpointProviderUpdateMetrics(
+    totalDurationMs: Long,
+    manifestCommitReadDurationMs: Long,
+    checkpointProviderInitializationDurationMs: Long,
+    initialCheckpointProviderVersion: Long,
+    initialCheckpointProviderType: String,
+    newCheckpointProviderVersion: Long,
+    manifestCommitVersion: Long,
+    contentRootVersion: Long,
+    contentRootSizeInBytes: Long,
+    numLeaves: Long) {
+
+    def toEventData: Map[String, Any] = Map(
+      "totalDurationMs" -> totalDurationMs,
+      "manifestCommitReadDurationMs" -> manifestCommitReadDurationMs,
+      "checkpointProviderInitializationDurationMs" -> checkpointProviderInitializationDurationMs,
+      "initialCheckpointProviderVersion" -> initialCheckpointProviderVersion,
+      "initialCheckpointProviderType" -> initialCheckpointProviderType,
+      "newCheckpointProviderVersion" -> newCheckpointProviderVersion,
+      "manifestCommitVersion" -> manifestCommitVersion,
+      "contentRootVersion" -> contentRootVersion,
+      "contentRootSizeInBytes" -> contentRootSizeInBytes,
+      "numLeaves" -> numLeaves)
   }
 }
 

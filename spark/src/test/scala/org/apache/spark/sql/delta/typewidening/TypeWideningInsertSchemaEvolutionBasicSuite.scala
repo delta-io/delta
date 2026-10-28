@@ -123,7 +123,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
       append(testCase.initialValuesDF)
 
-      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always") {
+      withConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always") {
         testCase.additionalValuesDF
           .write
           .format("delta")
@@ -148,7 +148,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
       append(testCase.initialValuesDF)
 
-      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
+      withConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
         mayOverflow {
           testCase.additionalValuesDF
             .write
@@ -171,7 +171,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
 
 
     val events = Log4jUsageLogger.track {
-      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "same_family_type") {
+      withConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "same_family_type") {
         mayOverflow {
           testCase.additionalValuesDF
             .write
@@ -247,7 +247,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
 
   test("INSERT - type widening isn't applied when schema evolution is disabled") {
     sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
-    withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
       // Insert integer values. This should succeed and downcast the values to short.
       sql(s"INSERT INTO $tableSQLIdentifier VALUES (1), (2)")
       assert(readDeltaTableByIdentifier().schema("a").dataType === ShortType)
@@ -256,7 +256,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
     }
 
     // Check that we would actually widen if schema evolution was enabled.
-    withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+    withConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
       sql(s"INSERT INTO $tableSQLIdentifier VALUES (3), (4)")
       assert(readDeltaTableByIdentifier().schema("a").dataType === IntegerType)
       checkAnswer(readDeltaTableByIdentifier(), Seq(1, 2, 3, 4).toDF("a"))
