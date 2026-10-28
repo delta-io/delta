@@ -41,7 +41,8 @@ import org.apache.spark.util.Utils
  * This builder is responsible for creating and caching UCCommitCoordinatorClient instances
  * based on the provided metastore IDs and catalog configurations.
  *
- * It caches the UCCommitCoordinatorClient instance for a given metastore ID upon its first access.
+ * It caches the UCCommitCoordinatorClient instance for a given metastore ID upon its first access
+ * ([[build]]), and for a given catalog configuration upon its first access ([[buildForCatalog]]).
  */
 object UCCommitCoordinatorBuilder
     extends CatalogOwnedCommitCoordinatorBuilder with DeltaLogging {
@@ -59,6 +60,23 @@ object UCCommitCoordinatorBuilder
   /** Cache for UCCommitCoordinatorClient instances. */
   private val commitCoordinatorClientCache =
     new ConcurrentHashMap[String, UCCommitCoordinatorClient]()
+
+  /**
+   * Cache for UCCommitCoordinatorClient instances created by [[buildForCatalog]], keyed by the
+   * catalog's full ucConfig (uri, auth.*, legacy token, and all other catalog-specific settings).
+   *
+   * The key deliberately does not use the catalog name: sessions in the same JVM (e.g. a
+   * multi-session Thrift server) may configure the same catalog name with different credentials,
+   * and must not share a client. Conversely, a changed config (e.g. a rotated secret) maps to a
+   * new entry and therefore a new client.
+   *
+   * Entries are never evicted or closed while the JVM runs, other than via [[clearCache]]: an
+   * entry made stale by a config change may still be referenced by snapshots or in-flight
+   * commits, so closing it could break them. The number of entries is bounded by the number of
+   * distinct catalog configurations seen by the JVM.
+   */
+  private val catalogCommitCoordinatorClientCache =
+    new ConcurrentHashMap[Map[String, String], UCCommitCoordinatorClient]()
 
   // Cache for ucConfig to metastoreId to avoid redundant calls to getMetastoreId.
   private val ucConfigToMetastoreIdCache =
@@ -83,14 +101,18 @@ object UCCommitCoordinatorBuilder
   override def buildForCatalog(
       spark: SparkSession,
       catalogName: String): CommitCoordinatorClient = {
-    val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, ucConfig)) => ucClientFactory.createUCClient(ucConfig.asJava)
+    val ucConfig = getCatalogConfigs(spark).find(_._1 == catalogName) match {
+      case Some((_, ucConfig)) => ucConfig
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
     }
-    val conf = Map.empty[String, String]
-    new UCCommitCoordinatorClient(conf.asJava, client)
+    catalogCommitCoordinatorClientCache.computeIfAbsent(
+      ucConfig,
+      _ => {
+        val conf = Map.empty[String, String]
+        new UCCommitCoordinatorClient(conf.asJava, ucClientFactory.createUCClient(ucConfig.asJava))
+      })
   }
 
   /**
@@ -240,8 +262,13 @@ object UCCommitCoordinatorBuilder
     }
   }
 
+  /**
+   * Drops all cached clients. Dropped clients are not closed, since snapshots or in-flight
+   * commits may still reference them; they are released once no longer referenced.
+   */
   def clearCache(): Unit = {
     commitCoordinatorClientCache.clear()
+    catalogCommitCoordinatorClientCache.clear()
     ucConfigToMetastoreIdCache.clear()
   }
 }
