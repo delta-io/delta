@@ -122,9 +122,18 @@ trait TransactionExecutionTestMixin {
     observer.phases.preparePhase.entryBarrier.unblock()
   }
 
-  /**
-   * Unblocks the `commitPhase` and `backfillPhase` for [[TransactionObserver]].
-   */
+  /** Unblocks the `commitPhase` and `backfillPhase` for [[TransactionObserver]]. */
+  def unblockBackfill(observer: TransactionObserver): Unit = {
+    observer.phases.commitPhase.entryBarrier.unblock()
+    observer.phases.backfillPhase.entryBarrier.unblock()
+  }
+
+  /** Unblocks the `postCommitPhase` for [[TransactionObserver]]. */
+  def unblockPostCommit(observer: TransactionObserver): Unit = {
+    observer.phases.postCommitPhase.entryBarrier.unblock()
+  }
+
+  /** Unblocks the `commitPhase` till `postCommitPhase` for [[TransactionObserver]]. */
   def unblockCommit(observer: TransactionObserver): Unit = {
     observer.phases.commitPhase.entryBarrier.unblock()
     observer.phases.backfillPhase.entryBarrier.unblock()
@@ -143,6 +152,14 @@ trait TransactionExecutionTestMixin {
 
   def waitForPrecommit(observer: TransactionObserver): Unit =
     busyWaitFor(observer.phases.preparePhase.hasEntered, timeout)
+
+  def waitForPreCommitComplete(observer: TransactionObserver): Unit = {
+    busyWaitFor(observer.phases.preparePhase.hasLeft, timeout)
+  }
+
+  def waitForBackfillComplete(observer: TransactionObserver): Unit = {
+    busyWaitFor(observer.phases.backfillPhase.hasLeft, timeout)
+  }
 
   def waitForCommit(observer: TransactionObserver): Unit = {
     busyWaitFor(observer.phases.commitPhase.hasLeft, timeout)
