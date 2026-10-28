@@ -1240,45 +1240,8 @@ case class DeltaSource(
    * Extracts whether users provided the option to time travel a relation. If a query restarts from
    * a checkpoint and the checkpoint has recorded the offset, this method should never been called.
    */
-  protected lazy val getStartingVersion: Option[Long] = {
-    // Note: returning a version beyond latest snapshot version won't be a problem as callers
-    // of this function won't use the version to retrieve snapshot(refer to [[getStartingOffset]]).
-    val allowOutOfRange =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
-    /** DeltaOption validates input and ensures that only one is provided. */
-    if (options.startingVersion.isDefined) {
-      val v = options.startingVersion.get match {
-        case StartingVersionLatest =>
-          streamingBackend.update().version + 1
-        case StartingVersion(version) =>
-          if (!DeltaSource.validateProtocolAt(
-              spark, streamingBackend, snapshotAtSourceInit, version)) {
-            // When starting from a given version, we don't require that the snapshot of this
-            // version can be reconstructed, even though the input table is technically in an
-            // inconsistent state. If the snapshot cannot be reconstructed, then the protocol
-            // check is skipped, so this is technically not safe, but we keep it this way for
-            // historical reasons.
-            streamingBackend.checkVersionExists(version, mustBeRecreatable = false, allowOutOfRange)
-          }
-          version
-      }
-      Some(v)
-    } else if (options.startingTimestamp.isDefined) {
-      val tt: DeltaTimeTravelSpec = DeltaTimeTravelSpec(
-        timestamp = options.startingTimestamp.map(Literal(_)),
-        version = None,
-        creationSource = Some("deltaSource"))
-      Some(DeltaSource
-        .getStartingVersionFromTimestamp(
-          spark,
-          streamingBackend,
-          snapshotAtSourceInit,
-          tt.getTimestamp(spark.sessionState.conf),
-          allowOutOfRange))
-    } else {
-      None
-    }
-  }
+  protected lazy val getStartingVersion: Option[Long] = DeltaSource.getStartingVersionFromOptions(
+    spark, options, streamingBackend, snapshotAtSourceInit)
 }
 
 object DeltaSource extends DeltaLogging {
@@ -1398,6 +1361,57 @@ object DeltaSource extends DeltaLogging {
           maxFiles = Some(composite.maxFiles.maxFiles()),
           maxBytes = Some(composite.bytes.maxBytes)))
       case other => throw DeltaErrors.unknownReadLimit(other.toString())
+    }
+  }
+
+  /**
+   * Returns the version that the `startingVersion` or `startingTimestamp` option selects, or None
+   * if neither option is set.
+   *
+   * @param spark - current spark session
+   * @param options - the source options that hold `startingVersion` or `startingTimestamp`
+   * @param streamingBackend - Delta log operations of the table for which we find the version.
+   * @param snapshotAtSourceInit - the snapshot when the source starts, which tags the usage events.
+   */
+  def getStartingVersionFromOptions(
+      spark: SparkSession,
+      options: DeltaOptions,
+      streamingBackend: DeltaStreamingBackend,
+      snapshotAtSourceInit: SnapshotDescriptor): Option[Long] = {
+    // Note: returning a version beyond latest snapshot version won't be a problem as callers
+    // of this function won't use the version to retrieve snapshot(refer to [[getStartingOffset]]).
+    val allowOutOfRange =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
+    // DeltaOption validates input and ensures that only one is provided.
+    if (options.startingVersion.isDefined) {
+      val v = options.startingVersion.get match {
+        case StartingVersionLatest =>
+          streamingBackend.update().version + 1
+        case StartingVersion(version) =>
+          if (!validateProtocolAt(spark, streamingBackend, snapshotAtSourceInit, version)) {
+            // When starting from a given version, we don't require that the snapshot of this
+            // version can be reconstructed, even though the input table is technically in an
+            // inconsistent state. If the snapshot cannot be reconstructed, then the protocol
+            // check is skipped, so this is technically not safe, but we keep it this way for
+            // historical reasons.
+            streamingBackend.checkVersionExists(version, mustBeRecreatable = false, allowOutOfRange)
+          }
+          version
+      }
+      Some(v)
+    } else if (options.startingTimestamp.isDefined) {
+      val tt: DeltaTimeTravelSpec = DeltaTimeTravelSpec(
+        timestamp = options.startingTimestamp.map(Literal(_)),
+        version = None,
+        creationSource = Some("deltaSource"))
+      Some(getStartingVersionFromTimestamp(
+        spark,
+        streamingBackend,
+        snapshotAtSourceInit,
+        tt.getTimestamp(spark.sessionState.conf),
+        allowOutOfRange))
+    } else {
+      None
     }
   }
 
