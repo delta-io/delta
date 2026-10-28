@@ -66,7 +66,7 @@ public class KernelMetadataAdapter implements AbstractMetadata {
   @Override
   public StructType schema() {
     if (cachedSchema == null) {
-      cachedSchema = SchemaUtils.convertKernelSchemaToSparkSchema(kernelMetadata.getSchema());
+      cachedSchema = SchemaUtils.convertKernelMetadataToSparkSchema(kernelMetadata);
     }
     return cachedSchema;
   }
