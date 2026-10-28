@@ -1161,6 +1161,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.4",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.15.4",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.15.4",
       "org.apache.parquet" % "parquet-hadoop" % "1.16.0",
 
