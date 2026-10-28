@@ -1196,10 +1196,11 @@ when a catalog-managed table is loaded without `maxCatalogVersion` or a filesyst
 loaded with it. These cases previously threw `IllegalArgumentException`; their error messages are
 unchanged. Update any exception handlers that relied on the previous type.
 
-Version time travel across a catalog-managed upgrade or downgrade is now allowed. `atVersion`
-queries no longer reject `maxCatalogVersion` for filesystem-managed versions, and require it for
-catalog-managed versions only while the table is still catalog-managed. Latest and timestamp
-queries are unchanged.
+To allow version time travel across a catalog-managed upgrade or downgrade, `atVersion`
+queries reject `maxCatalogVersion` for filesystem-managed versions, and require it for
+catalog-managed versions only while the table is still catalog-managed. To load the latest
+snapshot or perform timestamp-based time travel, provide `maxCatalogVersion` if the supplied
+latest snapshot is catalog-managed; omit it otherwise
 
 The exception identifies a mismatch between the snapshot protocol and the supplied catalog context.
 This can result from a table changing management modes or from incorrect builder inputs. It does
