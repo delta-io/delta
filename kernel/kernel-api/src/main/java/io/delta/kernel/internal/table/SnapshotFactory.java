@@ -291,7 +291,9 @@ public class SnapshotFactory {
       validateMaxCatalogVersionPresenceAgainst(targetProtocol);
     } else if (TableFeatures.isCatalogManagedSupported(targetProtocol)
         && !ctx.maxCatalogVersion.isPresent()) {
-      // The target may predate a downgrade, after which the table is read by path.
+      // The target may predate a downgrade. If so, the catalogManaged downgrade is always published
+      // after the publication of earlier commits. Thus, those commits can be read without invoking
+      // the catalog even though the history was catalogManaged at the time.
       if (isLatestVersionCatalogManaged(engine, snapshotMetrics)) {
         throw mustProvideMaxCatalogVersionError();
       }
