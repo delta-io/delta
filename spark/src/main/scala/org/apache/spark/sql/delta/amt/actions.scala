@@ -20,6 +20,7 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.core.JsonParser
@@ -825,6 +826,15 @@ case class DataManifestEntry(
   @JsonIgnore
   def manifestDV: Option[(Array[Byte], Long)] =
     manifest_info.dv.map(dv => (dv, manifest_info.dvCardinality))
+
+  /**
+   * The bitmaps in `tracking.deleted_positions` and `tracking.replaced_positions`, if set. CDF
+   * reads the positions set in any of them.
+   */
+  @JsonIgnore
+  def changedPositionsBitmaps: Seq[ManifestBitmap] =
+    (tracking.deleted_positions.toSeq ++ tracking.replaced_positions)
+      .map(AMTUtils.deserializeMdv)
 }
 
 /**
@@ -911,6 +921,12 @@ object Tracking {
      * REPLACED), for both entry kinds.
      */
     val tombstoneEntryStatuses: Set[Int] = all -- liveEntryStatuses
+
+    /**
+     * Statuses that represent a data change made by the commit that produced the tree.
+     * Used for CDF reconstruction.
+     */
+    val changeEntryStatuses: Set[Int] = Set(Added, Modified, Deleted, Replaced)
 
     /** The spec name of a `status` code, for error messages. */
     def nameOf(status: Int): String = status match {
@@ -1147,4 +1163,7 @@ case class ManifestInfo(
    */
   @JsonIgnore
   def dvCardinality: Long = dv.map(AMTUtils.deserializeMdv(_).cardinality).getOrElse(0L)
+
+  /** All file entries, live and tombstone. */
+  def totalFilesCount: Long = liveFilesCount.toLong + tombstoneFilesCount
 }

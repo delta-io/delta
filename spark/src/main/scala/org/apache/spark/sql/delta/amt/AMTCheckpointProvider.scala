@@ -18,11 +18,14 @@ package org.apache.spark.sql.delta.amt
 
 import java.util.concurrent.TimeUnit
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterProvider}
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, FileAction, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -62,7 +65,7 @@ final class AMTCheckpointProvider(
 trait AMTCheckpointProviderImpl extends CheckpointProvider {
   self: AMTCheckpointProvider =>
 
-  import AMTCheckpointProvider.AMTDataEntryExtended
+  import AMTCheckpointProvider.{AMTDataEntryExtended, DataEntryResolverProvider}
 
   /** The table version the manifest tree describes. */
   def checkpointVersion: Long = checkpointAction.version
@@ -76,12 +79,6 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   /** The live leaf pointers which must have all the live [[DataEntry]]s. */
   private lazy val liveLeaves: Seq[DataManifestEntry] =
     leaves.filter(l => Tracking.Status.liveEntryStatuses.contains(l.tracking.status))
-
-  /** The tracking to inherit from. */
-  private lazy val parentTrackingByManifestPath: Map[String, InheritableTracking] =
-    liveLeaves.map { leaf =>
-      SparkPath.fromPath(leaf.getAbsolutePath(tableRoot)).urlEncoded -> InheritableTracking(leaf)
-    }.toMap
 
   /** Absolute [[Path]]s to the live leaf manifest parquet files, resolved against the root. */
   lazy val liveLeafManifestAbsolutePaths: Seq[Path] = liveLeaves.map(_.getAbsolutePath(tableRoot))
@@ -164,26 +161,38 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     val index = DeltaLogFileIndex(
       DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
     val entries = liveDataEntries(deltaLog, index)
-    toAddSingleActions(entries)
+    toAddSingleActions(entries, dataEntryResolverProvider(parentLeaves = Seq.empty))
   }
 
   /** Reconstructs the AddFiles of every live leaf, taking care of inheritance. */
   private def liveLeafAddSingleActions(
       deltaLog: DeltaLog): Dataset[SingleAction] = {
-    val files = liveLeaves.map(_.toFileStatus(tableRoot)).toArray
-    val entries = liveDataEntriesWithRowIdPrefix(deltaLog, files, liveLeaves)
-    toAddSingleActions(entries)
+    val leavesWithFilters = liveLeaves.map { leaf =>
+      leaf -> leaf.manifestDV.map { case (dvBytes, _) =>
+        AMTUtils.deserializeMdv(dvBytes).toRowIndexFilterProvider(tableRoot)
+      }
+    }
+    toAddSingleActions(
+      loadLeafDataEntriesWithRowIdPrefix(deltaLog, leavesWithFilters),
+      dataEntryResolverProvider(parentLeaves = liveLeaves))
   }
 
   /**
-   * Reads all DATA entries, computes their row-ID prefix over each unfiltered leaf, then applies
-   * status and MDV filtering. The returned live entries retain the computed prefix.
+   * Reads all live DATA entries of the given leaves, computes their row-ID prefix over each
+   * unfiltered leaf, then applies status filtering and each leaf's row-index filter, if any. A
+   * leaf without a filter is read unfiltered. The returned entries retain the computed prefix.
    */
-  private def liveDataEntriesWithRowIdPrefix(
+  private def loadLeafDataEntriesWithRowIdPrefix(
       deltaLog: DeltaLog,
-      files: Array[FileStatus],
-      dvLeaves: Seq[DataManifestEntry]): Dataset[AMTDataEntryExtended] = {
-    val index = leafFileIndexWithManifestFilters(files, dvLeaves)
+      leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
+      : Dataset[AMTDataEntryExtended] = {
+    val files =
+      leavesWithRowIndexFilters.map { case (leaf, _) => leaf.toFileStatus(tableRoot) }.toArray
+    val perFileRowIndexFilters: Map[String, RowIndexFilterProvider] =
+      leavesWithRowIndexFilters.collect { case (leaf, Some(provider)) =>
+        leaf.getAbsolutePath(tableRoot).toString -> provider
+      }.toMap
+    val index = DeltaLogFileIndex(new AMTParquetFileFormat, files, perFileRowIndexFilters)
     val withPrefix = loadEntriesWithExtendedMetadata(
         deltaLog, index, checkpointAction.metaData, checkpointAction.protocol,
         includeRowIndexFilterMarker = true)
@@ -205,19 +214,6 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
         .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
         .withColumn(PRECEDING_RECORDS_COLUMN, lit(0L)))
 
-  /** Builds a leaf index with bitmap-format-independent manifest filter providers. */
-  protected def leafFileIndexWithManifestFilters(
-      files: Array[FileStatus],
-      dvLeaves: Seq[DataManifestEntry]): DeltaLogFileIndex = {
-    val perFileRowIndexFilters: Map[String, RowIndexFilterProvider] = dvLeaves.flatMap { leaf =>
-      leaf.manifestDV.map { case (dvBytes, _) =>
-        leaf.getAbsolutePath(tableRoot).toString ->
-          AMTUtils.deserializeMdv(dvBytes).toRowIndexFilterProvider(tableRoot)
-      }
-    }.toMap
-    DeltaLogFileIndex(new AMTParquetFileFormat, files, perFileRowIndexFilters)
-  }
-
   /** Extends the Parquet read schema with the keep/drop marker. */
   protected def rowIndexFilterReadSchema(persistedSchema: StructType): StructType =
     persistedSchema.add(AMTParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD)
@@ -230,7 +226,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   protected def rowIndexFilterMarkerColumn: Column =
     col(rowIndexFilterMarkerColumnName)
 
-  /** Drops rows marked deleted by the manifest DV, then removes the marker. */
+  /** Keeps the rows the row-index filter does not mark deleted, then removes the marker column. */
   protected def filterOutRowIndexFilterEntries(dataFrame: DataFrame): DataFrame =
     dataFrame
       .where(col(AMTParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME) ===
@@ -238,47 +234,24 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       .drop(AMTParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME)
 
   /**
-   * Converts manifest entries into the `AddFile` actions of the reconstructed state.
+   * Converts manifest entries into the `AddFile` actions of the reconstructed state. Each leaf
+   * entry carries a back reference to its position in its leaf and has its inheritance resolved.
+   *
+   * @param entries The live DATA entries to convert, read from the root or from leaves, each with
+   *                its read location and `first_row_id` prefix sum.
+   * @param resolverProvider The [[DataEntryResolverProvider]] for the leaves `entries` were read
+   *                         from.
    */
   private def toAddSingleActions(
-      entries: Dataset[AMTDataEntryExtended]): Dataset[SingleAction] = {
+      entries: Dataset[AMTDataEntryExtended],
+      resolverProvider: DataEntryResolverProvider): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
-    val localTableRoot = tableRoot
-    val encodedRootPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded
-    val parentTracking = parentTrackingByManifestPath
-
     entries.mapPartitions { iter =>
+      val resolver = resolverProvider.createResolver()
       iter.map { entryWithLoc =>
-        entryWithLoc.entry.unwrap match {
-          case data: DataEntry =>
-            val isRootEntry = entryWithLoc.leafPath == encodedRootPath
-            val backReference = if (isRootEntry) {
-              None
-            } else {
-              val absLeaf = SparkPath.fromUrlString(entryWithLoc.leafPath).toPath
-              val relManifest =
-                AMTUtils.relativizeLocation(localTableRoot.toString, absLeaf.toString)
-              Some(BackReference(relManifest, entryWithLoc.pos.toInt))
-            }
-            val resolvedTracking =
-              if (isRootEntry) {
-                // Root-resident DATA entries have no parent and retain their persisted tracking.
-                data.tracking
-              } else {
-                Tracking.resolve(
-                  childTracking = data.tracking,
-                  parentTracking = parentTracking(entryWithLoc.leafPath),
-                  prefixSumRecordCountForNullFirstRowId =
-                    entryWithLoc.precedingNullFirstRowIdRecords,
-                  childEntryLocationForLogging = data.location)
-              }
-            val add = data.copy(tracking = resolvedTracking)
-              .toAddFile(localTableRoot)
-              .copy(backReference = backReference)
-            SingleAction(add = add)
-          case other => throw new IllegalStateException(
-            s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
-        }
+        val (add, leafLocation) = resolver.resolve(entryWithLoc)
+        SingleAction(add = add.copy(
+          backReference = leafLocation.map(BackReference(_, entryWithLoc.pos.toInt))))
       }
     }
   }
@@ -307,6 +280,118 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       col("entry.record_count")).otherwise(lit(0L))
     // The frame is empty for the first row of a manifest, where the sum is null and the offset 0.
     coalesce(sum(contribution).over(precedingRowsOfManifest), lit(0L))
+  }
+
+  /**
+   * Reconstructs the AddFile and RemoveFile actions of the single commit this manifest tree
+   * describes. The AMT does not persist `dataChange` or when a file was removed, so callers supply
+   * the commit-level `dataChange` and the commit timestamp, which becomes every reconstructed
+   * RemoveFile's `deletionTimestamp`. The actions come in no particular order.
+   */
+  private[delta] def reconstructFileActions(
+      deltaLog: DeltaLog,
+      dataChange: Boolean,
+      commitTimestamp: Long): Seq[FileAction] =
+    mdvDerivedChangeActions(deltaLog, dataChange, commitTimestamp)
+      .foldLeft(trackingDerivedChangeActions(deltaLog, dataChange, commitTimestamp))(_ union _)
+      .collect().toSeq
+      .map(_.unwrap.asInstanceOf[FileAction])
+
+  /**
+   * Change files derived from tracking statuses from both root and new leaves, stamped with the
+   * commit-level `dataChange` and `commitTimestamp` (see [[reconstructFileActions]]).
+   */
+  private def trackingDerivedChangeActions(
+      deltaLog: DeltaLog,
+      dataChange: Boolean,
+      commitTimestamp: Long): Dataset[SingleAction] = {
+    import org.apache.spark.sql.delta.implicits._
+    // Only Added leaves are considered here.
+    // Existing leaves with MDV changes are handled by mdvDerivedChangeActions.
+    // Existing leaves removed entirely will be a subset of mdvDerivedChangeActions.
+    val addedLeaves = leaves.filter { leaf =>
+      leaf.tracking.status == Tracking.Status.Added && !holdsOnlyExistingEntries(leaf)
+    }
+    val manifestIndex = DeltaLogFileIndex(
+      DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET,
+      (rootFile +: addedLeaves.map(_.toFileStatus(tableRoot))).toArray)
+
+    val resolverProvider = dataEntryResolverProvider(addedLeaves)
+    // Only leaf entries inherit a row ID, so skip the prefix's shuffle when there is no leaf.
+    val precedingRecords =
+      if (addedLeaves.isEmpty) lit(0L) else precedingNullRowIdRecords
+
+    asExtendedEntries(
+      loadEntriesWithExtendedMetadata(
+          deltaLog, manifestIndex, checkpointAction.metaData, checkpointAction.protocol)
+        .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
+        // The row-ID prefix must see every entry of a leaf, so compute it before status filtering.
+        .withColumn(PRECEDING_RECORDS_COLUMN, precedingRecords)
+        .where(col("entry.tracking.status").isin(Tracking.Status.changeEntryStatuses.toSeq: _*)))
+      .mapPartitions { entries =>
+        val resolver = resolverProvider.createResolver()
+        entries.map { entryWithLoc =>
+          val (add, _) = resolver.resolve(entryWithLoc)
+          val status = entryWithLoc.entry.unwrap.asInstanceOf[DataEntry].tracking.status
+          if (Tracking.Status.liveEntryStatuses.contains(status)) {
+            SingleAction(add = add.copy(dataChange = dataChange))
+          } else {
+            SingleAction(remove = add.removeWithTimestamp(commitTimestamp, dataChange))
+          }
+        }
+      }
+  }
+
+  /**
+   * The change files coming from MDV-marked positions in the leaves, stamped with the commit-level
+   * `dataChange` and `commitTimestamp` (see [[reconstructFileActions]]).
+   */
+  private def mdvDerivedChangeActions(
+      deltaLog: DeltaLog,
+      dataChange: Boolean,
+      commitTimestamp: Long): Option[Dataset[SingleAction]] = {
+    import org.apache.spark.sql.delta.implicits._
+    // These are the leaves that contain MDV-masked entries.
+    // By definition these leaves cannot have ADDED statuses.
+    val touchedLeaves = leaves.filter(_.changedPositionsBitmaps.nonEmpty)
+    assert(touchedLeaves.forall(_.tracking.status != Tracking.Status.Added))
+    if (touchedLeaves.isEmpty) return None
+
+    val leavesWithFilters = touchedLeaves.map { leaf =>
+      leaf -> Some(ManifestBitmap.toRowIndexFilterProvider(
+        leaf.changedPositionsBitmaps, tableRoot, inverse = true))
+    }
+    val resolverProvider = dataEntryResolverProvider(touchedLeaves)
+    Some(loadLeafDataEntriesWithRowIdPrefix(deltaLog, leavesWithFilters)
+      .mapPartitions { entries =>
+        val resolver = resolverProvider.createResolver()
+        entries.map { entryWithLoc =>
+          val (add, _) = resolver.resolve(entryWithLoc)
+          SingleAction(remove = add.removeWithTimestamp(commitTimestamp, dataChange))
+        }
+      })
+  }
+
+  /**
+   * Whether every entry of `leaf` is EXISTING, per its `manifest_info` counts. Such a leaf holds
+   * only spilled files and carries no data change.
+   */
+  private def holdsOnlyExistingEntries(leaf: DataManifestEntry): Boolean = {
+    val info = leaf.manifest_info
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = info.totalFilesCount == leaf.record_count,
+      opTypeSuffix = AMTUsageLogs.ALERT_INCONSISTENT_MANIFEST_INFO_FILE_COUNTS,
+      message = s"Leaf ${leaf.location} has record_count ${leaf.record_count}, but its " +
+        s"manifest_info file counts sum to ${info.totalFilesCount}.",
+      data = Map(
+        "leafLocation" -> leaf.location,
+        "recordCount" -> leaf.record_count,
+        "addedFilesCount" -> info.added_files_count,
+        "existingFilesCount" -> info.existing_files_count,
+        "deletedFilesCount" -> info.deleted_files_count,
+        "replacedFilesCount" -> info.replaced_files_count,
+        "modifiedFilesCount" -> info.modified_files_count))
+    info.existing_files_count == leaf.record_count
   }
 
   /**
@@ -497,6 +582,24 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
           col("leafPath"),
           col("pos")) ++ decodedMarkerColumns): _*)
   }
+
+  /**
+   * Builds the [[DataEntryResolverProvider]] for DATA entries read from the root or from
+   * `parentLeaves`.
+   *
+   * @param parentLeaves The leaf pointers the scanned leaf entries were read from.
+   */
+  private def dataEntryResolverProvider(
+      parentLeaves: Seq[DataManifestEntry]): DataEntryResolverProvider = {
+    val tableRootString = tableRoot.toString
+    DataEntryResolverProvider(
+      tableRoot = tableRoot,
+      urlEncodedRootManifestPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded,
+      parentTrackingByLeafLocation = parentLeaves.map { leaf =>
+        AMTUtils.relativizeLocation(tableRootString, leaf.getAbsolutePath(tableRoot).toString) ->
+          InheritableTracking(leaf)
+      }.toMap)
+  }
 }
 
 object AMTCheckpointProvider extends DeltaLogging {
@@ -510,6 +613,22 @@ object AMTCheckpointProvider extends DeltaLogging {
       actions: Seq[Action],
       numActionsReusingBackref: Int,
       numActionsRegeneratingBackref: Int)
+
+  /**
+   * The identity a file action reconstructed by [[AMTCheckpointProvider.reconstructFileActions]]
+   * is matched to a committed one by.
+   *
+   * @param file  The file's (path, deletion vector) tuple, using deletion vector object identity.
+   * @param isAdd Whether the action is an [[AddFile]] rather than a [[RemoveFile]].
+   */
+  private[delta] case class FileActionKey(file: UniqueFileActionTuple, isAdd: Boolean)
+
+  private[delta] object FileActionKey {
+    def apply(action: FileAction, tableRoot: Path): FileActionKey =
+      FileActionKey(
+        action.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true),
+        isAdd = action.isInstanceOf[AddFile])
+  }
 
   /**
    * An [[AMTSingleAction]] entry paired with its physical read location in its manifest parquet.
@@ -529,6 +648,75 @@ object AMTCheckpointProvider extends DeltaLogging {
 
   private[amt] lazy val amtDataEntryExtendedEncoder: Encoder[AMTDataEntryExtended] =
     new DeltaEncoder[AMTDataEntryExtended].get
+
+  /**
+   * Everything needed to convert [[AMTDataEntryExtended]] DataEntries read from the root or from
+   * leaves into [[AddFile]]s with their tracking resolved.
+   *
+   * @param tableRoot                    The table's data path.
+   * @param urlEncodedRootManifestPath   The URL-encoded absolute path of the root manifest, which
+   *                                     tells root entries apart from leaf entries.
+   * @param parentTrackingByLeafLocation The inheritable tracking of each leaf the entries were read
+   *                                     from, keyed by the leaf's `location` relativized against
+   *                                     `tableRoot`.
+   */
+  private[amt] case class DataEntryResolverProvider(
+      tableRoot: Path,
+      urlEncodedRootManifestPath: String,
+      parentTrackingByLeafLocation: Map[String, InheritableTracking]) {
+
+    /** Creates the [[DataEntryResolver]] for one partition. Call it on the executor. */
+    def createResolver(): DataEntryResolver = new DataEntryResolver(this)
+  }
+
+  /**
+   * Resolves the DataEntries of one partition (see [[DataEntryResolverProvider]]). All entries of
+   * a leaf share its path, so each distinct leaf path is relativized once per partition rather than
+   * once per entry.
+   */
+  private[amt] final class DataEntryResolver(provider: DataEntryResolverProvider) {
+    private val tableRootString = provider.tableRoot.toString
+
+    /** Cache for each URL-encoded leaf path to (its raw relative path, its tracking). */
+    private val leafByUrlEncodedPath = mutable.HashMap.empty[String, (String, InheritableTracking)]
+
+    /** The uncoded relative path and parent tracking of the leaf at `urlEncodedPath`. */
+    private def getOrCacheLeaf(urlEncodedPath: String): (String, InheritableTracking) =
+      leafByUrlEncodedPath.getOrElseUpdate(urlEncodedPath, {
+        val leafUncodedRelPath = AMTUtils.relativizeLocation(
+          tableRootString, SparkPath.fromUrlString(urlEncodedPath).toPath.toString)
+        (leafUncodedRelPath, provider.parentTrackingByLeafLocation(leafUncodedRelPath))
+      })
+
+    /**
+     * Converts `entryWithLoc` into an [[AddFile]] with its tracking resolved. It also returns the
+     * uncoded relative path of the leaf the entry was read from, or None for a root entry.
+     */
+    def resolve(entryWithLoc: AMTDataEntryExtended): (AddFile, Option[String]) =
+      entryWithLoc.entry.unwrap match {
+        case data: DataEntry =>
+          if (entryWithLoc.leafPath == provider.urlEncodedRootManifestPath) {
+            // No inheritence for root entries.
+            (data.toAddFile(provider.tableRoot), None)
+          } else {
+            // Resolve inheritence for leaf entries.
+            val (leafUncodedRelPath, parentTracking) = getOrCacheLeaf(
+              entryWithLoc.leafPath
+            )
+            val resolvedTracking = Tracking.resolve(
+              childTracking = data.tracking,
+              parentTracking = parentTracking,
+              prefixSumRecordCountForNullFirstRowId = entryWithLoc.precedingNullFirstRowIdRecords,
+              childEntryLocationForLogging = data.location)
+            (
+              data.copy(tracking = resolvedTracking).toAddFile(provider.tableRoot),
+              Some(leafUncodedRelPath)
+            )
+          }
+        case other => throw new IllegalStateException(
+          s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
+      }
+  }
 
   /**
    * Builds a provider from an emitted [[Checkpoint]] action by reading the leaf pointers out of the

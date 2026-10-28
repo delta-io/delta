@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUtils, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -2822,6 +2822,79 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
+  /**
+   * Invariant check that the tree of an inline manifest commit reconstructs the commit's own
+   * AddFiles and RemoveFiles, compared by (path, dv, add or remove). `AddCDCFile`s are not recorded
+   * in the tree, so they are left out of the comparison.
+   */
+  private[delta] def verifyAmtCommitReconstruction(
+      actionsToCommit: Seq[Action],
+      attemptVersion: Long,
+      amtWriteResultOpt: Option[AMTWriteResult]): Unit = {
+    // Only an incremental AMT that describes this commit records the commit's changes:
+    //  - A deferred tree describes the previous table version.
+    //  - A full rewrite marks every live entry EXISTING and has no tombstones or changed positions.
+    //  - A non-AMT doesn't perform such check at all.
+    val result = amtWriteResultOpt match {
+      case Some(result) if result.checkpoint.contentRoot.version == attemptVersion &&
+          result.checkpoint.contentRoot.isIncremental.contains(true) => result
+      case _ => return
+    }
+    val committedFileActions: Seq[FileAction] = actionsToCommit.collect {
+      case a: AddFile => a
+      case r: RemoveFile => r
+    }
+    // Look for commit level dataChange.
+    val dataChange =
+      actionsToCommit.collectFirst { case commitInfo: CommitInfo => commitInfo }
+        .flatMap(_.dataChange) match {
+        case Some(dataChange) => dataChange
+        case None =>
+          deltaAssert(
+            check = false,
+            name = AMTUsageLogs.ALERT_COMMIT_MISSING_DATA_CHANGE,
+            msg = s"Manifest commit $attemptVersion has no dataChange in its CommitInfo.",
+            deltaLog = deltaLog)
+          return
+      }
+    // A metadata-only re-add (a dataChange=false commit without removes, e.g. a stats backfill)
+    // re-commits already-live files, which stay EXISTING in the tree, so the tree cannot
+    // reconstruct it.
+    if (!dataChange && !committedFileActions.exists(_.isInstanceOf[RemoveFile])) return
+
+    val tableRoot = deltaLog.dataPath
+    val committedKeys =
+      committedFileActions.map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
+    val provider = new AMTCheckpointProvider(
+      manifestCommitVersion = attemptVersion,
+      checkpointAction = result.checkpoint,
+      leaves = result.leaves,
+      tableRoot = tableRoot)
+    // Only file identities are compared, so the deletion timestamp stamped on the reconstructed
+    // RemoveFiles does not matter.
+    val treeKeys =
+        provider.reconstructFileActions(deltaLog, dataChange, commitTimestamp = 0L)
+        .map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
+    if (treeKeys != committedKeys) {
+      val onlyInTree = treeKeys -- committedKeys
+      val onlyInCommit = committedKeys -- treeKeys
+      // Bound the number of files named in the message.
+      val maxFilesToReport = 10
+      deltaAssert(
+        check = false,
+        name = AMTUsageLogs.ALERT_COMMIT_RECONSTRUCTION_MISMATCH,
+        msg = s"The AMT of manifest commit $attemptVersion reconstructs file actions that " +
+          s"disagree with the committed ones. Only in the tree (${onlyInTree.size}): " +
+          s"${onlyInTree.take(maxFilesToReport)}. Only in the commit (${onlyInCommit.size}): " +
+          s"${onlyInCommit.take(maxFilesToReport)}.",
+        deltaLog = deltaLog,
+        data = Map(
+          "manifestCommitVersion" -> attemptVersion,
+          "numOnlyInTree" -> onlyInTree.size,
+          "numOnlyInCommit" -> onlyInCommit.size))
+    }
+  }
+
   // Returns the isolation level to use for committing the transaction
   protected def getIsolationLevelToUse(
       preparedActions: Seq[Action], op: DeltaOperations.Operation): IsolationLevel = {
@@ -3319,6 +3392,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
     commitEndNano = System.nanoTime()
 
     executionObserver.beginPostCommit()
+    // Verify the AMT reconstruction is correct according to file actions.
+    verifyAmtCommitReconstruction(
+      committedTransactionInfo.finalActionsToCommit, attemptVersion, amtWriteResultOpt)
     val catalogTableForPostCommitSnapshot = catalogTable
     val postCommitSnapshot = resolvePostCommitSnapshot(
       attemptVersion,
