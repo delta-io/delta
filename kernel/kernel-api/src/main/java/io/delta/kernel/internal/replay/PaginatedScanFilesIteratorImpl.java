@@ -27,6 +27,7 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -284,6 +285,8 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       if (isSidecar(batchFilePath)) {
         lastSidecarIndex++;
       }
+    } else if (!batchFilePath.equals(lastReadLogFilePath)) {
+      lastReadLogFilePath = batchFilePath;
     }
 
     // Calculate the row index of the last row in current batch within the file.
@@ -329,7 +332,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       // If the current batch’s log file name is greater than the last one recorded in the token,
       // it means this file appeared earlier in the segment and has already been processed.
       return !isSidecar(batchFilePath)
-          && batchFilePath.compareTo(tokenLastReadLogFilePathOpt.get()) > 0;
+          && compareLogicalLogFilePaths(batchFilePath, tokenLastReadLogFilePathOpt.get()) > 0;
     }
     return false;
   }
@@ -346,7 +349,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     // present).
     boolean isSameFilePath =
         tokenLastReadFilePathOpt.isPresent()
-            && batchFilePath.equals(tokenLastReadFilePathOpt.get());
+            && isSameLogicalLogFile(batchFilePath, tokenLastReadFilePathOpt.get());
     if (!isSameFilePath) return false;
     // For sidecar files, if file path matches, sidecar index must also present and match.
     if (isSidecar(batchFilePath)) {
@@ -366,13 +369,13 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   private boolean isFirstBatchFromUnseenFile(String batchFilePath) {
     // If the batch's file path differs from {@code lastReadLogFilePath}, it's considered an
     // unseen file.
-    if (!batchFilePath.equals(lastReadLogFilePath)) {
+    if (!isSameLogicalLogFile(batchFilePath, lastReadLogFilePath)) {
       // For non-sidecar files, files must appear in reverse lexicographic order —
       // i.e., the current file must come *before* the last seen file.
       checkArgument(
           isSidecar(batchFilePath)
               || lastReadLogFilePath == null
-              || batchFilePath.compareTo(lastReadLogFilePath) < 0,
+              || compareLogicalLogFilePaths(batchFilePath, lastReadLogFilePath) < 0,
           "Expected file '%s' to appear after last read file '%s' in reverse lexicographic order, "
               + "unless it's a sidecar file",
           batchFilePath,
@@ -380,6 +383,18 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       return true;
     }
     return false;
+  }
+
+  private boolean isSameLogicalLogFile(String filePath1, String filePath2) {
+    return Objects.equals(canonicalizeLogFilePath(filePath1), canonicalizeLogFilePath(filePath2));
+  }
+
+  private int compareLogicalLogFilePaths(String filePath1, String filePath2) {
+    return canonicalizeLogFilePath(filePath1).compareTo(canonicalizeLogFilePath(filePath2));
+  }
+
+  private String canonicalizeLogFilePath(String filePath) {
+    return filePath == null ? null : FileNames.canonicalizeStagedDeltaFilePath(filePath);
   }
 
   // TODO: move isSidecar() to FileNames
