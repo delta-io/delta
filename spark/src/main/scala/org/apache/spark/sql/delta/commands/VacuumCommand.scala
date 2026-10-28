@@ -548,13 +548,17 @@ trait VacuumCommandImpl extends DeltaCommand {
     if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val checkEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
+      // Count before starting the transaction. The count runs a Spark job that can take a long
+      // time on large tables, and a metadata change committed while the transaction is open makes
+      // this empty commit fail with a MetadataChangedException.
+      val numFilesToDelete = diff.count()
       val txn = table.startTransaction()
       val metrics = Map[String, SQLMetric](
         "numFilesToDelete" -> createMetric(spark.sparkContext, "number of files to deleted"),
         "sizeOfDataToDelete" -> createMetric(spark.sparkContext,
           "The total amount of data to be deleted in bytes")
       )
-      metrics("numFilesToDelete").set(diff.count())
+      metrics("numFilesToDelete").set(numFilesToDelete)
       metrics("sizeOfDataToDelete").set(sizeOfDataToDelete)
       txn.registerSQLMetrics(spark, metrics)
       val version = txn.commit(actions = Seq(), DeltaOperations.VacuumStart(
