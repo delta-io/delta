@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, LogSegment, Snapshot, SnapshotDescriptor, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.fs.Path
@@ -45,6 +45,13 @@ object AMTUtils extends DeltaLogging {
   /** Whether AMT writes are enabled for `snapshot`. */
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
     amtEnabled(snapshot.metadata, snapshot.protocol)
+
+  /**
+   * Whether `amtCheckpointOpt` holds a ROOT-ONLY tree (no leaf manifests). A root-only tree keeps
+   * every live file in the root, so state reconstruction stamps no back reference on any of them.
+   */
+  def isRootOnlyCheckpoint(amtCheckpointOpt: Option[Checkpoint]): Boolean =
+    amtCheckpointOpt.exists(_.contentRoot.numLeaves.contains(0L))
 
   /** Whether a new table's `configuration` asks for AMT. */
   def amtRequested(configuration: Map[String, String]): Boolean =
