@@ -1199,8 +1199,16 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .withLogData(downgradeLogData.asJava)
         .build(defaultEngine)
       assert(latestSnapshot.getVersion === 3)
+      assert(!isCatalogManagedSupported(latestSnapshot.asInstanceOf[SnapshotImpl].getProtocol))
 
       val v2Timestamp = snapshotAt(tablePath, 2).getTimestamp(defaultEngine)
+      val timestampSnapshot = TableManager
+        .loadSnapshot(tablePath)
+        .atTimestamp(v2Timestamp, latestSnapshot)
+        .withLogData(downgradeLogData.asJava)
+        .build(defaultEngine)
+      assert(timestampSnapshot.getVersion === 2)
+      checkAnswer(readSnapshot(timestampSnapshot), dataBatches1.flatMap(_.toTestRows))
       val timestampError = intercept[MaxCatalogVersionException] {
         TableManager
           .loadSnapshot(tablePath)
