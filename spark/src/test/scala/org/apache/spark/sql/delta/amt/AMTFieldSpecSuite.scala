@@ -171,10 +171,10 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       def statsIds(columnId: Int, name: String, withBounds: Boolean): Seq[(String, Int)] = {
         val base = 10000 + 200 * columnId
         val field = s"${name}_$columnId" // sub-struct field name: logical name + field id
-        // Iceberg V4 offsets: lower_bound=1, upper_bound=2, null_value_count=5.
+        // Iceberg V4 offsets: lower_bound=1, upper_bound=2, null_value_count=4.
         Seq(
           s"content_stats.$field" -> base,
-          s"content_stats.$field.null_value_count" -> (base + 5)) ++
+          s"content_stats.$field.null_value_count" -> (base + 4)) ++
           (if (!withBounds) Nil
            else Seq(
              s"content_stats.$field.lower_bound" -> (base + 1),
