@@ -47,6 +47,8 @@ This design enables:
 | - | - | - |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the leaf-manifest entry this add supersedes in place, without a paired `remove` (e.g., a stats backfill). Null otherwise, including a DV update, where the backreference is on the paired `remove`. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
 
+<ins>When a file's `add` is folded into the metadata tree, its `clusteringProvider` is stored as described in [File Metadata Fields](#file-metadata-fields).</ins>
+
 ### Remove File
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#remove-file)***
@@ -78,6 +80,8 @@ This design enables:
 | <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>The `checkpoint` action for the latest manifest commit. Schema defined in [Checkpoint Action](#checkpoint-action).</ins> |
 
 <ins>When the embedded `checkpoint` action is present, readers can use `contentRoot.path` to begin prefetching the root manifest immediately, and the action provides the complete table state at `checkpointMetadata.version`. If the hint is absent, stale, or does not contain a `checkpoint` action, readers fall back to log replay to locate the latest `checkpoint` action.</ins>
+
+<ins>The embedded `checkpoint` action must include all of its inline `domainMetadata` entries, including the `delta.adaptiveMetadata` domain (see [File Metadata Fields](#file-metadata-fields)) when it exists.</ins>
 
 ### Checkpoints
 
@@ -159,6 +163,24 @@ This design enables:
 | <ins>lastManifestCommit</ins> | <ins>Struct</ins> | <ins>The latest manifest commit up to this version. Uses the same schema as `commitInfo.lastManifestCommit` and must match its value at the CRC's version.</ins> | <ins>Required from the first manifest commit onward; absent otherwise.</ins> |
 
 <ins>CRC files remain optional. Readers may obtain `lastManifestCommit` from the CRC at the target snapshot version. If that CRC is unavailable, readers must read `commitInfo` from the original JSON commit file at that version. If that CRC is available, its `lastManifestCommit` must be identical to the counterpart from the `commitInfo` of the corresponding version.</ins>
+
+<ins>The CRC file also records the [file metadata field ID mapping](#file-metadata-fields) as a top-level field:</ins>
+
+| Field Name | Data Type | Description | Optional/Required |
+| - | - | - | - |
+| <ins>fileMetadataFieldIds</ins> | <ins>Map[String, Int]</ins> | <ins>The `fileMetadataFieldIds` map from the `delta.adaptiveMetadata` domain configuration at this version.</ins> | <ins>Required when the `delta.adaptiveMetadata` domain exists at this version; absent otherwise.</ins> |
+
+<ins>Readers may obtain the mapping from the CRC at the target snapshot version. If that CRC is unavailable, readers must obtain it from the `delta.adaptiveMetadata` domain. If that CRC is available, its `fileMetadataFieldIds` must be identical to the domain's at that version.</ins>
+
+### Writer Requirements for Column Mapping
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-column-mapping)***
+
+The existing text reads:
+
+> The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
+
+<ins>When the `adaptiveMetadata` table feature is enabled, `delta.columnMapping.maxColumnId` also covers the IDs assigned to [file metadata fields](#file-metadata-fields). Writers must not assign an ID that appears in the file metadata field ID mapping to any column or nested field of the schema.</ins>
 
 --------
 
@@ -466,6 +488,8 @@ Each per-column stats struct contains:
 
 Implementations are not required to write a stats struct for every table field. If any field is missing from the struct, readers must assume it is unknown.
 
+Stats structs are also written for field IDs that do not belong to any schema column; see [File Metadata Fields](#file-metadata-fields).
+
 **Aggregation rules** (for manifest-level stats in root manifest `DATA_MANIFEST` entries, computed over constituent leaf entries):
 
 If any child entry is missing a stats field, the aggregate for that field must be null. Aggregation is only valid when all children have the field present.
@@ -491,6 +515,63 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 | `tightBounds` | `tight_bounds` |
 
 `value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightBounds` carries Delta's wide-bounds-under-deletion-vectors semantics to `tight_bounds`, consistent with manifest-level stats being `tight_bounds = false` when an MDV is present.
+
+### File Metadata Fields
+
+`add` action fields that have no counterpart in the content entry schema are stored as *file metadata fields*. Each file metadata field is assigned a field ID, and its value is stored in the `lower_bound` of the [Content Stats](#content-stats) struct for that field ID.
+
+The file metadata fields are:
+
+| Key | `add` field | `lower_bound` type |
+| - | - | - |
+| `clusteringProvider` | `clusteringProvider` | String |
+
+#### Field ID Mapping
+
+The mapping from file metadata field to field ID is stored in the system domain `delta.adaptiveMetadata`. Its `configuration` is a JSON object with this field:
+
+| Field Name | Data Type | Description | Optional/Required |
+| - | - | - | - |
+| fileMetadataFieldIds | Map[String, Int] | Maps each file metadata field key to its assigned field ID. | required |
+
+To assign a field ID, a writer must, in a single commit:
+1. Increment the table property `delta.columnMapping.maxColumnId` in a `metaData` action.
+2. Write the `delta.adaptiveMetadata` domain with the new value of `delta.columnMapping.maxColumnId` as the field ID for the key.
+
+A field ID must be assigned no later than the commit that first writes a manifest entry carrying a value for that field. Once assigned, a field ID must not change, and neither the entry nor the `delta.adaptiveMetadata` domain may be removed while `adaptiveMetadata` is supported.
+
+#### Reader Requirements for File Metadata Fields
+
+- Readers must obtain the field ID mapping from the `delta.adaptiveMetadata` domain at the snapshot version, from the `checkpoint` action, log replay, or the [Version Checksum File](#version-checksum-file).
+- When reconstructing an `add` action from a `DATA` entry, readers must set each file metadata field from `lower_bound` (field ID `10_000 + 200 × id + 1`) of the stats struct for its field ID `id`. A null `lower_bound` or missing stats struct means the field is absent on the `add`.
+- Readers must ignore keys in the mapping that they do not recognize.
+
+#### Writer Requirements for File Metadata Fields
+
+- When writing a `DATA` entry for an `add`, writers must store each non-null file metadata field in `lower_bound` of the stats struct for its field ID, without truncation.
+- When copying or rewriting an existing entry (for example during [Manifest Compaction](#manifest-compaction)), writers must preserve stats structs for every field ID, including field IDs they do not recognize.
+
+#### Example
+
+A table with `delta.columnMapping.maxColumnId` = `99` assigns a field ID to `clusteringProvider`, raising `delta.columnMapping.maxColumnId` to `100`. The domain configuration is:
+
+```json
+{"fileMetadataFieldIds": {"clusteringProvider": 100}}
+```
+
+and the `domainMetadata` action is:
+
+```json
+{
+  "domainMetadata": {
+    "domain": "delta.adaptiveMetadata",
+    "configuration": "{\"fileMetadataFieldIds\":{\"clusteringProvider\":100}}",
+    "removed": false
+  }
+}
+```
+
+An `add` with `"clusteringProvider": "z-order"` is stored in its `DATA` entry's `content_stats` as the string `"z-order"` in `lower_bound` (field ID 30001) of stats struct 30000.
 
 ## Snapshot ID Generation
 
@@ -602,6 +683,7 @@ When `adaptiveMetadata` is supported and active, readers must:
 - Read the root manifest at `contentRoot.path` and skip leaf-manifest entries marked in `manifest_info.dv` (see [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Reconstruct the current table state by applying the commits after `checkpointMetadata.version` on top of the tree, following [Action Reconciliation](#action-reconciliation).
 - Read any `sidecar` entries referenced by the checkpoint to obtain the complete set of transaction identifiers and domain metadata (see [Checkpoint Action](#checkpoint-action)).
+- Restore file metadata fields on `add` actions reconstructed from `DATA` entries (see [File Metadata Fields](#file-metadata-fields)).
 
 ## Writer Requirements for Adaptive Metadata
 
@@ -610,6 +692,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Maintain a two-level tree (root -> leaves) and not create nested manifest references.
 - Record a `backReference` for every file read from the tree, and use the accumulated backreferences to build MDVs and re-add entries when producing a manifest commit (see [Backreferences](#backreferences) and [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Populate manifest entries with partition values, content stats, deletion vectors, and tracking and sequence numbers (see [Content Entry Schema](#content-entry-schema) and [Row Tracking Compatibility](#row-tracking-compatibility)).
+- Store file metadata fields in content stats, and preserve stats structs for unrecognized field IDs when rewriting entries (see [File Metadata Fields](#file-metadata-fields)).
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
@@ -750,7 +833,7 @@ When `adaptiveMetadata` is added to `readerFeatures` and `writerFeatures`, the r
 
 ## Feature Removal
 
-When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current metadata tree state so that the table can be read without adaptiveMetadata support. Manifest files that are no longer referenced may be cleaned up.
+When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current metadata tree state so that the table can be read without adaptiveMetadata support. The `add` actions in that checkpoint must carry the values restored from [file metadata fields](#file-metadata-fields). Manifest files that are no longer referenced may be cleaned up.
 
 ## Compatibility Notes
 
