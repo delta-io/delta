@@ -102,15 +102,19 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
     }
   }
 
-  test("construction closes the Kernel commit when materialization fails") {
-    val failure = new IllegalStateException("Cannot read action batches")
-    val kernelCommit = new TestCommitActions(Seq.empty) {
-      override def getActions(): KernelCloseableIterator[KernelColumnarBatch] = throw failure
+  test("construction preserves unrelated failures and closes the Kernel commit") {
+    Seq(
+      new IllegalStateException("Cannot read action batches"),
+      new IllegalArgumentException("Invalid action batch")
+    ).foreach { failure =>
+      val kernelCommit = new TestCommitActions(Seq.empty) {
+        override def getActions(): KernelCloseableIterator[KernelColumnarBatch] = throw failure
+      }
+      val error = intercept[RuntimeException] {
+        DeltaV2SingleCommit(kernelCommit)
+      }
+      assert(error eq failure)
+      assert(kernelCommit.closed)
     }
-    val error = intercept[IllegalStateException] {
-      DeltaV2SingleCommit(kernelCommit)
-    }
-    assert(error eq failure)
-    assert(kernelCommit.closed)
   }
 }
