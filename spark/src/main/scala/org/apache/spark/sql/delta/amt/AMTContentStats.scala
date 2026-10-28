@@ -64,7 +64,7 @@ private[amt] object AMTContentStats {
    */
   private val LOWER_BOUND_ID_OFFSET: Long = 1L
   private val UPPER_BOUND_ID_OFFSET: Long = 2L
-  private val NULL_VALUE_COUNT_ID_OFFSET: Long = 5L
+  private val NULL_VALUE_COUNT_ID_OFFSET: Long = 4L
 
   /** Names of the per-column statistics, as defined by the Iceberg V4 spec. */
   private val LOWER_BOUND = "lower_bound"
@@ -210,7 +210,7 @@ private[amt] object AMTContentStats {
       val baseId = STATS_ID_START + STATS_IDS_PER_FIELD * leaf.fieldId
       // A leaf with no bounds gets only its null count; omitting the bound fields keeps them out
       // of the Parquet schema rather than persisting columns that are always null. Fields are
-      // ordered by ascending id (bounds 1-2, then null count 5).
+      // ordered by ascending id (bounds 1-2, then null count 4).
       val boundFields = leaf.boundType.toSeq.flatMap { boundType =>
         Seq(
           statField(LOWER_BOUND, boundType, baseId + LOWER_BOUND_ID_OFFSET),
