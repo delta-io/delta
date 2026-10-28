@@ -85,6 +85,15 @@ object AMTUsageLogs {
   val ALERT_UNEXPECTED_LEAF_TRACKING_STATUS =
     "amt.unexpectedLeafTrackingStatus"
 
+  // A leaf's manifest_info per status file counts do not sum to its record_count.
+  val ALERT_INCONSISTENT_MANIFEST_INFO_FILE_COUNTS = "amt.inconsistentManifestInfoFileCounts"
+
+  // An inline manifest commit's tree does not reconstruct the commit's own file actions.
+  val ALERT_COMMIT_RECONSTRUCTION_MISMATCH = "amt.commit.reconstructionMismatch"
+
+  // An inline manifest commit's CommitInfo carries no commit-level dataChange.
+  val ALERT_COMMIT_MISSING_DATA_CHANGE = "amt.commit.missingDataChange"
+
   // Alert raised when a base-preserving winning commit's Add/Remove file carries a new commit
   // sequence number (defaultRowCommitVersion newer than the losing full checkpoint's version)
   // yet a non-empty back reference into the base tree -- contradictory signals.
