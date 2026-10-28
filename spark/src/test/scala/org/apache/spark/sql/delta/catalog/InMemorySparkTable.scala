@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 
-import io.delta.spark.internal.v2.catalog.DeltaV2TableShims
+import org.apache.spark.sql.delta.v2.catalog.DeltaV2TableShims
 
 import org.apache.spark.sql.connector.catalog.{InMemoryRowLevelOperationTable, TableCapability}
 import org.apache.spark.sql.connector.expressions.Transform

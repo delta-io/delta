@@ -27,9 +27,17 @@ object AMTUsageLogs {
   val LAST_MANIFEST_COMMIT_READ_FROM_COMMIT_INFO =
     s"$PREFIX.lastManifestCommit.readFromCommitInfo"
 
+  /** Usage log emitted after an async CommitInfo read is fired and completed. */
+  val SNAPSHOT_DISCOVERY_READ_LAST_COMMIT_INFO_ASYNC =
+    s"$PREFIX.snapshotDiscovery.readLastCommitInfoAsync"
+
   /** Usage log emitted when an AMT provider reads the root manifest for its leaf pointers. */
   val CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION =
     s"$PREFIX.checkpointProvider.initializeFromCheckpointAction"
+
+  /** Usage log emitted after discovery reads and reconciles an AMT checkpoint provider. */
+  val SNAPSHOT_DISCOVERY_UPDATE_CHECKPOINT_PROVIDER =
+    s"$PREFIX.snapshotDiscovery.updateCheckpointProvider"
 
   /** Usage log emitted when a losing full AMT OPTIMIZE checkpoint is retried. */
   val CHECKPOINT_FULL_REGENERATE_RETRY = s"$PREFIX.checkpoint.fullRegenerateRetry"
@@ -76,6 +84,15 @@ object AMTUsageLogs {
   // A leaf entry has an unknown tracking status.
   val ALERT_UNEXPECTED_LEAF_TRACKING_STATUS =
     "amt.unexpectedLeafTrackingStatus"
+
+  // A leaf's manifest_info per status file counts do not sum to its record_count.
+  val ALERT_INCONSISTENT_MANIFEST_INFO_FILE_COUNTS = "amt.inconsistentManifestInfoFileCounts"
+
+  // An inline manifest commit's tree does not reconstruct the commit's own file actions.
+  val ALERT_COMMIT_RECONSTRUCTION_MISMATCH = "amt.commit.reconstructionMismatch"
+
+  // An inline manifest commit's CommitInfo carries no commit-level dataChange.
+  val ALERT_COMMIT_MISSING_DATA_CHANGE = "amt.commit.missingDataChange"
 
   // Alert raised when a base-preserving winning commit's Add/Remove file carries a new commit
   // sequence number (defaultRowCommitVersion newer than the losing full checkpoint's version)

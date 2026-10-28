@@ -27,13 +27,17 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, AMTCheckpointAction,
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 
@@ -124,6 +128,10 @@ trait AMTCheckpointTestBase
   /** The [[DeltaLog]] for a catalog-managed table accessed by name. */
   protected def deltaLogForName(tableName: String): DeltaLog =
     DeltaLog.forTable(spark, new TableIdentifier(tableName))
+
+  /** The catalog metadata for a table accessed by name. */
+  protected def catalogTableFor(tableName: String): CatalogTable =
+    spark.sessionState.catalog.getTableMetadata(new TableIdentifier(tableName))
 
   /** The physical data path of a catalog-managed table accessed by name. */
   protected def tablePath(tableName: String): String =
@@ -622,6 +630,19 @@ trait AMTCheckpointTestBase
    *    cardinality: a committed DV is stored `storageType="r"` (the relative path) while the AMT
    *    re-encodes the same vector as `"u"` (the base85 UUID), and both resolve to the same file.
    */
+  /**
+   * The parsed stats JSON with `tightBounds` dropped: AMT does not carry Delta's `tightBounds` into
+   * Iceberg's `tight_stats` yet (it writes `false`), so the flag does not survive a checkpoint.
+   */
+  private def withoutTightBounds(stats: String): JsonNode = {
+    val tree = JsonUtils.mapper.readTree(stats)
+    tree match {
+      case obj: ObjectNode => obj.remove(DeltaStatistics.TIGHT_BOUNDS)
+      case _ =>
+    }
+    tree
+  }
+
   private def canonicalAddFile(tableLocation: Path)(add: AddFile) =
     add.copy(
       modificationTime = 0L,
@@ -629,7 +650,7 @@ trait AMTCheckpointTestBase
       deletionVector = null,
       backReference = None,
       amtPassthrough = None) -> (
-        Option(add.stats).map(JsonUtils.mapper.readTree),
+        Option(add.stats).map(withoutTightBounds),
         Option(add.deletionVector).map { dv =>
           val physical =
             if (dv.storageType == "i") dv.uniqueFileId(tableLocation, useObjectIdentity = true)
@@ -711,16 +732,8 @@ trait AMTCheckpointTestBase
     metadataFiles(path, isRootFileName)
 
   /** Returns the actions committed at exactly `version`. */
-  protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] = {
-    // TODO: Restore this call once `CoordinatedCommitsUtils.commitFilesIterator` discovers
-    // unbackfilled manifest commits.
-    /*
+  protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] =
     deltaLog.getChanges(version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
-    */
-    val snapshot = deltaLog.update()
-    val path = DeltaCommitFileProvider(snapshot).deltaFile(version)
-    deltaLog.store.read(path, deltaLog.newDeltaHadoopConf()).map(Action.fromJson)
-  }
 
   /**
    * The live `AddFile` set reconstructed from the commit-log deltas alone (not the AMT tree). An

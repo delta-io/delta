@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, LogSegment, Snapshot, SnapshotDescriptor, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.fs.Path
@@ -31,6 +31,10 @@ import org.apache.hadoop.fs.Path
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
 object AMTUtils extends DeltaLogging {
+  /** Whether AMT is **supported** as per the protocol. */
+  def amtSupported(protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
    * `metadata`.
@@ -41,6 +45,11 @@ object AMTUtils extends DeltaLogging {
   /** Whether AMT writes are enabled for `snapshot`. */
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
     amtEnabled(snapshot.metadata, snapshot.protocol)
+
+  /** Whether a new table's `configuration` asks for AMT. */
+  def amtRequested(configuration: Map[String, String]): Boolean =
+    TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
+      configuration, AdaptiveMetadataTableFeature)
 
   /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
   def invariantCheckWithLogging(

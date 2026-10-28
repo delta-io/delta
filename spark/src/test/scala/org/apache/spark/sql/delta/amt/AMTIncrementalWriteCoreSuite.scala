@@ -53,6 +53,7 @@ class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
         intermediateLogCommits = Seq.empty,
         attemptVersion = attemptVersion,
         actionsToCommit = Seq(add),
+        snapshotId = 1L,
         trigger = "snapshot-bootstrap-test")
       val metric = result.amtWriteMetrics
 

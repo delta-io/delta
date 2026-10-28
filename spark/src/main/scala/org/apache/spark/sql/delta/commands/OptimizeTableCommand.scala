@@ -325,7 +325,8 @@ class OptimizeExecutor(
       val partitionsToCompact = filesToProcess
         .groupBy(_.normalizedPartitionValues(
           sparkSession,
-          snapshot.metadata.physicalPartitionSchema))
+          snapshot.metadata.physicalPartitionSchema,
+          snapshot))
         .map { case (_, files) => (files.head.partitionValues, files) }
         .toSeq
 

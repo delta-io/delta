@@ -52,6 +52,7 @@ object AMTWriteHelper extends DeltaLogging {
       commitVersion: Long,
       postCommitProtocol: Protocol,
       postCommitMetadata: Metadata,
+      snapshotId: Long,
       trigger: String): AMTWriteResult = {
     val deltaLog = readSnapshot.deltaLog
     val startNanos = System.nanoTime()
@@ -75,6 +76,7 @@ object AMTWriteHelper extends DeltaLogging {
       protocol = postCommitProtocol,
       entriesPerLeaf = entriesPerLeaf,
       contentTreeVersion = contentTreeVersion,
+      snapshotId = snapshotId,
       firstRowIdForNewLeaves = firstRowIdForNewLeaves)
     val materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos)
     buildResult(
@@ -173,6 +175,7 @@ object AMTWriteHelper extends DeltaLogging {
       protocol: Protocol,
       entriesPerLeaf: Int,
       contentTreeVersion: Long,
+      snapshotId: Long,
       firstRowIdForNewLeaves: Long): AMTClusteredWriteResult = {
     require(entriesPerLeaf > 0, "entriesPerLeaf must be positive.")
     val tableRoot = deltaLog.dataPath
@@ -182,6 +185,10 @@ object AMTWriteHelper extends DeltaLogging {
     val numFiles = readSnapshot.numOfFiles
     val desiredNumLeaves =
       math.max(1, math.ceil(numFiles.toDouble / entriesPerLeaf).toInt)
+    val newLeafTracking = NewLeafTracking(
+      contentTreeVersion = contentTreeVersion,
+      snapshotId = snapshotId,
+      firstRowId = firstRowIdForNewLeaves)
     val addFilesDf =
       readSnapshot.allFiles.toDF().repartition(desiredNumLeaves, col("path"))
 
@@ -194,8 +201,7 @@ object AMTWriteHelper extends DeltaLogging {
       metadata = metadata,
       protocol = protocol,
       desiredNumLeaves = desiredNumLeaves,
-      contentTreeVersion = contentTreeVersion,
-      firstRowIdForNewLeaves = firstRowIdForNewLeaves)
+      newLeafTracking = newLeafTracking)
     leafEntries match {
       case Seq(onlyLeaf) =>
         assert(onlyLeaf.manifest_info.tombstoneFilesCount == 0,
@@ -251,8 +257,7 @@ object AMTWriteHelper extends DeltaLogging {
       metadata: Metadata,
       protocol: Protocol,
       desiredNumLeaves: Int,
-      contentTreeVersion: Long,
-      firstRowIdForNewLeaves: Long): Seq[DataManifestEntry] = {
+      newLeafTracking: NewLeafTracking): Seq[DataManifestEntry] = {
     import org.apache.spark.sql.delta.implicits._
     val addFilesDs = addFilesDf.as[AddFile]
 
@@ -328,8 +333,7 @@ object AMTWriteHelper extends DeltaLogging {
             replacedFileAndRowCount = emptyFileRowCount,
             modifiedFileAndRowCount = emptyFileRowCount,
             minSequenceNumber = minSequenceNumber,
-            contentTreeVersion = contentTreeVersion,
-            firstRowId = firstRowIdForNewLeaves)
+            newLeafTracking = newLeafTracking)
           Iterator.single(DataManifestEntry(
             location = AMTUtils.relativizeLocation(
               tableRootSparkPath.toPath.toString, leafFile.toString),
@@ -365,6 +369,12 @@ object AMTWriteHelper extends DeltaLogging {
   private[amt] case class FileRowCount(fileCount: Int, rowCount: Long)
   private[amt] val emptyFileRowCount = FileRowCount(0, 0L)
 
+  /** Values assigned to the root pointer for a newly written leaf. */
+  private[amt] case class NewLeafTracking(
+      contentTreeVersion: Long,
+      snapshotId: Long,
+      firstRowId: Long)
+
   /**
    * Returns Delta's next unassigned row ID, which is the snapshot-level starting value for
    * assigning `first_row_id` to new data manifests. AMT currently materializes `first_row_id` on
@@ -384,13 +394,12 @@ object AMTWriteHelper extends DeltaLogging {
    */
   private[amt] def addedTrackingForLeaf(
       entries: Seq[DataEntry],
-      contentTreeVersion: Long,
-      firstRowId: Long): (Tracking, ManifestInfo) = {
+      newLeafTracking: NewLeafTracking): (Tracking, ManifestInfo) = {
     // Accumulate per-status file and row counts in a single pass. Plain Long accumulators avoid
     // allocating an intermediate object per entry.
     var addedFiles, existingFiles, deletedFiles, replacedFiles, modifiedFiles = 0
     var addedRows, existingRows, deletedRows, replacedRows, modifiedRows = 0L
-    var minSequenceNumber = contentTreeVersion
+    var minSequenceNumber = newLeafTracking.contentTreeVersion
     entries.foreach { entry =>
       val rows = entry.record_count
       require(entry.tracking.first_row_id.isDefined,
@@ -431,8 +440,7 @@ object AMTWriteHelper extends DeltaLogging {
       replacedFileAndRowCount = FileRowCount(replacedFiles, replacedRows),
       modifiedFileAndRowCount = FileRowCount(modifiedFiles, modifiedRows),
       minSequenceNumber = minSequenceNumber,
-      contentTreeVersion = contentTreeVersion,
-      firstRowId = firstRowId)
+      newLeafTracking = newLeafTracking)
   }
 
   /** Tracking + ManifestInfo for a freshly written leaf from its per-status file and row counts. */
@@ -443,12 +451,12 @@ object AMTWriteHelper extends DeltaLogging {
       replacedFileAndRowCount: FileRowCount,
       modifiedFileAndRowCount: FileRowCount,
       minSequenceNumber: Long,
-      contentTreeVersion: Long,
-      firstRowId: Long): (Tracking, ManifestInfo) = {
+      newLeafTracking: NewLeafTracking): (Tracking, ManifestInfo) = {
     val tracking = initializeTracking(Tracking.Status.Added).copy(
-      sequence_number = Some(contentTreeVersion),
-      file_sequence_number = Some(contentTreeVersion),
-      first_row_id = Some(firstRowId))
+      snapshot_id = Some(newLeafTracking.snapshotId),
+      sequence_number = Some(newLeafTracking.contentTreeVersion),
+      file_sequence_number = Some(newLeafTracking.contentTreeVersion),
+      first_row_id = Some(newLeafTracking.firstRowId))
     val manifestInfo = emptyManifestInfo.copy(
       added_files_count = addedFileAndRowCount.fileCount,
       existing_files_count = existingFileAndRowCount.fileCount,
@@ -470,9 +478,11 @@ object AMTWriteHelper extends DeltaLogging {
    * and per-commit CDF positions cleared, so the next AMT drops it.
    */
   private[amt] def deletedTrackingForCarriedLeaf(
-      oldEntry: DataManifestEntry): (Tracking, ManifestInfo) = {
+      oldEntry: DataManifestEntry,
+      snapshotId: Long): (Tracking, ManifestInfo) = {
     val newTracking = oldEntry.tracking.copy(
       status = Tracking.Status.Deleted,
+      snapshot_id = Some(snapshotId),
       // Clear the per-commit CDF positions: the leaf is being dropped, not changed this commit, so
       // it must not contribute any deleted/replaced rows to this commit's Change Data Feed.
       deleted_positions = None,
@@ -504,12 +514,15 @@ object AMTWriteHelper extends DeltaLogging {
       oldEntry: DataManifestEntry,
       mdvPositions: Seq[Int],
       deletedPositions: Seq[Int],
-      replacedPositions: Seq[Int]): (Tracking, ManifestInfo) = {
+      replacedPositions: Seq[Int],
+      snapshotId: Long): (Tracking, ManifestInfo) = {
     val mutableMdv = oldEntry.manifest_info.dv
       .map(AMTUtils.deserializeMdv).getOrElse(ManifestBitmap.fromPositions(Seq.empty))
       .toMutable
+    val oldMdvCardinality = oldEntry.manifest_info.dvCardinality
     mdvPositions.foreach(mutableMdv.add)
     val cumulativeMdv = mutableMdv.toManifestBitmap
+    val cumulativeMdvCardinality = cumulativeMdv.cardinality
     def bitmapOf(positions: Seq[Int]): Option[Array[Byte]] = {
       if (positions.isEmpty) None
       else Some(AMTUtils.serializeMdv(ManifestBitmap.fromPositions(positions)))
@@ -519,16 +532,27 @@ object AMTWriteHelper extends DeltaLogging {
     def assertWithinLeaf(count: Long, label: String): Unit =
       assert(count <= oldEntry.record_count,
         s"leaf ${oldEntry.location}: $label $count exceeds record_count ${oldEntry.record_count}.")
-    assertWithinLeaf(cumulativeMdv.cardinality, "MDV cardinality")
+    assertWithinLeaf(cumulativeMdvCardinality, "MDV cardinality")
     assertWithinLeaf(deletedPositions.size.toLong, "deleted_positions")
     assertWithinLeaf(replacedPositions.size.toLong, "replaced_positions")
+    assert(cumulativeMdvCardinality > oldMdvCardinality,
+      s"leaf ${oldEntry.location}: the cumulative MDV must grow beyond " +
+        s"$oldMdvCardinality, got $cumulativeMdvCardinality.")
     // A leaf whose every live entry is masked by the cumulative MDV holds no live file, so it
     // decays to DELETED rather than MODIFIED.
-    val noActiveFiles =
-      oldEntry.manifest_info.liveFilesCount.toLong - cumulativeMdv.cardinality <= 0
-    val status = if (noActiveFiles) Tracking.Status.Deleted else Tracking.Status.Modified
+    val activeFiles =
+      oldEntry.manifest_info.liveFilesCount.toLong - cumulativeMdvCardinality
+    assert(activeFiles >= 0,
+      s"leaf ${oldEntry.location}: cumulative MDV cardinality $cumulativeMdvCardinality exceeds " +
+        s"live file count ${oldEntry.manifest_info.liveFilesCount}.")
+    val status = if (activeFiles == 0) Tracking.Status.Deleted else Tracking.Status.Modified
     val newTracking = oldEntry.tracking.copy(
       status = status,
+      snapshot_id =
+        if (status == Tracking.Status.Deleted) Some(snapshotId)
+        else oldEntry.tracking.snapshot_id,
+      // The transaction materializing this manifest DV change owns modified_snapshot_id.
+      modified_snapshot_id = Some(snapshotId),
       deleted_positions = bitmapOf(deletedPositions),
       replaced_positions = bitmapOf(replacedPositions))
     // manifest_info file/row counts are immutable; only the MDV (`dv`) grows to mask the newly
@@ -551,15 +575,13 @@ object AMTWriteHelper extends DeltaLogging {
       metadata: Metadata,
       protocol: Protocol,
       entries: Seq[DataEntry],
-      contentTreeVersion: Long,
-      firstRowId: Long): DataManifestEntry = {
+      newLeafTracking: NewLeafTracking): DataManifestEntry = {
     val leafFile = FileNames.newAMTLeafManifestFile(metadataDir)
     writeAMTParquet(spark, hadoopConf, leafFile, metadata, protocol, entries.map(_.wrap))
     val fileStatus = fs.getFileStatus(leafFile)
     // A freshly written leaf is always ADDED -- even one holding only tombstones, whose
     // manifest_info still counts the DELETED / REPLACED entries and their rows.
-    val (tracking, manifestInfo) =
-      addedTrackingForLeaf(entries, contentTreeVersion, firstRowId)
+    val (tracking, manifestInfo) = addedTrackingForLeaf(entries, newLeafTracking)
     DataManifestEntry(
       location = AMTUtils.relativizeLocation(tableRoot.toString, leafFile.toString),
       file_format = AMTSingleAction.FileFormatParquet,

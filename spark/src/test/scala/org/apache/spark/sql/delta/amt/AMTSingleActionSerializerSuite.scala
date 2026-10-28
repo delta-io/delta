@@ -20,6 +20,7 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, InMemoryLogReplay}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
@@ -91,7 +92,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(spark.emptyDataset[AMTSingleAction].schema.fieldNames.toSeq == Seq(
       "content_type", "location", "file_format", "tracking",
       "deletion_vector", "spec_id", "partition", "sort_order_id", "record_count",
-      "file_size_in_bytes", "content_stats", "manifest_info", "key_metadata",
+      "file_size_in_bytes", "content_stats", "tight_stats", "manifest_info", "key_metadata",
       "split_offsets", "tags"))
   }
 
@@ -164,6 +165,42 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(entry.unwrap.asInstanceOf[DataEntry].toAddFile(tableRoot).path == deltaPath)
   }
 
+  test("DataManifestEntry JSON round-trip preserves long values") {
+    Seq(1L, Int.MaxValue.toLong + 1L).foreach { value =>
+      val leaf = DataManifestEntry(
+        location = "metadata/leaf-0.parquet",
+        file_format = AMTSingleAction.FileFormatParquet,
+        tracking = rootTracking.copy(
+          snapshot_id = Some(value),
+          modified_snapshot_id = Some(value),
+          sequence_number = Some(value),
+          file_sequence_number = Some(value),
+          first_row_id = Some(value)),
+        record_count = 42L,
+        file_size_in_bytes = 2048L,
+        manifest_info = sampleManifestInfo,
+        split_offsets = Some(Seq(0L, value)))
+      val restored = JsonUtils.fromJson[DataManifestEntry](JsonUtils.toJson(leaf))
+
+      // Extract Long values before comparing; generic equality accepts boxed Integers too.
+      Seq(
+        restored.tracking.snapshot_id,
+        restored.tracking.modified_snapshot_id,
+        restored.tracking.sequence_number,
+        restored.tracking.file_sequence_number,
+        restored.tracking.first_row_id).foreach { field =>
+        val actual: Long = field.get
+        assert(actual === value)
+      }
+      val splitOffsets = restored.split_offsets.get
+      assert(splitOffsets.size === 2)
+      val firstOffset: Long = splitOffsets.head
+      val secondOffset: Long = splitOffsets(1)
+      assert(firstOffset === 0L)
+      assert(secondOffset === value)
+    }
+  }
+
   test("DataManifestEntry wraps to a DATA_MANIFEST root entry") {
     val info = sampleManifestInfo
     val entry = DataManifestEntry(
@@ -201,6 +238,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     record_count = 1L,
     file_size_in_bytes = 1L,
     content_stats = None,
+    tight_stats = None,
     manifest_info = manifest_info,
     key_metadata = None,
     split_offsets = None,

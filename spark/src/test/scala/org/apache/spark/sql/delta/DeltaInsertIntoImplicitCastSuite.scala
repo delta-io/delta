@@ -267,7 +267,7 @@ trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
     withTable("target") {
       TestData("a int, b double", Seq("""{ "a": 1, "b": 2.0 }""")).toDF
         .write.format("delta").saveAsTable("target")
-      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "strict") {
+      withConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "strict") {
         TestData("a int, b int", Seq("""{ "a": 1, "b": 3 }""")).toDF
           .writeTo("target").overwrite(lit(true))
         checkAnswer(spark.table("target"),
@@ -338,8 +338,15 @@ trait DeltaInsertIntoImplicitCastStreamingWriteTests extends DeltaInsertIntoImpl
      // Dataframe INSERTs by name don't support implicit casting except for streaming
      // writes, no point in testing them.
      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
-     confs = Seq(DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
-       -> preserveNullSourceStructs.toString)
+     confs = Seq(
+       DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
+         -> preserveNullSourceStructs.toString,
+       // With null preservation disabled, both implicit-casting paths expand a null struct for a
+       // field-order-only mismatch. This narrow case does not justify extra casting complexity.
+       DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key
+         -> preserveNullSourceStructs.toString,
+       DeltaSQLConf.DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS.key
+         -> preserveNullSourceStructs.toString)
    )
  }
 

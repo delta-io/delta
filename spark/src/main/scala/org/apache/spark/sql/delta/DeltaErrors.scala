@@ -692,7 +692,7 @@ trait DeltaErrorsBase
 
   /**
    * Read-time CDF batch read rejected because the table resolved by the catalog is not a V2
-   * [[io.delta.spark.internal.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
+   * [[org.apache.spark.sql.delta.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
    * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
    * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`. Use
    * `AUTO`/`STRICT` mode so the catalog re-resolves V1 tables to the V2 connector for CHANGES.
@@ -3594,6 +3594,19 @@ trait DeltaErrorsBase
           }
         }
     )
+  }
+
+  def blockBatchCdfReadWithIncompatibleStartingCommitSchema(
+      start: Long,
+      incompatVersion: Long,
+      operation: Option[String]): Throwable = {
+    val (subClass, operationParameters) = operation.flatMap(Option(_)).filter(_.nonEmpty) match {
+      case Some(operationName) => ("KNOWN_OPERATION", Array(operationName))
+      case None => ("UNKNOWN_OPERATION", Array.empty[String])
+    }
+    new DeltaUnsupportedOperationException(
+      s"DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.$subClass",
+      messageParameters = Array(start.toString, incompatVersion.toString) ++ operationParameters)
   }
 
   def blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
