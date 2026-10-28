@@ -175,7 +175,7 @@ The `adaptiveMetadata` table feature is supported when:
 - The feature `adaptiveMetadata` exists in the table `protocol`'s `readerFeatures` and `writerFeatures`.
 
 Required table features that must also be enabled:
-- `columnMapping` (`name` or `id` mode): Stable column identification across schema evolution. Both modes assign a stable field ID (`delta.columnMapping.id`) to every schema field, which is all the metadata tree relies on. The mode only governs how columns are resolved inside data files; manifests are always written with Parquet `field_id` metadata and resolved by field ID, independent of the table's mode (see [Content Entry Schema](#content-entry-schema)).
+- `columnMapping` (`name` or `id` mode): Stable column identification across schema evolution. Both modes assign a stable field ID (`delta.columnMapping.id`) to every named field, which is all the metadata tree relies on. The mode only governs how columns are resolved inside data files; manifests are always written with Parquet `field_id` metadata and resolved by field ID, independent of the table's mode (see [Content Entry Schema](#content-entry-schema)).
 - `rowTracking`: Manifest entries natively carry row-tracking fields (`first_row_id`, `sequence_number`); see [Row Tracking Compatibility](#row-tracking-compatibility)
 - `domainMetadata`: Storing feature-specific metadata
 - `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
@@ -611,6 +611,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Record a `backReference` for every file read from the tree, and use the accumulated backreferences to build MDVs and re-add entries when producing a manifest commit (see [Backreferences](#backreferences) and [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Populate manifest entries with partition values, content stats, deletion vectors, and tracking and sequence numbers (see [Content Entry Schema](#content-entry-schema) and [Row Tracking Compatibility](#row-tracking-compatibility)).
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
+- Assign 32-bit integer field IDs to the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes; ID allocation is the same as in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2).
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
