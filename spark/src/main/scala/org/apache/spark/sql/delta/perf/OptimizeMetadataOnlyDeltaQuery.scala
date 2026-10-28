@@ -17,16 +17,17 @@
 package org.apache.spark.sql.delta.perf
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable, Snapshot}
-import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
+import org.apache.spark.sql.delta.stats.DeltaStatistics.TIGHT_BOUNDS
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
@@ -39,7 +40,19 @@ import java.util.Locale
  * ShortType, IntegerType, LongType, FloatType, DoubleType, DateType).
  * - All AddFiles in the Delta Log must have stats on columns used in MIN/MAX expressions,
  * or the columns must be partitioned, in the latter case it uses partitionValues, a required field.
- * - Table has no deletion vectors, or query has no MIN/MAX expressions.
+ * Files that contribute no rows to the table (no records at all, or a deletion vector that
+ * invalidates every record) are excluded, so that a partition value that no live row has cannot
+ * become the table-wide MIN/MAX.
+ * - For MIN/MAX, the per-column stat used must be trustworthy across the whole table. Per the
+ * Delta protocol, files with `stats.tightBounds = false` (only emitted by writers that add
+ * deletion vectors without recomputing stats) have wide bounds: their `stat_min` is a lower
+ * bound on the file's actual min and their `stat_max` is an upper bound on the file's actual
+ * max. The optimization can still apply when wide-bound files are present, provided the
+ * resulting table-wide value would have come from a tight-bound file. Concretely, for each
+ * column the rule checks that `min(stat_min over all files) IS NOT DISTINCT FROM
+ * min(stat_min over tight files only)` (and symmetric for MAX). When that holds, the wide
+ * files do not contribute to the table-wide bound, so the result is exact. MIN and MAX are
+ * evaluated independently per column.
  * - COUNT has no DISTINCT.
  * - Query has no filters.
  * - Query has no GROUP BY.
@@ -62,11 +75,18 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     val aggColumnsNames = Set(extractMinMaxFieldNames(plan).map(_.toLowerCase(Locale.ROOT)) : _*)
     val (rowCount, columnStats) = extractCountMinMaxFromDeltaLog(tahoeLogFileIndex, aggColumnsNames)
 
-    def checkStatsExists(attrRef: AttributeReference): Boolean = {
+    def checkMinStatsExists(attrRef: AttributeReference): Boolean = {
       columnStats.contains(attrRef.name) &&
+        columnStats(attrRef.name).min.isDefined &&
         // Avoid StructType, it is not supported by this optimization.
         // Sanity check only. If reference is nested column it would be GetStructType
         // instead of AttributeReference.
+        attrRef.references.size == 1 && attrRef.references.head.dataType != StructType
+    }
+
+    def checkMaxStatsExists(attrRef: AttributeReference): Boolean = {
+      columnStats.contains(attrRef.name) &&
+        columnStats(attrRef.name).max.isDefined &&
         attrRef.references.size == 1 && attrRef.references.head.dataType != StructType
     }
 
@@ -87,21 +107,21 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
         tps.copy(child = Literal(rowCount.get)).eval()
       case Alias(AggregateExpression(
       Min(minReference: AttributeReference), Complete, false, None, _), _)
-        if checkStatsExists(minReference) =>
-        convertValueIfRequired(minReference, columnStats(minReference.name).min)
+        if checkMinStatsExists(minReference) =>
+        convertValueIfRequired(minReference, columnStats(minReference.name).min.get)
       case Alias(tps@ToPrettyString(AggregateExpression(
       Min(minReference: AttributeReference), Complete, false, None, _), _), _)
-        if checkStatsExists(minReference) =>
-          val v = columnStats(minReference.name).min
+        if checkMinStatsExists(minReference) =>
+          val v = columnStats(minReference.name).min.get
           tps.copy(child = Literal(v)).eval()
       case Alias(AggregateExpression(
       Max(maxReference: AttributeReference), Complete, false, None, _), _)
-        if checkStatsExists(maxReference) =>
-        convertValueIfRequired(maxReference, columnStats(maxReference.name).max)
+        if checkMaxStatsExists(maxReference) =>
+        convertValueIfRequired(maxReference, columnStats(maxReference.name).max.get)
       case Alias(tps@ToPrettyString(AggregateExpression(
       Max(maxReference: AttributeReference), Complete, false, None, _), _), _)
-        if checkStatsExists(maxReference) =>
-          val v = columnStats(maxReference.name).max
+        if checkMaxStatsExists(maxReference) =>
+          val v = columnStats(maxReference.name).max.get
           tps.copy(child = Literal(v)).eval()
     }
 
@@ -134,9 +154,12 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
   }
 
   /**
-   * Min and max values from Delta Log stats or partitionValues.
-  */
-  case class DeltaColumnStat(min: Any, max: Any)
+   * Min and max values from Delta Log stats or partitionValues. Each side is `None` when the
+   * corresponding aggregate cannot be answered from metadata for that column (e.g. some file
+   * has stat bounds wide enough to potentially set the table-wide min/max). `Some(value)`
+   * carries the computed bound; `value` may be `null` when the column is all-null.
+   */
+  case class DeltaColumnStat(min: Option[Any], max: Option[Any])
 
   private def extractCountMinMaxFromStats(
       deltaScanGenerator: DeltaScanGenerator,
@@ -148,6 +171,22 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     val numLogicalRecords = (col("stats.numRecords") - dvCardinality).as("numLogicalRecords")
 
     val filesWithStatsForScan = deltaScanGenerator.filesWithStatsForScan(Nil)
+
+    // The `tightBounds` field is only present in the parsed stats schema when the table was
+    // written with deletion-vector support. When the field is absent, the protocol mandates
+    // that every file be treated as having tight bounds.
+    val hasTightBoundsField = filesWithStatsForScan.schema("stats").dataType match {
+      case s: StructType => s.fieldNames.contains(TIGHT_BOUNDS)
+      case _ => false
+    }
+    // Per-file `tight_bounds` flag projection. NULL or absent `tightBounds` is treated as
+    // tight per the Delta protocol; only an explicit `false` marks the file as wide.
+    val tightBoundsCol = if (hasTightBoundsField) {
+      coalesce(col(s"stats.$TIGHT_BOUNDS"), lit(true))
+    } else {
+      lit(true)
+    }
+
     // Validate all the files has stats
     val filesStatsCount = filesWithStatsForScan.select(
       sum(numLogicalRecords).as("numLogicalRecords"),
@@ -177,7 +216,6 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
 
     if (dataColumns.isEmpty
       || dataColumns.size != lowerCaseColumnNames.size
-      || !isTableDVFree(snapshot) // When DV enabled we can't rely on stats values easily
       || numFiles == 0
       || !statsMinMaxNullColumns.columns.contains(minColName)
       || !statsMinMaxNullColumns.columns.contains(maxColName)
@@ -206,28 +244,43 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       Seq(col(s"stats.$minColName.`$physicalName`").cast(dataType).as(s"min.$physicalName"),
         col(s"stats.$maxColName.`$physicalName`").cast(dataType).as(s"max.$physicalName"),
         col(s"stats.$nullColName.`$physicalName`").as(s"null_count.$physicalName"))
-    } ++ Seq(col(s"stats.numRecords").as(s"numRecords"))
+    } ++ Seq(
+      col(s"stats.numRecords").as(s"numRecords"),
+      tightBoundsCol.as("tight_bounds"))
 
     val minMaxExpr = dataColumnsWithStats.flatMap { columnAndPhysicalName =>
       val physicalName = columnAndPhysicalName._2
 
-      // To validate if the column has stats we do two validation:
+      // To validate if the column has stats for one direction (MIN or MAX) we do two
+      // validations followed by a tight-bounds check:
       // 1-) COUNT(null_count.columnName) should be equals to numFiles,
       // since null_count is always non-null.
-      // 2-) The number of files with non-null min/max:
-      // a. count(min.columnName)|count(max.columnName) +
+      // 2-) For MIN, the number of files with non-null min:
+      // a. count(min.columnName) +
       // the number of files where all rows are NULL:
       // b. count of (ISNULL(min.columnName) and null_count.columnName == numRecords)
-      // should be equals to numFiles
+      // should be equals to numFiles. Symmetric check for MAX.
+      // 3-) Tight-bounds check. Wide-bound files have stat_min <= actual min and
+      // stat_max >= actual max, so the table-wide MIN/MAX over all files' stats might be
+      // looser than the true table-wide MIN/MAX. We can still trust the value when it
+      // equals the same aggregate computed over only tight files: that proves the wide
+      // files cannot push the bound, so the answer is exact. Null-safe `<=>` handles
+      // empty / all-null cases (both sides NULL means the column is all-null overall).
       Seq(
         s"""case when $numFiles = count(`null_count.$physicalName`)
             | AND $numFiles = (count(`min.$physicalName`) + sum(case when
             |  ISNULL(`min.$physicalName`) and `null_count.$physicalName` = numRecords
             |   then 1 else 0 end))
+            | AND min(`min.$physicalName`) <=>
+            |   min(case when `tight_bounds` then `min.$physicalName` end)
+            | then TRUE else FALSE end as `min_complete_$physicalName`""".stripMargin,
+        s"""case when $numFiles = count(`null_count.$physicalName`)
             | AND $numFiles = (count(`max.$physicalName`) + sum(case when
             |  ISNULL(`max.$physicalName`) AND `null_count.$physicalName` = numRecords
             |   then 1 else 0 end))
-            | then TRUE else FALSE end as `complete_$physicalName`""".stripMargin,
+            | AND max(`max.$physicalName`) <=>
+            |   max(case when `tight_bounds` then `max.$physicalName` end)
+            | then TRUE else FALSE end as `max_complete_$physicalName`""".stripMargin,
         s"min(`min.$physicalName`) as `min_$physicalName`",
         s"max(`max.$physicalName`) as `max_$physicalName`")
     }
@@ -235,20 +288,29 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     val statsResults = files.select(columnsToQuery: _*).selectExpr(minMaxExpr: _*).head
 
     (Some(numRecords), dataColumnsWithStats
-      .filter(x => statsResults.getAs[Boolean](s"complete_${x._2}"))
-      .map { columnAndPhysicalName =>
+      .flatMap { columnAndPhysicalName =>
         val column = columnAndPhysicalName._1
         val physicalName = columnAndPhysicalName._2
-        column.name ->
-          DeltaColumnStat(
-            statsResults.getAs(s"min_$physicalName"),
-            statsResults.getAs(s"max_$physicalName"))
+        val minComplete = statsResults.getAs[Boolean](s"min_complete_$physicalName")
+        val maxComplete = statsResults.getAs[Boolean](s"max_complete_$physicalName")
+        if (!minComplete && !maxComplete) {
+          None
+        } else {
+          // Use explicit Some(...) to preserve all-null state. Option(...) would
+          // wrongly turn an all-null optimizable column into None.
+          val minValue =
+            if (minComplete) Some(statsResults.getAs[Any](s"min_$physicalName")) else None
+          val maxValue =
+            if (maxComplete) Some(statsResults.getAs[Any](s"max_$physicalName")) else None
+          Some(column.name -> DeltaColumnStat(minValue, maxValue))
+        }
       }.toMap)
   }
 
   private def extractMinMaxFromPartitionValue(
-      snapshot: Snapshot,
+      deltaScanGenerator: DeltaScanGenerator,
       lowerCaseColumnNames: Set[String]): Map[String, DeltaColumnStat] = {
+    val snapshot = deltaScanGenerator.snapshotToScan
 
     val partitionedColumns = snapshot.metadata.partitionSchema
       .filter(col => lowerCaseColumnNames.contains(col.name.toLowerCase(Locale.ROOT)))
@@ -270,7 +332,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
           max(s"`$physicalName`").as(s"max_$physicalName"))
       }
 
-      val partitionedColumnsQuery = snapshot.allFiles
+      val partitionedColumnsQuery = filesWithLogicalRecords(deltaScanGenerator)
         .select(partitionedColumnsValues: _*)
         .agg(partitionedColumnsAgg.head, partitionedColumnsAgg.tail: _*)
         .head()
@@ -280,10 +342,33 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
 
         partitionedColumn._1.name ->
           DeltaColumnStat(
-            partitionedColumnsQuery.getAs(s"min_$physicalName"),
-            partitionedColumnsQuery.getAs(s"max_$physicalName"))
+            // Partition values are exact (no wide-bounds notion applies), so both
+            // directions are always optimizable.
+            Some(partitionedColumnsQuery.getAs[Any](s"min_$physicalName")),
+            Some(partitionedColumnsQuery.getAs[Any](s"max_$physicalName")))
       }.toMap
     }
+  }
+
+  /**
+   * Files that are known to contribute at least one row to the table.
+   *
+   * A partition value must only be considered when the file actually contributes data, otherwise
+   * MIN/MAX over a partition column can return a value that no live row has. Two kinds of files
+   * contribute nothing: files with no records at all (e.g. the empty `AddFile`s that DELETE can
+   * produce) and files whose deletion vector invalidates every record.
+   *
+   * Files whose `numRecords` is unknown are conservatively kept, which cannot hide a deletion
+   * vector: the protocol requires that "when adding a logical file with a deletion vector, then
+   * that logical file must have correct `numRecords` information for the data file in the `stats`
+   * field", so a file with an unknown record count has no deletion vector.
+   */
+  private def filesWithLogicalRecords(deltaScanGenerator: DeltaScanGenerator): DataFrame = {
+    val dvCardinality = coalesce(col("deletionVector.cardinality"), lit(0))
+    val numLogicalRecords = col("stats.numRecords") - dvCardinality
+    deltaScanGenerator
+      .filesWithStatsForScan(Nil)
+      .where(numLogicalRecords.isNull || numLogicalRecords > 0)
   }
 
   /**
@@ -299,7 +384,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     val deltaScanGen = getDeltaScanGenerator(tahoeLogFileIndex)
 
     val partitionedValues = extractMinMaxFromPartitionValue(
-      deltaScanGen.snapshotToScan,
+      deltaScanGen,
       lowerCaseColumnNames)
 
     val partitionedColNames = partitionedValues.keySet.map(_.toLowerCase(Locale.ROOT))
