@@ -1071,10 +1071,11 @@ object Snapshot extends DeltaLogging {
     // AddFile-generation logic cannot handle back references (yet): it writes allFiles into the CRC
     // without them. Only leaf-resident files carry a back reference, so a root-only tree yields a
     // back-reference-free list that matches state reconstruction.
-    if (AMTUtils.amtEnabled(snapshot)) {
-      val rootOnly =
-        effectiveLatestAMTCheckpointAtCommitVersion.exists(_.contentRoot.numLeaves.contains(0L))
-      if (!rootOnly) return false
+    // The tree is checked even when the read snapshot is not AMT because the commit that upgrades
+    // the table to AMT can land a leaf bearing tree.
+    if ((AMTUtils.amtEnabled(snapshot) || effectiveLatestAMTCheckpointAtCommitVersion.isDefined) &&
+        !AMTUtils.isRootOnlyCheckpoint(effectiveLatestAMTCheckpointAtCommitVersion)) {
+      return false
     }
     allFilesInCrcWritePathEnabled(spark, snapshot) &&
       (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
