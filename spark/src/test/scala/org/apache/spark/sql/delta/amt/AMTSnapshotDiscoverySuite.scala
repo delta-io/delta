@@ -49,7 +49,7 @@ class AMTSnapshotDiscoverySuite
       assert(snapshot.logSegment.deltaAtCheckpointVersionOpt.isDefined)
       // Reuse the real checkpoint and remove only the required commit-file reference.
       val incompleteSegment = snapshot.logSegment.copy(deltaAtCheckpointVersionOpt = None)
-      val error = intercept[IllegalStateException] {
+      val error = intercept[AssertionError] {
         new Snapshot(
           path = snapshot.path,
           version = snapshot.version,
@@ -58,7 +58,7 @@ class AMTSnapshotDiscoverySuite
           checksumOpt = snapshot.checksumOpt
         )
       }
-      assert(error.getMessage.startsWith(
+      assert(error.getMessage.contains(
         "An AMT-enabled snapshot must define deltaAtCheckpointVersionOpt, got None."))
     }
   }

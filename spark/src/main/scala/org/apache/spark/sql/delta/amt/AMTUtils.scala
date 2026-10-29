@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, LogSegment, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, Snapshot, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.fs.Path
 
 /**
@@ -66,16 +69,55 @@ object AMTUtils extends DeltaLogging {
       deltaLog: DeltaLog = null,
       data: Map[String, Any] = Map.empty): Unit = {
     if (!checkInvariant) {
-      val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(10).mkString("\n\t")
-      deltaAssertAndThrow(
-        check = false,
-        name = opTypeSuffix,
-        msg = message,
-        throwable = new DeltaIllegalStateException(
-          errorClass = "INTERNAL_ERROR",
-          messageParameters = Array(message)),
+      failWithLogging(
+        opTypeSuffix = opTypeSuffix,
+        message = message,
         deltaLog = deltaLog,
-        data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+        data = data)
+    }
+  }
+
+  /** Logs and throws an [[IllegalStateException]] with the given message. */
+  def failWithLogging(
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Nothing = {
+    val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(30).mkString("\n\t")
+    deltaAssertAndThrow(
+      check = false,
+      name = opTypeSuffix,
+      msg = message,
+      throwable = new DeltaIllegalStateException(
+        errorClass = "INTERNAL_ERROR",
+        messageParameters = Array(message)),
+      deltaLog = deltaLog,
+      data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+    throw new IllegalStateException("should not reach here")
+  }
+
+  /**
+   * Runs invariant checks, logging unexpected non-fatal exceptions in production and propagating
+   * them in tests.
+   */
+  def runInvariantsSafely(
+      checkName: String,
+      deltaLog: Option[DeltaLog],
+      logPath: Path)(checkInvariant: => Unit): Unit = {
+    try {
+      checkInvariant
+    } catch {
+      case NonFatal(e) if !DeltaUtils.isTesting =>
+        recordDeltaEvent(
+          provider = deltaLog.orNull,
+          opType = AMTUsageLogs.EXCEPTIONS_THROWN_DUE_TO_LOGGING,
+          data = Map(
+            "check" -> checkName,
+            "exceptionClass" -> e.getClass.getName,
+            "exception" -> e.getMessage,
+            "stackTrace" -> e.getStackTrace.take(30).mkString("\n\t")),
+          path = Option(logPath)
+        )
     }
   }
 
@@ -198,18 +240,4 @@ object AMTUtils extends DeltaLogging {
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
     ManifestBitmap.fromSerializedByteArray(bytes)
-
-  /** Logs and throws when non-compacted deltas are absent in the log segment. */
-  def logAndThrowMissingNonCompactedDeltasInLogSegment(
-      deltaLog: DeltaLog,
-      logSegment: LogSegment,
-      eventData: Map[String, Any] = Map.empty): Unit = {
-    invariantCheckWithLogging(
-      checkInvariant = false,
-      opTypeSuffix = AMTUsageLogs.ALERT_MISSING_NON_COMPACTED_DELTAS,
-      message = s"nonCompactedDeltas are absent in an AMT log segment:\n${logSegment.toString}",
-      deltaLog = deltaLog,
-      data = Map("logSegmentVersion" -> logSegment.version) ++ eventData
-    )
-  }
 }

@@ -108,14 +108,13 @@ case class CheckpointInstance(
       deltaLog: DeltaLog,
       filesForCheckpointConstruction: Seq[FileStatus],
       lastCheckpointInfoHint: Option[LastCheckpointInfo] = None)
-      : UninitializedCheckpointProvider = {
+    : UninitializedCheckpointProvider = {
     val logPath = deltaLog.logPath
     val lastCheckpointInfo = lastCheckpointInfoHint.filter(cm => CheckpointInstance(cm) == this)
     val cpFiles = filterFiles(deltaLog, filesForCheckpointConstruction)
     format match {
       case CheckpointInstance.Format.AMT =>
-        val lastAMTCheckpointInfo =
-          lastCheckpointInfo.flatMap(_.amtCheckpoint).getOrElse {
+        val lastAMTCheckpointInfo = lastCheckpointInfo.flatMap(_.amtCheckpoint).getOrElse {
           throw new IllegalStateException(
             s"AMT checkpoint instance at version $version requires a LastCheckpointInfo with " +
               s"an amtCheckpoint, but none was provided.")
@@ -511,6 +510,14 @@ trait Checkpoints extends DeltaLogging {
         None
     }
 
+    val eventData: Map[String, Any] = Map(
+      "initialLogSegmentVersion" -> initSegment.version,
+      "initialCheckpointVersion" -> initSegment.checkpointProvider.version,
+      "initialCheckpointProviderType" -> initSegment.checkpointProvider.getClass.getSimpleName,
+      "hasLastManifestCommit" -> lastManifestCommitOpt.isDefined,
+      "lastManifestCommitVersion" -> lastManifestCommitOpt.map(_.version),
+      "lastManifestCommitContentRootVersion" -> lastManifestCommitOpt.map(_.contentRootVersion))
+
     (initSegment.checkpointProvider, lastManifestCommitOpt) match {
       case (amtCheckpointProvider: AMTCheckpointProvider, lastManifestCommitOpt) if
           amtCheckpointProvider.manifestCommitVersion > initSegment.version =>
@@ -558,18 +565,28 @@ trait Checkpoints extends DeltaLogging {
         } else {
           // amtCheckpointProvider.version > lastManifestCommit.contentRootVersion
           // This can only happen in the exemption case above.
-          throw new IllegalStateException(
-            s"AMT checkpoint mismatch for table $logPath: the AMT checkpoint provider is at " +
-              s"version ${amtCheckpointProvider.version}, but the checksum's lastManifestCommit " +
-              s"describes content root version ${lastManifestCommit.contentRootVersion}.")
+          AMTUtils.failWithLogging(
+            opTypeSuffix = AMTUsageLogs.CHECKPOINT_AHEAD_OF_LAST_MANIFEST_COMMIT_CONTENT_ROOT,
+            message = s"AMT checkpoint mismatch for table $logPath: " +
+              s"the AMT checkpoint provider is at version ${amtCheckpointProvider.version}, " +
+              s"but the lastManifestCommit describes a smaller content root version " +
+              s"${lastManifestCommit.contentRootVersion}.",
+            deltaLog = this,
+            data = eventData ++ Map(
+              "checkpointManifestCommitVersion" -> amtCheckpointProvider.manifestCommitVersion)
+          )
         }
 
       case (amtCheckpointProvider: AMTCheckpointProvider, None) =>
-        throw new IllegalStateException(
-          s"An AMT checkpoint provider at version ${amtCheckpointProvider.version} was " +
+        AMTUtils.failWithLogging(
+          opTypeSuffix = AMTUsageLogs.MISSING_LAST_MANIFEST_COMMIT,
+          message = s"An AMT checkpoint provider at version ${amtCheckpointProvider.version} was " +
             s"discovered for table $logPath, but no lastManifestCommit is available from either " +
-            s"the CRC or the latest commit's CommitInfo to corroborate it. Refusing to trust the " +
-            s"AMT checkpoint.")
+            s"the CRC or the latest commit's CommitInfo to verify it.",
+          deltaLog = this,
+          data = eventData ++ Map(
+            "checkpointManifestCommitVersion" -> amtCheckpointProvider.manifestCommitVersion)
+        )
 
       case (otherCheckpointProvider, Some(lastManifestCommit)) =>
         // Treat the lastManifestCommit as the source of truth for the AMT checkpoint provider,
@@ -582,10 +599,10 @@ trait Checkpoints extends DeltaLogging {
           // claims that there is some AMT content root available describing an earlier version.
           // This might happen across upgrade/downgrade code paths. Throw until we support them.
           throw new IllegalStateException(
-            s"The LastManifestCommit of version ${initSegment.version} carries a content root " +
-              s"version ${lastManifestCommit.contentRootVersion} that is ahead of the initial " +
-              s"non-AMT checkpoint version ${otherCheckpointProvider.version}. Refusing to " +
-              s"trust the checkpoint.")
+            s"The LastManifestCommit of version ${lastManifestCommit.version} carries a " +
+              s"content root version ${lastManifestCommit.contentRootVersion} that is before " +
+              s"the initial non-AMT checkpoint version ${otherCheckpointProvider.version}. " +
+              "Refusing to trust the checkpoint.")
         }
 
       // A non-AMT / empty provider with no lastManifestCommit: nothing to reconcile.
@@ -683,9 +700,17 @@ trait Checkpoints extends DeltaLogging {
       return logSegment.copy(checkpointProvider = newCheckpointProvider)
     }
 
+    val eventData: Map[String, Any] = Map(
+      "initialLogSegmentVersion" -> logSegment.version,
+      "initialCheckpointVersion" -> logSegment.checkpointProvider.version,
+      "newCheckpointVersion" -> newCheckpointProvider.version,
+      "newCheckpointManifestCommitVersion" -> newCheckpointProvider.manifestCommitVersion)
     val nonCompactedDeltas = logSegment.nonCompactedDeltasOpt.getOrElse {
-      throw new IllegalStateException(
-        s"The AMT log segment at version ${logSegment.version} has no non-compacted deltas.")
+      AMTUtils.failWithLogging(
+        opTypeSuffix = AMTUsageLogs.TRIMMING_MISSING_NON_COMPACTED_DELTAS,
+        message = s"nonCompactedDeltas are absent in an AMT log segment: $logSegment",
+        deltaLog = this,
+        data = eventData)
     }
     val deltasAndCompactedDeltas = (logSegment.deltas ++ nonCompactedDeltas)
       .distinct.sortBy(f => f.getPath.getName)
@@ -701,7 +726,7 @@ trait Checkpoints extends DeltaLogging {
     if (deltaAtCheckpointVersionOpt.isEmpty) {
       throw new IllegalStateException(
         s"The trimmed AMT log segment has no delta at the new checkpoint version " +
-          s"${newCheckpointProvider.version}.\nOld log segment: ${logSegment}")
+          s"${newCheckpointProvider.version}. Old log segment: ${logSegment.toString}")
     }
     logSegment.copy(
       deltas = trimmedDeltasAndCompactedDeltas,
@@ -722,10 +747,18 @@ trait Checkpoints extends DeltaLogging {
         .map(Action.fromJson)
         .collectFirst { case cp: Checkpoint => cp }
         .getOrElse {
-          throw new IllegalStateException(
-            s"The lastManifestCommit names manifest commit version $manifestCommitVersion as the " +
-              s"source of content root version $contentRootVersion, but that commit carries no " +
-              s"Checkpoint action.")
+          AMTUtils.failWithLogging(
+            opTypeSuffix = AMTUsageLogs.MISSING_CHECKPOINT_ACTION,
+            message = "The lastManifestCommit names manifest commit version " +
+              s"$manifestCommitVersion as the source of content root version " +
+              s"$contentRootVersion, but that commit carries no Checkpoint action.",
+            deltaLog = this,
+            data = Map(
+              "maxVersionInclusive" -> deltaCommitFileProvider.maxVersionInclusive,
+              "commitFilePath" -> commitFile.toString,
+              "manifestCommitVersion" -> manifestCommitVersion,
+              "contentRootVersion" -> contentRootVersion)
+          )
         }
     } finally {
       actions.close()
