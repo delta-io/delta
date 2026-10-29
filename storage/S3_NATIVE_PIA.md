@@ -1,12 +1,17 @@
 # Native S3 put-if-absent LogStore
 
-`io.delta.storage.S3LogStore` is an opt-in native conditional writer for filesystem-based Delta commits.
+Delta Spark automatically selects `io.delta.storage.S3LogStore` for filesystem-based commits on S3 when the filesystem advertises the required native-write capabilities.
 It uses Hadoop S3A for credentials, endpoints, encryption, uploads, and request retries.
-It does not change the default S3 LogStore or Delta's OCC configuration.
+Delta's OCC configuration and the default providers used by other engines are unchanged.
 
 ## Configuration and assumptions
 
-Select the store for every S3 scheme used by the application, for example:
+No LogStore override is needed for supported S3A filesystems.
+Automatic selection applies to `s3`, `s3a`, and `s3n` paths and uses the operation's Hadoop configuration.
+Instances are cached by scheme and selected implementation, while the capability decision is evaluated for each operation.
+An explicit `spark.delta.logStore.class` or `spark.delta.logStore.<scheme>.impl` override always takes precedence without a filesystem capability probe.
+The existing aliases without the `spark.` prefix are also honored.
+For example, an explicit native selection remains supported and fails rather than falling back if the filesystem cannot perform native writes:
 
 ```text
 spark.delta.logStore.s3a.impl=io.delta.storage.S3LogStore
@@ -14,12 +19,17 @@ spark.delta.logStore.s3a.impl=io.delta.storage.S3LogStore
 
 The native LogStore requires Hadoop S3A 3.4.2 or later with conditional creation enabled, user metadata, metadata reads, immediate publication on close, and abortable streams.
 Select matching Hadoop/S3A runtime dependencies; they are supplied by the application, not bundled with Delta storage.
-Unsupported filesystems and capabilities fail explicitly.
+During automatic selection, filesystems without the required capabilities retain the legacy `S3SingleDriverLogStore` with a warning that it cannot coordinate concurrent drivers.
+This is a compatibility fallback, not the recommended configuration.
+Use a supported S3A runtime and keep `fs.s3a.create.conditional.enabled` enabled, including any bucket-specific override.
+S3A enables this option by default; it configures the connector, not AWS S3's support for conditional writes.
+Explicit legacy selection is still respected, but should not be used for concurrent drivers.
+Capability-probe errors propagate rather than causing a fallback, and a native write failure never retries through the legacy writer.
 Magic output streams are unsupported because they defer publication until a later job commit.
 AWS general-purpose S3 buckets are the intended production target; the local tests do not qualify S3 Express or other S3-compatible services.
 
 All concurrent writers must use a compatible atomic publication protocol.
-Do not overlap these writers with legacy `S3SingleDriverLogStore` writers or assume an existing DynamoDB writer deployment can be mixed without a migration protocol.
+Do not overlap these writers with legacy `S3SingleDriverLogStore` writers.
 An unconditional writer can overwrite a conditionally created object.
 Destination keys must remain immutable during reconciliation, including protection from external deletion and replacement.
 These assumptions apply to non-overwrite writes; overwrite calls retain the existing S3 behavior.
@@ -102,7 +112,7 @@ Run the relevant suites from the repository root:
 
 ```sh
 build/sbt 'storage/test'
-build/sbt 'spark/testOnly org.apache.spark.sql.delta.NativeS3CommitSuite org.apache.spark.sql.delta.IdempotentCommitRetrySuite org.apache.spark.sql.delta.DelegatingLogStoreSuite org.apache.spark.sql.delta.LogStoreProviderSuite org.apache.spark.sql.delta.*LogStoreSuite'
+build/sbt 'spark/testOnly org.apache.spark.sql.delta.CapabilityBasedLogStoreSuite org.apache.spark.sql.delta.NativeS3CommitSuite org.apache.spark.sql.delta.IdempotentCommitRetrySuite org.apache.spark.sql.delta.DelegatingLogStoreSuite org.apache.spark.sql.delta.LogStoreProviderSuite org.apache.spark.sql.delta.*LogStoreSuite'
 build/sbt 'storageS3DynamoDB/test' 'spark/Test/scalastyle'
 ```
 
@@ -113,7 +123,7 @@ Fresh correctness review identified an interrupt-restoration defect; regression 
 Legacy compatibility smoke checks exercised external Java callers and subclasses on Hadoop 2.7.3 and 3.3.4, including callers compiled against the original class hierarchy.
 These local checks used selected older Hadoop jars with some newer support dependencies and do not qualify complete historical runtime distributions.
 
-Verified locally on 2026-10-07 with OpenJDK 17, Hadoop S3A 3.4.2, AWS SDK 2.29.52, and the repository's default Spark 4.2.0 test lane:
+The original explicit-selection implementation was verified locally on 2026-10-07 with OpenJDK 17, Hadoop S3A 3.4.2, AWS SDK 2.29.52, and the repository's default Spark 4.2.0 test lane:
 
 | Check | Result |
 | --- | --- |
@@ -128,5 +138,11 @@ The same Spark lost-acknowledgement test failed against that fixture and passed 
 No live AWS bucket was used.
 Independent correctness review found no blocking issues in the implementation.
 
-Before making this store the default, qualify real AWS PUT and multipart failure behavior, supported Hadoop distributions and endpoints, homogeneous writer rollout, unknown-outcome diagnostics, and cleanup.
+Automatic selection was verified locally on 2026-10-27: 155 storage tests, 154 Spark selection/commit/LogStore tests, and 36 existing external-store regression tests passed.
+The Spark test Scala style check reported zero errors and warnings.
+The new selection suite includes 40 cases covering override precedence, operation and active-session configurations, capability decisions across buckets, and probe-client cleanup.
+Isolated checks also verified legacy selection without `hadoop-aws` and with Hadoop 2.7.3, while broken dependencies propagate instead of silently selecting legacy writes.
+The automatic-selection change has not been rerun against live AWS.
+
+Release qualification includes real AWS PUT and multipart failure behavior, supported Hadoop distributions and endpoints, homogeneous writer rollout, unknown-outcome diagnostics, and cleanup.
 Whole-upload replay, persistent restart identity, and generalized OCC recovery for unknown outcomes are follow-up work.

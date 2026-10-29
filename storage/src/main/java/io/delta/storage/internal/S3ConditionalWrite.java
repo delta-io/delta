@@ -25,6 +25,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.UUID;
 
+import io.delta.storage.S3LogStore;
 import org.apache.hadoop.fs.Abortable;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -34,7 +35,6 @@ import org.apache.hadoop.fs.StreamCapabilities;
 import org.apache.hadoop.fs.s3a.AWSServiceIOException;
 import org.apache.hadoop.fs.s3a.Constants;
 import org.apache.hadoop.fs.s3a.RemoteFileChangedException;
-import org.apache.hadoop.fs.s3a.S3AFileSystem;
 import org.apache.hadoop.fs.s3a.commit.CommitConstants;
 
 import static org.apache.hadoop.fs.Options.CreateFileOptionKeys
@@ -49,9 +49,7 @@ public final class S3ConditionalWrite {
     private S3ConditionalWrite() {}
 
     public static void write(FileSystem fs, Path path, Iterator<String> actions) throws IOException {
-        if (!(fs instanceof S3AFileSystem)
-                || !fs.hasPathCapability(path, FS_OPTION_CREATE_CONDITIONAL_OVERWRITE)
-                || !fs.hasPathCapability(path, Constants.FS_S3A_CREATE_HEADER)) {
+        if (!S3LogStore.isSupported(fs, path)) {
             throw new UnsupportedOperationException(
                 "Native S3 LogStore requires S3A conditional creation and user metadata: " + path);
         }
