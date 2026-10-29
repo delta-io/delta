@@ -64,6 +64,9 @@ A list of columns to encrypt, with master key IDs.
 Formatted as: `<masterKeyId>:<columnName>;<masterKeyId>:<columnName>,<columnName>`.
 A semi-colon (`;`) separates key entries and a comma (`,`) separates columns sharing the same master key.
 
+Column names use the same syntax as `delta.dataSkippingStatsColumns`: nested fields are separated by `.`,
+and a name that contains `.`, backticks or other special characters is enclosed in backticks, with a backtick inside a name doubled.
+
 If this is empty or unspecified and a footer key is specified, uniform encryption is used, where all columns are encrypted with the footer key.
 
 Column names can be dot-separated to specify encryption of nested columns, using the [field path](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#field-path) scheme.
