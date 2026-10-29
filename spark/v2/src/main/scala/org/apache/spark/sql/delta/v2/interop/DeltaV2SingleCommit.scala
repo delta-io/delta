@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 import io.delta.kernel.{CommitActions => KernelCommitActions}
+import io.delta.kernel.internal.util.Utils
 
 /**
  * Kernel-backed [[DeltaSingleCommit]].
@@ -36,7 +37,7 @@ private[interop] class DeltaV2SingleCommit(
     val actions = KernelActionUtils.readActions(singleKernelCommit).processAndClose(_.toVector)
     (version, timestamp, actions)
   } finally {
-    singleKernelCommit.close()
+    Utils.closeCloseables(singleKernelCommit)
   }
 
   override val version: Long = commitVersion
