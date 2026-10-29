@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, LastManifestCommit}
+import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.commons.io.IOUtils
@@ -27,10 +28,13 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.metric.SQLMetrics
+import org.apache.spark.util.ThreadUtils
 
 class AMTSnapshotDiscoverySuite
   extends AMTCheckpointTestBase
-  with DeltaMinorCompactionTestUtils {
+  with DeltaMinorCompactionTestUtils
+  with PhaseLockingTestMixin
+  with TransactionExecutionTestMixin {
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED.key, "true")
@@ -1076,6 +1080,109 @@ class AMTSnapshotDiscoverySuite
         assert(provider.leaves == winningProvider.leaves)
         assert(postCommitSnapshot.logSegment.deltas.map(FileNames.deltaVersion) == Seq(3L, 4L))
       }
+    }
+  }
+
+  test("[post-commit] non-fast-path discovers the first AMT from a concurrent commit") {
+    // The main transaction has no AMT in its read snapshot and commits without conflict, so its
+    // post-commit provider stays empty. A separate DeltaLog publishes the first full AMT before
+    // the main transaction's post-commit update. A queued snapshot-lock waiter forces re-listing.
+    val name = "amt_post_commit_slow_path_first_amt"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = Int.MaxValue)
+      val deltaLog = deltaLogForName(name)
+      sql(s"INSERT INTO $name VALUES (0)") // v1: INSERT (0), no AMT yet
+      val readSnapshot = deltaLog.update()
+      assert(readSnapshot.version == 1)
+      assert(amtProvider(readSnapshot).isEmpty)
+      assert(readSnapshot.lastManifestCommitOpt.isEmpty)
+
+      // Obtain a different DeltaLog handle for the concurrent transaction.
+      DeltaLog.clearCache()
+      val concurrentDeltaLog = deltaLogForName(name)
+      assert(concurrentDeltaLog ne deltaLog)
+
+      val snapshotLockWaiter = new Thread(() => {
+        try {
+          deltaLog.withSnapshotLockInterruptibly(())
+        } catch {
+          case _: InterruptedException => ()
+        }
+      }, "amt-post-commit-snapshot-lock-waiter")
+      snapshotLockWaiter.setDaemon(true)
+
+      var postCommitSnapshotOpt = Option.empty[Snapshot]
+
+      try {
+        val Seq(commitFuture) = runFunctionsWithOrderingFromObserver(Seq(() => {
+          // Hold the lock while paused so the waiter stays queued when updateAfterCommit takes
+          // the lock reentrantly.
+          deltaLog.withSnapshotLockInterruptibly {
+            val txn = deltaLog.startTransaction(Some(catalogTableFor(name)), Some(readSnapshot))
+            val addFiles = txn.writeFiles(spark.range(1).selectExpr("CAST(1 AS INT) AS id"))
+            assert(txn.commit(addFiles, DeltaOperations.ManualUpdate) == 2)
+            assert(txn.readVersion == 1)
+            assert(txn.preCommitLogSegment.version == 1)
+            postCommitSnapshotOpt = Some(txn.getCommitted.get.postCommitSnapshot)
+          }
+          Array.empty[Row]
+        })) {
+          case observer :: Nil =>
+            // Time  Main transaction                         Concurrent writer
+            // ----  ---------------------------------------  ----------------------------------
+            // T0    Reads v1, with no AMT
+            // T1    Commits v2; pauses before post-commit
+            // T2                                             Full AMT at v3, covering v2
+            // T3                                             Plain append at v4
+            // T4    Snapshot-lock waiter queues
+            // T5    Post-commit re-lists v4; adopts AMT at v3
+            unblockUntilPreCommit(observer)
+            waitForPreCommitComplete(observer)
+            unblockBackfill(observer)
+            waitForBackfillComplete(observer)
+
+            assert(concurrentDeltaLog.update().version == 2)
+            assert(checkpointAt(concurrentDeltaLog, 2).isEmpty)
+            commitCheckpoint(concurrentDeltaLog, incremental = false)
+            assert(concurrentDeltaLog.update().version == 3)
+            assert(checkpointAt(concurrentDeltaLog, 3).isDefined)
+
+            // The latest commit carries lastManifestCommit but no checkpoint action itself.
+            sql(s"INSERT INTO $name VALUES (2)")
+            assert(concurrentDeltaLog.update().version == 4)
+            assert(checkpointAt(concurrentDeltaLog, 4).isEmpty)
+            assert(deltaLog.unsafeVolatileSnapshot eq readSnapshot)
+
+            snapshotLockWaiter.start()
+            // This thread only acquires the snapshot lock, so WAITING means it is queued.
+            busyWaitFor(snapshotLockWaiter.getState == Thread.State.WAITING, timeout)
+            unblockPostCommit(observer)
+            waitForCommit(observer)
+        }
+        ThreadUtils.awaitResult(commitFuture, timeout)
+      } finally {
+        snapshotLockWaiter.interrupt()
+        snapshotLockWaiter.join(timeout.toMillis)
+        assert(!snapshotLockWaiter.isAlive, "The snapshot-lock waiter must terminate.")
+      }
+
+      val postCommitSnapshot = postCommitSnapshotOpt.getOrElse(
+        fail("The main transaction must capture its post-commit snapshot."))
+
+      // Fast-path construction would stop at v2; only re-listing can pick up v4 and its AMT.
+      assert(postCommitSnapshot.version == 4)
+      assert(postCommitSnapshot.logSegment.version == 4)
+      val provider = amtProvider(postCommitSnapshot).getOrElse(
+        fail("The slow-path post-commit snapshot must discover the concurrent AMT."))
+      assert(provider.version == 2)
+      assert(provider.manifestCommitVersion == 3)
+      assert(provider.checkpointAction == checkpointAt(concurrentDeltaLog, 3L).get)
+      val expectedDeltas = Seq(3L, 4L)
+      assert(postCommitSnapshot.logSegment.deltas.map(FileNames.deltaVersion) == expectedDeltas)
+      assert(postCommitSnapshot.logSegment.nonCompactedDeltasOpt
+        .map(_.map(FileNames.deltaVersion)).contains(expectedDeltas))
+      val expectedLastManifestCommit = LastManifestCommit(version = 3, contentRootVersion = 2)
+      assert(postCommitSnapshot.lastManifestCommitOpt.contains(expectedLastManifestCommit))
     }
   }
 
