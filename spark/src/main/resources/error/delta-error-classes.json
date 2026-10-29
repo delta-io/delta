@@ -1877,6 +1877,12 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_INCOMPATIBLE_TABLE_FEATURES" : {
+    "message" : [
+      "Table '<tableName>' cannot support both '<feature1>' and '<feature2>' at the same time."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_INCONSISTENT_LOGSTORE_CONFS" : {
     "message" : [
       "(<setKeys>) cannot be set to different values. Please only set one of them, or set them to the same value."

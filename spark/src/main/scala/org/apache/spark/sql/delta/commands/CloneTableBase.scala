@@ -419,6 +419,16 @@ abstract class CloneTableBase(
       metadata.configuration ++
         validatedConfigurationsWithoutCoordinatedCommits ++
         finalCatalogOwnedMetadata)
+    // An AMT source makes a new target AMT only through the protocol, which the defaults applied
+    // while creating its metadata (e.g. the catalog-owned QoL features) do not see. Request AMT in
+    // the configuration too, so that they skip the features AMT is incompatible with. An existing
+    // target gets none of those defaults.
+    if (!tableExists(targetSnapshot) &&
+        sourceTable.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+      metadata = metadata.copy(configuration = metadata.configuration +
+        (TableFeatureProtocolUtils.propertyKey(AdaptiveMetadataTableFeature) ->
+          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
+    }
 
     verifyMetadataInvariants(targetSnapshot, metadata)
     metadata
