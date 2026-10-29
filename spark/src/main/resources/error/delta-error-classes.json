@@ -1879,7 +1879,7 @@
   },
   "DELTA_INCOMPATIBLE_TABLE_FEATURES" : {
     "message" : [
-      "Table '<tableName>' cannot support both '<feature1>' and '<feature2>' at the same time."
+      "Table '<tableName>' cannot support both '<feature1>' and '<feature2>' because they are incompatible."
     ],
     "sqlState" : "0AKDC"
   },
