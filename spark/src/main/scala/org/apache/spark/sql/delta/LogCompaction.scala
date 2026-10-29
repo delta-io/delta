@@ -19,14 +19,16 @@ package org.apache.spark.sql.delta
 import java.nio.file.FileAlreadyExistsException
 
 import org.apache.spark.sql.delta.actions.{Action, FileAction, InMemoryLogReplay}
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
-import org.apache.spark.sql.delta.util.FileNames.{CompactedDeltaFile, DeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.DeltaFile
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Utilities for creating log compaction files. A log compaction file aggregates the actions
@@ -63,7 +65,8 @@ object LogCompaction extends DeltaLogging {
    *
    * The individual commit files in the range are read using the path resolution of the provided
    * `snapshot`, so this works for both regular tables and coordinated-commits / catalog-managed
-   * tables (where recent commits may live under `_delta_log/_staged_commits`).
+   * tables (where recent commits may live under `_delta_log/_staged_commits`). Before writing,
+   * commits are backfilled so that the compaction only covers published versions.
    *
    * This is a no-op if a compaction file for the exact `[startVersion, endVersion]` range already
    * exists (idempotent): the common case is short-circuited by an existence check that avoids
@@ -82,15 +85,21 @@ object LogCompaction extends DeltaLogging {
    * @param snapshot A snapshot at or after `endVersion`, used to resolve commit file paths.
    * @param startVersion The start version of the compaction range (inclusive).
    * @param endVersion The end version of the compaction range (inclusive).
+   * @param catalogTableOpt Catalog metadata used to backfill catalog-managed commits.
    */
   def compact(
       deltaLog: DeltaLog,
       snapshot: Snapshot,
       startVersion: Long,
-      endVersion: Long): Unit = {
+      endVersion: Long,
+      catalogTableOpt: Option[CatalogTable] = None): Unit = {
+    require(startVersion >= 0, s"startVersion ($startVersion) must be non-negative")
     require(
       endVersion > startVersion,
       s"endVersion ($endVersion) must be greater than startVersion ($startVersion)")
+    require(
+      endVersion <= snapshot.version,
+      s"endVersion ($endVersion) must not exceed the snapshot version (${snapshot.version})")
 
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val compactedFilePath =
@@ -122,7 +131,7 @@ object LogCompaction extends DeltaLogging {
     // driver memory, so skip compaction when the combined size of the window's commit files
     // exceeds the configured threshold. The commits remain available as individual delta files and
     // are subsumed by the next checkpoint; readers transparently fall back to them.
-    val windowSizeBytes = windowCommitSizeBytes(snapshot, startVersion, endVersion)
+    val windowSizeBytes = windowCommitSizeBytes(deltaLog, snapshot, startVersion, endVersion)
     val maxWindowSizeBytes =
       SparkSession.active.conf.get(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_MAX_WINDOW_SIZE)
     if (maxWindowSizeBytes > 0 && windowSizeBytes > maxWindowSizeBytes) {
@@ -142,6 +151,8 @@ object LogCompaction extends DeltaLogging {
       return
     }
 
+    snapshot.ensureCommitFilesBackfilled(catalogTableOpt)
+
     val fileProvider = DeltaCommitFileProvider(snapshot)
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
@@ -149,6 +160,8 @@ object LogCompaction extends DeltaLogging {
       tableRoot = deltaLog.dataPath,
       useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
         snapshot.metadata, snapshot.protocol, SparkSession.active),
+      // Later actions may omit the back reference that invalidates an earlier AMT leaf entry.
+      retainFirstBackreference = AMTUtils.amtEnabled(snapshot),
       // A compaction file incrementally replaces its commit range, so (unlike a checkpoint) it
       // must retain `removed = true` DomainMetadata tombstones to suppress earlier adds.
       retainDomainMetadataTombstones = true)
@@ -217,26 +230,29 @@ object LogCompaction extends DeltaLogging {
 
   /**
    * Returns the combined size, in bytes, of the commit files for versions
-   * `[startVersion, endVersion]` as seen by `snapshot`'s log segment. Used to bound the driver
-   * memory consumed by reconciling the window. The sizes come from the already-listed
-   * [[org.apache.hadoop.fs.FileStatus]] entries, so this adds no extra file-system calls.
-   *
-   * Best-effort: this assumes `snapshot.logSegment` covers `[startVersion, endVersion]`, which
-   * holds on the post-commit-hook path (the window is always entirely after the checkpoint and is
-   * represented by individual commit files in the segment). If called directly with a snapshot
-   * whose segment does not cover the range, in-range entries may be missing and the result will
-   * under-count (possibly `0`) - so the size guard fails open (compaction proceeds) rather than
-   * ever wrongly tripping.
+   * `[startVersion, endVersion]`. Reuses the snapshot's listed non-compacted files where possible.
+   * Missing entries (for example, before the snapshot's checkpoint) are statted individually:
+   * compacted file sizes cannot bound the raw commits that the writer actually replays.
    */
   private def windowCommitSizeBytes(
+      deltaLog: DeltaLog,
       snapshot: Snapshot,
       startVersion: Long,
       endVersion: Long): Long = {
-    snapshot.logSegment.deltas.iterator.collect {
+    val segment = snapshot.logSegment
+    val commitFiles = segment.deltaAtCheckpointVersionOpt.toSeq ++
+      segment.nonCompactedDeltasOpt.getOrElse(segment.deltas)
+    val knownSizes = commitFiles.iterator.collect {
       case DeltaFile(fileStatus, version) if version >= startVersion && version <= endVersion =>
-        fileStatus.getLen
-      case CompactedDeltaFile(fileStatus, lo, hi) if lo >= startVersion && hi <= endVersion =>
-        fileStatus.getLen
+        version -> fileStatus.getLen
+    }.toMap
+    lazy val hadoopConf = deltaLog.newDeltaHadoopConf()
+    lazy val fileProvider = DeltaCommitFileProvider(snapshot)
+    (startVersion to endVersion).iterator.map { version =>
+      knownSizes.getOrElse(version, {
+        val file = fileProvider.deltaFile(version)
+        file.getFileSystem(hadoopConf).getFileStatus(file).getLen
+      })
     }.sum
   }
 
@@ -251,7 +267,8 @@ object LogCompaction extends DeltaLogging {
  *
  * @param startVersion The (inclusive) start version of the compaction range.
  * @param endVersion The (inclusive) end version of the compaction range.
- * @param status `completed` if a file was written, `skipped` if it already existed.
+ * @param status `completed` if a file was written, `skipped` if it already existed or the window
+ *               exceeded the size limit.
  * @param durationMs Wall-clock time spent in `compact`, in milliseconds.
  * @param skipReason When `status == skipped`, why it was skipped (see `SKIP_REASON_*`).
  * @param numCommitsCompacted Number of commit files reconciled into the compaction file.

@@ -82,4 +82,62 @@ class LogCompactionWithCatalogOwnedSuite extends QueryTest
       }
     }
   }
+
+  test("direct compaction backfills only after the window passes the size guard") {
+    withSQLConf(
+      DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_WRITES.key -> "false",
+      DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "100") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        (0L to 3L).foreach { v =>
+          spark.range(v, v + 1).write.format("delta").mode("append").save(path)
+        }
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val snapshot = deltaLog.update()
+        val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        val endCommitPath = FileNames.unsafeDeltaFile(deltaLog.logPath, 3)
+        val compactedPath = FileNames.compactedDeltaFile(deltaLog.logPath, 1, 3)
+        assert(!fs.exists(endCommitPath), "the last commit should still be staged")
+
+        withSQLConf(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_MAX_WINDOW_SIZE.key -> "1") {
+          LogCompaction.compact(deltaLog, snapshot, startVersion = 1, endVersion = 3)
+        }
+        assert(!fs.exists(endCommitPath), "a skipped compaction should not force backfill")
+        assert(!fs.exists(compactedPath))
+
+        LogCompaction.compact(deltaLog, snapshot, startVersion = 1, endVersion = 3)
+        assert(fs.exists(compactedPath))
+        (1L to 3L).foreach { version =>
+          assert(fs.exists(FileNames.unsafeDeltaFile(deltaLog.logPath, version)),
+            s"compaction must publish version $version before writing")
+        }
+      }
+    }
+  }
+
+  test("compaction files do not bypass catalog-managed cleanup permissions") {
+    withSQLConf(
+      DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_WRITES.key -> "true",
+      DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "100") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        (0L to 5L).foreach { v =>
+          spark.range(v, v + 1).write.format("delta").mode("append").save(path)
+        }
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val snapshot = deltaLog.update()
+        val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        val compactedPath = FileNames.compactedDeltaFile(deltaLog.logPath, 1, 5)
+        assert(fs.exists(compactedPath))
+
+        checkError(
+          intercept[DeltaUnsupportedOperationException] {
+            deltaLog.cleanUpExpiredLogs(snapshot)
+          },
+          "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+          parameters = Map("operation" -> "METADATA_CLEANUP"))
+        assert(fs.exists(compactedPath))
+      }
+    }
+  }
 }

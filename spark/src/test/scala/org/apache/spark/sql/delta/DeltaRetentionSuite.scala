@@ -369,7 +369,9 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("log compaction files are cleaned up based on their start version") {
+  test(
+      "log compaction files are cleaned up based on their start version",
+      CatalogManagedMaintenanceIncompatible) {
     withTempDir { tempDir =>
       val clock = new ManualClock(getStartTimeForRetentionTest)
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)

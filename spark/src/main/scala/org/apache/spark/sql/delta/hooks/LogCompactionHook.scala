@@ -74,15 +74,7 @@ object LogCompactionHook extends PostCommitHook {
     // Need at least two commits in the range to produce a useful compaction.
     if (endVersion <= startVersion) return
 
-    // Per the protocol, a log compaction file may only be produced for versions already published
-    // (backfilled) in `_delta_log` (i.e. `_delta_log/<v>.json` must exist for every `v` in the
-    // range). On coordinated-commits / catalog-managed tables recent commits may still be staged
-    // under `_delta_log/_staged_commits`, so we synchronously backfill them first - the same way
-    // checkpoint writing ensures published commits (see `Snapshot.ensureCommitFilesBackfilled`,
-    // invoked from `Checkpoints.writeCheckpointFiles`). This is a no-op on filesystem-based tables
-    // (no commit coordinator).
-    txn.postCommitSnapshot.ensureCommitFilesBackfilled(txn.catalogTable)
-
-    LogCompaction.compact(txn.deltaLog, txn.postCommitSnapshot, startVersion, endVersion)
+    LogCompaction.compact(
+      txn.deltaLog, txn.postCommitSnapshot, startVersion, endVersion, txn.catalogTable)
   }
 }

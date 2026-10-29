@@ -445,4 +445,61 @@ class LogCompactionSuite extends QueryTest
       }
     }
   }
+
+  for (checkpoint <- Seq(false, true)) {
+    test(s"size guard measures raw commits with a checkpointed snapshot: $checkpoint") {
+      withSQLConf(
+        DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_WRITES.key -> "false",
+        DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "100") {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          val deltaLog = commitUpToVersion(path, 5)
+          if (checkpoint) {
+            deltaLog.checkpoint()
+          } else {
+            LogCompaction.compact(deltaLog, deltaLog.update(), startVersion = 1, endVersion = 5)
+          }
+
+          DeltaLog.clearCache()
+          val reloadedLog = DeltaLog.forTable(spark, path)
+          val snapshot = reloadedLog.update()
+          if (checkpoint) {
+            assert(snapshot.logSegment.checkpointProvider.version === 5L)
+          } else {
+            assert(snapshot.logSegment.deltas.exists(FileNames.isCompactedDeltaFile))
+          }
+          val fs = reloadedLog.logPath.getFileSystem(reloadedLog.newDeltaHadoopConf())
+          val windowSize = (1L to 4L).map { version =>
+            fs.getFileStatus(FileNames.unsafeDeltaFile(reloadedLog.logPath, version)).getLen
+          }.sum
+          val compactedPath = FileNames.compactedDeltaFile(reloadedLog.logPath, 1, 4)
+
+          val skippedLogs = withSQLConf(
+            DeltaSQLConf.DELTALOG_MINOR_COMPACTION_MAX_WINDOW_SIZE.key ->
+              (windowSize - 1).toString) {
+            DeltaTestUtils.collectUsageLogs("delta.logCompaction.stats") {
+              LogCompaction.compact(reloadedLog, snapshot, startVersion = 1, endVersion = 4)
+            }
+          }
+          assert(!fs.exists(compactedPath))
+          assert(skippedLogs.size === 1)
+          val skipped = JsonUtils.mapper.readValue[LogCompactionMetrics](skippedLogs.head.blob)
+          assert(skipped.skipReason === Some(LogCompaction.SKIP_REASON_WINDOW_TOO_LARGE))
+          assert(skipped.windowSizeBytes === windowSize)
+
+          val completedLogs = withSQLConf(
+            DeltaSQLConf.DELTALOG_MINOR_COMPACTION_MAX_WINDOW_SIZE.key -> windowSize.toString) {
+            DeltaTestUtils.collectUsageLogs("delta.logCompaction.stats") {
+              LogCompaction.compact(reloadedLog, snapshot, startVersion = 1, endVersion = 4)
+            }
+          }
+          assert(fs.exists(compactedPath))
+          assert(completedLogs.size === 1)
+          val completed = JsonUtils.mapper.readValue[LogCompactionMetrics](completedLogs.head.blob)
+          assert(completed.status === LogCompaction.STATUS_COMPLETED)
+          assert(completed.windowSizeBytes === windowSize)
+        }
+      }
+    }
+  }
 }

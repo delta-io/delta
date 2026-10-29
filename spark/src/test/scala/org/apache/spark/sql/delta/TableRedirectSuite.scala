@@ -40,8 +40,8 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.text.StringEscapeUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{QueryTest, SaveMode, SparkSession}
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.{QueryTest, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
