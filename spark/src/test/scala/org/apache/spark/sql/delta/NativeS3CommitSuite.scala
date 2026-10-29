@@ -33,7 +33,6 @@ import io.delta.storage.integration.S3NativeTestFixture
 import io.delta.storage.integration.S3NativeTestFixture._
 import org.apache.hadoop.fs.s3a.S3AFileSystem
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ThreadUtils
@@ -46,10 +45,6 @@ class NativeS3CommitSuite
 
   private val nativeLogStoreClass = "io.delta.storage.S3LogStore"
   private val tableKey = "table"
-
-  override protected def sparkConf: SparkConf = {
-    super.sparkConf.set(LogStore.logStoreSchemeConfKey("s3a"), nativeLogStoreClass)
-  }
 
   private def commitKey(version: Long): String =
     s"$tableKey/_delta_log/${f"$version%020d"}.json"
@@ -95,12 +90,16 @@ class NativeS3CommitSuite
         assert(fs.isInstanceOf[S3AFileSystem])
         val options = conf.iterator().asScala.map(e => e.getKey -> e.getValue).toMap
         val log = DeltaLog.forTable(spark, tablePath, options)
-        val delegate = log.store.asInstanceOf[DelegatingLogStore].getDelegate(log.logPath)
-        assert(delegate.asInstanceOf[LogStoreAdaptor].logStoreImpl.getClass.getName ==
-          nativeLogStoreClass)
+        assert(!spark.sparkContext.getConf.contains(LogStore.logStoreSchemeConfKey("s3a")))
         val metadata = Metadata(configuration = Map(
           DeltaConfigs.CHECKPOINT_INTERVAL.key -> checkpointInterval.toString))
         assert(log.startTransaction().commit(Seq(metadata), ManualUpdate) == 0)
+        val delegate = log.store.asInstanceOf[DelegatingLogStore]
+          .getDelegate(log.logPath, log.newDeltaHadoopConf())
+        assert(delegate.asInstanceOf[LogStoreAdaptor].logStoreImpl.getClass.getName ==
+          nativeLogStoreClass, "capable S3 filesystems must select native writes by default")
+        assert(fixture.requests.filter(r => r.operation == Put && r.key == commitKey(0))
+          .forall(_.conditional), "the initial commit must be published conditionally")
         f(fixture, log)
         assert(fixture.handlerErrors.isEmpty, fixture.handlerErrors.mkString("\n"))
         assert(fixture.pendingUploads == 0, "multipart uploads must not leak")

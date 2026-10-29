@@ -28,6 +28,8 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.MDC
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.util.Utils
 
 
 /**
@@ -39,10 +41,9 @@ class DelegatingLogStore(hadoopConf: Configuration)
 
   private val sparkConf = SparkEnv.get.conf
 
-  // Map scheme to the corresponding LogStore resolved and created. Accesses to this map need
-  // synchronization This could be accessed by multiple threads because it is shared through
-  // shared DeltaLog instances.
-  private val schemeToLogStoreMap = mutable.Map.empty[String, LogStore]
+  // Cache instances, not the capability decision: the same scheme can resolve to filesystems
+  // with different capabilities. Access is synchronized because DeltaLog instances are shared.
+  private val logStoreMap = mutable.Map.empty[(String, String), LogStore]
 
   private lazy val defaultLogStore = createLogStore(DelegatingLogStore.defaultHDFSLogStoreClassName)
 
@@ -51,67 +52,91 @@ class DelegatingLogStore(hadoopConf: Configuration)
     LogStore.createLogStoreWithClassName(className, sparkConf, hadoopConf)
   }
 
-  // Create LogStore based on the scheme of `path`.
-  private def schemeBasedLogStore(path: Path): LogStore = {
-    val store = Option(path.toUri.getScheme) match {
+  private def getHadoopConfiguration: Configuration = {
+    // Match LogStoreAdaptor's configuration-less operations, including active-session overrides.
+    // scalastyle:off deltahadoopconfiguration
+    SparkSession.getActiveSession.map(_.sessionState.newHadoopConf()).getOrElse(hadoopConf)
+    // scalastyle:on deltahadoopconfiguration
+  }
+
+  private def supportsNativeS3(path: Path, conf: Configuration): Boolean = {
+    val fs = path.getFileSystem(conf)
+    Utils.tryWithSafeFinally {
+      io.delta.storage.S3LogStore.isSupported(fs, path)
+    } {
+      // A cache-disabled lookup creates a client owned by this probe. The selected LogStore
+      // resolves its own filesystem, so do not leak this client or close Hadoop's shared client.
+      if (conf.getBoolean(s"fs.${path.toUri.getScheme}.impl.disable.cache", false)) {
+        fs.close()
+      }
+    }
+  }
+
+  def getDelegate(path: Path): LogStore = getDelegate(path, getHadoopConfiguration)
+
+  def getDelegate(path: Path, conf: Configuration): LogStore = {
+    Option(path.toUri.getScheme) match {
       case Some(origScheme) =>
         val scheme = origScheme.toLowerCase(Locale.ROOT)
-        this.synchronized {
-          if (schemeToLogStoreMap.contains(scheme)) {
-            schemeToLogStoreMap(scheme)
+        val configuredClass = LogStore.getLogStoreConfValue(
+          LogStore.logStoreSchemeConfKey(scheme), sparkConf)
+        // An explicit override wins without resolving or probing the filesystem.
+        val className = configuredClass.getOrElse {
+          if (DelegatingLogStore.s3Schemes.contains(scheme) && supportsNativeS3(path, conf)) {
+            DelegatingLogStore.nativeS3LogStoreClassName
           } else {
-            // Resolve LogStore class based on the following order:
-            // 1. Scheme conf if set.
-            // 2. Defaults for scheme if exists.
-            // 3. Default.
-            val logStoreClassNameOpt = LogStore.getLogStoreConfValue( // we look for all viable keys
-              LogStore.logStoreSchemeConfKey(scheme), sparkConf)
-              .orElse(DelegatingLogStore.getDefaultLogStoreClassName(scheme))
-            val logStore = logStoreClassNameOpt.map(createLogStore(_)).getOrElse(defaultLogStore)
-            schemeToLogStoreMap += scheme -> logStore
-
+            DelegatingLogStore.getDefaultLogStoreClassName(scheme)
+              .getOrElse(DelegatingLogStore.defaultHDFSLogStoreClassName)
+          }
+        }
+        this.synchronized {
+          logStoreMap.getOrElseUpdate((scheme, className), {
+            val logStore = createLogStore(className)
+            if (configuredClass.isEmpty && DelegatingLogStore.s3Schemes.contains(scheme) &&
+                className == DelegatingLogStore.defaultS3LogStoreClassName) {
+              logWarning(log"Native S3 conditional writes are unavailable for scheme " +
+                log"${MDC(DeltaLogKeys.FILE_SYSTEM_SCHEME, scheme)}; using " +
+                log"S3SingleDriverLogStore, which cannot coordinate concurrent drivers. " +
+                log"Use a supported Hadoop S3A filesystem with conditional creation enabled.")
+            }
             val actualLogStoreClassName = logStore match {
               case lsa: LogStoreAdaptor => s"LogStoreAdapter(${lsa.logStoreImpl.getClass.getName})"
               case _ => logStore.getClass.getName
             }
             logInfo(log"LogStore ${MDC(DeltaLogKeys.SYSTEM_CLASS_NAME, actualLogStoreClassName)} " +
               log"is used for scheme ${MDC(DeltaLogKeys.FILE_SYSTEM_SCHEME, scheme)}")
-
             logStore
-          }
+          })
         }
       case _ => defaultLogStore
     }
-    store
   }
-
-  def getDelegate(path: Path): LogStore = schemeBasedLogStore(path)
 
   //////////////////////////
   // Public API Overrides //
   //////////////////////////
 
   override def read(path: Path): Seq[String] = {
-    getDelegate(path).read(path)
+    read(path, getHadoopConfiguration)
   }
 
   override def read(path: Path, hadoopConf: Configuration): Seq[String] = {
-    getDelegate(path).read(path, hadoopConf)
+    getDelegate(path, hadoopConf).read(path, hadoopConf)
   }
 
   override def readAsIterator(path: Path): ClosableIterator[String] = {
-    getDelegate(path).readAsIterator(path)
+    readAsIterator(path, getHadoopConfiguration)
   }
 
   override def readAsIterator(path: Path, hadoopConf: Configuration): ClosableIterator[String] = {
-    getDelegate(path).readAsIterator(path, hadoopConf)
+    getDelegate(path, hadoopConf).readAsIterator(path, hadoopConf)
   }
 
   override def write(
       path: Path,
       actions: Iterator[String],
       overwrite: Boolean): Unit = {
-    getDelegate(path).write(path, actions, overwrite)
+    write(path, actions, overwrite, getHadoopConfiguration)
   }
 
   override def write(
@@ -119,20 +144,20 @@ class DelegatingLogStore(hadoopConf: Configuration)
       actions: Iterator[String],
       overwrite: Boolean,
       hadoopConf: Configuration): Unit = {
-    getDelegate(path).write(path, actions, overwrite, hadoopConf)
+    getDelegate(path, hadoopConf).write(path, actions, overwrite, hadoopConf)
   }
 
   override def listFrom(path: Path): Iterator[FileStatus] = {
-    getDelegate(path).listFrom(path)
+    listFrom(path, getHadoopConfiguration)
   }
 
   override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
-    getDelegate(path).listFrom(path, hadoopConf)
+    getDelegate(path, hadoopConf).listFrom(path, hadoopConf)
   }
 
   override def invalidateCache(): Unit = {
     this.synchronized {
-      schemeToLogStoreMap.foreach { entry =>
+      logStoreMap.foreach { entry =>
         entry._2.invalidateCache()
       }
     }
@@ -140,19 +165,19 @@ class DelegatingLogStore(hadoopConf: Configuration)
   }
 
   override def resolvePathOnPhysicalStorage(path: Path): Path = {
-    getDelegate(path).resolvePathOnPhysicalStorage(path)
+    resolvePathOnPhysicalStorage(path, getHadoopConfiguration)
   }
 
   override def resolvePathOnPhysicalStorage(path: Path, hadoopConf: Configuration): Path = {
-    getDelegate(path).resolvePathOnPhysicalStorage(path, hadoopConf)
+    getDelegate(path, hadoopConf).resolvePathOnPhysicalStorage(path, hadoopConf)
   }
 
   override def isPartialWriteVisible(path: Path): Boolean = {
-    getDelegate(path).isPartialWriteVisible(path)
+    isPartialWriteVisible(path, getHadoopConfiguration)
   }
 
   override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = {
-    getDelegate(path).isPartialWriteVisible(path, hadoopConf)
+    getDelegate(path, hadoopConf).isPartialWriteVisible(path, hadoopConf)
   }
 }
 
@@ -169,6 +194,8 @@ object DelegatingLogStore {
   /**
    * Java LogStore (io.delta.storage) implementations are now the default.
    */
+  val nativeS3LogStoreClassName = classOf[io.delta.storage.S3LogStore].getName
+  // Conservative fallback for S3 filesystems without native-write prerequisites.
   val defaultS3LogStoreClassName = classOf[io.delta.storage.S3SingleDriverLogStore].getName
   val defaultAzureLogStoreClassName = classOf[io.delta.storage.AzureLogStore].getName
   val defaultHDFSLogStoreClassName = classOf[io.delta.storage.HDFSLogStore].getName
@@ -179,7 +206,7 @@ object DelegatingLogStore {
   val azureSchemes = Set("abfs", "abfss", "adl", "wasb", "wasbs")
   val gsSchemes = Set("gs")
 
-  // Returns the default LogStore class name for `scheme`.
+  // Returns the scheme-only default. getDelegate selects native S3 when capabilities permit.
   // None if we do not have a default for it.
   def getDefaultLogStoreClassName(scheme: String): Option[String] = {
     if (s3Schemes.contains(scheme)) {

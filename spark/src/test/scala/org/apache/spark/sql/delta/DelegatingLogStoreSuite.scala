@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.storage.{DelegatingLogStore, LogStore, LogStoreAdaptor}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.LocalSparkSession._
@@ -33,6 +33,12 @@ class DelegatingLogStoreSuite
 
   private def constructSparkConf(confs: Seq[(String, String)]): SparkConf = {
     val sparkConf = new SparkConf(loadDefaults = false).setMaster("local")
+    // Default selection now inspects the filesystem. These scheme-only tests use a filesystem
+    // without native S3 capabilities; real S3A selection is covered by NativeS3CommitSuite.
+    DelegatingLogStore.s3Schemes.foreach { scheme =>
+      sparkConf.set(s"spark.hadoop.fs.$scheme.impl", classOf[RawLocalFileSystem].getName)
+      sparkConf.set(s"spark.hadoop.fs.$scheme.impl.disable.cache", "true")
+    }
     confs.foreach { case (key, value) => sparkConf.set(key, value) }
     sparkConf
   }
@@ -127,7 +133,7 @@ class DelegatingLogStoreSuite
       expClassName = DelegatingLogStore.defaultHDFSLogStoreClassName)
   }
 
-  test("native S3 LogStore requires an explicit scheme override") {
+  test("an explicit native S3 LogStore override wins even on an unsupported filesystem") {
     for (scheme <- DelegatingLogStore.s3Schemes) {
       testDefaultSchemeResolution(scheme, "io.delta.storage.S3SingleDriverLogStore")
       testCustomSchemeResolution(scheme, "io.delta.storage.S3LogStore", expAdaptor = true)

@@ -24,8 +24,12 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
+import static org.apache.hadoop.fs.Options.CreateFileOptionKeys
+    .FS_OPTION_CREATE_CONDITIONAL_OVERWRITE;
+import static org.apache.hadoop.fs.s3a.Constants.FS_S3A_CREATE_HEADER;
+
 /**
- * Opt-in S3 LogStore using native conditional publication for mutual exclusion across drivers.
+ * S3 LogStore using native conditional publication for mutual exclusion across drivers.
  *
  * <p>Requires Hadoop S3A 3.4.2 or later, conditional creation, user metadata and abortable,
  * immediately visible output streams. Unsupported configurations fail the write. All writers
@@ -40,6 +44,35 @@ public class S3LogStore extends BaseS3LogStore {
 
     public S3LogStore(Configuration hadoopConf) {
         super(hadoopConf);
+    }
+
+    /**
+     * Whether this filesystem advertises the prerequisites for native writes. Selection must
+     * use the operation's actual filesystem and path, not cache this result by URI scheme.
+     * The writer still validates the opened stream and requires the conditional builder option.
+     * An I/O or linkage failure is not evidence that unconditional writing is safe.
+     */
+    public static boolean isSupported(FileSystem fs, Path path) throws IOException {
+        return NativeSupport.S3A_CLASS != null
+            && NativeSupport.S3A_CLASS.isInstance(fs)
+            && fs.hasPathCapability(path, FS_OPTION_CREATE_CONDITIONAL_OVERWRITE)
+            && fs.hasPathCapability(path, FS_S3A_CREATE_HEADER);
+    }
+
+    private static final class NativeSupport {
+        private static final Class<?> S3A_CLASS = findS3AClass();
+
+        private static Class<?> findS3AClass() {
+            try {
+                // Keep legacy selection usable on older Hadoop and without optional hadoop-aws.
+                FileSystem.class.getMethod("hasPathCapability", Path.class, String.class);
+                return Class.forName(
+                    "org.apache.hadoop.fs.s3a.S3AFileSystem", false,
+                    S3LogStore.class.getClassLoader());
+            } catch (ClassNotFoundException | NoSuchMethodException unavailable) {
+                return null;
+            }
+        }
     }
 
     @Override
