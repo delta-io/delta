@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.sources
 
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaHistoryManager, Snapshot}
+import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaSingleCommit, Snapshot}
 
 
 /**
@@ -73,4 +73,11 @@ trait DeltaStreamingBackend {
    * cannot read a table feature at `version`.
    */
   def getSnapshotToValidateProtocol(version: Long): Snapshot
+
+  /**
+   * Returns the commits from `startVersion` to the latest version, in version order.
+   *
+   * @param failOnDataLoss if true, throws if a commit in the range is missing.
+   */
+  def getChangesIterator(startVersion: Long, failOnDataLoss: Boolean): Iterator[DeltaSingleCommit]
 }
