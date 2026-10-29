@@ -11,7 +11,7 @@ from access to the underlying storage.
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
-encryptionKeyMetadata | [Key Metadata Struct](#encryption-key-metadata) | Contains metadata that can be used to derive the footer and column encryption keys required to decrypt data in the file. Must be set if the file uses Parquet modular encryption | optional
+encryptionKeyMetadata | [Key Metadata Struct](#encryption-key-metadata) | Contains metadata that can be used to derive the footer and column encryption keys required to decrypt data in the file. May be set for files that use Parquet modular encryption. The same metadata must be embedded in the Parquet file, and the embedded metadata is authoritative | optional
 
 > ***New section added to the [Appendix](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#appendix)***
 
@@ -25,6 +25,9 @@ footerKey | `String` | Metadata that can be used to derive the footer encryption
 columnKeys | `Map[String, String]` | A map from column names to metadata that can be used to derive per-column encryption keys. For tables that use column mapping, column names are the physical column names. This field is not set for files that use uniform encryption. | optional
 
 The format of the key metadata itself is not prescribed by the Delta protocol and may be implementation specific.
+When this field is set, it must describe the same keys as the key metadata embedded in the Parquet file.
+Readers must not rely on the key metadata being present: an implementation may choose not to write it,
+and the key metadata embedded in the Parquet data files is the authoritative source.
 
 > ***New section added before [Additional Requirements for Writers](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#additional-requirements-for-writers)***
 
@@ -94,16 +97,25 @@ If `delta.encryption.plaintext_footer` is true, the footer is stored in plaintex
 If `delta.encryption.column_keys` is specified, only the configured columns are encrypted, using their corresponding
 master encryption keys.
 
-Any `add` actions generated for an encrypted file must have the [`encryptionKeyMetadata` field](#encryption-key-metadata) set,
-and the `footerKey` field must be non-empty.
-If per-column encryption keys are configured, the `columnKeys` field in the `encryptionKeyMetadata` must also be set and
-contain non-empty strings for each encrypted column.
-When generating a `remove` action for an encrypted file, the `encryptionKeyMetadata` must be propagated from the
-original `add` action.
+Writers must store the key metadata needed to derive the footer and column decryption keys in the Parquet file itself,
+in the `key_metadata` fields of the footer and of each encrypted column
+(see [`EncryptionWithColumnKey`](https://github.com/apache/parquet-format/blob/2076361bb64e2de9ca6a8d06eda025a6fa4e9df6/src/main/thrift/parquet.thrift#L984)
+and [`FileCryptoMetaData`](https://github.com/apache/parquet-format/blob/2076361bb64e2de9ca6a8d06eda025a6fa4e9df6/src/main/thrift/parquet.thrift#L1485)),
+so that every encrypted file is self-describing.
+The key metadata must use the key material format of the
+[Parquet Key Management Tools](https://docs.google.com/document/d/1bEu903840yb95k9q2X-BlsYKuXoygE4VnMDl9xz_zhk) (`keyMaterialType` `PKMT1`),
+stored internally in the file; external key material files must not be used.
+The `masterKeyID` in the key material must be the master key ID the file was written with,
+and `kmsInstanceID` should be the value of `delta.encryption.kms_id`.
 
-Writers may additionally choose to store key metadata embedded in the Parquet file,
-for example in the [`key_metadata`](https://github.com/apache/parquet-format/blob/2076361bb64e2de9ca6a8d06eda025a6fa4e9df6/src/main/thrift/parquet.thrift#L984)
-field of the `EncryptionWithColumnKey` Thrift struct for column keys.
+Writers must not use an AAD prefix unless it is stored in the file (the `aad_prefix` of the file's encryption algorithm),
+because Parquet readers cannot otherwise derive it.
+
+Writers may additionally set the [`encryptionKeyMetadata` field](#encryption-key-metadata) on the `add` action,
+with a non-empty `footerKey` and, if per-column keys are configured, a non-empty `columnKeys` entry for each encrypted column.
+This lets readers resolve keys without reading the file footer, and supports conversion to table formats that store
+key metadata in their file manifests rather than in the data files.
+When generating a `remove` action for a file whose `add` action had `encryptionKeyMetadata`, it must be propagated.
 
 Note that it is valid for a table to have the `parquetEncryption` feature enabled, but no footer key configured,
 for example if encryption was previously used and then disabled. In this case, data files are written unencrypted
@@ -148,10 +160,11 @@ encryption keys must be configured in terms of the physical column names, which 
 
 ## Reader Requirements for Parquet Encryption
 
-When reading a data file that has `encryptionKeyMetadata` set in its corresponding `add` action,
-a reader must use the configured KMS and `encryptionKeyMetadata`, or encryption metadata embedded in the Parquet file,
-to determine decryption keys for reading the data file,
+When reading an encrypted data file, a reader may determine the decryption keys from the key metadata embedded in the
+Parquet file, using the KMS configured by `delta.encryption.kms_id` and `delta.encryption.kms_configuration`,
 or raise an error if it is unable to do so.
+If the file's `add` action has `encryptionKeyMetadata` set, a reader may use it instead to determine the keys
+without reading the file's footer.
 
 Readers must not use the `delta.encryption.footer_key` or `delta.encryption.column_keys`
 table properties to derive decryption keys, because these may change over time and their
