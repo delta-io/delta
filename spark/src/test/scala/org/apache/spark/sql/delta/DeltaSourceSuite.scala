@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{File, FileInputStream, OutputStream, PrintWriter, StringWriter}
+import java.io.{File, FileInputStream, FileNotFoundException, OutputStream, PrintWriter, StringWriter}
 import java.net.URI
 import java.sql.Timestamp
 import java.util.UUID
@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, modifyCommitTimestamps}
 import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedMaintenanceIncompatible
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSource, DeltaSourceOffset}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -39,12 +40,13 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 import org.scalatest.time.{Seconds, Span}
 
-import org.apache.spark.{SparkConf, SparkThrowable}
+import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 import org.apache.spark.sql.types.{IntegerType, LongType, NullType, StringType, StructField, StructType}
@@ -245,6 +247,71 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2", "keep5", "keep6", "keep7", "keep9")
       )
+    }
+  }
+
+  test("session time zone reads timestamp partitions") {
+    for (utcTimestampPartitionValues <- Seq(true, false)) {
+      withTempDir { dir =>
+        val sourcePath = new File(dir, "source").getCanonicalPath
+        withSQLConf(
+            DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key ->
+              utcTimestampPartitionValues.toString) {
+          withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> "UTC") {
+            sql("SELECT id, timestamp_micros(id * 1000000) AS part FROM range(1, 3)")
+              .write.format("delta").partitionBy("part").save(sourcePath)
+          }
+          for ((timeZone, shiftSeconds) <- Seq(
+              "PST" -> 28800L, "+8:00" -> -28800L, "-08:3" -> 28980L, "UTC" -> 0L)) {
+            val expectedShiftSeconds = if (utcTimestampPartitionValues) 0L else shiftSeconds
+            val expectedRows = Seq(1L, 2L).map { id =>
+              Row(id, new Timestamp((id + expectedShiftSeconds) * 1000L))
+            }
+            withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> timeZone) {
+              withClue(s"UTC timestamp partitions=$utcTimestampPartitionValues, " +
+                  s"timeZone=$timeZone: ") {
+                val stream = loadStreamWithOptions(sourcePath, Map.empty)
+                testStream(stream)(
+                  ProcessAllAvailable(),
+                  CheckAnswer(expectedRows: _*))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("malformed partition values in commits read as null") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      Seq((1, 1, 1.toByte, true), (2, 2, 2.toByte, false))
+        .toDF("id", "p_int", "p_byte", "p_bool")
+        .write.format("delta").partitionBy("p_int", "p_byte", "p_bool").save(path)
+      // Re-add one file with partition values that do not parse as the column types, as a log
+      // written by another writer may contain.
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val file = deltaLog.update().allFiles.collect().find(_.partitionValues("p_int") == "1").get
+      deltaLog.startTransaction().commit(
+        Seq(file.copy(
+          partitionValues = Map("p_int" -> "abc", "p_byte" -> "300", "p_bool" -> "yes"),
+          dataChange = true)),
+        DeltaOperations.ManualUpdate)
+
+      for (ansiEnabled <- Seq("true", "false")) {
+        withSQLConf(SQLConf.ANSI_ENABLED.key -> ansiEnabled) {
+          withClue(s"ansi=$ansiEnabled: ") {
+            // Starting at version 0 reads every file from the commits instead of a snapshot.
+            val stream = loadStreamWithOptions(path, Map("startingVersion" -> "0"))
+            testStream(stream)(
+              ProcessAllAvailable(),
+              CheckAnswer(
+                Row(1, 1, 1.toByte, true),
+                Row(2, 2, 2.toByte, false),
+                Row(1, null, null, true)))
+          }
+        }
+      }
     }
   }
 
@@ -454,10 +521,17 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             .start()
             .processAllAvailable()
         }
-        assert(e.getCause.isInstanceOf[IllegalArgumentException])
-        for (msg <- Seq("Invalid", DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "positive")) {
-          assert(e.getCause.getMessage.contains(msg))
+        val cause = e.getCause.asInstanceOf[DeltaIllegalArgumentException]
+        val condition = invalidMaxFilesPerTrigger match {
+          case _: Int => "DELTA_ILLEGAL_OPTION.MUST_BE_POSITIVE_NUMBER"
+          case _ => "DELTA_ILLEGAL_OPTION.MUST_BE_INTEGER"
         }
+        checkError(
+          cause,
+          condition,
+          parameters = Map(
+            "input" -> invalidMaxFilesPerTrigger.toString,
+            "name" -> DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION))
       }
     }
   }
@@ -1086,7 +1160,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test(
-      "can delete old files of a snapshot without update"
+      "can delete old files of a snapshot without update",
+    CatalogManagedMaintenanceIncompatible
   ) {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
@@ -1362,13 +1437,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     Seq(new Timestamp(timestamp)).toDF("ts")
       .select($"ts".cast("string")).as[String].head()
   }
-
-  /**
-   * Executes a DML SQL statement (DELETE, INSERT, etc.).
-   * Overridable so that V2 suites can route DML through the V1 connector,
-   * since SparkTable (V2) is read-only and does not support writes.
-   */
-  protected def executeDml(sqlText: String): Unit = sql(sqlText)
 
   /** Disable log cleanup to avoid deleting logs we are testing. */
   protected def disableLogCleanup(tablePath: String): Unit = {
@@ -2280,15 +2348,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             assert(e.getMessage.contains(
               "unexpectedly still requires additional file-system listing"))
           } else {
-            // getBatch reads versions 0-1 (version 2 is gone), so maxVersionSeen = 1.
-            // lastExpectedVersion = 2 in both cases:
-            //   mid-version:  endOffset=(v2, index=0) -> lastExpectedVersion = 2
-            //   fully consumed: endOffset=(v3, BASE_INDEX) -> lastExpectedVersion = 3 - 1 = 2
-            val e = intercept[DeltaIllegalStateException] {
+            // With the parallel CommitInfo read, getBatch's `update()` call eagerly reads the last
+            // commit's file during snapshot construction to source the AMT manifest reference.
+            // Because v2's commit file was deleted, that read fails as a SparkException wrapping a
+            // FileNotFoundException before the streaming's DELTA_STREAMING_TRAILING_COMMIT_MISSING
+            // check fires.
+            val e = intercept[SparkException] {
               source.getBatch(startOffsetOption = None, endOffset)
             }
-            checkError(e, "DELTA_STREAMING_TRAILING_COMMIT_MISSING", "42K03",
-              Map("expectedVersion" -> "2", "seenVersion" -> "1"))
+            assert(
+              Iterator.iterate[Throwable](e)(_.getCause).takeWhile(_ != null)
+                .exists(_.isInstanceOf[FileNotFoundException]),
+              s"expected a FileNotFoundException in the cause chain, got: $e")
           }
         }
       }
@@ -2692,7 +2763,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       Seq(1, 2, 3).toDF().write.delta(inputDir.toString)
 
-      val df = spark.readStream.delta(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       val stream = df.writeStream
         .option("checkpointLocation", checkpointDir.toString)
@@ -3374,20 +3445,19 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
         def readStream(startingVersion: Option[Long] = None): DataFrame = {
-          var dsr = spark.readStream
-          startingVersion.foreach { v =>
-            dsr = dsr.option("startingVersion", v)
-          }
-          dsr.table("srcTable")
+          val options = startingVersion
+            .map(version => Map("startingVersion" -> version.toString))
+            .getOrElse(Map.empty)
+          loadStreamWithOptions(srcTblDir.getCanonicalPath, options)
         }
 
-        sql(s"""
+        executeDml(s"""
              |CREATE TABLE srcTable (
              |  a STRING NOT NULL,
              |  b STRING NOT NULL
              |) USING DELTA LOCATION '${srcTblDir.getCanonicalPath}'
              |""".stripMargin)
-        sql("""
+        executeDml("""
             |INSERT INTO srcTable
             | VALUES ("a", "b")
             |""".stripMargin)
@@ -3409,12 +3479,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           // Write more data and drop NOT NULL constraint
           Execute { _ =>
             // A batch of Delta actions
-            sql("""
+            executeDml("""
               |INSERT INTO srcTable
               |VALUES ("c", "d")
               |""".stripMargin)
-            sql("ALTER TABLE srcTable ALTER COLUMN a DROP NOT NULL")
-            sql("""
+            executeDml("ALTER TABLE srcTable ALTER COLUMN a DROP NOT NULL")
+            executeDml("""
               |INSERT INTO srcTable
               |VALUES ("e", "f")
               |""".stripMargin)
@@ -3445,7 +3515,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           txn.commit(txn.metadata.copy(schemaString = newSchema.json) :: Nil,
             DeltaOperations.ManualUpdate)
         }
-        sql("""
+        executeDml("""
             |INSERT INTO srcTable
             |VALUES ("g", "h")
             |""".stripMargin)

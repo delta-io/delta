@@ -72,6 +72,15 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
   override val name: String = "Generate Symlink Format Manifest"
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
+    try {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        "GENERATE_SYMLINK_FORMAT_MANIFEST",
+        txn.postCommitSnapshot,
+        txn.catalogTable)
+    } catch {
+      case _: DeltaUnsupportedOperationException => return
+    }
+
     generateIncrementalManifest(spark, txn, txn.postCommitSnapshot)
   }
 
@@ -183,6 +192,10 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       deltaLog: DeltaLog,
       catalogTableOpt: Option[CatalogTable]): Unit = {
     val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
+    DeltaErrors.checkCatalogManagedTableOperationAllowed(
+      "GENERATE_SYMLINK_FORMAT_MANIFEST",
+      snapshot,
+      catalogTableOpt)
     assertTableIsDVFree(spark, snapshot)
     generateFullManifestWithSnapshot(spark, deltaLog, snapshot)
   }

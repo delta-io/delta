@@ -119,7 +119,6 @@ public class ScanImpl implements Scan {
    *
    * @return data in {@link ColumnarBatch} batch format. Each row correspond to one survived file.
    */
-  @Override
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(
       Engine engine, boolean includeStats) {
     return getScanFiles(engine, includeStats, Optional.empty() /* paginationContextOpt */);

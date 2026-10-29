@@ -22,8 +22,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.FileStatus;
-import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -54,15 +52,6 @@ public interface CommitRange {
    * @return the ending version number of the commit range
    */
   long getEndVersion();
-
-  /**
-   * Returns the delta commit files that make up this commit range, one per version in {@code
-   * [getStartVersion(), getEndVersion()]}, in increasing version order.
-   *
-   * @return the list of {@link FileStatus}es for the delta commit files in this range
-   * @since 4.4.0
-   */
-  List<FileStatus> getDeltaFiles();
 
   /**
    * Returns the original query boundary used to define the start boundary of this commit range.

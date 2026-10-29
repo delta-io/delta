@@ -228,11 +228,11 @@ abstract class CloneTableBase(
       var actions: Iterator[Action] =
         addFileIter.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
-          // CLONE does not preserve Row IDs and Commit Versions, nor the source table's AMT
-          // back reference and passthrough.
+          // CLONE does not preserve Row IDs and Commit Versions, nor the source
+          // table's AMT back reference, snapshot IDs and passthrough.
           copiedFile.copy(
             baseRowId = None, defaultRowCommitVersion = None, backReference = None,
-            amtPassthrough = None)
+            amtPassthrough = None, snapshotId = None, modifiedSnapshotId = None)
         }
       sourceTable.snapshot.foreach { sourceSnapshot =>
         // Handle DomainMetadata for cloning a table.
@@ -260,6 +260,11 @@ abstract class CloneTableBase(
         }
       }
 
+      // Every file action above is stamped with `dataChangeInFileAction`, so the commit changes
+      // data exactly when that is true and there is at least one file action.
+      val fileActionCount = addedFileCount
+      val commitDataChange = dataChangeInFileAction && fileActionCount > 0
+
       recordDeltaOperation(
         destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
         txn.commitLarge(
@@ -268,7 +273,8 @@ abstract class CloneTableBase(
           Some(newProtocol),
           deltaOperation,
           context,
-          commitOpMetrics.mapValues(_.toString()).toMap)
+          commitOpMetrics.mapValues(_.toString()).toMap,
+          dataChange = commitDataChange)
       }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(
@@ -309,6 +315,9 @@ abstract class CloneTableBase(
     val filteredConfiguration = clonedMetadata.configuration
       // Coordinated Commit configurations are never copied over to the target table.
       .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
+      // ICT enablement provenance info refers to the source's log. The commit re-derives it for
+      // the target (see InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo).
+      .filterKeys(!InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(_))
       // Catalog-Owned enabled table's UC table ID property is never copied over to the
       // target table.
       .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
@@ -410,6 +419,16 @@ abstract class CloneTableBase(
       metadata.configuration ++
         validatedConfigurationsWithoutCoordinatedCommits ++
         finalCatalogOwnedMetadata)
+    // An AMT source makes a new target AMT only through the protocol, which the defaults applied
+    // while creating its metadata (e.g. the catalog-owned QoL features) do not see. Request AMT in
+    // the configuration too, so that they skip the features AMT is incompatible with. An existing
+    // target gets none of those defaults.
+    if (!tableExists(targetSnapshot) &&
+        sourceTable.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+      metadata = metadata.copy(configuration = metadata.configuration +
+        (TableFeatureProtocolUtils.propertyKey(AdaptiveMetadataTableFeature) ->
+          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
+    }
 
     verifyMetadataInvariants(targetSnapshot, metadata)
     metadata

@@ -84,7 +84,6 @@ public class PaginatedScanImpl implements PaginatedScan {
     return this.getScanFiles(engine, false /* include stats */);
   }
 
-  @Override
   public PaginatedScanFilesIterator getScanFiles(Engine engine, boolean includeStates) {
     CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter =
         baseScan.getScanFiles(engine, includeStates, Optional.of(paginationContext));

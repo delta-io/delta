@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
@@ -111,7 +111,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       size = 1,
       modificationTime = 2,
       dataChange = false,
-      backReference = Some(BackReference(manifest = "metadata/leaf-1.parquet", pos = 7L)))
+      backReference = Some(BackReference(manifest = "metadata/leaf-1.parquet", pos = 7)))
     assert(withBackRef.json.contains("\"backReference\":{\"manifest\":" +
       "\"metadata/leaf-1.parquet\",\"pos\":7}"))
     assert(Action.fromJson(withBackRef.json) === withBackRef)
@@ -126,7 +126,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     val withBackRef = RemoveFile(
       path = "a",
       deletionTimestamp = Some(1L),
-      backReference = Some(BackReference(manifest = "metadata/leaf-2.parquet", pos = 3L)))
+      backReference = Some(BackReference(manifest = "metadata/leaf-2.parquet", pos = 3)))
     assert(withBackRef.json.contains("\"backReference\":{\"manifest\":" +
       "\"metadata/leaf-2.parquet\",\"pos\":3}"))
     assert(Action.fromJson(withBackRef.json) === withBackRef)
@@ -137,7 +137,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
   }
 
   test("AddFile back reference propagates to removeWithTimestamp and copy") {
-    val backRef = Some(BackReference(manifest = "metadata/leaf-3.parquet", pos = 11L))
+    val backRef = Some(BackReference(manifest = "metadata/leaf-3.parquet", pos = 11))
     val add = AddFile("a", Map.empty, 1, 2, dataChange = true, backReference = backRef)
     // removeWithTimestamp -> tombstone inherits the back reference.
     assert(add.removeWithTimestamp().backReference == backRef)
@@ -168,15 +168,30 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(Action.fromJson(emptyPassthrough.json) === emptyPassthrough)
   }
 
-  test("AddFile amtPassthrough propagates to copy but not to removeWithTimestamp") {
+  test("AddFile snapshot IDs serialize and transition to RemoveFile") {
     val passthrough = Some(AMTPassthrough(spec_id = Some(7)))
-    val add = AddFile("a", Map.empty, 1, 2, dataChange = true, amtPassthrough = passthrough)
+    val add = AddFile(
+      "a",
+      Map.empty,
+      1,
+      2,
+      dataChange = true,
+      amtPassthrough = passthrough,
+      snapshotId = Some(11L),
+      modifiedSnapshotId = Some(12L))
+    assert(add.json.contains("\"snapshotId\":11"))
+    assert(add.json.contains("\"modifiedSnapshotId\":12"))
+    assert(Action.fromJson(add.json) === add)
+
     // copy (the mechanism the superseding AddFile of removeRows relies on) preserves it.
-    assert(add.copy(dataChange = false).amtPassthrough == passthrough)
-    // Unlike backReference, RemoveFile has no amtPassthrough field: the tombstone drops it. The
-    // surviving AddFile is what carries the AMT-native state forward.
-    assert(add.removeWithTimestamp().json.contains("\"remove\""))
-    assert(!add.removeWithTimestamp().json.contains("amtPassthrough"))
+    val copied = add.copy(dataChange = false)
+    assert(copied.snapshotId.contains(11L))
+    assert(copied.modifiedSnapshotId.contains(12L))
+    val remove = add.removeWithTimestamp()
+    assert(!remove.json.contains("amtPassthrough"))
+    assert(remove.snapshotId.isEmpty)
+    assert(remove.modifiedSnapshotId.contains(12L))
+    assert(Action.fromJson(remove.json) === remove)
   }
 
   // This is the same test as "removefile" in OSS, but due to a Jackson library upgrade the behavior
@@ -225,6 +240,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
@@ -251,6 +267,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
@@ -529,7 +546,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""")
 
   private def deletionVectorWithRelativePath: DeletionVectorDescriptor =
-    DeletionVectorDescriptor.onDiskWithRelativePath(
+    DeletionVectorDescriptor.onDiskWithUuidRelativePath(
       id = UUID.randomUUID(),
       randomPrefix = "a1",
       sizeInBytes = 10,
@@ -715,6 +732,69 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     }
   }
 
+  test("Checkpoint - Spark log schema stores an array of action structs") {
+    val elementSchema = Action.logSchema("checkpoint").dataType match {
+      case ArrayType(schema: StructType, _) => schema
+      case other => fail(s"Expected an array of checkpoint action structs, found $other")
+    }
+    // Compare Spark's inferred array element schema with AMTCheckpointSingleAction's fields.
+    // Keep the expected names explicit to catch accidental changes to the schema.
+    assert(elementSchema.fieldNames.toSeq === Seq(
+      "checkpointMetadata",
+      "contentRoot",
+      "protocol",
+      "metaData",
+      "domainMetadata",
+      "txn",
+      "sidecar"))
+    assert(elementSchema.fields.forall(_.dataType.isInstanceOf[StructType]))
+  }
+
+  // Snapshot replay can decode trailing commit JSON with Spark and call `SingleAction.unwrap`.
+  // A deferred Checkpoint must pass validation before replay ignores its pointer.
+  // Spark ignores Jackson's annotations and custom deserializer, so Jackson round-trip tests
+  // do not cover this path or guarantee that required sidecar types survive decoding.
+  Seq(false, true).foreach { withSidecars =>
+    test(s"Checkpoint - Spark decodes the action array with sidecars=$withSidecars") {
+      import testImplicits._
+
+      val sidecars = if (withSidecars) {
+        Seq(
+          SidecarFile(
+            path = "domain-metadata.parquet",
+            sizeInBytes = 100L,
+            modificationTime = 0L,
+            `type` = Some(SidecarType.Type.DomainMetadata)),
+          SidecarFile(
+            path = "transactions.parquet",
+            sizeInBytes = 2048L,
+            modificationTime = 0L,
+            `type` = Some(SidecarType.Type.Txn)))
+      } else {
+        Seq.empty
+      }
+      val checkpoint = Checkpoint(
+        version = 1L,
+        contentRoot = ContentRoot("metadata/root.parquet", sizeInBytes = 4096L, version = 1L),
+        protocol = Protocol(minReaderVersion = 3, minWriterVersion = 7),
+        metaData = Metadata(id = "metadata-id"),
+        domainMetadata = Seq(
+          DomainMetadata("domain-1", "{}", removed = false),
+          DomainMetadata("domain-2", "{}", removed = false)),
+        txns = Seq(
+          SetTransaction("app-1", 7L, Some(100L)),
+          SetTransaction("app-2", 8L, None)),
+        sidecars = sidecars)
+      val decoded = spark.read.schema(Action.logSchema)
+        .option("mode", "FAILFAST")
+        .json(Seq(checkpoint.json).toDS())
+        .as[SingleAction](SingleAction.encoder)
+        .collect().toSeq
+      assert(decoded === Seq(checkpoint.wrap))
+      assert(decoded.map(_.unwrap) === Seq(checkpoint))
+    }
+  }
+
   testActionSerDe(
     "AddCDCFile (without tags) - json serialization/deserialization",
     AddCDCFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10),
@@ -785,6 +865,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = Some(Map("k1" -> "v1")),
@@ -869,6 +950,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(5),
       isolationLevel = Some("WriteSerializable"),
       isBlindAppend = Some(false),
+      dataChange = None,
       operationMetrics = Some(Map("numFiles" -> "10")),
       userMetadata = Some("test metadata"),
       tags = Some(Map("source" -> "test")),
@@ -909,6 +991,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(42),
       isolationLevel = Some("WriteSerializable"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("numFiles" -> "25", "numOutputRows" -> "1000")),
       userMetadata = operation.userMetadata,
       tags = Some(Map("environment" -> "production", "team" -> "data-eng")),

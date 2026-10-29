@@ -289,7 +289,10 @@ object SparkVersionSpec {
   private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.1",
     targetJvm = "17",
-    additionalSourceDirs = Seq("scala-shims/spark-4.0", "scala-shims/spark-4.0-4.1"),
+    additionalSourceDirs = Seq(
+      "scala-shims/spark-4.0",
+      "scala-shims/spark-4.0-4.1",
+      "scala-shims/spark-4.0-4.2"),
     supportIceberg = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
@@ -300,7 +303,11 @@ object SparkVersionSpec {
     fullVersion = "4.1.0",
     targetJvm = "17",
     additionalSourceDirs =
-      Seq("scala-shims/spark-4.1", "scala-shims/spark-4.0-4.1", "scala-shims/spark-4.1-4.2"),
+      Seq(
+        "scala-shims/spark-4.1",
+        "scala-shims/spark-4.0-4.1",
+        "scala-shims/spark-4.0-4.2",
+        "scala-shims/spark-4.1-4.3"),
     supportIceberg = true,
     supportHudi = false,
     antlr4Version = "4.13.1",
@@ -311,12 +318,30 @@ object SparkVersionSpec {
   private val spark42 = SparkVersionSpec(
     fullVersion = "4.2.0",
     targetJvm = "17",
-    additionalSourceDirs = Seq("scala-shims/spark-4.2", "scala-shims/spark-4.1-4.2"),
+    additionalSourceDirs = Seq(
+      "scala-shims/spark-4.2",
+      "scala-shims/spark-4.2-4.3",
+      "scala-shims/spark-4.0-4.2",
+      "scala-shims/spark-4.1-4.3"),
     supportIceberg = false,
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
+  )
+
+  private val spark43 = SparkVersionSpec(
+    fullVersion = "4.3.0-SNAPSHOT",
+    targetJvm = "17",
+    additionalSourceDirs = Seq(
+      "scala-shims/spark-4.2-4.3",
+      "scala-shims/spark-4.1-4.3",
+      "scala-shims/spark-4.3"),
+    supportIceberg = false,
+    supportHudi = false,
+    antlr4Version = "4.13.1",
+    additionalJavaOptions = java17TestSettings,
+    sourceBuildDefaultRef = Some("3db813416c8716996b0d4d2fbb94fed5dc121fd2")
   )
 
   /** Default Spark version */
@@ -326,7 +351,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42)
+  val ALL_SPECS = Seq(spark40, spark41, spark42, spark43)
 }
 
 /** See docs on top of this file */
@@ -518,7 +543,7 @@ object CrossSparkVersions extends AutoPlugin {
    * Generates release steps for cross-Spark publishing.
    *
    * Returns a sequence of release steps that:
-   * 1. Publishes all modules WITHOUT Spark suffix (backward compatibility)
+   * 1. Publishes non-Flink modules WITHOUT Spark suffix (backward compatibility)
    * 2. Publishes Spark-dependent modules WITH Spark suffix for each non-master version
    *
    * For example, with Spark versions 4.0, 4.1, and 4.2 (default):
@@ -560,13 +585,13 @@ object CrossSparkVersions extends AutoPlugin {
       state
     }
 
-    // Step 1: Publish ALL modules WITHOUT Spark suffix (backward compatibility)
-    // Uses skipSparkSuffix=true to get artifact names like delta-spark_2.13
+    // Step 1: Publish non-Flink modules WITHOUT Spark suffix (backward compatibility).
+    // Flink is published separately for every supported version.
     val backwardCompatStep: ReleaseStep = { (state: State) =>
       runSbtSubprocess(
         state,
-        Seq("-DskipSparkSuffix=true", task),
-        "Publishing all modules without Spark suffix (backward compat)"
+        Seq("-DskipSparkSuffix=true", "-DskipFlinkPublish=true", task),
+        "Publishing non-Flink modules without Spark suffix (backward compat)"
       )
     }
 

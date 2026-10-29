@@ -16,11 +16,14 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.LastManifestCommit
-import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
-import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.hadoop.fs.{FileSystem, Path}
+import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.hadoop.fs.Path
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -30,15 +33,158 @@ import org.apache.hadoop.fs.{FileSystem, Path}
  * file lives under it and resolved back by string concatenation (`tableRoot + "/" + relative`).
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
-object AMTUtils {
+object AMTUtils extends DeltaLogging {
+  /** Whether AMT is **supported** as per the protocol. */
+  def amtSupported(protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
 
   /**
-   * Relativizes an AMT manifest file `path` against `tableRoot`, returning the raw
-   * (non-URL-encoded) string to store in a manifest `location` / `contentRoot.path`. Paths under
-   * the table root become relative; paths elsewhere are returned absolute.
+   * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
+   * `metadata`.
    */
-  def relativizeManifestPathToTableRoot(fs: FileSystem, tableRoot: Path, path: Path): String =
-    DeltaFileOperations.tryRelativizePath(fs, tableRoot, path).toString
+  def amtEnabled(metadata: Metadata, protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+
+  /** Whether AMT writes are enabled for `snapshot`. */
+  def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
+    amtEnabled(snapshot.metadata, snapshot.protocol)
+
+  /**
+   * Whether `amtCheckpointOpt` holds a ROOT-ONLY tree (no leaf manifests). A root-only tree keeps
+   * every live file in the root, so state reconstruction stamps no back reference on any of them.
+   */
+  def isRootOnlyCheckpoint(amtCheckpointOpt: Option[Checkpoint]): Boolean =
+    amtCheckpointOpt.exists(_.contentRoot.numLeaves.contains(0L))
+
+  /** Whether a new table's `configuration` asks for AMT. */
+  def amtRequested(configuration: Map[String, String]): Boolean =
+    TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
+      configuration, AdaptiveMetadataTableFeature)
+
+  /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
+  def invariantCheckWithLogging(
+      checkInvariant: => Boolean,
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Unit = {
+    if (!checkInvariant) {
+      failWithLogging(
+        opTypeSuffix = opTypeSuffix,
+        message = message,
+        deltaLog = deltaLog,
+        data = data)
+    }
+  }
+
+  /** Logs and throws an [[IllegalStateException]] with the given message. */
+  def failWithLogging(
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Nothing = {
+    val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(30).mkString("\n\t")
+    deltaAssertAndThrow(
+      check = false,
+      name = opTypeSuffix,
+      msg = message,
+      throwable = new DeltaIllegalStateException(
+        errorClass = "INTERNAL_ERROR",
+        messageParameters = Array(message)),
+      deltaLog = deltaLog,
+      data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+    throw new IllegalStateException("should not reach here")
+  }
+
+  /**
+   * Runs invariant checks, logging unexpected non-fatal exceptions in production and propagating
+   * them in tests.
+   */
+  def runInvariantsSafely(
+      checkName: String,
+      deltaLog: Option[DeltaLog],
+      logPath: Path)(checkInvariant: => Unit): Unit = {
+    try {
+      checkInvariant
+    } catch {
+      case NonFatal(e) if !DeltaUtils.isTesting =>
+        recordDeltaEvent(
+          provider = deltaLog.orNull,
+          opType = AMTUsageLogs.EXCEPTIONS_THROWN_DUE_TO_LOGGING,
+          data = Map(
+            "check" -> checkName,
+            "exceptionClass" -> e.getClass.getName,
+            "exception" -> e.getMessage,
+            "stackTrace" -> e.getStackTrace.take(30).mkString("\n\t")),
+          path = Option(logPath)
+        )
+    }
+  }
+
+  private val PathSeparator = "/"
+
+  /**
+   * Returns true if the location contains a URI scheme, per RFC 3986 section 3.1.
+   * https://datatracker.ietf.org/doc/html/rfc3986#section-3.1
+   */
+  private[amt] def hasScheme(location: String): Boolean = {
+    var i = 0
+    while (i < location.length) {
+      val ch = location.charAt(i)
+      if (ch == ':') {
+        return i > 0
+      }
+      if (!isSchemeChar(ch, i)) {
+        return false
+      }
+      i += 1
+    }
+    false
+  }
+
+  private def isSchemeChar(ch: Char, position: Int): Boolean = {
+    (ch >= 'a' && ch <= 'z') ||
+      (ch >= 'A' && ch <= 'Z') ||
+      (position > 0 && ((ch >= '0' && ch <= '9') || ch == '+' || ch == '-' || ch == '.'))
+  }
+
+  /**
+   * Returns true if a location is absolute.
+   * NOTE: This is not the same implementation as Hadoop [[Path.isAbsolute]].
+   */
+  def isAbsoluteLocation(location: String): Boolean = {
+    hasScheme(location) || location.startsWith(PathSeparator)
+  }
+
+  /**
+   * Relativizes a location against a table location. A trailing slash on `tableLocation` is
+   * ignored. If `location` starts with the normalized table location immediately followed by `/`,
+   * the prefix and separator are removed. Otherwise, `location` is returned as-is.
+   * This is a lightweight string manipulation.
+   *
+   * Because the relativization is prefix matching based, callers are expected to pass locations in
+   * the same format and encoding (either both raw or both URL-encoded).
+   * No such checks are performed here.
+   */
+  def relativizeLocation(tableLocation: String, location: String): String = {
+    // Strip trailing slash from tableLocation if present.
+    val normalizedTableLocation =
+      if (tableLocation.length > PathSeparator.length && tableLocation.endsWith(PathSeparator)) {
+        tableLocation.dropRight(PathSeparator.length)
+      } else {
+        tableLocation
+      }
+
+    // Prefix matching based location relativization
+    val prefixLength = normalizedTableLocation.length
+    if (location.length > prefixLength &&
+        location.startsWith(PathSeparator, prefixLength) &&
+        location.startsWith(normalizedTableLocation)) {
+      location.substring(prefixLength + PathSeparator.length)
+    } else {
+      location
+    }
+  }
 
   /**
    * Resolves a manifest `location` / `contentRoot.path` back to an absolute [[Path]] against
@@ -80,7 +226,7 @@ object AMTUtils {
         commitInfo = currentTransactionInfo.commitInfo.map(_.copy(
           lastManifestCommit = Some(LastManifestCommit(
             version = winningCommitSummary.commitVersion,
-            contentRootVersion = winningAMTCheckpoint.version))))
+            contentRootVersion = winningAMTCheckpoint.contentRoot.version))))
       )
     }.getOrElse(currentTransactionInfo)
     // Clear `currentCommitAttemptAMTCheckpointOpt` because it is stale once we rebase.
@@ -88,10 +234,10 @@ object AMTUtils {
   }
 
   // Serializes a Manifest Deletion Vector to the on-disk byte form carried in `manifest_info.dv`.
-  private[amt] def serializeMdv(mdv: RoaringBitmapArray): Array[Byte] =
-    mdv.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+  private[amt] def serializeMdv(mdv: ManifestBitmap): Array[Byte] =
+    mdv.serializeAsByteArray()
 
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
-  private[amt] def deserializeMdv(bytes: Array[Byte]): RoaringBitmapArray =
-    RoaringBitmapArray.readFrom(bytes)
+  private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
+    ManifestBitmap.fromSerializedByteArray(bytes)
 }

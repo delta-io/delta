@@ -691,7 +691,7 @@ object DeletionVectorWriter extends DeltaLogging {
       DeletionVectorDescriptor.EMPTY
     } else {
       val dvRange = ctx.writer.write(bitmapData)
-      DeletionVectorDescriptor.onDiskWithRelativePath(
+      DeletionVectorDescriptor.onDiskWithUuidRelativePath(
         id = ctx.fileId,
         randomPrefix = ctx.prefix,
         sizeInBytes = bitmapData.length,

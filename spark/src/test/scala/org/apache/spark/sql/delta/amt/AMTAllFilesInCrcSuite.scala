@@ -16,11 +16,14 @@
 
 package org.apache.spark.sql.delta.amt
 
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaOperations}
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
 
-class AMTAllFilesInCrcSuite extends AMTCheckpointTestBase {
+class AMTAllFilesInCrcSuite extends AMTCheckpointTestBase with DeletionVectorsTestUtils {
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key, "true")
@@ -59,13 +62,44 @@ class AMTAllFilesInCrcSuite extends AMTCheckpointTestBase {
       "a root-only AMT CRC must agree with state reconstruction.")
   }
 
+  testAcrossAMTCheckpointScenarios(
+      "CRC validation canonicalizes equivalent deletion-vector path encodings",
+      "amt_crc_dv",
+      sqlConfs = Seq(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false"))(
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = 1, rowsPerFile = 2),
+      inlineCheckpointTriggerActionsOrSQL = Some { name =>
+        val log = deltaLogForName(name)
+        val files = log.update().allFiles.collect()
+        assert(files.length == 1)
+        Left((
+          writeFileWithDVOnDisk(log, files.head, RoaringBitmapArray(0L)),
+          DeltaOperations.Delete(predicate = Seq.empty)))
+      }) { context =>
+    val snapshot = context.postCheckpointSnapshot
+    assert(context.provider.leaves.isEmpty, "the AMT must be root-only.")
+
+    val crc = snapshot.deltaLog.readChecksum(snapshot.version).getOrElse(
+      fail(s"expected a CRC at version ${snapshot.version}."))
+    val crcFiles = crc.allFiles.getOrElse(
+      fail("a root-only AMT must persist allFiles in its CRC."))
+    val reconstructedFiles = snapshot.allFilesViaStateReconstruction.collect()
+    assert(crcFiles.length == 1 && reconstructedFiles.length == 1)
+
+    val crcDv = crcFiles.head.deletionVector
+    val reconstructedDv = reconstructedFiles.head.deletionVector
+    assert(crcDv.storageType == DeletionVectorDescriptor.UUID_DV_MARKER)
+    assert(reconstructedDv.storageType == DeletionVectorDescriptor.RELATIVE_DV_MARKER)
+    assert(snapshot.validateFileListAgainstCRC(
+      crc, contextOpt = Some("AMTAllFilesInCrcSuite")))
+  }
+
   test("AMT tree with leaf manifests keeps its files out of the CRC") {
     withSQLConf(leafPackingConfs: _*) {
       withTable("amt_crc_leaves") {
         createAMTTable("amt_crc_leaves", checkpointInterval = Int.MaxValue)
         val deltaLog = deltaLogForName("amt_crc_leaves")
         commitCheckpoint(deltaLog, incremental = false) // bootstrap full checkpoint
-        appendRowsAsSeparateFiles("amt_crc_leaves", numRows = leafPackedFiles)
+        appendRowsAsSeparateFiles("amt_crc_leaves", numFiles = leafPackedFiles)
         commitCheckpoint(deltaLog, incremental = false)
         val snapshot = deltaLog.update()
         val provider = amtProvider(snapshot).getOrElse(fail("table must be AMT-backed."))
@@ -109,7 +143,7 @@ class AMTAllFilesInCrcSuite extends AMTCheckpointTestBase {
         val deltaLog = deltaLogForName("amt_crc_shrink")
         commitCheckpoint(deltaLog, incremental = false) // bootstrap full checkpoint
 
-        appendRowsAsSeparateFiles("amt_crc_shrink", numRows = leafPackedFiles)
+        appendRowsAsSeparateFiles("amt_crc_shrink", numFiles = leafPackedFiles)
         commitCheckpoint(deltaLog, incremental = false)
         val snapshotBackedByMultiLeafAMT = deltaLog.update()
         assert(amtProvider(snapshotBackedByMultiLeafAMT).exists(_.leaves.size >= 2),

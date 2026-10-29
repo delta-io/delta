@@ -24,7 +24,6 @@ import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.databind.{DeserializationFeature, ObjectMapper}
 import com.fasterxml.jackson.module.scala.{ClassTagExtensions, DefaultScalaModule}
 
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, StructType}
 
 /** Trait containing common utility methods for struct evolution nullness tests. */
@@ -248,7 +247,7 @@ trait MergeIntoStructEvolutionNullnessTestUtils extends MergeHelpers {
 trait MergeIntoTopLevelStructEvolutionNullnessTests
     extends MergeIntoSchemaEvolutionMixin
     with MergeIntoStructEvolutionNullnessTestUtils {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   private val testNamePrefix = "top-level struct - "
 
@@ -555,7 +554,7 @@ trait MergeIntoTopLevelStructEvolutionNullnessTests
 trait MergeIntoNestedStructEvolutionNullnessTests
     extends MergeIntoSchemaEvolutionMixin
     with MergeIntoStructEvolutionNullnessTestUtils {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   private val testNamePrefix = "nested struct - "
 
@@ -1017,9 +1016,7 @@ trait MergeIntoNestedStructEvolutionNullnessTests
 trait MergeIntoTopLevelArrayStructEvolutionNullnessTests
     extends MergeIntoSchemaEvolutionMixin
     with MergeIntoStructEvolutionNullnessTestUtils {
-  self: MergeIntoTestUtils with SharedSparkSession =>
-
-  import org.apache.spark.sql.types.ArrayType
+  self: MergeIntoTestUtils =>
 
   private val testNamePrefix = "top-level array-of-struct - "
 
@@ -1213,7 +1210,7 @@ trait MergeIntoTopLevelArrayStructEvolutionNullnessTests
 trait MergeIntoNestedArrayStructEvolutionNullnessTests
     extends MergeIntoSchemaEvolutionMixin
     with MergeIntoStructEvolutionNullnessTestUtils {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import org.apache.spark.sql.types.ArrayType
 
@@ -1536,7 +1533,7 @@ trait MergeIntoNestedArrayStructEvolutionNullnessTests
 trait MergeIntoTopLevelMapStructEvolutionNullnessTests
     extends MergeIntoSchemaEvolutionMixin
     with MergeIntoStructEvolutionNullnessTestUtils {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import org.apache.spark.sql.types.{MapType, StringType}
 
@@ -1733,7 +1730,7 @@ trait MergeIntoTopLevelMapStructEvolutionNullnessTests
 trait MergeIntoNestedMapStructEvolutionNullnessTests
     extends MergeIntoSchemaEvolutionMixin
     with MergeIntoStructEvolutionNullnessTestUtils {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import org.apache.spark.sql.types.{MapType, StringType}
 
@@ -2061,7 +2058,7 @@ trait MergeIntoNestedMapStructEvolutionNullnessTests
 trait MergeIntoStructEvolutionNullnessMultiClauseTests
     extends MergeIntoSchemaEvolutionMixin
     with MergeIntoStructEvolutionNullnessTestUtils {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   private val testNamePrefix = s"multiple clauses - " +
     s"preserveNullSourceStructs=$preserveNullSourceStructs - " +

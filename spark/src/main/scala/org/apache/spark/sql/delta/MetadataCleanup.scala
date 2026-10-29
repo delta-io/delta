@@ -24,6 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, MINUTE, TruncationGranularity}
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -67,8 +68,30 @@ trait MetadataCleanup extends DeltaLogging {
       snapshotToCleanup: Snapshot,
       catalogTableOpt: Option[CatalogTable]): Unit = {
     if (enableExpiredLogCleanup(unsafeVolatileSnapshot.metadata)) {
+      try {
+        DeltaErrors.checkCatalogManagedTableOperationAllowed(
+          CatalogManagedTableMaintenanceOperation.METADATA_CLEANUP,
+          snapshotToCleanup,
+          catalogTableOpt)
+      } catch {
+        case _: DeltaUnsupportedOperationException => return
+      }
       cleanUpExpiredLogs(snapshotToCleanup, catalogTableOpt)
     }
+  }
+
+  /**
+   * Returns whether metadata cleanup must be skipped because `snapshotToCleanup` belongs to an AMT
+   * table. Metadata cleanup only knows classic and V2 checkpoints, so on an AMT table it can pick
+   * a cleanup boundary that no AMT checkpoint backs and try to write a non-AMT checkpoint there.
+   */
+  protected def shouldSkipMetadataCleanupForAMT(snapshotToCleanup: Snapshot): Boolean = {
+    val skip = AMTUtils.amtEnabled(snapshotToCleanup)
+    if (skip) {
+      logInfo(log"Skipping metadata cleanup for AMT table " +
+        log"${MDC(DeltaLogKeys.PATH, dataPath)}")
+    }
+    skip
   }
 
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
@@ -77,6 +100,12 @@ trait MetadataCleanup extends DeltaLogging {
       catalogTableOpt: Option[CatalogTable] = None,
       deltaRetentionMillisOpt: Option[Long] = None,
       cutoffTruncationGranularity: TruncationGranularity = DAY): Unit = {
+    if (shouldSkipMetadataCleanupForAMT(snapshotToCleanup)) return
+    DeltaErrors.checkCatalogManagedTableOperationAllowed(
+      CatalogManagedTableMaintenanceOperation.METADATA_CLEANUP,
+      snapshotToCleanup,
+      catalogTableOpt)
+
     recordDeltaOperation(this, "delta.log.cleanup") {
       val retentionMillis =
         deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(unsafeVolatileSnapshot.metadata))

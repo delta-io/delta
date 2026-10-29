@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta.metering
 
+import java.lang.{Boolean => JavaBoolean}
+import java.util.function.Supplier
+
 import scala.concurrent.duration._
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -32,15 +35,18 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import com.google.common.cache.{Cache, CacheBuilder}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{Logging, MDC, MessageWithContext}
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -108,6 +114,39 @@ trait DeltaLogging
   }
 
   /**
+   * Records a delta event once per table and `opType` in this JVM, for conditions that would
+   * otherwise be logged repeatedly. The table is identified by its id tag, or by its path tag if
+   * no id is known. Events without a table identity are dropped.
+   *
+   * `data` is evaluated only when the event is recorded. A bounded number of (table, opType)
+   * pairs is remembered, and a pair that was evicted is recorded again.
+   */
+  protected def recordDeltaEventOncePerTable(
+      provider: DeltaLoggingProvider,
+      opType: String,
+      data: => AnyRef = null): Unit = {
+    try {
+      if (provider != null) {
+        val tableTags = provider.getCommonTags
+        val tableIdentity = tableTags.get(TAG_TAHOE_ID).flatMap(Option(_))
+          .orElse(tableTags.get(TAG_TAHOE_PATH).flatMap(Option(_)))
+        if (tableIdentity.exists(DeltaLogging.markLoggedOncePerTable(_, opType))) {
+          recordDeltaEvent(provider, opType, data = data)
+        }
+      }
+    } catch {
+      case NonFatal(e) =>
+        recordEvent(
+          EVENT_LOGGING_FAILURE,
+          blob = JsonUtils.toJson(
+            Map("exception" -> e.getMessage,
+              "opType" -> opType,
+              "method" -> "recordDeltaEventOncePerTable"))
+        )
+    }
+  }
+
+  /**
    * Used to report the duration as well as the success or failure of an operation on a `tahoePath`.
    */
   protected def recordDeltaOperationForTablePath[A](
@@ -153,7 +192,7 @@ trait DeltaLogging
       check: => Boolean,
       name: String,
       msg: String,
-      deltaLog: DeltaLog = null,
+      deltaLog: DeltaLoggingProvider = null,
       data: AnyRef = null,
       path: Option[Path] = None)
     : Unit = {
@@ -170,9 +209,78 @@ trait DeltaLogging
     }
   }
 
+  /**
+   * A variation of [[deltaAssert]] that only logs the assertion error and
+   * does not add an assertion in test. This is useful for writing negative tests
+   * that validates the behaviour of executing the code after the [[deltaAssert]] call.
+   * The assertion in test prevents us from testing the production behaviour.
+   */
+  protected def deltaAssertLogOnly(
+      check: => Boolean,
+      name: String,
+      msg: String,
+      deltaLog: DeltaLoggingProvider = null,
+      data: AnyRef = null,
+      path: Option[Path] = None
+    ): Unit = {
+    if (!check) {
+      recordDeltaEvent(
+        provider = deltaLog,
+        opType = s"delta.assertions.$name",
+        data = data,
+        path = path
+      )
+      logWarning(msg)
+    }
+  }
+
+  /**
+   * A variation of [[deltaAssert]] that logs the assertion error and throws a throwable.
+   * We don't need an assertion in test since if it fails we want the same throwable in
+   * test and in production.
+   */
+  protected def deltaAssertAndThrow(
+      check: => Boolean,
+      name: String,
+      msg: String,
+      throwable: Throwable,
+      deltaLog: DeltaLoggingProvider = null,
+      data: AnyRef = null,
+      path: Option[Path] = None
+    ): Unit = {
+    if (!check) {
+      recordDeltaEvent(
+        provider = deltaLog,
+        opType = s"delta.assertions.$name",
+        data = data,
+        path = path
+      )
+      logError(msg)
+
+      throw throwable
+    }
+  }
+
   protected def recordFrameProfile[T](group: String, name: String)(thunk: => T): T = {
     // future work to capture runtime information ...
     thunk
+  }
+
+
+  /** Java adapter for a value-returning frame with fixed system-code group and name literals. */
+  protected def recordFrameProfileValue[T](
+      group: String,
+      name: String,
+      body: Supplier[T]): T = {
+    recordFrameProfile(group, name)(body.get())
+  }
+
+  /** Java adapter for a void frame with fixed system-code group and name literals. */
+  protected def recordFrameProfileAction(
+      group: String,
+      name: String,
+      body: Runnable): Unit = {
+    recordFrameProfile(group, name)(body.run())
   }
 
   private def withDmqTag[T](thunk: => T): T = {
@@ -224,6 +332,20 @@ object DeltaLogging {
 
   // The opType for delta commit stats.
   final val DELTA_COMMIT_STATS_OPTYPE = "delta.commit.stats"
+
+  // Guava caches only work with Java objects, so the value is a JavaBoolean. The size is read
+  // from the static conf when the cache is first used.
+  private lazy val eventsLoggedOncePerTable: Cache[(String, String), JavaBoolean] =
+    CacheBuilder.newBuilder()
+      .maximumSize(SQLConf.get.getConf(DeltaSQLConf.DELTA_EVENT_ONCE_PER_TABLE_CACHE_SIZE))
+      .build[(String, String), JavaBoolean]()
+
+  /** Remembers `tableIdentity` and `opType`, returning true if the pair was not remembered yet. */
+  private def markLoggedOncePerTable(tableIdentity: String, opType: String): Boolean = {
+    val key = (tableIdentity, opType)
+    eventsLoggedOncePerTable.getIfPresent(key) == null &&
+      eventsLoggedOncePerTable.asMap().putIfAbsent(key, JavaBoolean.TRUE) == null
+  }
 }
 
 /**

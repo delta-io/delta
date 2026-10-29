@@ -21,6 +21,7 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.PartitionKeyType
 import io.delta.kernel.Transaction.{generateAppendActions, getWriteContext, transformLogicalData}
 import io.delta.kernel.data._
 import io.delta.kernel.exceptions.KernelException
@@ -156,6 +157,71 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         ctx.asInstanceOf[DataWriteContextImpl].getPartitionValues.keySet().asScala
       assert(partitionKeys === Set("col-state", "col-country"))
     }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"getWriteContext: PHYSICAL keys used as-is on column-mapped table: cmMode=$cmMode") {
+      // Physical keys are used as-is: same physical target dir and keys as the LOGICAL path.
+      val ctx = getWriteContext(
+        mockEngine(),
+        testTxnState(columnMappedPartitionSchema, testPartitionColNames, cmMode = cmMode),
+        Map(
+          "col-state" -> Literal.ofString("CA"),
+          "col-country" -> Literal.ofString("USA")).asJava,
+        PartitionKeyType.PHYSICAL)
+
+      assert(ctx.getTargetDirectory.endsWith("/col-state=CA/col-country=USA"))
+      val partitionKeys =
+        ctx.asInstanceOf[DataWriteContextImpl].getPartitionValues.keySet().asScala
+      assert(partitionKeys === Set("col-state", "col-country"))
+    }
+  }
+
+  test("getWriteContext: PHYSICAL rejects a value whose type mismatches the column") {
+    val e = intercept[IllegalArgumentException] {
+      getWriteContext(
+        mockEngine(),
+        testTxnState(columnMappedPartitionSchema, testPartitionColNames, cmMode = "name"),
+        Map(
+          "col-state" -> Literal.ofInt(5), // state is StringType
+          "col-country" -> Literal.ofString("USA")).asJava,
+        PartitionKeyType.PHYSICAL)
+    }
+    assert(
+      e.getMessage ===
+        "Partition column col-state is of type string but the value provided is of type integer")
+  }
+
+  test("getWriteContext: PHYSICAL rejects an unknown physical partition column") {
+    val e = intercept[IllegalArgumentException] {
+      getWriteContext(
+        mockEngine(),
+        testTxnState(columnMappedPartitionSchema, testPartitionColNames, cmMode = "name"),
+        Map(
+          "col-bogus" -> Literal.ofString("CA"),
+          "col-country" -> Literal.ofString("USA")).asJava,
+        PartitionKeyType.PHYSICAL)
+    }
+    assert(
+      e.getMessage ===
+        "Partition values provided are not matching the partition columns. " +
+        "Partition columns: [col-state, col-country], " +
+        "Partition values: {col-bogus=CA, col-country=USA}")
+  }
+
+  test("getWriteContext: PHYSICAL rejects a missing partition column") {
+    val e = intercept[IllegalArgumentException] {
+      getWriteContext(
+        mockEngine(),
+        testTxnState(columnMappedPartitionSchema, testPartitionColNames, cmMode = "name"),
+        Map("col-state" -> Literal.ofString("CA")).asJava, // missing col-country
+        PartitionKeyType.PHYSICAL)
+    }
+    assert(
+      e.getMessage ===
+        "Partition values provided are not matching the partition columns. " +
+        "Partition columns: [col-state, col-country], " +
+        "Partition values: {col-state=CA}")
   }
 
   withIcebergCompatVersions("generateAppendActions: iceberg comaptibily checks") {

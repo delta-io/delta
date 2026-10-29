@@ -26,7 +26,7 @@ import scala.util.Try
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
@@ -36,8 +36,10 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
+import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.StateCache
@@ -236,7 +238,7 @@ class Snapshot(
 
   /** Returns the lastManifestCommit reliably for this snapshot's version. */
   lazy val lastManifestCommitOpt: Option[LastManifestCommit] =
-    Option.when(protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+    Option.when(AMTUtils.amtEnabled(this)) {
       _reconstructedProtocolMetadataICTAndLMC.bestEffortLastManifestCommit.orElse {
         // Only fallback to direct CommitInfo read if there are no trailing deltas.
         // This avoids unnecessary I/O when there isn't any AMT checkpoint yet.
@@ -314,11 +316,12 @@ class Snapshot(
    * been backfilled.
    */
   private[delta] def allCommitsBackfilled: Boolean = {
-    lastKnownBackfilledVersion >= FileNames.getFileVersion(logSegment.deltas.last) &&
-      // This should always be true because we synchronously backfill during checkpoint
-      // creation and always create a new snapshot after that, which will force the
-      // latest LogSegment to be used.
-      lastKnownBackfilledVersion >= logSegment.checkpointProvider.version
+    // This should never happen, but we check anyway to be defensive.
+    if (lastKnownBackfilledVersion > this.version) {
+      throw new IllegalStateException("`lastKnownBackfilledVersion` should never be greater " +
+        "than the snapshot's version.")
+    }
+    lastKnownBackfilledVersion == this.version
   }
 
   /**
@@ -473,6 +476,116 @@ class Snapshot(
     deltaLog.protocolRead(protocol)
     deltaLog.assertTableFeaturesMatchMetadata(protocol, metadata)
     SchemaUtils.recordUndefinedTypes(deltaLog, metadata.schema)
+    AMTUtils.runInvariantsSafely(
+        checkName = "Snapshot.assertAMTInvariantsAtInit",
+        deltaLog = Some(deltaLog),
+        logPath = logPath) {
+      assertAMTInvariantsAtInit()
+    }
+  }
+
+  /**
+   * Checks AMT invariants at snapshot initialization, logging in production and throwing in tests.
+   */
+  private def assertAMTInvariantsAtInit(): Unit = {
+    def toStrLMC(lastManifestCommit: LastManifestCommit): String = {
+      s"LastManifestCommit[version=${lastManifestCommit.version}, " +
+        s"contentRootVersion=${lastManifestCommit.contentRootVersion}]"
+    }
+    def toStrCP(amtCheckpointProvider: AMTCheckpointProvider): String = {
+      s"AMTCheckpointProvider[version=${amtCheckpointProvider.version}]"
+    }
+
+    val eventData: Map[String, Any] = Map(
+      "version" -> version,
+      "logSegmentVersion" -> logSegment.version,
+      "checkpointVersion" -> logSegment.checkpointProvider.version,
+      "checkpointProviderType" -> logSegment.checkpointProvider.getClass.getSimpleName)
+
+    val amtCheckpointProviderOpt = logSegment.checkpointProvider match {
+      case amtCheckpointProvider: AMTCheckpointProvider =>
+        deltaAssert(
+          check = amtCheckpointProvider.version <= version,
+          name = AMTUsageLogs.CHECKPOINT_EXCEEDS_SNAPSHOT_VERSION,
+          msg = s"${toStrCP(amtCheckpointProvider)} exceeds snapshot version $version.",
+          deltaLog = deltaLog,
+          data = eventData,
+          path = Some(logPath))
+        Some(amtCheckpointProvider)
+      case _ => None
+    }
+
+    if (!AMTUtils.amtEnabled(this)) {
+      deltaAssert(
+        check = amtCheckpointProviderOpt.isEmpty,
+        name = AMTUsageLogs.AMT_CHECKPOINT_PROVIDER_WITH_FEATURE_DISABLED,
+        msg = s"AMTCheckpointProvider[version=${logSegment.checkpointProvider.version}] " +
+          "is present but AMT is disabled.",
+        deltaLog = deltaLog,
+        data = eventData,
+        path = Some(logPath))
+      return
+    }
+
+    deltaAssert(
+      check = logSegment.nonCompactedDeltasOpt.isDefined,
+      name = AMTUsageLogs.SNAPSHOT_INVARIANT_MISSING_NON_COMPACTED_DELTAS,
+      msg = s"An AMT-enabled snapshot must define nonCompactedDeltasOpt, got None.\n" +
+        s"${logSegment}",
+      deltaLog = deltaLog,
+      data = eventData,
+      path = Some(logPath))
+
+    deltaAssert(
+      check = amtCheckpointProviderOpt.isEmpty || logSegment.deltaAtCheckpointVersionOpt.isDefined,
+      name = AMTUsageLogs.MISSING_DELTA_AT_CHECKPOINT_VERSION,
+      msg = s"An AMT-enabled snapshot must define deltaAtCheckpointVersionOpt, got None.\n" +
+        s"${logSegment}",
+      deltaLog = deltaLog,
+      data = eventData,
+      path = Some(logPath))
+
+    (amtCheckpointProviderOpt, lastManifestCommitOpt) match {
+      // Normally, the AMT checkpoint provider's version matches the lastManifestCommit exactly.
+      // However, during time travel it may instead describe something newer, i.e. a later manifest
+      // commit not yet discoverable at the target version, carried forward from lastCheckpointInfo.
+      // Thus, we only report a violation when the AMT checkpoint provider is stale.
+      // For example, if a table has the following latest state:
+      //   DeltaLog[commits v0~9, manifest-commit v10 (content root @v5), commits v11~20]
+      // Then `deltaLog.getSnapshotAt(version = 8)` could construct a LogSegment with:
+      //   LogSegment[AMTCheckpointProvider(version = 5), deltas = commits v6~8]
+      case (Some(amtCp), Some(lmc)) =>
+        deltaAssert(
+          check = lmc.contentRootVersion <= amtCp.version,
+          name = AMTUsageLogs.STALE_CHECKPOINT_PROVIDER,
+          msg = s"LastManifestCommit.contentRootVersion ${lmc.contentRootVersion} exceeds " +
+            s"AMTCheckpointProvider.version ${amtCp.version}.",
+          deltaLog = deltaLog,
+          data = eventData ++ Map(
+            "hasLastManifestCommit" -> true,
+            "lastManifestCommitVersion" -> lmc.version,
+            "lastManifestCommitContentRootVersion" -> lmc.contentRootVersion),
+          path = Some(logPath)
+        )
+      // When that undiscoverable manifest commit is the first manifest commit, lastManifestCommit
+      // does not exist, so this is not a violation.
+      case (Some(amtCp), None) => ()
+      // But when the lastManifestCommit is present but the AMT checkpoint provider is missing,
+      // that's a mismatch.
+      case (None, Some(lmc)) =>
+        deltaAssert(
+          check = false,
+          name = AMTUsageLogs.MISSING_CHECKPOINT_PROVIDER,
+          msg = s"${toStrLMC(lmc)} is present but AMTCheckpointProvider is missing.",
+          deltaLog = deltaLog,
+          data = eventData ++ Map(
+            "hasLastManifestCommit" -> true,
+            "lastManifestCommitVersion" -> lmc.version,
+            "lastManifestCommitContentRootVersion" -> lmc.contentRootVersion),
+          path = Some(logPath)
+        )
+      case (None, None) => ()
+    }
   }
 
   /** The current set of actions in this [[Snapshot]] as plain Rows */
@@ -507,6 +620,10 @@ class Snapshot(
   override def metadata: Metadata = _reconstructedProtocolMetadataICTAndLMC.metadata
 
   override def protocol: Protocol = _reconstructedProtocolMetadataICTAndLMC.protocol
+
+  /** The row tracking high watermark assigned in this snapshot. */
+  def getRowTrackingHighWaterMark(): Option[Long] =
+    RowId.RowTrackingMetadataDomain.fromSnapshot(this).map(_.rowIdHighWaterMark)
 
   /**
    * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the
@@ -600,6 +717,9 @@ class Snapshot(
       // for serializability
       val localMinFileRetentionTimestamp = minFileRetentionTimestamp
       val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
+      val localTableRoot = deltaLog.dataPath.toString
+      val localUseDeletionVectorObjectIdentity =
+        FileAction.useDeletionVectorObjectIdentity(metadata, protocol, spark)
 
       val canonicalPath = deltaLog.getCanonicalPathUdf()
 
@@ -636,7 +756,9 @@ class Snapshot(
             col("add.defaultRowCommitVersion"),
             col("add.clusteringProvider"),
             col("add.backReference"),
-            col("add.amtPassthrough")
+            col("add.amtPassthrough"),
+            col("add.snapshotId"),
+            col("add.modifiedSnapshotId")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,
@@ -646,7 +768,9 @@ class Snapshot(
           val state: LogReplay =
             new InMemoryLogReplay(
               Some(localMinFileRetentionTimestamp),
-              localMinSetTransactionRetentionTimestamp)
+              localMinSetTransactionRetentionTimestamp,
+              tableRoot = new Path(localTableRoot),
+              useDeletionVectorObjectIdentity = localUseDeletionVectorObjectIdentity)
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
         }
@@ -772,16 +896,7 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
-  /**
-   * Ensures that commit files are backfilled up to the current version in the snapshot.
-   *
-   * This method checks if there are any un-backfilled versions up to the current version and
-   * triggers the backfilling process using the commit-coordinator. It verifies that the delta file
-   * for the current version exists after the backfilling process.
-   *
-   * @throws IllegalStateException
-   *   if the delta file for the current version is not found after backfilling.
-   */
+  /** Ensures that commit files are backfilled up to the current version in the snapshot. */
   def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
     val tableCommitCoordinatorClientOpt = if (isCatalogOwned) {
       CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(spark, catalogTableOpt, this)
@@ -791,20 +906,12 @@ class Snapshot(
     val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       return
     }
-    val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
-    if (minUnbackfilledVersion <= version) {
-      val hadoopConf = deltaLog.newDeltaHadoopConf()
-      tableCommitCoordinatorClient.backfillToVersion(
-        catalogTableOpt.map(_.identifier),
-        version,
-        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
-      val fs = deltaLog.logPath.getFileSystem(hadoopConf)
-      val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
-      if (!fs.exists(expectedBackfilledDeltaFile)) {
-        throw new IllegalStateException("Backfilling of commit files failed. " +
-          s"Expected delta file $expectedBackfilledDeltaFile not found.")
-      }
-    }
+    CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+      version,
+      deltaLog,
+      tableCommitCoordinatorClient,
+      DeltaCommitFileProvider(this),
+      catalogTableOpt)
   }
 
 
@@ -964,10 +1071,11 @@ object Snapshot extends DeltaLogging {
     // AddFile-generation logic cannot handle back references (yet): it writes allFiles into the CRC
     // without them. Only leaf-resident files carry a back reference, so a root-only tree yields a
     // back-reference-free list that matches state reconstruction.
-    if (snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
-      val rootOnly =
-        effectiveLatestAMTCheckpointAtCommitVersion.exists(_.contentRoot.numLeaves.contains(0L))
-      if (!rootOnly) return false
+    // The tree is checked even when the read snapshot is not AMT because the commit that upgrades
+    // the table to AMT can land a leaf bearing tree.
+    if ((AMTUtils.amtEnabled(snapshot) || effectiveLatestAMTCheckpointAtCommitVersion.isDefined) &&
+        !AMTUtils.isRootOnlyCheckpoint(effectiveLatestAMTCheckpointAtCommitVersion)) {
+      return false
     }
     allFilesInCrcWritePathEnabled(spark, snapshot) &&
       (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
@@ -1069,6 +1177,14 @@ class DummySnapshot(
 
   override def domainMetadata: Seq[DomainMetadata] = domainMetadataOpt.getOrElse(Seq.empty)
   override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
+  // The base DV accessors gate on DV readability of this snapshot's protocol, but a dummy snapshot
+  // seeds the incremental checksum of the first commit, which may enable DVs. Serve the
+  // already-computed initial state directly so that checksum starts from zeroed DV metrics instead
+  // of None, which would force a state reconstruction on the next commit.
+  override def numDeletedRecordsOpt: Option[Long] = computedState.numDeletedRecordsOpt
+  override def numDeletionVectorsOpt: Option[Long] = computedState.numDeletionVectorsOpt
+  override def deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram] =
+    computedState.deletedRecordCountsHistogramOpt
   override protected[delta] lazy val getInCommitTimestampOpt: Option[Long] = None
   /* A dummy snapshot never has a manifest commit. */
   override lazy val lastManifestCommitOpt: Option[LastManifestCommit] = None

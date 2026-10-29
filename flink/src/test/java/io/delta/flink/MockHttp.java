@@ -20,6 +20,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.*;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import dev.failsafe.function.CheckedConsumer;
 import java.net.URI;
@@ -182,5 +183,9 @@ public class MockHttp {
 
   public void verifyPostRequest(String path) {
     this.wireMockServer.verify(1, postRequestedFor(urlPathEqualTo(path)));
+  }
+
+  public void verify(RequestPatternBuilder requestPattern) {
+    wireMockServer.verify(requestPattern);
   }
 }
