@@ -2924,6 +2924,19 @@ trait DeltaErrorsBase
         supportedFeatures.map(_.name).toSeq.sorted.mkString(", ")))
   }
 
+  /**
+   * Thrown when a transaction makes a table support both `feature1` and `feature2`, while Delta
+   * declares these features as incompatible.
+   */
+  def incompatibleTableFeatures(
+      tableName: String,
+      feature1: String,
+      feature2: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_INCOMPATIBLE_TABLE_FEATURES",
+      messageParameters = Array(tableName, feature1, feature2))
+  }
+
   case class LogRetentionConfig(key: String, value: String, truncateHistoryRetention: String)
 
   private def logRetentionConfig(metadata: Metadata): LogRetentionConfig = {
