@@ -87,3 +87,21 @@ Reorganize a Delta Lake table by rewriting files to purge soft-deleted data, suc
   data may still exist in the old files. You can run
   [VACUUM](/delta-utility/#vacuum) to physically delete the old files.
 </Aside>
+
+#### REORG TABLE output
+
+`REORG TABLE ... APPLY (PURGE)` returns a single row with the same schema as [OPTIMIZE](/optimizations-oss/#compaction-bin-packing):
+
+| Column | Type | Description |
+| :-- | :-- | :-- |
+| `path` | string | Path of the table. |
+| `metrics` | struct | The same `OptimizeMetrics` struct returned by `OPTIMIZE`, for example `numFilesAdded`, `numFilesRemoved`, `filesAdded`, `filesRemoved`, `partitionsOptimized`, `numBatches` and `totalConsideredFiles`. |
+
+For a purge, `metrics.deletionVectorStats` contains the following fields. It is `null` when no file with a deletion vector was rewritten.
+
+| Field | Type | Description |
+| :-- | :-- | :-- |
+| `numDeletionVectorsRemoved` | long | Number of deletion vectors purged, that is, the number of rewritten files that carried a deletion vector. |
+| `numDeletionVectorRowsRemoved` | long | Total number of soft-deleted rows that were physically removed by rewriting those files. |
+
+In [DESCRIBE HISTORY](/delta-utility/#retrieve-delta-table-history) the command is recorded as a `REORG` operation. Its `operationParameters` contain `predicate` and `applyPurge`, and its `operationMetrics` contain the same keys as `OPTIMIZE`, including `numDeletionVectorsRemoved`. `numDeletionVectorRowsRemoved` is only available in the command output, not in the table history. If no file needs to be rewritten, `REORG TABLE` does not create a new table version.
