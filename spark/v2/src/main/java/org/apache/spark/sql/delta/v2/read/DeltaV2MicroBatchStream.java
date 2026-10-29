@@ -27,15 +27,10 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.actions.CommitInfo;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -53,10 +48,17 @@ import org.apache.spark.sql.connector.read.streaming.*;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.TypeWidening;
+import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.actions.CommitInfo;
+import org.apache.spark.sql.delta.actions.Metadata;
+import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.actions.RemoveFile;
+import org.apache.spark.sql.delta.commands.cdc.CDCReader$;
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
@@ -67,8 +69,9 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
-import org.apache.spark.sql.delta.v2.adapters.KernelMetadataAdapter;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
@@ -76,7 +79,6 @@ import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils;
 import org.apache.spark.sql.delta.v2.utils.PartitionValueCaster;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
-import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
@@ -937,7 +939,8 @@ class DeltaV2MicroBatchStream
         return;
       }
     }
-    if (!isCDFEnabled(startSnapshot.getMetadata())) {
+    // TODO: Replace the Kernel startSnapshot with a V1 snapshot to remove this conversion.
+    if (!isCDFEnabled(KernelActionUtils$.MODULE$.metadataFromKernel(startSnapshot.getMetadata()))) {
       throw new RuntimeException(
           DeltaErrors.changeDataNotRecordedException(startVersion, startVersion, startVersion));
     }
@@ -947,6 +950,8 @@ class DeltaV2MicroBatchStream
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
     return getCommitsFromRange(startVersion, endOffset, ACTION_SET)
+        // TODO: Remove once the table manager returns DeltaSingleCommit.
+        .map(DeltaV2SingleCommit$.MODULE$::apply)
         .flatMap(commit -> processCommitToIndexedFiles(commit, startVersion, endOffset));
   }
 
@@ -1058,9 +1063,9 @@ class DeltaV2MicroBatchStream
    * sentinels.
    */
   private CloseableIterator<IndexedFile> processCommitToIndexedFiles(
-      CommitActions commit, long startVersion, Optional<DeltaSourceOffset> endOffsetOpt) {
+      DeltaSingleCommit commit, long startVersion, Optional<DeltaSourceOffset> endOffsetOpt) {
     try {
-      long version = commit.getVersion();
+      long version = commit.version();
 
       // First pass: Validate the commit and decide whether to skip it.
       //
@@ -1069,7 +1074,6 @@ class DeltaV2MicroBatchStream
       // If we emitted AddFiles before discovering a RemoveFile(dataChange=true) later in the
       // commit, downstream would produce incorrect results.
       //
-      // TODO(#5318): consider caching the commit actions to avoid reading the same commit twice.
       // When schema tracking is enabled, skip per-commit metadata verification — the handler
       // manages schema changes through the barrier protocol instead.
       boolean trackingMetadataChange = metadataEvolutionHandler.shouldTrackMetadataChange();
@@ -1105,13 +1109,7 @@ class DeltaV2MicroBatchStream
       // in filterAndGetIndexedFiles.
       CloseableIterator<IndexedFile> metadataBarrier =
           metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
-              validationResult.metadataAction == null
-                  ? null
-                  : KernelActionUtils$.MODULE$.metadataFromKernel(validationResult.metadataAction),
-              validationResult.protocolAction == null
-                  ? null
-                  : KernelActionUtils$.MODULE$.protocolFromKernel(validationResult.protocolAction),
-              version);
+              validationResult.metadataAction, validationResult.protocolAction, version);
 
       CloseableIterator<IndexedFile> inner =
           Utils.singletonCloseableIterator(
@@ -1122,56 +1120,43 @@ class DeltaV2MicroBatchStream
                   Utils.singletonCloseableIterator(
                       IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX())));
 
-      // Wrap the iterator so that closing it also closes the CommitActions, releasing its
-      // internal ActionsIterator and any associated file handles / parsed data.
-      return wrapIteratorWithCommitClose(inner, commit);
+      return inner;
     } catch (Exception e) {
-      // commit is not a CloseableIterator, we need to close it manually.
-      Utils.closeCloseables(commit);
       throw (e instanceof RuntimeException) ? (RuntimeException) e : new RuntimeException(e);
     }
   }
 
-  /**
-   * Wraps an iterator so that closing it also closes the given {@link CommitActions}, releasing its
-   * internal resources. This is necessary because {@link CommitActions} is an {@link AutoCloseable}
-   * but not a {@link CloseableIterator}, so closing the iterator chain alone does not close the
-   * {@link CommitActions} that produced it. Package-private for testing.
-   */
-  static CloseableIterator<IndexedFile> wrapIteratorWithCommitClose(
-      CloseableIterator<IndexedFile> inner, CommitActions commit) {
-    return new CloseableIterator<IndexedFile>() {
-      @Override
-      public boolean hasNext() {
-        return inner.hasNext();
-      }
+  private CloseableIterator<IndexedFile> getFilesFromCommit(
+      DeltaSingleCommit commit, long version) {
+    ClosableIterator<Action> actions =
+        commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L);
+    // TODO: Remove this adapter when the streaming source uses V1 ClosableIterator.
+    CloseableIterator<Action> actionIterator =
+        new CloseableIterator<Action>() {
+          @Override
+          public boolean hasNext() {
+            return actions.hasNext();
+          }
 
-      @Override
-      public IndexedFile next() {
-        return inner.next();
-      }
+          @Override
+          public Action next() {
+            return actions.next();
+          }
 
-      @Override
-      public void close() throws IOException {
-        Utils.closeCloseables(inner, commit);
-      }
-    };
-  }
-
-  private CloseableIterator<IndexedFile> getFilesFromCommit(CommitActions commit, long version) {
+          @Override
+          public void close() throws IOException {
+            actions.close();
+          }
+        };
     // Assign each IndexedFile a unique index within the commit. We use a mutable array
     // because variables captured by a lambda must be effectively final (never reassigned).
     long[] fileIndex = {0};
 
-    return commit
-        .getActions()
-        .flatMap(
-            batch -> {
-              // Processing each batch eagerly because they are already loaded into memory.
-              List<IndexedFile> files = new ArrayList<>();
-              fileIndex[0] = addIndexedFilesAndReturnNextIndex(batch, version, fileIndex[0], files);
-              return Utils.toCloseableIterator(files.iterator());
-            });
+    // Only include AddFiles with dataChange=true. Skip changes that optimize or reorganize
+    // data without changing the logical content.
+    return actionIterator
+        .filter(action -> action instanceof AddFile && ((AddFile) action).dataChange())
+        .map(action -> IndexedFile.addFile(version, fileIndex[0]++, (AddFile) action));
   }
 
   /** Result of commit validation, including skip decision and detected metadata/protocol. */
@@ -1194,7 +1179,7 @@ class DeltaV2MicroBatchStream
    * Validates a commit, fail the stream if it's invalid and decides whether to skip it. Mimics
    * DeltaSource.validateCommitAndDecideSkipping in Scala.
    *
-   * @param commit the CommitActions representing a single commit
+   * @param commit the DeltaSingleCommit representing a single commit
    * @param version the commit version
    * @param batchStartVersion Starting version of the batch being processed
    * @param tablePath the path to the Delta table
@@ -1204,7 +1189,7 @@ class DeltaV2MicroBatchStream
    * @throws RuntimeException if the commit is invalid.
    */
   private CommitValidationResult validateCommitAndDecideSkipping(
-      CommitActions commit,
+      DeltaSingleCommit commit,
       long version,
       long batchStartVersion,
       String tablePath,
@@ -1234,60 +1219,42 @@ class DeltaV2MicroBatchStream
     String removeFileActionPath = null;
     String operation = null;
 
-    try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+    try (ClosableIterator<Action> actionsIter =
+        commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) {
       while (actionsIter.hasNext()) {
-        ColumnarBatch batch = actionsIter.next();
-        int numRows = batch.getSize();
-        for (int rowId = 0; rowId < numRows; rowId++) {
-          // Track AddFile(dataChange=true)
-          Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
-          if (addOpt.isPresent()) {
-            hasFileAdd = true;
+        Action action = actionsIter.next();
+        if (action instanceof AddFile && ((AddFile) action).dataChange()) {
+          hasFileAdd = true;
+        } else if (action instanceof RemoveFile && ((RemoveFile) action).dataChange()) {
+          // skip change commits include delete-only commits
+          shouldSkipCommit = skipChangeCommits;
+          if (removeFileActionPath == null) {
+            removeFileActionPath = ((RemoveFile) action).path();
           }
-
-          // Track RemoveFile(dataChange=true)
-          Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
-          if (removeOpt.isPresent()) {
-            // skip change commits include delete-only commits
-            shouldSkipCommit = skipChangeCommits;
-            if (removeFileActionPath == null) {
-              removeFileActionPath = removeOpt.get().getPath();
-            }
-          }
-
-          // Track Metadata for read-incompatible schema changes.
-          Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
-          if (metadataOpt.isPresent()) {
-            metadataAction =
-                validateMetadata(
-                    metadataOpt.get(),
-                    metadataAction,
-                    version,
-                    batchStartVersion,
-                    endOffsetOpt,
-                    verifyMetadataAction);
-          }
-
-          // Track Protocol for schema evolution barrier detection.
-          Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
-          if (protocolOpt.isPresent()) {
-            Preconditions.checkArgument(
-                protocolAction == null,
-                "Should not encounter two protocol actions in the same commit of version %d",
-                version);
-            protocolAction = protocolOpt.get();
-          }
-
-          // Track CommitInfo for operation details in error messages.
-          Optional<CommitInfo> commitInfoOpt = StreamingHelper.getCommitInfo(batch, rowId);
-          if (commitInfoOpt.isPresent()) {
-            CommitInfo commitInfo = commitInfoOpt.get();
-            operation =
-                commitInfo
-                    .getOperation()
-                    .map(op -> String.format("%s (%s)", op, commitInfo.getOperationParameters()))
-                    .orElse(null);
-          }
+        } else if (action instanceof Metadata) {
+          metadataAction =
+              validateMetadata(
+                  (Metadata) action,
+                  metadataAction,
+                  version,
+                  batchStartVersion,
+                  endOffsetOpt,
+                  verifyMetadataAction);
+        } else if (action instanceof Protocol) {
+          Preconditions.checkArgument(
+              protocolAction == null,
+              "Should not encounter two protocol actions in the same commit of version %d",
+              version);
+          protocolAction = (Protocol) action;
+        } else if (action instanceof CommitInfo) {
+          CommitInfo commitInfo = (CommitInfo) action;
+          operation =
+              commitInfo.operation() == null
+                  ? null
+                  : String.format(
+                      "%s (%s)",
+                      commitInfo.operation(),
+                      CollectionConverters.asJava(commitInfo.operationParameters()));
         }
       }
     } catch (IOException e) {
@@ -1337,19 +1304,21 @@ class DeltaV2MicroBatchStream
         batchEndVersion != null ? batchEndVersion : "latest");
 
     Metadata newMetadata, oldMetadata;
+    // TODO: Use a V1 snapshot for snapshotAtSourceInit to remove these conversions.
     if (version < snapshotAtSourceInit.getVersion()) {
-      newMetadata = snapshotAtSourceInit.getMetadata();
+      newMetadata =
+          KernelActionUtils$.MODULE$.metadataFromKernel(snapshotAtSourceInit.getMetadata());
       oldMetadata = metadata;
     } else {
       newMetadata = metadata;
-      oldMetadata = snapshotAtSourceInit.getMetadata();
+      oldMetadata =
+          KernelActionUtils$.MODULE$.metadataFromKernel(snapshotAtSourceInit.getMetadata());
     }
 
     // Table ID has changed during streaming
-    if (!Objects.equals(newMetadata.getId(), oldMetadata.getId())) {
+    if (!Objects.equals(newMetadata.id(), oldMetadata.id())) {
       throw (RuntimeException)
-          DeltaErrors.differentDeltaTableReadByStreamingSource(
-              newMetadata.getId(), oldMetadata.getId());
+          DeltaErrors.differentDeltaTableReadByStreamingSource(newMetadata.id(), oldMetadata.id());
     }
 
     // Partition column change will be ignored if user enable the unsafe flag
@@ -1358,18 +1327,8 @@ class DeltaV2MicroBatchStream
       newPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
       oldPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
     } else {
-      newPartitionColumns =
-          CollectionConverters.asScala(
-                  VectorUtils.toJavaList(newMetadata.getPartitionColumns()).stream()
-                      .map(Object::toString)
-                      .collect(Collectors.toList()))
-              .toSeq();
-      oldPartitionColumns =
-          CollectionConverters.asScala(
-                  VectorUtils.toJavaList(oldMetadata.getPartitionColumns()).stream()
-                      .map(Object::toString)
-                      .collect(Collectors.toList()))
-              .toSeq();
+      newPartitionColumns = newMetadata.partitionColumns().toList();
+      oldPartitionColumns = oldMetadata.partitionColumns().toList();
     }
 
     checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart);
@@ -1379,7 +1338,7 @@ class DeltaV2MicroBatchStream
         || !schemaReadOptions
             .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart()) {
 
-      StructType schemaChange = KernelActionUtils$.MODULE$.metadataFromKernel(metadata).schema();
+      StructType schemaChange = metadata.schema();
 
       // There is a schema change. All files after this commit will use `schemaChange`. Hence, we
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
@@ -1415,13 +1374,10 @@ class DeltaV2MicroBatchStream
   // manages these changes through the barrier protocol instead.
   private void checkNonAdditiveSchemaChanges(
       Metadata oldMetadata, Metadata newMetadata, boolean validatedDuringStreamStart) {
-    StructType sparkNewSchema = SchemaUtils.convertKernelMetadataToSparkSchema(newMetadata);
-    StructType sparkOldSchema = SchemaUtils.convertKernelMetadataToSparkSchema(oldMetadata);
-
     boolean shouldTrackSchema;
     if (schemaReadOptions.typeWideningEnabled()
         && schemaReadOptions.enableSchemaTrackingForTypeWidening()
-        && TypeWidening.containsWideningTypeChanges(sparkOldSchema, sparkNewSchema)) {
+        && TypeWidening.containsWideningTypeChanges(oldMetadata.schema(), newMetadata.schema())) {
       // If schema tracking is enabled for type widening, we will detect widening type changes and
       // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
       // DROP/RENAME for column mapping.
@@ -1433,15 +1389,15 @@ class DeltaV2MicroBatchStream
       // (both enabled, upgrade from none, downgrade to none).
       shouldTrackSchema =
           !DeltaColumnMapping$.MODULE$.hasNoColumnMappingSchemaChanges(
-              new KernelMetadataAdapter(newMetadata),
-              new KernelMetadataAdapter(oldMetadata),
+              newMetadata,
+              oldMetadata,
               schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges());
     }
 
     if (shouldTrackSchema) {
       throw (RuntimeException)
           DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-              spark, sparkOldSchema, sparkNewSchema, !validatedDuringStreamStart);
+              spark, oldMetadata.schema(), newMetadata.schema(), !validatedDuringStreamStart);
     }
   }
 
@@ -1522,8 +1478,10 @@ class DeltaV2MicroBatchStream
         || !schemaReadOptions
             .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart()) {
       if (startVersionSnapshot != null) {
+        // TODO: Replace the Kernel startVersionSnapshot with a V1 snapshot to remove
+        // this metadata conversion.
         checkReadIncompatibleSchemaChanges(
-            startVersionSnapshot.getMetadata(),
+            KernelActionUtils$.MODULE$.metadataFromKernel(startVersionSnapshot.getMetadata()),
             startVersionSnapshot.getVersion(),
             batchStartVersion,
             batchEndVersion,
@@ -1532,7 +1490,7 @@ class DeltaV2MicroBatchStream
         // intermediate schema changes against the stream read schema to capture corners cases such
         // as rename and rename back.
         if (batchEndVersion != null) {
-          for (Map.Entry<Long, Metadata> entry :
+          for (Map.Entry<Long, io.delta.kernel.internal.actions.Metadata> entry :
               StreamingHelper.collectMetadataActionsFromRangeUnsafe(
                       batchStartVersion,
                       Optional.of(batchEndVersion),
@@ -1541,7 +1499,9 @@ class DeltaV2MicroBatchStream
                       snapshotAtSourceInit.getPath())
                   .entrySet()) {
             long version = entry.getKey();
-            Metadata metadata = entry.getValue();
+            // TODO: Replace StreamingHelper's Kernel metadata range scan with V1 action
+            // iteration to remove this conversion.
+            Metadata metadata = KernelActionUtils$.MODULE$.metadataFromKernel(entry.getValue());
             checkReadIncompatibleSchemaChanges(
                 metadata,
                 version,
@@ -1606,27 +1566,6 @@ class DeltaV2MicroBatchStream
       result = result.add(f);
     }
     return result;
-  }
-
-  /**
-   * Extracts IndexedFiles from a batch of actions for a given version and adds them to the output
-   * list. Assigns an index to each IndexedFile.
-   *
-   * @return The next available index after processing this batch
-   */
-  private long addIndexedFilesAndReturnNextIndex(
-      ColumnarBatch batch, long version, long startIndex, List<IndexedFile> output) {
-    long index = startIndex;
-    for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-      // Only include AddFiles with dataChange=true. Skip changes that optimize or reorganize
-      // data without changing the logical content.
-      Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
-      if (addOpt.isPresent()) {
-        output.add(IndexedFile.addFile(version, index++, addOpt.get()));
-      }
-    }
-
-    return index;
   }
 
   /**
@@ -1774,11 +1713,14 @@ class DeltaV2MicroBatchStream
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
           // Metadata: check schema changes + CDF still enabled. Skip the read-compat check when
           // tracking — the barrier protocol below handles divergence.
-          Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
+          Optional<io.delta.kernel.internal.actions.Metadata> metadataOpt =
+              StreamingHelper.getMetadata(batch, rowId);
+          // TODO: Read CDC commits as V1 actions instead of Kernel batches to remove
+          // this Metadata conversion.
           if (metadataOpt.isPresent()) {
             metadataAction =
                 validateMetadata(
-                    metadataOpt.get(),
+                    KernelActionUtils$.MODULE$.metadataFromKernel(metadataOpt.get()),
                     metadataAction,
                     version,
                     startVersion,
@@ -1794,21 +1736,29 @@ class DeltaV2MicroBatchStream
           }
 
           // Protocol: captured so the barrier fires on protocol-only changes.
-          Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
+          Optional<io.delta.kernel.internal.actions.Protocol> protocolOpt =
+              StreamingHelper.getProtocol(batch, rowId);
           if (protocolOpt.isPresent()) {
             Preconditions.checkArgument(
                 protocolAction == null,
                 "Should not encounter two protocol actions in the same commit of version %d",
                 version);
-            protocolAction = protocolOpt.get();
+            // TODO: Read CDC commits as V1 actions instead of Kernel batches to remove
+            // this Protocol conversion.
+            protocolAction = KernelActionUtils$.MODULE$.protocolFromKernel(protocolOpt.get());
           }
 
           // CommitInfo: detect no-op MERGEs where the operation rewrites files without
           // changing logical data. These produce file actions that cancel out; inferred CDC
           // actions will be discarded after the scan to avoid emitting spurious changes.
-          Optional<CommitInfo> commitInfoOpt = StreamingHelper.getCommitInfo(batch, rowId);
+          Optional<io.delta.kernel.internal.actions.CommitInfo> commitInfoOpt =
+              StreamingHelper.getCommitInfo(batch, rowId);
           if (commitInfoOpt.isPresent()) {
-            shouldSkip = shouldSkipFileActionsInCommit(commitInfoOpt.get());
+            // TODO: Read CDC commits as V1 actions instead of Kernel batches to remove
+            // this CommitInfo conversion.
+            shouldSkip =
+                CDCReader$.MODULE$.shouldSkipFileActionsInCommit(
+                    KernelActionUtils$.MODULE$.commitInfoFromKernel(commitInfoOpt.get()));
           }
 
           // Explicit CDC files
@@ -1819,7 +1769,8 @@ class DeltaV2MicroBatchStream
           }
 
           // RemoveFile(dataChange=true): collect for inferred CDC
-          Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
+          Optional<io.delta.kernel.internal.actions.RemoveFile> removeOpt =
+              StreamingHelper.getDataChangeRemove(batch, rowId);
           if (removeOpt.isPresent()) {
             inferredCdcFiles.add(CDCDataFile.fromRemoveFile(removeOpt.get(), timestamp));
             continue;
@@ -1839,13 +1790,7 @@ class DeltaV2MicroBatchStream
     // IndexedChangeFileSeq.filterFiles; V2 does both here.
     try (CloseableIterator<IndexedFile> barrierIter =
         metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
-            metadataAction == null
-                ? null
-                : KernelActionUtils$.MODULE$.metadataFromKernel(metadataAction),
-            protocolAction == null
-                ? null
-                : KernelActionUtils$.MODULE$.protocolFromKernel(protocolAction),
-            version)) {
+            metadataAction, protocolAction, version)) {
       if (barrierIter.hasNext()) {
         List<IndexedFile> result = new ArrayList<>();
         result.add(barrierIter.next());
@@ -1875,7 +1820,7 @@ class DeltaV2MicroBatchStream
       // DV-based deletes reuse the same parquet file (marking rows in the DV instead of rewriting),
       // so both the Remove and Add reference the same path.
       Map<String, io.delta.kernel.internal.actions.AddFile> addByPath = new HashMap<>();
-      Map<String, RemoveFile> removeByPath = new HashMap<>();
+      Map<String, io.delta.kernel.internal.actions.RemoveFile> removeByPath = new HashMap<>();
       for (CDCDataFile cdc : inferredCdcFiles) {
         if (cdc.getAddFile() != null) {
           io.delta.kernel.internal.actions.AddFile prev =
@@ -1885,7 +1830,8 @@ class DeltaV2MicroBatchStream
               "Unexpected duplicate AddFile at path %s in a single commit",
               cdc.getAddFile().getPath());
         } else if (cdc.getRemoveFile() != null) {
-          RemoveFile prev = removeByPath.put(cdc.getRemoveFile().getPath(), cdc.getRemoveFile());
+          io.delta.kernel.internal.actions.RemoveFile prev =
+              removeByPath.put(cdc.getRemoveFile().getPath(), cdc.getRemoveFile());
           Preconditions.checkArgument(
               prev == null,
               "Unexpected duplicate RemoveFile at path %s in a single commit",
@@ -1908,7 +1854,7 @@ class DeltaV2MicroBatchStream
         } else if (emittedPairs.add(path)) {
           // First occurrence of a same-path pair: emit the consolidated pair entries.
           io.delta.kernel.internal.actions.AddFile add = addByPath.get(path);
-          RemoveFile remove = removeByPath.get(path);
+          io.delta.kernel.internal.actions.RemoveFile remove = removeByPath.get(path);
           if (add.getDeletionVector().isPresent() || remove.getDeletionVector().isPresent()) {
             // DV-based delete/restore: compute the bitmap diff and emit one CDC file per diff
             // entry. Path.toString() avoids percent-encoding that breaks DV file resolution.
@@ -1932,18 +1878,6 @@ class DeltaV2MicroBatchStream
     }
 
     return result;
-  }
-
-  /** Detects no-op MERGEs whose file actions should be skipped for CDC. */
-  private static boolean shouldSkipFileActionsInCommit(CommitInfo commitInfo) {
-    boolean isMerge = commitInfo.getOperation().filter("MERGE"::equals).isPresent();
-    if (!isMerge) {
-      return false;
-    }
-    Map<String, String> metrics = commitInfo.getOperationMetrics();
-    return "0".equals(metrics.get("numTargetRowsInserted"))
-        && "0".equals(metrics.get("numTargetRowsUpdated"))
-        && "0".equals(metrics.get("numTargetRowsDeleted"));
   }
 
   /**
@@ -2031,7 +1965,7 @@ class DeltaV2MicroBatchStream
   private static boolean isCDFEnabled(Metadata metadata) {
     // Fall back to the deprecated delta.enableChangeDataCapture key when
     // delta.enableChangeDataFeed is not set.
-    Map<String, String> config = metadata.getConfiguration();
+    Map<String, String> config = CollectionConverters.asJava(metadata.configuration());
     String value = config.get("delta.enableChangeDataFeed");
     if (value == null) {
       value = config.get("delta.enableChangeDataCapture");
