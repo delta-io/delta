@@ -2259,7 +2259,12 @@ class JsonMapSerializer extends JsonSerializer[Map[String, String]] {
   }
 }
 
-/** Allows commit metrics from other Delta writers to contain JSON values. */
+/**
+ * Read-side compatibility for existing commit history containing non-string operation metrics.
+ * Older delta-rs OPTIMIZE commits used JSON objects; newer writers can still emit
+ * numbers and booleans. Delta Spark continues to write string-valued metrics.
+ * This deserializer does not change the writer contract.
+ */
 class JsonMetricsDeserializer extends JsonDeserializer[Option[Map[String, String]]] {
   override def getNullValue(ctxt: DeserializationContext): Option[Map[String, String]] = None
 

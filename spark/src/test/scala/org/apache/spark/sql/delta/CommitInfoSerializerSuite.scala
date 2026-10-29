@@ -34,6 +34,36 @@ import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructT
  */
 class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
 
+  // delta-rs <= 0.16.x emitted nested objects here (delta-rs #2087).
+  test("legacy delta-rs OPTIMIZE metrics remain readable") {
+    val json = """{"commitInfo":{"timestamp":1705439516034,"operation":"OPTIMIZE",
+      "operationMetrics":{"filesAdded":{"avg":50424.6,"max":50517,"min":50335,
+      "totalFiles":5,"totalSize":252123},"filesRemoved":{"avg":14010.447154471545,
+      "max":15213,"min":13942,"totalFiles":123,"totalSize":1723285},
+      "numBatches":123,"numFilesAdded":5,"numFilesRemoved":123,
+      "partitionsOptimized":5,"preserveInsertionOrder":true}}}"""
+    val metrics = Action.fromJson(json).asInstanceOf[CommitInfo].operationMetrics.get
+    assert(metrics("numFilesAdded") == "5")
+    assert(metrics("preserveInsertionOrder") == "true")
+    assert(JsonUtils.mapper.readTree(metrics("filesAdded")).get("totalFiles").asInt() == 5)
+    assert(JsonUtils.mapper.readTree(metrics("filesRemoved")).get("totalFiles").asInt() == 123)
+  }
+
+  // delta-rs #2317 fixed the nested values but retained native JSON number/bool metrics.
+  test("modern delta-rs OPTIMIZE metrics preserve string-encoded details") {
+    val json = """{"commitInfo":{"timestamp":1711125995487,"operation":"OPTIMIZE",
+      "operationMetrics":{"filesAdded":"{\"avg\":19956.0,\"max\":19956,\"min\":19956,\"totalFiles\":1,\"totalSize\":19956}",
+      "filesRemoved":"{\"avg\":4851.833333333333,\"max\":10358,\"min\":3734,\"totalFiles\":6,\"totalSize\":29111}",
+      "numFilesAdded":1,"numFilesRemoved":6,"preserveInsertionOrder":true}}}"""
+    val metrics = Action.fromJson(json).asInstanceOf[CommitInfo].operationMetrics.get
+    assert(metrics("numFilesAdded") == "1")
+    assert(metrics("preserveInsertionOrder") == "true")
+    assert(JsonUtils.mapper.readTree(metrics("filesAdded")).get("totalFiles").asInt() == 1)
+    assert(JsonUtils.mapper.readTree(metrics("filesRemoved")).get("totalFiles").asInt() == 6)
+  }
+
+
+
   test("CommitInfo accepts non-string operation metrics from other writers") {
     val json =
       """{"commitInfo":{"timestamp":123,"operation":"OPTIMIZE","operationMetrics":{""" +
