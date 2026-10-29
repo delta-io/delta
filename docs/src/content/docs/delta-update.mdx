@@ -620,9 +620,11 @@ Schema evolution allows users to resolve schema mismatches between the target an
 2. A column in the target table is not present in the source table. The target schema is left unchanged; the values in the additional target column are either left unchanged (for `UPDATE`) or set to `NULL` (for `INSERT`).
 
 <Aside type="caution">
-  To use schema evolution, you must set the Spark session
-  configuration`spark.databricks.delta.schema.autoMerge.enabled` to `true`
-  before you run the `merge` command.
+  To use schema evolution, you must either enable it for a single `merge`
+  command with the `WITH SCHEMA EVOLUTION` SQL clause or the
+  `withSchemaEvolution()` API, or set the Spark session configuration
+  `spark.databricks.delta.schema.autoMerge.enabled` to `true` before you run
+  the `merge` command.
 </Aside>
 
 <Aside type="note">
@@ -630,6 +632,45 @@ Schema evolution allows users to resolve schema mismatches between the target an
   by name in insert or update actions. In Delta 2.2 and below, only `INSERT *`
   or `UPDATE SET *` actions can be used for schema evolution with merge.
 </Aside>
+
+#### Enable schema evolution for a single merge
+
+You can enable schema evolution for one `merge` command only, without changing the session configuration. The command-level setting takes effect regardless of the value of `spark.databricks.delta.schema.autoMerge.enabled`; it cannot be used to turn schema evolution off when the session configuration is `true`.
+
+- In SQL, add the `WITH SCHEMA EVOLUTION` clause after the `MERGE` keyword. The clause is honored by Delta Lake 4.3.0 and above. The syntax itself is parsed by Apache Spark 4.0 and above, so on Delta Lake 4.0.0 through 4.2.x the statement is accepted but the clause has no effect and schema evolution still depends on the session configuration.
+- In Python and Scala, call `withSchemaEvolution()` on the merge builder. This method is available in Delta Lake 3.2.0 and above.
+
+<Tabs syncKey="code-examples">
+  <TabItem label="SQL">
+    ```sql
+    MERGE WITH SCHEMA EVOLUTION INTO target_table t
+    USING source_table s
+    ON t.key = s.key
+    WHEN MATCHED THEN UPDATE SET *
+    WHEN NOT MATCHED THEN INSERT *
+    ```
+  </TabItem>
+  <TabItem label="Python">
+    ```python
+    (targetTable.alias("t")
+      .merge(sourceDF.alias("s"), "t.key = s.key")
+      .withSchemaEvolution()
+      .whenMatchedUpdateAll()
+      .whenNotMatchedInsertAll()
+      .execute())
+    ```
+  </TabItem>
+  <TabItem label="Scala">
+    ```scala
+    targetTable.as("t")
+      .merge(sourceDF.as("s"), "t.key = s.key")
+      .withSchemaEvolution()
+      .whenMatched().updateAll()
+      .whenNotMatched().insertAll()
+      .execute()
+    ```
+  </TabItem>
+</Tabs>
 
 Here are a few examples of the effects of `merge` operation with and without schema evolution.
 
