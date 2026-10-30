@@ -221,7 +221,8 @@ class FeatureEnablementConcurrencySuite
       spark,
       initialCurrentTransactionInfo = dummyTransactionInfo,
       winningCommitSummary = dummySummary,
-      isolationLevel = WriteSerializable)
+      isolationLevel = WriteSerializable,
+      commitLockHeld = false)
 
     // Test 1: Change 2 configs. One is allowed, the other is not.
     val current = Metadata(configuration = Map("prop1" -> "value1", "prop2" -> "value2"))
@@ -278,7 +279,8 @@ class FeatureEnablementConcurrencySuite
       spark,
       initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = v2CkptProtocol),
       winningCommitSummary = dummySummary,
-      isolationLevel = WriteSerializable)
+      isolationLevel = WriteSerializable,
+      commitLockHeld = false)
 
     // Test 5: delta.checkpointPolicy=v2 is valid when the protocol supports V2Checkpoint.
     val result5 = conflictCheckerWithV2Ckpt.checkConfigurationChangesForConflicts(
@@ -302,7 +304,8 @@ class FeatureEnablementConcurrencySuite
       spark,
       initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = ictProtocol),
       winningCommitSummary = dummySummary,
-      isolationLevel = WriteSerializable)
+      isolationLevel = WriteSerializable,
+      commitLockHeld = false)
     val ictAllowList = InCommitTimestampUtils.TABLE_PROPERTY_KEYS.toSet
 
     // Test 7: Enabling ICT is valid when the protocol supports InCommitTimestampTableFeature.
@@ -373,7 +376,8 @@ class FeatureEnablementConcurrencySuite
       spark,
       initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = coProtocol),
       winningCommitSummary = dummySummary,
-      isolationLevel = WriteSerializable)
+      isolationLevel = WriteSerializable,
+      commitLockHeld = false)
 
     // Test 14: Adding UC_TABLE_ID_KEY is valid (the key injected during catalogManaged
     // enablement).

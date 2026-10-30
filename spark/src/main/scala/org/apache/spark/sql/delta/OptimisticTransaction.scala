@@ -2980,12 +2980,19 @@ trait OptimisticTransactionImpl extends TransactionHelper
       deltaLog.store.isPartialWriteVisible(logPath, newDeltaHadoopConf()))
   }
 
+  /** Whether this transaction's commit currently holds the commit lock. */
+  private var holdsCommitLock = false
+
   private def lockCommitIfEnabled[T](body: => T): T = {
     if (isCommitLockEnabled) {
       // We are borrowing the `snapshotLock` even for commits. Ideally we should be
       // using a separate lock for this purpose, because multiple threads fighting over
       // a commit shouldn't interfere with normal snapshot updates by readers.
-      deltaLog.withSnapshotLockInterruptibly(body)
+      deltaLog.withSnapshotLockInterruptibly {
+        val previouslyHeld = holdsCommitLock
+        holdsCommitLock = true
+        try body finally holdsCommitLock = previouslyHeld
+      }
     } else {
       body
     }
@@ -3804,7 +3811,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
           spark,
           updatedCurrentTransactionInfo,
           winningCommitSummary,
-          commitIsolationLevel)
+          commitIsolationLevel,
+          commitLockHeld = holdsCommitLock)
 
         updatedCurrentTransactionInfo = resolveAgainstWinningCommit(
             winningCommitSummary, firstWinningVersion, updatedCurrentTransactionInfo).getOrElse {
