@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{Closeable, InterruptedIOException, UncheckedIOException}
+import java.io.{Closeable, InterruptedIOException, IOException, UncheckedIOException}
 import java.net.SocketTimeoutException
 import java.nio.channels.ClosedByInterruptException
 import java.util.concurrent.{Callable, ExecutionException, TimeUnit}
@@ -39,7 +39,7 @@ import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.{SparkContext, SparkThrowable}
+import org.apache.spark.{SparkContext, SparkException, SparkThrowable, SparkThrowableHelper}
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions.{And, AttributeReference, Expression, Or}
@@ -438,17 +438,8 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
     if (newlyDeletedMatches == 0) None else Some(NotReconciledReason.ReadAffected)
   }
 
-  /**
-   * Whether `e`, thrown while the read-check job runs, is the job failing, for example on a file
-   * it cannot read or on a row its condition cannot be evaluated for. Spark reports a failed job
-   * as a [[SparkThrowable]]; an internal error, which Spark reports for a bug, and a cancellation
-   * are not job failures.
-   */
-  private def isReadCheckJobFailure(e: Throwable): Boolean = e match {
-    case st: SparkThrowable =>
-      !Option(st.getCondition).exists(_.startsWith("INTERNAL_ERROR")) && !isCancellation(e)
-    case _ => false
-  }
+  private def isReadCheckJobFailure(e: Throwable): Boolean =
+    RowLevelConcurrencyResolution.isReadCheckJobFailure(e, spark.sparkContext)
 
   /**
    * Whether a MERGE's outcome is unchanged when rows it did not modify are deleted first. Each
@@ -773,6 +764,34 @@ private class DeletionVectorWriteException(cause: Throwable) extends Exception(c
 private object RowLevelConcurrencyResolution {
   /** How many files one resolution decodes or merges at a time. */
   private val MaxParallelFiles = 8
+
+  /**
+   * Whether `e`, thrown while the read-check job runs, is the job failing on the data it reads,
+   * for example on a file it cannot read or on a row its condition cannot be evaluated for,
+   * rather than a bug or a cancellation. Spark's DAGScheduler.abortStage passes a task's
+   * user-facing error to the driver as is, and wraps any other task failure, including an
+   * internal error, in a `SparkException` without a condition: such a failure counts only when an
+   * I/O error caused it. A user-facing error can carry an internal error too, as the scan's
+   * FAILED_READ_FILE carries any failure of the file reader, so no failure counts when an
+   * internal error is among its causes.
+   */
+  private[delta] def isReadCheckJobFailure(e: Throwable, sc: SparkContext): Boolean = {
+    lazy val causes = causeChain(e)
+    !isCancellation(e, sc) && (e match {
+      case st: SparkThrowable if st.getCondition != null => true
+      case _: SparkException => causes.exists(_.isInstanceOf[IOException])
+      case _ => false
+    }) && !causes.exists(isInternalError)
+  }
+
+  private def isInternalError(e: Throwable): Boolean = e match {
+    case st: SparkThrowable => Option(st.getCondition).exists(SparkThrowableHelper.isInternalError)
+    case _ => false
+  }
+
+  /** `e` and its causes, at most 16 of them, so that a cyclic chain of causes ends. */
+  private def causeChain(e: Throwable): Seq[Throwable] =
+    Iterator.iterate(e)(_.getCause).takeWhile(_ != null).take(16).toSeq
 
   /**
    * Whether `e` cancels the statement rather than failing the reconciliation: a cancelled Spark

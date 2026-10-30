@@ -35,10 +35,11 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{DelegateToFileSystem, FSDataOutputStream, Path, RawLocalFileSystem}
 import org.apache.hadoop.util.Progressable
 
-import org.apache.spark.{SparkConf, SparkException, TaskContext}
+import org.apache.spark.{SparkArithmeticException, SparkConf, SparkException, TaskContext}
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.functions.lit
@@ -925,6 +926,37 @@ class RowLevelConcurrencySuite extends QueryTest
     // An interrupt of this thread, however the failure that it caused looks.
     Thread.currentThread().interrupt()
     try assert(cancelled(new java.io.IOException("unreadable"))) finally Thread.interrupted()
+  }
+
+  test("isReadCheckJobFailure: failures on the data read, not bugs or cancellations") {
+    val sc = spark.sparkContext
+    def jobFailure(e: Throwable): Boolean =
+      RowLevelConcurrencyResolution.isReadCheckJobFailure(e, sc)
+    // A task failure that is not a user-facing error, as DAGScheduler.abortStage reports it.
+    def aborted(cause: Throwable): SparkException =
+      new SparkException("Job aborted due to stage failure: task failed", cause)
+    // A user-facing task error, which abortStage passes to the driver as is.
+    val divideByZero = withSQLConf(SQLConf.ANSI_ENABLED.key -> "true") {
+      intercept[SparkArithmeticException] {
+        spark.range(1).selectExpr("1 / (id - id)").collect()
+      }
+    }
+    assert(jobFailure(divideByZero))
+    assert(jobFailure(aborted(new IOException("unreadable"))))
+    assert(!jobFailure(aborted(SparkException.internalError("bug"))))
+    assert(!jobFailure(aborted(new IOException("unreadable", SparkException.internalError("bug")))))
+    assert(!jobFailure(aborted(new NullPointerException())))
+    // A failure of the file reader, which the scan reports as the user-facing FAILED_READ_FILE.
+    def failedRead(cause: Throwable): Throwable =
+      QueryExecutionErrors.cannotReadFilesError(cause, "file:/t/part-0.parquet")
+    assert(jobFailure(failedRead(new IOException("unreadable"))))
+    assert(!jobFailure(failedRead(SparkException.internalError("bug"))))
+    assert(!jobFailure(SparkException.internalError("bug")))
+    assert(!jobFailure(new IOException("not a job failure")))
+    assert(!jobFailure(new SparkException(
+      errorClass = "SPARK_JOB_CANCELLED",
+      messageParameters = Map("jobId" -> "1", "reason" -> ""),
+      cause = null)))
   }
 
   test("a cancelled read-check job is thrown as is, not as a conflict") {

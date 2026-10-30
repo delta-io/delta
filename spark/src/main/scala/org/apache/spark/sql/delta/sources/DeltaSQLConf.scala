@@ -640,8 +640,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         """Maximum number of files, updated by both the winning and the current transaction, that
           |row-level concurrency tries to reconcile against one winning commit. Above it, the
           |conflict is left to the file-level checks, as when row-level concurrency is disabled.
-          |This bounds the deletion vectors decoded and written during conflict detection, which
-          |can run under the table's commit lock.""".stripMargin)
+          |On every store, this bounds the deletion vectors decoded on the driver and written during
+          |conflict detection, and so how long it takes; on stores where the commit holds the
+          |table's commit lock, that is also how long the lock is held.""".stripMargin)
       .intConf
       .checkValue(_ > 0, "rowLevelConcurrency.maxCandidateFiles must be positive")
       .createWithDefault(1000)
