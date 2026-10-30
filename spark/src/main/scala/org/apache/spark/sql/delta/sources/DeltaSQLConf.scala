@@ -3009,6 +3009,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CDF_RELAX_TIGHTENED_NULLABILITY_ENABLED =
+    buildConf("changeDataFeed.relaxTightenedNullability.enabled")
+      .internal()
+      .doc(
+        """When true, batch CDF relations relax NOT NULL fields that were nullable at the
+          |starting version during analysis. This prevents Catalyst from pruning null filters
+          |before scan-time schema validation can reject an incompatible version range.
+          |When false, the relation retains the selected read schema's nullability and will
+          |not fail on specific invalid CDF scans.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
     buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
       .doc(
