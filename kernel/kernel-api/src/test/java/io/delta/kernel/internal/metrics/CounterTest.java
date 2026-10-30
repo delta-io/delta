@@ -36,7 +36,7 @@ class CounterTest {
   }
 
   @ParameterizedTest
-  @ValueSource(longs = {0L, 1L, 10L})
+  @ValueSource(longs = {0L, 1L, 10L, Long.MAX_VALUE})
   void incrementsBySpecifiedAmount(long amount) {
     Counter counter = new Counter();
     counter.increment(amount);
