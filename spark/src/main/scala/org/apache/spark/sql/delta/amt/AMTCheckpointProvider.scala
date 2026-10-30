@@ -192,7 +192,8 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       leavesWithRowIndexFilters.collect { case (leaf, Some(provider)) =>
         leaf.getAbsolutePath(tableRoot).toString -> provider
       }.toMap
-    val index = DeltaLogFileIndex(new AMTParquetFileFormat, files, perFileRowIndexFilters)
+    val index = new AMTLeafFileIndex(
+      new AMTParquetFileFormat, files, perFileRowIndexFilters)
     val withPrefix = loadEntriesWithExtendedMetadata(
         deltaLog, index, checkpointAction.metaData, checkpointAction.protocol,
         includeRowIndexFilterMarker = true)
