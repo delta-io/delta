@@ -430,6 +430,7 @@ public class TransactionImpl implements Transaction {
 
       int attempt = 1;
       boolean seenRetryableNonConflictException = false;
+      Optional<Long> accumulatedWinningRowIdHighWatermark = Optional.empty();
       while (true) {
         // This loop exits upon either (a) commit success (return statement) or (b) commit failure.
         logger.info(
@@ -484,11 +485,18 @@ public class TransactionImpl implements Transaction {
             printLogForRetryableWithConflictException(attempt, commitAsVersion, cfe);
 
             TransactionRebaseState rebaseState =
-                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, attempt, dataActions);
+                resolveConflicts(
+                    engine,
+                    commitAsVersion,
+                    attemptCommitInfo,
+                    attempt,
+                    dataActions,
+                    accumulatedWinningRowIdHighWatermark);
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadataState.setComputedDomainMetadatas(rebaseState.getUpdatedDomainMetadatas());
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
+            accumulatedWinningRowIdHighWatermark = rebaseState.getWinningRowIdHighWatermark();
           }
         }
         // We will be retrying the commit (either from case 3 or 5 above).
@@ -707,7 +715,8 @@ public class TransactionImpl implements Transaction {
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
       int attempt,
-      CloseableIterable<Row> dataActions) {
+      CloseableIterable<Row> dataActions,
+      Optional<Long> priorWinningRowIdHighWatermark) {
     logger.info(
         "[{}] Trying to resolve conflicts and retry commit. Attempt {}/{}.",
         dataPath,
@@ -720,7 +729,8 @@ public class TransactionImpl implements Transaction {
             commitAsVersion,
             this,
             domainMetadataState.getComputedDomainMetadatasToCommit(),
-            dataActions);
+            dataActions,
+            priorWinningRowIdHighWatermark);
     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,
