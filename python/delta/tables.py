@@ -754,7 +754,8 @@ class DeltaTable(object):
         """
 
         DeltaTable._verify_clone_types(target, isShallow, replace, properties)
-        return self._jdt.clone(target, isShallow, replace, properties)
+        jdt = self._jdt.clone(target, isShallow, replace, properties)
+        return DeltaTable(self._spark, jdt)
 
     def cloneAtVersion(  # type: ignore[no-untyped-def]
         self, version, target, isShallow=False, replace=False, properties=None
@@ -784,7 +785,8 @@ class DeltaTable(object):
         """
 
         DeltaTable._verify_clone_types(target, isShallow, replace, properties, version=version)
-        return self._jdt.cloneAtVersion(version, target, isShallow, replace, properties)
+        jdt = self._jdt.cloneAtVersion(version, target, isShallow, replace, properties)
+        return DeltaTable(self._spark, jdt)
 
     def cloneAtTimestamp(  # type: ignore[no-untyped-def]
         self, timestamp, target, isShallow=False, replace=False, properties=None
@@ -818,7 +820,8 @@ class DeltaTable(object):
         """
 
         DeltaTable._verify_clone_types(target, isShallow, replace, properties, timestamp)
-        return self._jdt.cloneAtTimestamp(timestamp, target, isShallow, replace, properties)
+        jdt = self._jdt.cloneAtTimestamp(timestamp, target, isShallow, replace, properties)
+        return DeltaTable(self._spark, jdt)
 
     @classmethod
     def _verify_clone_types(
