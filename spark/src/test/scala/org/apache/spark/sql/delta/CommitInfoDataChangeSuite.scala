@@ -81,6 +81,26 @@ class CommitInfoDataChangeSuite
     assert(CommitInfo.dataChangeFromActions(Seq(cdc, addFile("a", dataChange = true))))
   }
 
+  test("file action operation classification") {
+    import FileActionOperationClass._
+
+    val cases = Seq(
+      (0, 0, false, NO_FILE_ACTIONS),
+      (1, 0, false, COMPUTE_STATS),
+      (1, 1, false, REORGANIZATION),
+      (0, 1, false, INVALID_REMOVE_ONLY),
+      (1, 0, true, INSERT),
+      (1, 1, true, LOGICAL_DATA_REPLACEMENT),
+      (0, 1, true, DELETE),
+      (0, 0, true, INVALID),
+      (-1, 0, false, INVALID),
+      (0, -1, false, INVALID))
+
+    cases.foreach { case (numAdd, numRemove, dataChange, expected) =>
+      assert(classify(numAdd, numRemove, dataChange) === expected)
+    }
+  }
+
   test("dataChange write flag applies only to non-AMT tables") {
     val metadata = Metadata()
     val nonAMTProtocol = Protocol(1, 2)

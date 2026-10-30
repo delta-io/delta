@@ -267,7 +267,7 @@ trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
     withTable("target") {
       TestData("a int, b double", Seq("""{ "a": 1, "b": 2.0 }""")).toDF
         .write.format("delta").saveAsTable("target")
-      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "strict") {
+      withConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "strict") {
         TestData("a int, b int", Seq("""{ "a": 1, "b": 3 }""")).toDF
           .writeTo("target").overwrite(lit(true))
         checkAnswer(spark.table("target"),

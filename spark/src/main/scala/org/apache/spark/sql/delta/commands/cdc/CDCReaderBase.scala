@@ -26,8 +26,8 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{cdcReadSchema, DeltaCDFRelation}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaLogStreamingBackend, DeltaSource, DeltaSQLConf}
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
@@ -53,6 +53,9 @@ case class ResolvedCDFVersion(version: Long, timestamp: Option[Timestamp]) {
 // A snapshot coupled with a schema mode that user specified
 case class SnapshotWithSchemaMode(snapshot: Snapshot, schemaMode: DeltaBatchCDFSchemaMode)
 
+/** A table schema paired with the version it describes. */
+case class SchemaWithVersion(version: Long, schema: StructType)
+
 /**
  * A special BaseRelation wrapper for CDF reads.
  */
@@ -60,10 +63,11 @@ abstract class DeltaCDFRelationBase(
     snapshotWithSchemaMode: SnapshotWithSchemaMode,
     sqlContext: SQLContext,
     catalogTableOpt: Option[CatalogTable],
-    startingVersion: Option[Long],
+    startingSchemaWithVersion: Option[SchemaWithVersion],
     endingVersion: Option[Long]) extends BaseRelation with CatalystScan {
 
   protected val deltaLog: DeltaLog = snapshotWithSchemaMode.snapshot.deltaLog
+  protected val startingVersion: Option[Long] = startingSchemaWithVersion.map(_.version)
 
   protected lazy val latestVersionOfTableDuringAnalysis: Long =
     deltaLog.update(catalogTableOpt = catalogTableOpt).version
@@ -97,15 +101,47 @@ abstract class DeltaCDFRelationBase(
       snapshotWithSchemaMode.snapshot
   }
 
+
+  /**
+   * Keeps null filters from folding away a CDF scan before scan-time schema validation.
+   * Only the relation schema is relaxed; the selected snapshot remains intact for validation.
+   * Endpoint comparison does not detect intermediate nullability reversals.
+   *
+   * @param readSchema selected CDF schema before internal metadata cleanup
+   * @param start schema and version resolved for the requested start
+   */
+  private def relaxNullabilityIfNeeded(
+      readSchema: StructType,
+      start: SchemaWithVersion): StructType = {
+    // Equal versions have no schema transition. Also guard against an older selected schema
+    // defensively: nullability tightening must be compared in version order.
+    if (start.version >= snapshotForBatchSchema.version ||
+        SchemaUtils.filterRecursively(readSchema, checkComplexTypes = true)(!_.nullable).isEmpty) {
+      return readSchema
+    }
+
+    val startingPhysicalFields = DeltaColumnMapping.getPhysicalNameFieldMap(start.schema)
+    val physicalPaths = DeltaColumnMapping.getLogicalNameToPhysicalNameMap(readSchema)
+    SchemaMergingUtils.transformColumns(readSchema) { (path, field, _) =>
+      val fieldPath = path :+ field.name
+      // Physical paths preserve field identity across renames and column mapping upgrades.
+      val startingField = startingPhysicalFields.get(physicalPaths(fieldPath))
+      field.copy(nullable = field.nullable || startingField.exists(_.nullable))
+    }
+  }
+
   override val schema: StructType = {
-    cdcReadSchema(
-      DeltaTableUtils.removeInternalDeltaMetadata(
-        sqlContext.sparkSession,
-        DeltaTableUtils.removeInternalWriterMetadata(
-          sqlContext.sparkSession, snapshotForBatchSchema.metadata.schema
-        )
-      )
-    )
+    var readSchema =
+      cdcReadSchema(snapshotForBatchSchema.metadata.schema)
+    readSchema = startingSchemaWithVersion match {
+      case Some(start) if sqlContext.sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_CDF_RELAX_TIGHTENED_NULLABILITY_ENABLED) =>
+        relaxNullabilityIfNeeded(readSchema, start)
+      case _ => readSchema
+    }
+    readSchema = DeltaTableUtils.removeInternalWriterMetadata(sqlContext.sparkSession, readSchema)
+    readSchema = DeltaTableUtils.removeInternalDeltaMetadata(sqlContext.sparkSession, readSchema)
+    readSchema
   }
 
   override def unhandledFilters(filters: Array[Filter]): Array[Filter] = Array.empty
@@ -169,7 +205,11 @@ trait CDCReaderBase extends DeltaLogging {
         // For the starting timestamp we need to find a version after the provided timestamp
         // we can use the same semantics as streaming.
         DeltaSource.getStartingVersionFromTimestamp(
-          spark, deltaLog, catalogTableOpt, timestamp, allowOutOfRange)
+          spark,
+          new DeltaLogStreamingBackend(deltaLog, () => catalogTableOpt),
+          deltaLog.unsafeVolatileSnapshot,
+          timestamp,
+          allowOutOfRange)
       } else {
         // For ending timestamp the version should be before the provided timestamp.
         DeltaTableUtils.resolveTimeTravelVersion(
@@ -293,7 +333,9 @@ trait CDCReaderBase extends DeltaLogging {
       SnapshotWithSchemaMode(snapshotToUse, schemaMode),
       spark.sqlContext,
       catalogTableOpt,
-      Some(startingVersion.version),
+      // Capture only the version and schema, without retaining the historical Snapshot.
+      Some(SchemaWithVersion(startingSnapshot.version,
+        startingSnapshot.metadata.schema)),
       endingVersionOpt.map(_.version)
     )
   }
@@ -360,7 +402,7 @@ trait CDCReaderBase extends DeltaLogging {
       SnapshotWithSchemaMode(snapshot, schemaMode),
       spark.sqlContext,
       catalogTableOpt,
-      startingVersion = None,
+      startingSchemaWithVersion = None,
       endingVersion = None) {
       override def buildScan(requiredColumns: Seq[Attribute], filters: Seq[Expression]): RDD[Row] =
         sqlContext.sparkSession.sparkContext.emptyRDD[Row]
@@ -648,7 +690,7 @@ trait CDCReaderBase extends DeltaLogging {
       snapshotWithSchemaMode: SnapshotWithSchemaMode,
       sqlContext: SQLContext,
       catalogTableOpt: Option[CatalogTable],
-      startingVersion: Option[Long],
+      startingSchemaWithVersion: Option[SchemaWithVersion],
       endingVersion: Option[Long]): BaseRelation
 
   /**

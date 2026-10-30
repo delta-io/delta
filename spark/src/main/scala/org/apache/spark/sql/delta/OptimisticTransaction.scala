@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUtils, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -126,6 +126,36 @@ case class PrepareCommitResult(
     amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider],
     prepMetrics: CommitPrepMetrics)
 
+/**
+ * A semantic classification of a commit derived only from its [[AddFile]] and [[RemoveFile]]
+ * actions. This is intentionally separate from [[CommitInfo.operation]], which records the command
+ * that produced the commit.
+ */
+private[delta] object FileActionOperationClass extends Enumeration {
+  val COMPUTE_STATS, REORGANIZATION, LOGICAL_DATA_REPLACEMENT, INSERT, DELETE,
+    INVALID_REMOVE_ONLY, INVALID, NO_FILE_ACTIONS = Value
+
+  def classify(
+      numAdd: Int,
+      numRemove: Int,
+      dataChange: Boolean): Value = {
+    if (numAdd < 0 || numRemove < 0) {
+      INVALID
+    } else {
+      (dataChange, numAdd > 0, numRemove > 0) match {
+        case (false, false, false) => NO_FILE_ACTIONS
+        case (false, true, false) => COMPUTE_STATS
+        case (false, true, true) => REORGANIZATION
+        case (false, false, true) => INVALID_REMOVE_ONLY
+        case (true, true, false) => INSERT
+        case (true, true, true) => LOGICAL_DATA_REPLACEMENT
+        case (true, false, true) => DELETE
+        case _ => INVALID
+      }
+    }
+  }
+}
+
 /** Record metrics about a successful commit. */
 case class CommitStats(
   /** The version read by the txn when it starts. */
@@ -174,7 +204,9 @@ case class CommitStats(
   numOfDomainMetadatas: Long = 0,
   txnId: Option[String] = None,
   /** Metrics for the AMT (Adaptive Metadata Tree) write used by this commit, if any. */
-  amtCommitStats: Option[AMTCommitStats] = None
+  amtCommitStats: Option[AMTCommitStats] = None,
+  /** The operation class derived from this commit's AddFile and RemoveFile actions. */
+  fileActionOperationClass: Option[String] = None
 )
 
 /**
@@ -991,8 +1023,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // to remove them and retain the Coordinated Commits configurations from the existing table.
     val newConfsWithoutCC = newMetadata.get.configuration --
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
+    // An AMT table cannot keep a QoL feature that AMT is incompatible with (e.g. v2Checkpoint).
+    val amtIncompatibleQoLKeys = if (AMTUtils.amtRequested(metadata.configuration)) {
+      CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
+        case (feature, config, _)
+            if AdaptiveMetadataTableFeature.incompatibleFeatures.contains(feature) => config.key
+      }.toSet
+    } else {
+      Set.empty[String]
+    }
     val existingQoLConfsToRetain = existingQoLConfs.filterNot { case (key, _) =>
-      newConfsWithoutCC.contains(key)
+      newConfsWithoutCC.contains(key) || amtIncompatibleQoLKeys.contains(key)
     }
     var newConfs: Map[String, String] =
       newConfsWithoutCC ++ existingCCConfs ++ existingQoLConfsToRetain ++ existingUCTableIdConf
@@ -1552,6 +1593,44 @@ trait OptimisticTransactionImpl extends TransactionHelper
         spark,
         newMetadata = newMetadata.get,
         oldMetadata = snapshot.metadata)
+    }
+  }
+
+  /**
+   * Rejects incompatible feature combinations in the protocol and metadata being committed.
+   *
+   * For an adaptive metadata table, fails if this commit adds a feature that is incompatible with
+   * the [[AdaptiveMetadataTableFeature]], either to the protocol or by setting a table property
+   * that enables it (e.g. `delta.checkpointPolicy` = `v2`). This runs on the final protocol and
+   * metadata, so it also covers features added after [[updateMetadata]], such as defaults and
+   * protocol actions. On an existing table, features it already had are left alone, so a table
+   * that has one can still be updated and can drop it.
+   *
+   * Every commit runs this check (`prepareCommit` and `commitLarge` both call it), so it catches
+   * incompatible features (e.g. v2Checkpoint and AMT) however they are added.
+   */
+  protected def performTableFeatureIncompatibilityCheck(): Unit = {
+    if (AMTUtils.amtEnabled(metadata, protocol)) {
+      AdaptiveMetadataTableFeature.incompatibleFeatures.foreach { feature =>
+        def enabledByMetadata(p: Protocol, m: Metadata): Boolean = feature match {
+          case f: FeatureAutomaticallyEnabledByMetadata =>
+            f.metadataRequiresFeatureToBeEnabled(p, m, spark)
+          case _ => false
+        }
+        // A feature is added when the new state has it and the table did not have it before.
+        // When creating a table, everything counts as added: the initial snapshot of a new table
+        // already has the session defaults merged into its metadata and protocol.
+        val addedToProtocol = protocol.isFeatureSupported(feature) &&
+          (isCreatingNewTable || !snapshot.protocol.isFeatureSupported(feature))
+        val enabledByNewMetadata = enabledByMetadata(protocol, metadata) &&
+          (isCreatingNewTable || !enabledByMetadata(snapshot.protocol, snapshot.metadata))
+        if (addedToProtocol || enabledByNewMetadata) {
+          throw DeltaErrors.incompatibleTableFeatures(
+            tableName = catalogTable.map(_.qualifiedName).getOrElse(dataPath.toString),
+            feature1 = AdaptiveMetadataTableFeature.name,
+            feature2 = feature.name)
+        }
+      }
     }
   }
 
@@ -2178,6 +2257,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // feature in the metadata (if needed) and add it to the protocol.
     // e.g. Coordinated Commits requires ICT and VacuumProtocolCheck to be enabled.
     updateMetadataAndProtocolWithRequiredFeatures(newMetadata, newProtocol.toSeq)
+    performTableFeatureIncompatibilityCheck()
 
     def recordCommitLargeFailure(ex: Throwable, op: DeltaOperations.Operation): Unit = {
       val coordinatedCommitsExceptionOpt = ex match {
@@ -2653,6 +2733,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       )
     newProtocol = protocolUpdate1.orElse(newProtocol)
     newMetadata = metadataUpdate1.orElse(newMetadata)
+    performTableFeatureIncompatibilityCheck()
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
@@ -2787,6 +2868,79 @@ trait OptimisticTransactionImpl extends TransactionHelper
               "non-AMT table, which must not happen.")
           case _ => // File action without a back reference, or a non-file action: nothing to check.
         }
+    }
+  }
+
+  /**
+   * Invariant check that the tree of an inline manifest commit reconstructs the commit's own
+   * AddFiles and RemoveFiles, compared by (path, dv, add or remove). `AddCDCFile`s are not recorded
+   * in the tree, so they are left out of the comparison.
+   */
+  private[delta] def verifyAmtCommitReconstruction(
+      actionsToCommit: Seq[Action],
+      attemptVersion: Long,
+      amtWriteResultOpt: Option[AMTWriteResult]): Unit = {
+    // Only an incremental AMT that describes this commit records the commit's changes:
+    //  - A deferred tree describes the previous table version.
+    //  - A full rewrite marks every live entry EXISTING and has no tombstones or changed positions.
+    //  - A non-AMT doesn't perform such check at all.
+    val result = amtWriteResultOpt match {
+      case Some(result) if result.checkpoint.contentRoot.version == attemptVersion &&
+          result.checkpoint.contentRoot.isIncremental.contains(true) => result
+      case _ => return
+    }
+    val committedFileActions: Seq[FileAction] = actionsToCommit.collect {
+      case a: AddFile => a
+      case r: RemoveFile => r
+    }
+    // Look for commit level dataChange.
+    val dataChange =
+      actionsToCommit.collectFirst { case commitInfo: CommitInfo => commitInfo }
+        .flatMap(_.dataChange) match {
+        case Some(dataChange) => dataChange
+        case None =>
+          deltaAssert(
+            check = false,
+            name = AMTUsageLogs.ALERT_COMMIT_MISSING_DATA_CHANGE,
+            msg = s"Manifest commit $attemptVersion has no dataChange in its CommitInfo.",
+            deltaLog = deltaLog)
+          return
+      }
+    // A metadata-only re-add (a dataChange=false commit without removes, e.g. a stats backfill)
+    // re-commits already-live files, which stay EXISTING in the tree, so the tree cannot
+    // reconstruct it.
+    if (!dataChange && !committedFileActions.exists(_.isInstanceOf[RemoveFile])) return
+
+    val tableRoot = deltaLog.dataPath
+    val committedKeys =
+      committedFileActions.map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
+    val provider = new AMTCheckpointProvider(
+      manifestCommitVersion = attemptVersion,
+      checkpointAction = result.checkpoint,
+      leaves = result.leaves,
+      tableRoot = tableRoot)
+    // Only file identities are compared, so the deletion timestamp stamped on the reconstructed
+    // RemoveFiles does not matter.
+    val treeKeys =
+        provider.reconstructFileActions(deltaLog, dataChange, commitTimestamp = 0L)
+        .map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
+    if (treeKeys != committedKeys) {
+      val onlyInTree = treeKeys -- committedKeys
+      val onlyInCommit = committedKeys -- treeKeys
+      // Bound the number of files named in the message.
+      val maxFilesToReport = 10
+      deltaAssert(
+        check = false,
+        name = AMTUsageLogs.ALERT_COMMIT_RECONSTRUCTION_MISMATCH,
+        msg = s"The AMT of manifest commit $attemptVersion reconstructs file actions that " +
+          s"disagree with the committed ones. Only in the tree (${onlyInTree.size}): " +
+          s"${onlyInTree.take(maxFilesToReport)}. Only in the commit (${onlyInCommit.size}): " +
+          s"${onlyInCommit.take(maxFilesToReport)}.",
+        deltaLog = deltaLog,
+        data = Map(
+          "manifestCommitVersion" -> attemptVersion,
+          "numOnlyInTree" -> onlyInTree.size,
+          "numOnlyInCommit" -> onlyInCommit.size))
     }
   }
 
@@ -3287,6 +3441,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
     commitEndNano = System.nanoTime()
 
     executionObserver.beginPostCommit()
+    // Verify the AMT reconstruction is correct according to file actions.
+    verifyAmtCommitReconstruction(
+      committedTransactionInfo.finalActionsToCommit, attemptVersion, amtWriteResultOpt)
     val catalogTableForPostCommitSnapshot = catalogTable
     val postCommitSnapshot = resolvePostCommitSnapshot(
       attemptVersion,

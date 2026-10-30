@@ -548,13 +548,17 @@ trait VacuumCommandImpl extends DeltaCommand {
     if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val checkEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
+      // Count before starting the transaction. The count runs a Spark job that can take a long
+      // time on large tables, and a metadata change committed while the transaction is open makes
+      // this empty commit fail with a MetadataChangedException.
+      val numFilesToDelete = diff.count()
       val txn = table.startTransaction()
       val metrics = Map[String, SQLMetric](
         "numFilesToDelete" -> createMetric(spark.sparkContext, "number of files to deleted"),
         "sizeOfDataToDelete" -> createMetric(spark.sparkContext,
           "The total amount of data to be deleted in bytes")
       )
-      metrics("numFilesToDelete").set(diff.count())
+      metrics("numFilesToDelete").set(numFilesToDelete)
       metrics("sizeOfDataToDelete").set(sizeOfDataToDelete)
       txn.registerSQLMetrics(spark, metrics)
       val version = txn.commit(actions = Seq(), DeltaOperations.VacuumStart(
@@ -682,7 +686,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       fs: FileSystem,
       basePath: Path,
       relativizeIgnoreError: Boolean): Option[String] = {
-    getRelativePath(action.path, fs, basePath, relativizeIgnoreError)
+    getRelativePath(action.path, fs, basePath,
+      relativizeIgnoreError = relativizeIgnoreError)
   }
   /** Returns the relative path of a file or None if the file lives outside of the table. */
   protected def getRelativePath(
@@ -717,7 +722,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       relativizeIgnoreError: Boolean,
       dvDiscoveryDisabled: Boolean
   ): Seq[String] = {
-    val paths = getActionRelativePath(action, fs, basePath, relativizeIgnoreError)
+    val paths = getActionRelativePath(action, fs, basePath,
+        relativizeIgnoreError = relativizeIgnoreError)
       .map {
         relativePath =>
         Seq(relativePath) ++ getAllSubdirs("/", relativePath, fs)
@@ -847,7 +853,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       iter.flatMap { f =>
         // if file path is outside of the table base path, those files are not considered as they
         // are not part of this table. Shallow clone is one example where this happens.
-        getRelativePath(f.path, fs, tableBasePath, relativizeIgnoreErrorValue)
+        getRelativePath(f.path, fs, tableBasePath,
+            relativizeIgnoreError = relativizeIgnoreErrorValue)
           .map(SerializableFileStatus(_, f.length, f.isDir, f.modificationTime))
       }
     }

@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, LogSegment, Snapshot, SnapshotDescriptor, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
+import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.fs.Path
 
 /**
@@ -31,6 +34,10 @@ import org.apache.hadoop.fs.Path
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
 object AMTUtils extends DeltaLogging {
+  /** Whether AMT is **supported** as per the protocol. */
+  def amtSupported(protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
    * `metadata`.
@@ -42,6 +49,18 @@ object AMTUtils extends DeltaLogging {
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
     amtEnabled(snapshot.metadata, snapshot.protocol)
 
+  /**
+   * Whether `amtCheckpointOpt` holds a ROOT-ONLY tree (no leaf manifests). A root-only tree keeps
+   * every live file in the root, so state reconstruction stamps no back reference on any of them.
+   */
+  def isRootOnlyCheckpoint(amtCheckpointOpt: Option[Checkpoint]): Boolean =
+    amtCheckpointOpt.exists(_.contentRoot.numLeaves.contains(0L))
+
+  /** Whether a new table's `configuration` asks for AMT. */
+  def amtRequested(configuration: Map[String, String]): Boolean =
+    TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
+      configuration, AdaptiveMetadataTableFeature)
+
   /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
   def invariantCheckWithLogging(
       checkInvariant: => Boolean,
@@ -50,16 +69,55 @@ object AMTUtils extends DeltaLogging {
       deltaLog: DeltaLog = null,
       data: Map[String, Any] = Map.empty): Unit = {
     if (!checkInvariant) {
-      val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(10).mkString("\n\t")
-      deltaAssertAndThrow(
-        check = false,
-        name = opTypeSuffix,
-        msg = message,
-        throwable = new DeltaIllegalStateException(
-          errorClass = "INTERNAL_ERROR",
-          messageParameters = Array(message)),
+      failWithLogging(
+        opTypeSuffix = opTypeSuffix,
+        message = message,
         deltaLog = deltaLog,
-        data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+        data = data)
+    }
+  }
+
+  /** Logs and throws an [[IllegalStateException]] with the given message. */
+  def failWithLogging(
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Nothing = {
+    val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(30).mkString("\n\t")
+    deltaAssertAndThrow(
+      check = false,
+      name = opTypeSuffix,
+      msg = message,
+      throwable = new DeltaIllegalStateException(
+        errorClass = "INTERNAL_ERROR",
+        messageParameters = Array(message)),
+      deltaLog = deltaLog,
+      data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+    throw new IllegalStateException("should not reach here")
+  }
+
+  /**
+   * Runs invariant checks, logging unexpected non-fatal exceptions in production and propagating
+   * them in tests.
+   */
+  def runInvariantsSafely(
+      checkName: String,
+      deltaLog: Option[DeltaLog],
+      logPath: Path)(checkInvariant: => Unit): Unit = {
+    try {
+      checkInvariant
+    } catch {
+      case NonFatal(e) if !DeltaUtils.isTesting =>
+        recordDeltaEvent(
+          provider = deltaLog.orNull,
+          opType = AMTUsageLogs.EXCEPTIONS_THROWN_DUE_TO_LOGGING,
+          data = Map(
+            "check" -> checkName,
+            "exceptionClass" -> e.getClass.getName,
+            "exception" -> e.getMessage,
+            "stackTrace" -> e.getStackTrace.take(30).mkString("\n\t")),
+          path = Option(logPath)
+        )
     }
   }
 
@@ -182,18 +240,4 @@ object AMTUtils extends DeltaLogging {
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
     ManifestBitmap.fromSerializedByteArray(bytes)
-
-  /** Logs and throws when non-compacted deltas are absent in the log segment. */
-  def logAndThrowMissingNonCompactedDeltasInLogSegment(
-      deltaLog: DeltaLog,
-      logSegment: LogSegment,
-      eventData: Map[String, Any] = Map.empty): Unit = {
-    invariantCheckWithLogging(
-      checkInvariant = false,
-      opTypeSuffix = AMTUsageLogs.ALERT_MISSING_NON_COMPACTED_DELTAS,
-      message = s"nonCompactedDeltas are absent in an AMT log segment:\n${logSegment.toString}",
-      deltaLog = deltaLog,
-      data = Map("logSegmentVersion" -> logSegment.version) ++ eventData
-    )
-  }
 }

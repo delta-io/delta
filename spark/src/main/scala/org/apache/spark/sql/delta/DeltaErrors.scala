@@ -692,7 +692,7 @@ trait DeltaErrorsBase
 
   /**
    * Read-time CDF batch read rejected because the table resolved by the catalog is not a V2
-   * [[io.delta.spark.internal.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
+   * [[org.apache.spark.sql.delta.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
    * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
    * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`. Use
    * `AUTO`/`STRICT` mode so the catalog re-resolves V1 tables to the V2 connector for CHANGES.
@@ -2922,6 +2922,19 @@ trait DeltaErrorsBase
       messageParameters = Array(
         unsupportedFeatures.map(_.name).toSeq.sorted.mkString(", "),
         supportedFeatures.map(_.name).toSeq.sorted.mkString(", ")))
+  }
+
+  /**
+   * Thrown when a transaction makes a table support both `feature1` and `feature2`, while Delta
+   * declares these features as incompatible.
+   */
+  def incompatibleTableFeatures(
+      tableName: String,
+      feature1: String,
+      feature2: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_INCOMPATIBLE_TABLE_FEATURES",
+      messageParameters = Array(tableName, feature1, feature2))
   }
 
   case class LogRetentionConfig(key: String, value: String, truncateHistoryRetention: String)

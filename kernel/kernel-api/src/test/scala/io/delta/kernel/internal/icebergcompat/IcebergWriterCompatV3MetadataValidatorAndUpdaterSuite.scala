@@ -438,7 +438,8 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
       "icebergCompatV2",
       "icebergWriterCompatV1",
       "allowColumnDefaults",
-      "catalogManaged")
+      "catalogManaged",
+      "materializePartitionColumns")
     val protocol = new Protocol(3, 7, readerFeatures.asJava, writerFeatures.asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
     validateAndUpdateIcebergWriterCompatV3Metadata(true, metadata, protocol, Optional.empty())

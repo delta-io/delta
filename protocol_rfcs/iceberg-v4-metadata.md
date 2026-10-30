@@ -175,7 +175,7 @@ The `adaptiveMetadata` table feature is supported when:
 - The feature `adaptiveMetadata` exists in the table `protocol`'s `readerFeatures` and `writerFeatures`.
 
 Required table features that must also be enabled:
-- `columnMapping` (`name` or `id` mode): Stable column identification across schema evolution. Both modes assign a stable field ID (`delta.columnMapping.id`) to every schema field, which is all the metadata tree relies on. The mode only governs how columns are resolved inside data files; manifests are always written with Parquet `field_id` metadata and resolved by field ID, independent of the table's mode (see [Content Entry Schema](#content-entry-schema)).
+- `columnMapping` (`name` or `id` mode): Stable column identification across schema evolution. Both modes assign a stable field ID (`delta.columnMapping.id`) to every named field, which is all the metadata tree relies on. The mode only governs how columns are resolved inside data files; manifests are always written with Parquet `field_id` metadata and resolved by field ID, independent of the table's mode (see [Content Entry Schema](#content-entry-schema)).
 - `rowTracking`: Manifest entries natively carry row-tracking fields (`first_row_id`, `sequence_number`); see [Row Tracking Compatibility](#row-tracking-compatibility)
 - `domainMetadata`: Storing feature-specific metadata
 - `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
@@ -216,7 +216,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
 {
   "checkpoint": [
     { "checkpointMetadata": { "version": 42 } },
-    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42, "tags": {} } },
+    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42, "commitTimestamp": 1234567890000, "tags": {} } },
     { "protocol": { "minReaderVersion": 3, "minWriterVersion": 7, "readerFeatures": ["columnMapping", "deletionVectors", "adaptiveMetadata"], "writerFeatures": ["columnMapping", "deletionVectors", "domainMetadata", "rowTracking", "adaptiveMetadata"] } },
     { "metaData": { "id": "af23c9d7-fff1-4a5a-a2c8-55c59bd782aa", "name": "my_table", "schemaString": "{...}", "partitionColumns": [], "configuration": {}, "createdTime": 1234567890000 } },
     { "domainMetadata": { "domain": "delta.rowTracking", "configuration": "{\"rowIdHighWaterMark\": 1000000}", "removed": false } },
@@ -235,7 +235,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 | Action | Description |
 |--------|-------------|
 | `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
-| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). `tags` allow writers to record additional optional metadata about the manifest tree. |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, `commitTimestamp`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). A metadata tree can only be produced as of a version at which In-Commit Timestamps are enabled. `commitTimestamp` is the in-commit timestamp (milliseconds since the Unix epoch) of the commit at `version`. `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
 | `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
@@ -611,6 +611,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Record a `backReference` for every file read from the tree, and use the accumulated backreferences to build MDVs and re-add entries when producing a manifest commit (see [Backreferences](#backreferences) and [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Populate manifest entries with partition values, content stats, deletion vectors, and tracking and sequence numbers (see [Content Entry Schema](#content-entry-schema) and [Row Tracking Compatibility](#row-tracking-compatibility)).
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
+- Assign field IDs to the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes; ID allocation is the same as in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2).
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
@@ -758,4 +759,4 @@ When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint m
   will fail fast when encountering the feature in the protocol, as expected for reader features.
 
 - **Iceberg interoperability**: This feature uses Iceberg V4's manifest
-  format internally but does not enable Iceberg reader/writer access to the table. Iceberg interoperability requires the separate `icebergNativeV4` feature (not covered in this RFC).
+  format internally but does not enable Iceberg reader/writer access to the table. Iceberg interoperability [requires the separate `icebergNativeV4` feature](https://github.com/delta-io/delta/pull/7374/).

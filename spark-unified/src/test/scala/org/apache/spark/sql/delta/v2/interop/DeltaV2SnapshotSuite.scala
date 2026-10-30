@@ -27,8 +27,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import io.delta.spark.internal.v2.kernel.KernelContext
-import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager
+import org.apache.spark.sql.delta.v2.kernel.KernelContext
+import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FSDataInputStream, Path, RawLocalFileSystem}
 import org.mockito.Mockito.{atLeastOnce, clearInvocations, spy, verify, verifyNoInteractions}

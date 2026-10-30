@@ -693,12 +693,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED =
     buildConf("amt.snapshotDiscovery.asyncCommitInfoRead.enabled")
       .internal()
-      .doc("When enabled, an async CommitInfo read will be kicked off during snapshot creation " +
-        "in parallel with the CRC read. Enabling it could cause slight performance overhead on " +
-        "non-AMT tables when CRC is absent, and extra checkpoint threadpool contention. " +
-        "Disabling it could result in missing file actions in snapshot discovery for AMT tables.")
+      .doc("When enabled, snapshot creation may read CommitInfo asynchronously in parallel with " +
+        "the CRC read to discover AMT checkpoints. The read is skipped when a CRC for the target " +
+        "version is already available or when hints identify the table as non-AMT. Tables with " +
+        "unknown AMT status may still incur extra I/O and checkpoint threadpool contention. " +
+        "Disabling this can cause missing file actions in snapshot discovery for AMT tables " +
+        "without a CRC.")
       .booleanConf
-      .createWithDefault(DeltaUtils.isTesting)
+      .createWithDefault(true)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -1275,6 +1277,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
     final val list = Set(NONE, ALL, AUTO)
   }
+
+  val INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED =
+    buildConf("insertReplaceOnOrUsing.pinStatementTime.enabled")
+      .internal()
+      .doc(
+        """
+          |If enabled, INSERT REPLACE ON/USING folds current date/time functions in its source
+          |query and REPLACE ON condition to one statement instant. DELETE, INSERT and source
+          |materialization retries then use the same time. When disabled, the phases fold time
+          |independently, which can lose or duplicate rows selected by a current-time filter.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE =
     buildConf("insertReplaceOnOrUsing.materializeSource")
@@ -2577,6 +2592,96 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         .checkValue(_ > 0, "batchSize has to be positive")
         .createOptional
 
+  val DELTA_REORG_FOOTER_MEMORY_ADMISSION_ENABLED =
+    buildConf("reorg.footerScan.memoryAdmission.enabled")
+      .internal()
+      .doc(
+        "Whether REORG / PURGE uses executor-wide memory admission while reading Parquet " +
+          "footers. When enabled, each worker reads, decodes and filters one footer before " +
+          "returning only the selected AddFile. When disabled, REORG / PURGE retains the " +
+          "existing batched footer-reading and caller-side filtering behavior.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_REORG_FOOTER_MEMORY_ADMISSION_MAX_ACTIVE_READERS =
+    buildStaticConf("reorg.footerScan.memoryAdmission.maxActiveReaders")
+      .internal()
+      .doc(
+        "Maximum number of active REORG / PURGE footer readers per executor. This bounds " +
+          "connector buffers and streams opened before the exact footer size is known and memory " +
+          "admission can occur.")
+      .intConf
+      .checkValue(_ > 0, "maxActiveReaders must be positive")
+      .createWithDefault(64)
+
+  val DELTA_REORG_FOOTER_MEMORY_ADMISSION_EXECUTOR_MEMORY_FRACTION =
+    buildStaticConf("reorg.footerScan.memoryAdmission.executorMemoryFraction")
+      .internal()
+      .doc(
+        "Fraction of the executor's maximum JVM heap used as the executor-wide REORG / PURGE " +
+          "footer memory-admission pool. This is a logical admission budget and does not " +
+          "preallocate heap memory.")
+      .doubleConf
+      .checkValue(
+        value => value > 0.0 && value <= 1.0,
+        "executorMemoryFraction must be greater than 0 and at most 1")
+      .createWithDefault(0.10)
+
+  val DELTA_REORG_FOOTER_SCAN_PARALLELISM =
+    buildConf("reorg.footerScan.parallelism")
+      .internal()
+      .doc(
+        """
+          |Maximum number of worker threads per task while REORG / PURGE reads Parquet footers.
+          |When memory admission is enabled, each worker also converts the schema and evaluates the
+          |file predicate, returning only the selected AddFile so decoded footers are not
+          |accumulated.
+          |
+          |When enabled, executor-wide admission independently limits the combined footer working
+          |set across concurrent tasks to a configured fraction of the maximum JVM heap, 10% by
+          |default. A file is charged in 1 KiB units for its raw footer buffer size (footer length
+          |plus the 8-byte trailer) plus a 512 KiB decoded-object allowance through predicate
+          |evaluation. The allowance starts with the widest measured 999-node QPL graph at about
+          |150 KiB, adds 64 KiB of file-unique footer metadata, rounds the resulting 214 KiB up to
+          |256 KiB, and applies a 2x safety margin.
+          |AddFile stats are excluded because a positive batch size bounds them separately; a
+          |zero batch size does not. A footer larger than the pool acquires the full admitted-memory
+          |budget to guarantee forward progress. Other readers may still hold streams while waiting
+          |for memory admission.
+          |An executor-wide active-reader cap bounds stream buffers allocated before memory
+          |admission. The cap defaults to 64. Lowering it trades per-task scan throughput for fewer
+          |concurrently active readers; it does not affect the file-rewrite stage.
+          |""".stripMargin)
+      .intConf
+      .checkValue(
+        value => value > 0 && value <= Short.MaxValue,
+        s"'reorg.footerScan.parallelism' must be between 1 and ${Short.MaxValue}.")
+      .createWithDefault(8)
+
+  val DELTA_REORG_FOOTER_SCAN_BATCH_SIZE =
+    buildConf("reorg.footerScan.batchSize")
+      .internal()
+      .doc(
+        """
+          |Maximum number of files passed to one REORG / PURGE parallel footer-filtering call.
+          |ThreadUtils.parmap eagerly creates futures for all inputs and retains all completed
+          |results until the call finishes, so batching bounds those structures, decoded AddFiles
+          |and the batch-local candidate-file map. When memory admission is disabled, it also
+          |bounds the Footer objects returned by the existing reader. When admission is enabled,
+          |footer buffers and decoded footer objects are released per file instead.
+          |
+          |With a positive batch size, input UnsafeRows and AddFile stats are retained only for the
+          |current batch. The partition-wide path-collision set remains outside footer admission for
+          |the task lifetime. Set to 0 to disable batching and materialize the complete input
+          |partition in one call. Lowering this value does not add a shuffle or change stage
+          |parallelism. Read parallelism within a batch is bounded separately by
+          |'reorg.footerScan.parallelism'. Disabling batching does not disable memory admission when
+          |its separate gate is enabled.
+          |""".stripMargin)
+      .intConf
+      .checkValue(_ >= 0, "'reorg.footerScan.batchSize' must be >= 0 (0 disables batching).")
+      .createWithDefault(500)
+
   val DELTA_OPTIMIZE_REPARTITION_ENABLED =
     buildConf("optimize.repartition.enabled")
       .internal()
@@ -2903,6 +3008,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "is disabled.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CDF_RELAX_TIGHTENED_NULLABILITY_ENABLED =
+    buildConf("changeDataFeed.relaxTightenedNullability.enabled")
+      .internal()
+      .doc(
+        """When true, batch CDF relations relax NOT NULL fields that were nullable at the
+          |starting version during analysis. This prevents Catalyst from pruning null filters
+          |before scan-time schema validation can reject an incompatible version range.
+          |When false, the relation retains the selected read schema's nullability and will
+          |not fail on specific invalid CDF scans.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
     buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
@@ -3525,6 +3642,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .doc("The rentention duration of DeltaLog instances in the cache")
     .timeConf(TimeUnit.MINUTES)
     .createWithDefault(60)
+
+  val DELTA_EVENT_ONCE_PER_TABLE_CACHE_SIZE =
+    buildStaticConf("eventLogging.oncePerTable.cacheSize")
+      .internal()
+      .doc("The maximum number of (table, opType) pairs remembered by " +
+        "recordDeltaEventOncePerTable. A pair that was evicted is logged again.")
+      .longConf
+      .checkValue(_ > 0, "'eventLogging.oncePerTable.cacheSize' must be positive.")
+      .createWithDefault(5000)
 
   //////////////////
   // Delta Sharing
