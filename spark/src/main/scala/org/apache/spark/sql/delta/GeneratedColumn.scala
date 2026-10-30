@@ -448,6 +448,10 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                 StringLiteral(format)) =>
                   createExpr(name)(TruncDatePartitionExpr(partColName,
                     format))
+                case Ceil(ExtractBaseColumn(name, _)) =>
+                  createExpr(name)(CeilPartitionExpr(partColName))
+                case Floor(ExtractBaseColumn(name, _)) =>
+                  createExpr(name)(FloorPartitionExpr(partColName))
                 case _ => None
               }
             case other =>
