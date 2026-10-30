@@ -277,7 +277,8 @@ trait DeltaRetentionSuiteBase extends QueryTest
           dfToWrite,
           parquetFile,
           hadoopConf,
-          useRename = false)
+          useRename = false,
+          tableProperties = snapshot.metadata.configuration)
       case _ =>
         assert(false, "Invalid v2 checkpoint format")
     }
