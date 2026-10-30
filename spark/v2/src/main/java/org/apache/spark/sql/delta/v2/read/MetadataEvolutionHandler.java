@@ -22,12 +22,8 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.util.Preconditions;
-import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +48,9 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper;
+import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
@@ -62,6 +61,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Option;
+import scala.collection.Iterator;
+import scala.collection.immutable.List$;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 
@@ -173,20 +174,20 @@ public class MetadataEvolutionHandler {
    * <p>This ensures a batch never crosses a schema change boundary — it stops at the barrier
    * IndexedFile so the batch can be committed before the schema evolution takes effect.
    */
-  public CloseableIterator<IndexedFile> stopIndexedFileIteratorAtSchemaChangeBarrier(
-      CloseableIterator<IndexedFile> fileActions) {
+  public ClosableIterator<IndexedFile> stopIndexedFileIteratorAtSchemaChangeBarrier(
+      ClosableIterator<IndexedFile> fileActions) {
     // Lazily include files up to and including the barrier, then break.
     boolean[] sawBarrier = {false};
-    return fileActions.breakableFilter(
-        file -> {
+    return new IteratorCloseOps<>(fileActions).withClose(
+        iterator -> iterator.takeWhile(file -> {
           if (sawBarrier[0]) {
-            return BreakableFilterResult.BREAK;
+            return false;
           }
           if (file.getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
             sawBarrier[0] = true;
           }
-          return BreakableFilterResult.INCLUDE;
-        });
+          return true;
+        }));
   }
 
   /**
@@ -196,16 +197,14 @@ public class MetadataEvolutionHandler {
    * <p>V2 port of V1's {@code
    * DeltaSourceMetadataEvolutionSupport.getMetadataOrProtocolChangeIndexedFileIterator}.
    */
-  public CloseableIterator<IndexedFile> getMetadataOrProtocolChangeIndexedFileIterator(
+  public ClosableIterator<IndexedFile> getMetadataOrProtocolChangeIndexedFileIterator(
       @Nullable Metadata metadata, @Nullable Protocol protocol, long version) {
     if (shouldTrackMetadataChange()
         && hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)) {
-      return Utils.toCloseableIterator(
-          Collections.singletonList(
-                  IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX()))
-              .iterator());
+      return new ClosableWrapper<>(Iterator.single(
+          IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX()))).toClosable();
     }
-    return Utils.toCloseableIterator(Collections.emptyIterator());
+    return new ClosableWrapper<>(List$.MODULE$.<IndexedFile>empty().iterator()).toClosable();
   }
 
   /**
@@ -615,10 +614,11 @@ public class MetadataEvolutionHandler {
         (CommitRangeImpl)
             snapshotManager.getTableChanges(engine, currentMetadataVersion, Optional.empty());
 
-    try (CloseableIterator<CommitActions> commitsIter =
+    try (ClosableIterator<CommitActions> commitsIter =
         // Always include CDC: the merger must stop on any file action
-        StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine, commitRange, tablePath, DeltaV2MicroBatchStream.CDC_ACTION_SET)) {
+        // TODO: Read metadata-merging commits through V1 APIs to remove this iterator adapter.
+        ScalaUtils.toClosableIterator(StreamingHelper.getCommitActionsFromRangeUnsafe(
+            engine, commitRange, tablePath, DeltaV2MicroBatchStream.CDC_ACTION_SET))) {
       while (commitsIter.hasNext()) {
         try (CommitActions commit = commitsIter.next()) {
           long version = commit.getVersion();
@@ -626,7 +626,9 @@ public class MetadataEvolutionHandler {
           Protocol protocolAction = null;
           boolean hasFileAction = false;
 
-          try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+          // TODO: Read V1 actions from the commit to remove this iterator adapter.
+          try (ClosableIterator<ColumnarBatch> actionsIter =
+              ScalaUtils.toClosableIterator(commit.getActions())) {
             outer:
             while (actionsIter.hasNext()) {
               ColumnarBatch batch = actionsIter.next();
