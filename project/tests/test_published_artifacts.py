@@ -118,7 +118,7 @@ SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
     "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True, support_hudi=True),
     "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=False),
     "4.2.0": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False),
-    "4.3.0-SNAPSHOT": SparkVersionSpec(
+    "4.3.0": SparkVersionSpec(
         suffix="_4.3", support_iceberg=False, support_hudi=False
     ),
 }
@@ -587,6 +587,11 @@ class SparkVersionsScriptTest:
                 full = full_versions_by_short.get(version, "")
                 if is_pre_release(full):
                     print(f"  ✗ Released versions should not include pre-releases: {version} ({full})")
+                    return False
+                lock_file = (self.delta_root / ".github" / "ci-requirements" /
+                             "spark-python" / f"spark{version}.lock")
+                if not lock_file.is_file():
+                    print(f"  ✗ Released Spark {version} is missing its Python dependency lock file")
                     return False
 
             print(f"  ✓ --released-spark-versions: {released_versions} (snapshots and previews excluded)")

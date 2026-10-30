@@ -70,6 +70,7 @@ jobs:
     name: "Prepare Spark ${{ matrix.spark_version }} source cache"
     runs-on: ubuntu-24.04
     needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.source_build_spark_versions != '[]' }}
     # Source-built Spark tracks unreleased APIs. Keep the producer non-blocking too,
     # otherwise a checkout/build/cache-save failure blocks the whole workflow before
     # source_spark_test can surface the same signal.
@@ -125,7 +126,7 @@ jobs:
     needs: [generate-matrix, prepare_spark_source_cache]
     # Run even if the non-blocking prepare job failed. If no cache was produced, each
     # shard fails during restore/verification under this already non-blocking job.
-    if: ${{ always() && needs.generate-matrix.result == 'success' }}
+    if: ${{ always() && needs.generate-matrix.result == 'success' && needs.generate-matrix.outputs.source_build_spark_versions != '[]' }}
     # Source-built Spark lanes track unreleased Spark APIs and remain non-blocking
     # while still producing a full pass/fail signal for every PR.
     continue-on-error: true
