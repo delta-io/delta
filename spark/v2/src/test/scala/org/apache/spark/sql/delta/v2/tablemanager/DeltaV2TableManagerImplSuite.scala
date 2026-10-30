@@ -16,13 +16,16 @@
 package org.apache.spark.sql.delta.v2.tablemanager
 
 import java.io.File
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.Files
 import java.util.{Collections, EnumSet, Optional}
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
-import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import org.apache.spark.sql.delta.v2.utils.StreamingHelper
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
 import org.apache.spark.SparkConf
@@ -251,6 +254,44 @@ class DeltaV2TableManagerImplSuite
       }
     }
   }
+
+  test("metadata and protocol collectors reject duplicate actions") {
+    Seq("metaData", "protocol").foreach { actionName =>
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        spark.range(1).write.format("delta").save(path)
+        val snapshot = DeltaLog.forTable(spark, path).update()
+        val actions: Seq[Action] = if (actionName == "metaData") {
+          Seq(
+            snapshot.metadata.copy(description = "first metadata"),
+            snapshot.metadata.copy(description = "second metadata"))
+        } else {
+          Seq(Protocol(1, 1), Protocol(1, 2))
+        }
+        Files.writeString(
+          new File(dir, "_delta_log/00000000000000000001.json").toPath,
+          actions.map(_.json).mkString("", "\n", "\n"),
+          UTF_8)
+
+        forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
+          val snapshotManager = manager.snapshotManager(catalogTableOpt)
+          val kernelEngine = manager.kernelContext.getDefaultEngine()
+          val error = intercept[IllegalArgumentException] {
+            if (actionName == "metaData") {
+              StreamingHelper.collectMetadataActions(
+                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine)
+            } else {
+              StreamingHelper.collectProtocolActions(
+                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine)
+            }
+          }
+          assert(error.getMessage ===
+            s"Should not encounter two $actionName actions in the same commit of version 1")
+        }
+      }
+    }
+  }
+
 
   test("cached composite reuses the table manager and KernelContext") {
     withSQLConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE.key -> "1000") {

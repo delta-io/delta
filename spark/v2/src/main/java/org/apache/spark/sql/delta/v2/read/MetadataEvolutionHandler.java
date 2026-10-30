@@ -24,7 +24,6 @@ import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.util.Preconditions;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -93,7 +92,6 @@ public class MetadataEvolutionHandler {
 
   private final SparkSession spark;
   private final String tableId;
-  private final String tablePath;
   private final DeltaV2SnapshotManager snapshotManager;
   private final DeltaStreamingBackend streamingBackend;
   private final Engine engine;
@@ -112,7 +110,6 @@ public class MetadataEvolutionHandler {
   public MetadataEvolutionHandler(
       SparkSession spark,
       String tableId,
-      String tablePath,
       DeltaV2SnapshotManager snapshotManager,
       DeltaStreamingBackend streamingBackend,
       Engine engine,
@@ -124,7 +121,6 @@ public class MetadataEvolutionHandler {
       String metadataPath) {
     this.spark = Objects.requireNonNull(spark);
     this.tableId = Objects.requireNonNull(tableId);
-    this.tablePath = Objects.requireNonNull(tablePath);
     this.snapshotManager = Objects.requireNonNull(snapshotManager);
     this.streamingBackend = Objects.requireNonNull(streamingBackend);
     this.engine = Objects.requireNonNull(engine);
@@ -387,13 +383,8 @@ public class MetadataEvolutionHandler {
 
   /** Collect all metadata actions between start and end version, both inclusive. */
   private Map<Long, Metadata> collectMetadataActions(long startVersion, long endVersion) {
-    Map<Long, Metadata> actions = new LinkedHashMap<>();
-    StreamingHelper.collectMetadataActionsFromRangeUnsafe(
-            startVersion, Optional.of(endVersion), snapshotManager, engine, tablePath)
-        .forEach(
-            (version, action) ->
-                actions.put(version, KernelActionUtils$.MODULE$.metadataFromKernel(action)));
-    return actions;
+    return StreamingHelper.collectMetadataActions(
+        startVersion, Optional.of(endVersion), snapshotManager, engine);
   }
 
   /** Collect the protocol action at a specific version. Returns null if none. */
@@ -403,13 +394,8 @@ public class MetadataEvolutionHandler {
 
   /** Collect all protocol actions between start and end version, both inclusive. */
   private Map<Long, Protocol> collectProtocolActions(long startVersion, long endVersion) {
-    Map<Long, Protocol> actions = new LinkedHashMap<>();
-    StreamingHelper.collectProtocolActionsFromRangeUnsafe(
-            startVersion, Optional.of(endVersion), snapshotManager, engine, tablePath)
-        .forEach(
-            (version, action) ->
-                actions.put(version, KernelActionUtils$.MODULE$.protocolFromKernel(action)));
-    return actions;
+    return StreamingHelper.collectProtocolActions(
+        startVersion, Optional.of(endVersion), snapshotManager, engine);
   }
 
   /**
