@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 
 import org.apache.spark.{SparkContext, TaskContext}
 import org.apache.spark.internal.{Logging, MDC}
-import org.apache.spark.util.{Utils => SparkUtils}
 
 /**
  * Implementation of ThreadPoolExecutor that captures the Spark ThreadLocals present at submit time
@@ -52,10 +51,11 @@ trait SparkThreadLocalCapturingHelper extends Logging {
   // At the time of creating this instance we capture the task context and command context.
   val capturedTaskContext = TaskContext.get()
   val sparkContext = SparkContext.getActive
-  // Capture an immutable threadsafe snapshot of the current local properties
+  // Capture an immutable threadsafe snapshot of the current local properties. The snapshot
+  // copies their entries once, directly, under the same lock Properties.clone() takes, so an
+  // intermediate clone would only copy them twice more.
   val capturedProperties = sparkContext
-    .map(sc => CapturedSparkThreadLocals.toValuesArray(
-      SparkUtils.cloneProperties(sc.getLocalProperties)))
+    .map(sc => CapturedSparkThreadLocals.toValuesArray(sc.getLocalProperties))
 
   def runWithCaptured[T](body: => T): T = {
     // Save the previous contexts, overwrite them with the captured contexts, and then restore the
@@ -100,7 +100,8 @@ object CapturedSparkThreadLocals {
   }
 
   def toProperties(props: Array[(String, String)]): Properties = {
-    val resultProps = new Properties()
+    // Sized for the entries, so that adding them does not resize the table.
+    val resultProps = new Properties(props.length)
     for ((key, value) <- props) {
       resultProps.put(key, value)
     }
@@ -108,7 +109,16 @@ object CapturedSparkThreadLocals {
   }
 
   def toValuesArray(props: Properties): Array[(String, String)] = {
-    props.asScala.toArray
+    // Properties may be shared and written by other threads (e.g. PySpark's
+    // inheritable_thread_target hands one Properties to several threads). Its writers hold its
+    // monitor, as Properties.clone() does, so copying under that monitor sees the entries as they
+    // stood between two writes, rather than the mix a weakly consistent iteration could see.
+    props.synchronized {
+      val entries = Array.newBuilder[(String, String)]
+      entries.sizeHint(props.size)
+      entries ++= props.asScala.iterator
+      entries.result()
+    }
   }
 
 }
