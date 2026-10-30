@@ -17,9 +17,9 @@ package org.apache.spark.sql.delta.v2.read;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_FEATURE;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE;
+import static org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamUtils.*;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.ImmutableSet;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.data.ColumnarBatch;
@@ -37,8 +37,6 @@ import java.io.UncheckedIOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.time.ZoneId;
 import java.util.*;
-import java.util.stream.Collectors;
-import javax.annotation.Nullable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.util.DateTimeUtils;
@@ -60,7 +58,6 @@ import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.RemoveFile;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader$;
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot;
-import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
@@ -83,18 +80,14 @@ import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
-import org.apache.spark.sql.types.DataType;
-import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import scala.Function2;
 import scala.Option;
 import scala.Some;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
-import scala.runtime.AbstractFunction2;
 import scala.util.matching.Regex;
 
 // TODO(#5318): Use DeltaErrors error framework for consistent error handling.
@@ -108,27 +101,6 @@ class DeltaV2MicroBatchStream
     implements MicroBatchStream, SupportsAdmissionControl, SupportsTriggerAvailableNow {
 
   private static final Logger logger = LoggerFactory.getLogger(DeltaV2MicroBatchStream.class);
-
-  public static final Set<DeltaAction> ACTION_SET =
-      ImmutableSet.of(
-          DeltaAction.ADD,
-          DeltaAction.REMOVE,
-          DeltaAction.METADATA,
-          DeltaAction.PROTOCOL,
-          DeltaAction.COMMITINFO);
-
-  /** Action set for CDC reads: {@link #ACTION_SET} plus {@link DeltaAction#CDC}. */
-  public static final Set<DeltaAction> CDC_ACTION_SET =
-      ImmutableSet.<DeltaAction>builder().addAll(ACTION_SET).add(DeltaAction.CDC).build();
-
-  /**
-   * Max attempts to resolve the start version when failOnDataLoss=false. Attempt 1 is the initial
-   * try with the user's startVersion (surfaces the StartVersionNotFoundException that triggers the
-   * failOnDataLoss check). Attempt 2 retries with the earliest available version to recover when
-   * failOnDataLoss=false. Attempt 3 guards against a concurrent log-retention prune in the tiny
-   * window between attempt 2's exception and its retry.
-   */
-  private static final int FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS = 3;
 
   private final Engine engine;
   private final DeltaV2SnapshotManager snapshotManager;
@@ -670,36 +642,6 @@ class DeltaV2MicroBatchStream
     }
   }
 
-  /**
-   * If the given exception wraps a {@link ClosedByInterruptException} as its direct cause, returns
-   * it. This occurs when Spark interrupts the micro-batch thread during stream shutdown and the
-   * thread is blocked inside Kernel's {@code DefaultJsonHandler} reading delta log files via NIO
-   * channels.
-   */
-  static Optional<ClosedByInterruptException> findClosedByInterruptCause(Throwable t) {
-    Throwable cause = t.getCause();
-    if (cause instanceof ClosedByInterruptException) {
-      return Optional.of((ClosedByInterruptException) cause);
-    }
-    return Optional.empty();
-  }
-
-  /**
-   * Walks the cause chain of the given throwable looking for a Kernel {@link
-   * UnsupportedProtocolVersionException}.
-   */
-  static Optional<UnsupportedProtocolVersionException> findUnsupportedProtocolCause(Throwable t) {
-    for (Throwable current = t; current != null; current = current.getCause()) {
-      if (current instanceof UnsupportedProtocolVersionException) {
-        return Optional.of((UnsupportedProtocolVersionException) current);
-      }
-      if (current.getCause() == current) {
-        break;
-      }
-    }
-    return Optional.empty();
-  }
-
   private boolean isExcludedPath(String path) {
     return excludeRegex.isPresent() && excludeRegex.get().findFirstIn(path).isDefined();
   }
@@ -880,15 +822,6 @@ class DeltaV2MicroBatchStream
     result = result.filter(file -> isAfterStartBoundary(file, fromVersion, fromIndex));
 
     return applyEndBoundaryFiltering(result, endOffset);
-  }
-
-  /**
-   * Returns true if the file is strictly after the (exclusive) resume point (fromVersion,
-   * fromIndex).
-   */
-  private static boolean isAfterStartBoundary(IndexedFile file, long fromVersion, long fromIndex) {
-    return file.getVersion() > fromVersion
-        || (file.getVersion() == fromVersion && file.getIndex() > fromIndex);
   }
 
   /**
@@ -1157,22 +1090,6 @@ class DeltaV2MicroBatchStream
     return actionIterator
         .filter(action -> action instanceof AddFile && ((AddFile) action).dataChange())
         .map(action -> IndexedFile.addFile(version, fileIndex[0]++, (AddFile) action));
-  }
-
-  /** Result of commit validation, including skip decision and detected metadata/protocol. */
-  private static class CommitValidationResult {
-    final boolean shouldSkipCommit;
-    @Nullable final Metadata metadataAction;
-    @Nullable final Protocol protocolAction;
-
-    CommitValidationResult(
-        boolean shouldSkipCommit,
-        @Nullable Metadata metadataAction,
-        @Nullable Protocol protocolAction) {
-      this.shouldSkipCommit = shouldSkipCommit;
-      this.metadataAction = metadataAction;
-      this.protocolAction = protocolAction;
-    }
   }
 
   /**
@@ -1515,72 +1432,6 @@ class DeltaV2MicroBatchStream
 
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true;
-  }
-
-  /**
-   * Validates that the analysis-time schema matches the latest snapshot schema. This catches cases
-   * where the table schema changed after the streaming query was analyzed, and the user restarts
-   * the stream with a stale DataFrame.
-   *
-   * @param dataSchema data columns from analysis time (excludes partition columns)
-   * @param partitionSchema partition columns from analysis time
-   * @param snapshotSchema full table schema from the latest snapshot at stream start
-   */
-  @VisibleForTesting
-  static void validateSchemaCompatibilityOnStartup(
-      StructType dataSchema, StructType partitionSchema, StructType snapshotSchema) {
-    // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
-    // StructType is immutable — add() returns a new instance without modifying the original.
-    StructType querySchema = dataSchema;
-    for (StructField field : partitionSchema.fields()) {
-      querySchema = querySchema.add(field);
-    }
-    // Sort both sides so a partition column declared in the middle of the table doesn't
-    // trip the check.
-    StructType sortedQuery = sortFieldsByName(querySchema);
-    StructType sortedSnapshot = sortFieldsByName(snapshotSchema);
-    // equalsStructurally checks types + nullability but ignores field names;
-    // equalsStructurallyByName checks names but ignores types/nullability.
-    boolean typesAndNullabilityMatch =
-        DataType.equalsStructurally(sortedQuery, sortedSnapshot, /* ignoreNullability= */ false);
-    boolean namesMatch =
-        DataType.equalsStructurallyByName(sortedQuery, sortedSnapshot, CASE_INSENSITIVE_RESOLVER);
-    if (!typesAndNullabilityMatch || !namesMatch) {
-      throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
-    }
-  }
-
-  private static final Function2<String, String, Object> CASE_INSENSITIVE_RESOLVER =
-      new AbstractFunction2<String, String, Object>() {
-        @Override
-        public Object apply(String a, String b) {
-          return a.equalsIgnoreCase(b);
-        }
-      };
-
-  private static StructType sortFieldsByName(StructType schema) {
-    StructField[] fields = Arrays.copyOf(schema.fields(), schema.fields().length);
-    Arrays.sort(fields, Comparator.comparing(StructField::name));
-    StructType result = new StructType();
-    for (StructField f : fields) {
-      result = result.add(f);
-    }
-    return result;
-  }
-
-  /**
-   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for {@code version} before and after the
-   * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
-   * to this version.
-   */
-  private static CloseableIterator<IndexedFile> addBeginAndEndIndexOffsetsForVersion(
-      long version, CloseableIterator<IndexedFile> files) {
-    return Utils.singletonCloseableIterator(
-            IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
-        .combine(files)
-        .combine(
-            Utils.singletonCloseableIterator(
-                IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX())));
   }
 
   /**
@@ -1953,32 +1804,6 @@ class DeltaV2MicroBatchStream
       result.add(IndexedFile.sentinel(commitVersion, DeltaSourceOffset.END_INDEX()));
     }
     return result;
-  }
-
-  /** Converts a list of IndexedFiles to a Scala Seq of AdmittableFile for batch admission. */
-  private static Seq<AdmittableFile> toScalaAdmittableSeq(List<IndexedFile> files) {
-    return CollectionConverters.asScala(
-            files.stream().map(f -> (AdmittableFile) f).collect(Collectors.toList()))
-        .toSeq();
-  }
-
-  private static boolean isCDFEnabled(Metadata metadata) {
-    // Fall back to the deprecated delta.enableChangeDataCapture key when
-    // delta.enableChangeDataFeed is not set.
-    Map<String, String> config = CollectionConverters.asJava(metadata.configuration());
-    String value = config.get("delta.enableChangeDataFeed");
-    if (value == null) {
-      value = config.get("delta.enableChangeDataCapture");
-    }
-    return value != null && value.equalsIgnoreCase("true");
-  }
-
-  /** Checks if the endOffset is at BASE_INDEX for the given version (early exit condition). */
-  private static boolean isEndOffsetAtBaseIndex(
-      Optional<DeltaSourceOffset> endOffsetOpt, long version) {
-    return endOffsetOpt.isPresent()
-        && endOffsetOpt.get().reservoirVersion() == version
-        && endOffsetOpt.get().index() == DeltaSourceOffset.BASE_INDEX();
   }
 
   /**
