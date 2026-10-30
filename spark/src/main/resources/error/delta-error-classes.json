@@ -3115,6 +3115,37 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME" : {
+    "message" : [
+      "Recreate the streaming DataFrame, then restart the query."
+    ],
+    "subClass" : {
+      "PARTITION_SCHEMA_CHANGED" : {
+        "message" : [
+          "The partition schema changed for Delta table <tableId>.",
+          "Partition schema from analysis:",
+          "<analyzedPartitionSchema>",
+          "Physical partition column names from analysis: <analyzedPhysicalNames>",
+          "Partition schema at source initialization:",
+          "<currentPartitionSchema>",
+          "Physical partition column names at source initialization: <currentPhysicalNames>",
+          ""
+        ]
+      },
+      "SCHEMA_CHANGED" : {
+        "message" : [
+          "The streaming query's schema does not match the current table schema.",
+          "",
+          "Query schema (from analysis): <querySchema>",
+          "",
+          "Current table schema: <tableSchema>",
+          "",
+          "The table schema has changed since this streaming query was created."
+        ]
+      }
+    },
+    "sqlState" : "KD007"
+  },
   "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT" : {
     "message" : [
       "Detected conflicting schema location '<loc>' while streaming from table or table located at '<table>'.",
@@ -3165,18 +3196,6 @@
       "The schema log may have been corrupted. Please pick a new schema location."
     ],
     "sqlState" : "22000"
-  },
-  "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART" : {
-    "message" : [
-      "The streaming query's schema does not match the current table schema.",
-      "",
-      "Query schema (from analysis): <querySchema>",
-      "",
-      "Current table schema: <tableSchema>",
-      "",
-      "The table schema has changed since this streaming query was created. Create a new streaming DataFrame to pick up the current schema."
-    ],
-    "sqlState" : "KD007"
   },
   "DELTA_STREAMING_TRAILING_COMMIT_MISSING" : {
     "message" : [

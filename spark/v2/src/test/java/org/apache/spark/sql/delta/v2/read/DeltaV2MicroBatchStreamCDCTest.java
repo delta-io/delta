@@ -29,6 +29,7 @@ import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.*;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -47,6 +48,7 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -1190,7 +1192,15 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
   private DeltaV2MicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
-    StructType tableSchema = snapshot.schema();
+    // Split the table schema into data and partition columns, as DeltaV2Table does at analysis.
+    StructType partitionSchema = snapshot.metadata().partitionSchema();
+    Set<String> partitionColNames =
+        Arrays.stream(partitionSchema.fieldNames()).collect(Collectors.toSet());
+    StructType dataSchema =
+        new StructType(
+            Arrays.stream(snapshot.schema().fields())
+                .filter(field -> !partitionColNames.contains(field.name()))
+                .toArray(StructField[]::new));
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,
@@ -1198,8 +1208,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         spark,
         options,
         /* tablePath= */ "",
-        /* dataSchema= */ tableSchema,
-        /* partitionSchema= */ new StructType(),
+        dataSchema,
+        partitionSchema,
         /* readDataSchema= */ new StructType(),
         /* ddlOrderedReadOutputSchema= */ new StructType(),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],

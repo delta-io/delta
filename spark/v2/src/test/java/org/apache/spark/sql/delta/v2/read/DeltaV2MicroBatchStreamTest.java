@@ -4348,7 +4348,15 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     String tablePath = snapshot.dataPath().toString();
-    StructType tableSchema = snapshot.schema();
+    // Split the table schema into data and partition columns, as DeltaV2Table does at analysis.
+    StructType partitionSchema = snapshot.metadata().partitionSchema();
+    Set<String> partitionColNames =
+        Arrays.stream(partitionSchema.fieldNames()).collect(Collectors.toSet());
+    StructType dataSchema =
+        new StructType(
+            Arrays.stream(snapshot.schema().fields())
+                .filter(field -> !partitionColNames.contains(field.name()))
+                .toArray(StructField[]::new));
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,
@@ -4356,8 +4364,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         spark,
         options,
         /* tablePath= */ tablePath,
-        /* dataSchema= */ tableSchema,
-        /* partitionSchema= */ new StructType(),
+        dataSchema,
+        partitionSchema,
         /* readDataSchema= */ new StructType(),
         /* ddlOrderedReadOutputSchema= */ new StructType(),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
@@ -4695,7 +4703,14 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             () ->
                 DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
-    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+    assertSchemaChangedOnRestart(
+        ex,
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType)
+            .add("dropped", DataTypes.StringType)
+            .add("part", DataTypes.LongType),
+        snapshotSchema);
   }
 
   @Test
@@ -4716,7 +4731,13 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             () ->
                 DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
-    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+    assertSchemaChangedOnRestart(
+        ex,
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType)
+            .add("part", DataTypes.LongType),
+        snapshotSchema);
   }
 
   @Test
@@ -4736,7 +4757,13 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             () ->
                 DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
-    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+    assertSchemaChangedOnRestart(
+        ex,
+        new StructType()
+            .add("id", DataTypes.IntegerType)
+            .add("col3", DataTypes.IntegerType)
+            .add("part", DataTypes.LongType),
+        snapshotSchema);
   }
 
   @Test
@@ -4764,7 +4791,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             () ->
                 DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
-    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+    assertSchemaChangedOnRestart(
+        ex, new StructType().add("a", DataTypes.IntegerType), snapshotSchema);
   }
 
   @Test
@@ -4777,6 +4805,17 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         () ->
             DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
+  }
+
+  /** The query schema lists the data columns first, followed by the partition columns. */
+  private static void assertSchemaChangedOnRestart(
+      DeltaIllegalStateException ex, StructType querySchema, StructType tableSchema) {
+    assertEquals(
+        "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED", ex.getCondition());
+    assertEquals("KD007", ex.getSqlState());
+    assertEquals(
+        Map.of("querySchema", querySchema.treeString(), "tableSchema", tableSchema.treeString()),
+        ex.getMessageParameters());
   }
 
   /** The shared DeltaSourceSnapshot path returns only END sentinel for an empty table. */
