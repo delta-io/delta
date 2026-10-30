@@ -31,7 +31,6 @@ import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.channels.ClosedByInterruptException;
@@ -70,6 +69,9 @@ import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper;
+import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
+import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseOp;
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
@@ -91,6 +93,8 @@ import org.slf4j.LoggerFactory;
 import scala.Function2;
 import scala.Option;
 import scala.Some;
+import scala.collection.Iterator;
+import scala.collection.immutable.List$;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
@@ -515,14 +519,15 @@ class DeltaV2MicroBatchStream
       }
     }
 
-    CloseableIterator<IndexedFile> changes =
+    ClosableIterator<IndexedFile> changes =
         getFileChangesWithRateLimit(
             previousOffset.reservoirVersion(),
             previousOffset.index(),
             previousOffset.isInitialSnapshot(),
             limits);
 
-    Optional<IndexedFile> lastFileChange = Utils.iteratorLast(changes);
+    Optional<IndexedFile> lastFileChange =
+        ScalaUtils.toJavaOptional(DeltaSource.iteratorLast(changes));
 
     if (!lastFileChange.isPresent()) {
       // For the first batch, return empty to match DSv1's
@@ -570,7 +575,7 @@ class DeltaV2MicroBatchStream
     ZoneId zoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone());
     PartitionValueCaster caster = new PartitionValueCaster(partitionSchema, zoneId);
 
-    try (CloseableIterator<IndexedFile> fileChanges =
+    try (ClosableIterator<IndexedFile> fileChanges =
         isCDC
             ? getFileChangesWithRateLimitForCDC(
                 fromVersion,
@@ -586,7 +591,7 @@ class DeltaV2MicroBatchStream
         partitionedFiles.add(pf);
       }
     } catch (IOException e) {
-      throw new RuntimeException(
+      throw new UncheckedIOException(
           String.format(
               "Failed to get file changes for table %s from version %d index %d to offset %s",
               tablePath, fromVersion, fromIndex, endOffset),
@@ -741,7 +746,7 @@ class DeltaV2MicroBatchStream
    * @param limits Rate limits to apply (Optional.empty() for no limits)
    * @return An iterator of IndexedFile with rate limiting applied
    */
-  CloseableIterator<IndexedFile> getFileChangesWithRateLimit(
+  ClosableIterator<IndexedFile> getFileChangesWithRateLimit(
       long fromVersion,
       long fromIndex,
       boolean isInitialSnapshot,
@@ -751,7 +756,7 @@ class DeltaV2MicroBatchStream
           fromVersion, fromIndex, isInitialSnapshot, limits, /* endOffset= */ Optional.empty());
     }
 
-    CloseableIterator<IndexedFile> changes =
+    ClosableIterator<IndexedFile> changes =
         getFileChanges(
             fromVersion, fromIndex, isInitialSnapshot, /* endOffset= */ Optional.empty());
 
@@ -760,7 +765,9 @@ class DeltaV2MicroBatchStream
     // the maxFilesPerTrigger conf.
     if (limits.isPresent()) {
       DeltaSource.AdmissionLimits admissionLimits = limits.get();
-      changes = changes.takeWhile(admissionLimits::admit);
+      changes =
+          new IteratorCloseOps<>(changes)
+              .withClose(iterator -> iterator.takeWhile(admissionLimits::admit));
     }
 
     // Stop before any schema change barrier if detected.
@@ -781,20 +788,27 @@ class DeltaV2MicroBatchStream
    * @param endOffset The end offset (inclusive), or empty to read all available commits
    * @return An iterator of IndexedFile representing the file changes
    */
-  CloseableIterator<IndexedFile> getFileChanges(
+  ClosableIterator<IndexedFile> getFileChanges(
       long fromVersion,
       long fromIndex,
       boolean isInitialSnapshot,
       Optional<DeltaSourceOffset> endOffset) {
 
-    CloseableIterator<IndexedFile> result;
+    ClosableIterator<IndexedFile> result;
 
     if (isInitialSnapshot) {
-      // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
+      // Read snapshot files, then delta logs from fromVersion + 1.
+      // Create each iterator on demand.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
-      CloseableIterator<IndexedFile> snapshotFiles = getSnapshotAt(fromVersion);
-      CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
-      result = snapshotFiles.combine(deltaChanges);
+      result =
+          new IteratorFlatMapCloseOp<>(CollectionConverters.asScala(Arrays.asList(1, 2).iterator()))
+              .flatMapWithClose(
+                  part -> {
+                    if (part == 1) {
+                      return getSnapshotAt(fromVersion);
+                    }
+                    return filterDeltaLogs(fromVersion + 1, endOffset);
+                  });
     } else {
       result = filterDeltaLogs(fromVersion, endOffset);
     }
@@ -813,39 +827,55 @@ class DeltaV2MicroBatchStream
    * @param endOffset The end offset (inclusive), or empty to read all available commits
    * @return An iterator of IndexedFile representing the CDC file changes
    */
-  CloseableIterator<IndexedFile> getFileChangesWithRateLimitForCDC(
+  ClosableIterator<IndexedFile> getFileChangesWithRateLimitForCDC(
       long fromVersion,
       long fromIndex,
       boolean isInitialSnapshot,
       Optional<DeltaSource.AdmissionLimits> limits,
       Optional<DeltaSourceOffset> endOffset) {
     validateCDFEnabledOnTable(fromVersion);
-    CloseableIterator<IndexedFile> result;
+    ClosableIterator<IndexedFile> result;
     if (isInitialSnapshot) {
-      CloseableIterator<IndexedFile> snapshotFiles = getSnapshotAt(fromVersion);
-      long commitTimestamp = initialSnapshot.snapshot().timestamp();
-      snapshotFiles =
-          snapshotFiles.map(
-              file ->
-                  file.getAddFile() != null
-                      ? IndexedFile.cdc(
-                          file.getVersion(),
-                          file.getIndex(),
-                          CDCDataFile.fromAddFile(file.getAddFile(), commitTimestamp))
-                      : file);
-      // Filter already-processed files BEFORE admission so they don't consume the budget.
-      snapshotFiles =
-          snapshotFiles.filter(file -> isAfterStartBoundary(file, fromVersion, fromIndex));
-      // Admission for delta-log files happens inside filterDeltaLogsWithRateLimitForCDC
-      // (version-level + per-commit). Both share the same AdmissionLimits instance so
-      // the budget is continuous.
-      if (limits.isPresent()) {
-        snapshotFiles = snapshotFiles.takeWhile(limits.get()::admit);
-      }
-      CloseableIterator<IndexedFile> deltaChanges =
-          filterDeltaLogsWithRateLimitForCDC(
-              fromVersion + 1, fromVersion, fromIndex, limits, endOffset);
-      result = snapshotFiles.combine(deltaChanges);
+      result =
+          new IteratorFlatMapCloseOp<>(CollectionConverters.asScala(Arrays.asList(1, 2).iterator()))
+              .flatMapWithClose(
+                  part -> {
+                    if (part == 1) {
+                      ClosableIterator<IndexedFile> snapshotFiles = getSnapshotAt(fromVersion);
+                      long commitTimestamp = initialSnapshot.snapshot().timestamp();
+                      snapshotFiles =
+                          new IteratorCloseOps<>(snapshotFiles)
+                              .withClose(
+                                  iterator ->
+                                      iterator.map(
+                                          file ->
+                                              file.getAddFile() != null
+                                                  ? IndexedFile.cdc(
+                                                      file.getVersion(),
+                                                      file.getIndex(),
+                                                      CDCDataFile.fromAddFile(
+                                                          file.getAddFile(), commitTimestamp))
+                                                  : file));
+                      // Filter already-processed files BEFORE admission so they don't consume
+                      // budget.
+                      snapshotFiles =
+                          new IteratorCloseOps<>(snapshotFiles)
+                              .withClose(
+                                  iterator ->
+                                      iterator.filter(
+                                          file ->
+                                              isAfterStartBoundary(file, fromVersion, fromIndex)));
+                      // Delta-log admission shares the same limits so the budget is continuous.
+                      if (limits.isPresent()) {
+                        snapshotFiles =
+                            new IteratorCloseOps<>(snapshotFiles)
+                                .withClose(iterator -> iterator.takeWhile(limits.get()::admit));
+                      }
+                      return snapshotFiles;
+                    }
+                    return filterDeltaLogsWithRateLimitForCDC(
+                        fromVersion + 1, fromVersion, fromIndex, limits, endOffset);
+                  });
     } else {
       result =
           filterDeltaLogsWithRateLimitForCDC(
@@ -871,13 +901,17 @@ class DeltaV2MicroBatchStream
    * @param endOffset The end offset (inclusive), or empty to read all available commits
    * @return The filtered iterator
    */
-  private CloseableIterator<IndexedFile> applyBoundaryFiltering(
-      CloseableIterator<IndexedFile> result,
+  private ClosableIterator<IndexedFile> applyBoundaryFiltering(
+      ClosableIterator<IndexedFile> result,
       long fromVersion,
       long fromIndex,
       Optional<DeltaSourceOffset> endOffset) {
     // Check start boundary (exclusive)
-    result = result.filter(file -> isAfterStartBoundary(file, fromVersion, fromIndex));
+    result =
+        new IteratorCloseOps<>(result)
+            .withClose(
+                iterator ->
+                    iterator.filter(file -> isAfterStartBoundary(file, fromVersion, fromIndex)));
 
     return applyEndBoundaryFiltering(result, endOffset);
   }
@@ -895,8 +929,8 @@ class DeltaV2MicroBatchStream
    * Applies end boundary filtering only. Used by CDC paths where start boundary filtering is
    * applied before admission to avoid wasting budget on already-processed files.
    */
-  private CloseableIterator<IndexedFile> applyEndBoundaryFiltering(
-      CloseableIterator<IndexedFile> result, Optional<DeltaSourceOffset> endOffset) {
+  private ClosableIterator<IndexedFile> applyEndBoundaryFiltering(
+      ClosableIterator<IndexedFile> result, Optional<DeltaSourceOffset> endOffset) {
     // If endOffset is provided, we are getting a batch on a constructed range so we should use
     // the endOffset as the limit.
     // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
@@ -908,11 +942,14 @@ class DeltaV2MicroBatchStream
     if (lastOffsetForThisScan.isPresent()) {
       DeltaSourceOffset bound = lastOffsetForThisScan.get();
       result =
-          result.takeWhile(
-              file ->
-                  file.getVersion() < bound.reservoirVersion()
-                      || (file.getVersion() == bound.reservoirVersion()
-                          && file.getIndex() <= bound.index()));
+          new IteratorCloseOps<>(result)
+              .withClose(
+                  iterator ->
+                      iterator.takeWhile(
+                          file ->
+                              file.getVersion() < bound.reservoirVersion()
+                                  || (file.getVersion() == bound.reservoirVersion()
+                                      && file.getIndex() <= bound.index())));
     }
 
     return result;
@@ -947,36 +984,60 @@ class DeltaV2MicroBatchStream
     cdfEnabledOnStreamStartValidated = true;
   }
 
-  private CloseableIterator<IndexedFile> filterDeltaLogs(
+  private ClosableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
-    return getCommitsFromRange(startVersion, endOffset, ACTION_SET)
-        // TODO: Remove once the table manager returns DeltaSingleCommit.
-        .map(DeltaV2SingleCommit$.MODULE$::apply)
-        .flatMap(commit -> processCommitToIndexedFiles(commit, startVersion, endOffset));
+    ClosableIterator<DeltaSingleCommit> commits =
+        new IteratorCloseOps<>(getCommitsFromRange(startVersion, endOffset, ACTION_SET))
+            // TODO: Remove once the table manager returns DeltaSingleCommit.
+            .withClose(iterator -> iterator.map(DeltaV2SingleCommit$.MODULE$::apply));
+    ClosableIterator<IndexedFile> files =
+        new IteratorFlatMapCloseOp<>(commits)
+            .flatMapWithClose(
+                commit -> processCommitToIndexedFiles(commit, startVersion, endOffset));
+    return wrapIteratorWithCommitIteratorClose(files, commits);
   }
 
-  private CloseableIterator<IndexedFile> filterDeltaLogsWithRateLimitForCDC(
+  private ClosableIterator<IndexedFile> filterDeltaLogsWithRateLimitForCDC(
       long startVersion,
       long lastProcessedVersion,
       long lastProcessedIndex,
       Optional<DeltaSource.AdmissionLimits> limits,
       Optional<DeltaSourceOffset> endOffset) {
-    CloseableIterator<CommitActions> commits =
+    ClosableIterator<CommitActions> commits =
         getCommitsFromRange(startVersion, endOffset, CDC_ACTION_SET);
 
-    // Early exit: skip opening further commits once the budget is spent.
+    // Stop processing further commits once the budget is spent.
     if (limits.isPresent()) {
-      commits = commits.takeWhile(commit -> limits.get().hasCapacity());
+      commits =
+          new IteratorCloseOps<>(commits)
+              .withClose(
+                  iterator ->
+                      iterator.takeWhile(
+                          commit -> {
+                            if (limits.get().hasCapacity()) {
+                              return true;
+                            }
+                            Utils.closeCloseables(commit);
+                            return false;
+                          }));
     }
 
-    return commits.flatMap(
-        commit ->
-            processCommitToIndexedFilesForCDC(
-                commit, startVersion, limits, endOffset, lastProcessedVersion, lastProcessedIndex));
+    ClosableIterator<IndexedFile> files =
+        new IteratorFlatMapCloseOp<>(commits)
+            .flatMapWithClose(
+                commit ->
+                    processCommitToIndexedFilesForCDC(
+                        commit,
+                        startVersion,
+                        limits,
+                        endOffset,
+                        lastProcessedVersion,
+                        lastProcessedIndex));
+    return wrapIteratorWithCommitIteratorClose(files, commits);
   }
 
   /** Resolves the version range and returns commit actions from delta logs. */
-  private CloseableIterator<CommitActions> getCommitsFromRange(
+  private ClosableIterator<CommitActions> getCommitsFromRange(
       long startVersion, Optional<DeltaSourceOffset> endOffset, Set<DeltaAction> actionSet) {
     // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
     Preconditions.checkArgument(
@@ -1003,7 +1064,7 @@ class DeltaV2MicroBatchStream
       // This can happen when all files in the batch come from the initial snapshot
       // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
       if (startVersion > endVersionOpt.get()) {
-        return Utils.toCloseableIterator(Collections.emptyIterator());
+        return new ClosableWrapper<>(List$.MODULE$.<CommitActions>empty().iterator()).toClosable();
       }
     } else {
       // When endOffset is empty (offset discovery), check if startVersion exceeds the current
@@ -1011,7 +1072,7 @@ class DeltaV2MicroBatchStream
       // commits may have arrived since stream initialization.
       long currentLatestVersion = streamingBackend.update().version();
       if (startVersion > currentLatestVersion) {
-        return Utils.toCloseableIterator(Collections.emptyIterator());
+        return new ClosableWrapper<>(List$.MODULE$.<CommitActions>empty().iterator()).toClosable();
       }
     }
 
@@ -1041,7 +1102,7 @@ class DeltaV2MicroBatchStream
             FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS,
             earliestVersionToFetch);
       } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
-        return Utils.toCloseableIterator(Collections.emptyIterator());
+        return new ClosableWrapper<>(List$.MODULE$.<CommitActions>empty().iterator()).toClosable();
       }
     }
 
@@ -1051,18 +1112,19 @@ class DeltaV2MicroBatchStream
     //    (e.g., if log files have been cleaned up after checkpointing).
     // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
     //    AddFile actions and performs per-commit protocol validation.
-    return StreamingHelper.getCommitActionsFromRangeUnsafe(
-        engine,
-        (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
-        snapshotAtSourceInit.getPath(),
-        actionSet);
+    return ScalaUtils.toClosableIterator(
+        StreamingHelper.getCommitActionsFromRangeUnsafe(
+            engine,
+            (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
+            snapshotAtSourceInit.getPath(),
+            actionSet));
   }
 
   /**
    * Processes a single commit and returns an iterator of IndexedFiles wrapped with BEGIN/END
    * sentinels.
    */
-  private CloseableIterator<IndexedFile> processCommitToIndexedFiles(
+  private ClosableIterator<IndexedFile> processCommitToIndexedFiles(
       DeltaSingleCommit commit, long startVersion, Optional<DeltaSourceOffset> endOffsetOpt) {
     try {
       long version = commit.version();
@@ -1099,26 +1161,30 @@ class DeltaV2MicroBatchStream
       //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
       //
       // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
-      CloseableIterator<IndexedFile> fileActions =
+      ClosableIterator<IndexedFile> fileActions =
           validationResult.shouldSkipCommit
-              ? Utils.toCloseableIterator(Collections.emptyIterator())
+              ? new ClosableWrapper<>(List$.MODULE$.<IndexedFile>empty().iterator()).toClosable()
               : getFilesFromCommit(commit, version);
 
       // If metadata tracking is active, inject schema change barrier sentinel before file
       // actions. This mirrors v1's getMetadataOrProtocolChangeIndexedFileIterator concatenation
       // in filterAndGetIndexedFiles.
-      CloseableIterator<IndexedFile> metadataBarrier =
+      ClosableIterator<IndexedFile> metadataBarrier =
           metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
               validationResult.metadataAction, validationResult.protocolAction, version);
 
-      CloseableIterator<IndexedFile> inner =
-          Utils.singletonCloseableIterator(
-                  IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
-              .combine(metadataBarrier)
-              .combine(fileActions)
-              .combine(
-                  Utils.singletonCloseableIterator(
-                      IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX())));
+      ClosableIterator<IndexedFile> inner =
+          new IteratorCloseOps<>(fileActions)
+              .withClose(
+                  files ->
+                      Iterator.single(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
+                          .$plus$plus(() -> metadataBarrier)
+                          .$plus$plus(() -> files)
+                          .$plus$plus(
+                              () ->
+                                  Iterator.single(
+                                      IndexedFile.sentinel(
+                                          version, DeltaSourceOffset.END_INDEX()))));
 
       return inner;
     } catch (Exception e) {
@@ -1126,37 +1192,49 @@ class DeltaV2MicroBatchStream
     }
   }
 
-  private CloseableIterator<IndexedFile> getFilesFromCommit(
-      DeltaSingleCommit commit, long version) {
+  /** Closes the current commit's files before the owning commit iterator. */
+  static <T> ClosableIterator<T> wrapIteratorWithCommitIteratorClose(
+      ClosableIterator<T> inner, ClosableIterator<?> commits) {
+    return new ClosableIterator<T>() {
+      private boolean innerClosed;
+
+      @Override
+      public boolean hasNext() {
+        return inner.hasNext();
+      }
+
+      @Override
+      public T next() {
+        return inner.next();
+      }
+
+      @Override
+      public void close() throws IOException {
+        try (commits) {
+          if (!innerClosed) {
+            innerClosed = true;
+            inner.close();
+          }
+        }
+      }
+    };
+  }
+
+  private ClosableIterator<IndexedFile> getFilesFromCommit(DeltaSingleCommit commit, long version) {
     ClosableIterator<Action> actions =
         commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L);
-    // TODO: Remove this adapter when the streaming source uses V1 ClosableIterator.
-    CloseableIterator<Action> actionIterator =
-        new CloseableIterator<Action>() {
-          @Override
-          public boolean hasNext() {
-            return actions.hasNext();
-          }
-
-          @Override
-          public Action next() {
-            return actions.next();
-          }
-
-          @Override
-          public void close() throws IOException {
-            actions.close();
-          }
-        };
     // Assign each IndexedFile a unique index within the commit. We use a mutable array
     // because variables captured by a lambda must be effectively final (never reassigned).
     long[] fileIndex = {0};
 
     // Only include AddFiles with dataChange=true. Skip changes that optimize or reorganize
     // data without changing the logical content.
-    return actionIterator
-        .filter(action -> action instanceof AddFile && ((AddFile) action).dataChange())
-        .map(action -> IndexedFile.addFile(version, fileIndex[0]++, (AddFile) action));
+    return new IteratorCloseOps<>(actions)
+        .withClose(
+            actionIterator ->
+                actionIterator
+                    .filter(action -> action instanceof AddFile && ((AddFile) action).dataChange())
+                    .map(action -> IndexedFile.addFile(version, fileIndex[0]++, (AddFile) action)));
   }
 
   /** Result of commit validation, including skip decision and detected metadata/protocol. */
@@ -1573,14 +1651,17 @@ class DeltaV2MicroBatchStream
    * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
    * to this version.
    */
-  private static CloseableIterator<IndexedFile> addBeginAndEndIndexOffsetsForVersion(
-      long version, CloseableIterator<IndexedFile> files) {
-    return Utils.singletonCloseableIterator(
-            IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
-        .combine(files)
-        .combine(
-            Utils.singletonCloseableIterator(
-                IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX())));
+  private static ClosableIterator<IndexedFile> addBeginAndEndIndexOffsetsForVersion(
+      long version, ClosableIterator<IndexedFile> files) {
+    return new IteratorCloseOps<>(files)
+        .withClose(
+            iterator ->
+                Iterator.single(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
+                    .$plus$plus(() -> iterator)
+                    .$plus$plus(
+                        () ->
+                            Iterator.single(
+                                IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()))));
   }
 
   /**
@@ -1589,7 +1670,7 @@ class DeltaV2MicroBatchStream
    *
    * @return an iterator of IndexedFiles for the initial snapshot
    */
-  private CloseableIterator<IndexedFile> getSnapshotAt(long version) {
+  private ClosableIterator<IndexedFile> getSnapshotAt(long version) {
     if (initialSnapshot == null || version != initialSnapshotVersion) {
       cleanUpSnapshotResources();
       Snapshot snapshot = streamingBackend.getSnapshotAt(version);
@@ -1624,9 +1705,12 @@ class DeltaV2MicroBatchStream
 
     // TODO: Add range-aware iteration to DeltaSourceSnapshot so V1 and V2 can filter the
     // already-processed prefix before decoding files.
-    CloseableIterator<IndexedFile> snapshotFiles =
-        Utils.toCloseableIterator(CollectionConverters.asJava(initialSnapshot.iterator()))
-            .map(file -> IndexedFile.addFile(file.version(), file.index(), file.add()));
+    ClosableIterator<IndexedFile> snapshotFiles =
+        new ClosableWrapper<>(
+                initialSnapshot
+                    .iterator()
+                    .map(file -> IndexedFile.addFile(file.version(), file.index(), file.add())))
+            .toClosable();
     return addBeginAndEndIndexOffsetsForVersion(version, snapshotFiles);
   }
 
@@ -1636,7 +1720,7 @@ class DeltaV2MicroBatchStream
    *
    * <p>Package-private for testing.
    */
-  CloseableIterator<IndexedFile> processCommitToIndexedFilesForCDC(
+  ClosableIterator<IndexedFile> processCommitToIndexedFilesForCDC(
       CommitActions commit,
       long startVersion,
       Optional<DeltaSource.AdmissionLimits> limits,
@@ -1648,11 +1732,13 @@ class DeltaV2MicroBatchStream
       long timestamp = commit.getTimestamp();
 
       if (isEndOffsetAtBaseIndex(endOffsetOpt, version)) {
-        return Utils.toCloseableIterator(
-            Arrays.asList(
-                    IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()),
-                    IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()))
-                .iterator());
+        return new ClosableWrapper<>(
+                CollectionConverters.asScala(
+                        Arrays.asList(
+                            IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()),
+                            IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX())))
+                    .iterator())
+            .toClosable();
       }
 
       List<IndexedFile> result =
@@ -1667,12 +1753,12 @@ class DeltaV2MicroBatchStream
       if (limits.isPresent()) {
         result = applyPerCommitCDCAdmission(result, limits.get(), version);
         if (result.isEmpty()) {
-          return Utils.toCloseableIterator(Collections.emptyIterator());
+          return new ClosableWrapper<>(List$.MODULE$.<IndexedFile>empty().iterator()).toClosable();
         }
       } else {
         result.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
       }
-      return Utils.toCloseableIterator(result.iterator());
+      return new ClosableWrapper<>(CollectionConverters.asScala(result).iterator()).toClosable();
     } catch (IOException e) {
       throw new RuntimeException(e);
     } finally {
@@ -1707,7 +1793,9 @@ class DeltaV2MicroBatchStream
     Metadata metadataAction = null;
     Protocol protocolAction = null;
 
-    try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+    // TODO: Remove this adapter when CDC reads V1 actions through DeltaSingleCommit.
+    try (ClosableIterator<ColumnarBatch> actionsIter =
+        ScalaUtils.toClosableIterator(commit.getActions())) {
       while (actionsIter.hasNext()) {
         ColumnarBatch batch = actionsIter.next();
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
@@ -1788,7 +1876,7 @@ class DeltaV2MicroBatchStream
     // Schema-change barrier: emit only the barrier when this commit diverges from source-init.
     // V1 injects in DeltaSourceCDCSupport.filterAndIndexDeltaLogs and short-circuits in
     // IndexedChangeFileSeq.filterFiles; V2 does both here.
-    try (CloseableIterator<IndexedFile> barrierIter =
+    try (ClosableIterator<IndexedFile> barrierIter =
         metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
             metadataAction, protocolAction, version)) {
       if (barrierIter.hasNext()) {

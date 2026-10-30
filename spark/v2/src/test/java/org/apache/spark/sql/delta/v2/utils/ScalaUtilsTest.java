@@ -19,9 +19,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.junit.jupiter.api.Test;
 import scala.Option;
 
@@ -59,5 +65,44 @@ class ScalaUtilsTest {
     assertEquals(
         OptionalLong.of(value), ScalaUtils.toJavaOptionalLong(Option.apply((Object) value)));
     assertEquals(OptionalLong.empty(), ScalaUtils.toJavaOptionalLong(Option.empty()));
+  }
+
+  @Test
+  void testWithClosePreservesJavaIteratorCloseAfterEarlyStop() throws IOException {
+    AtomicInteger closes = new AtomicInteger();
+    ClosableIterator<Integer> input =
+        ScalaUtils.toClosableIterator(new TrackingJavaIterator(List.of(1, 2, 3), closes));
+    try (ClosableIterator<Integer> limited =
+        new IteratorCloseOps<>(input)
+            .withClose(iterator -> iterator.takeWhile(value -> value < 2))) {
+      assertEquals(1, limited.next());
+      assertEquals(0, closes.get());
+    }
+    assertEquals(1, closes.get());
+  }
+
+  private static class TrackingJavaIterator implements java.util.Iterator<Integer>, Closeable {
+    private final java.util.Iterator<Integer> values;
+    private final AtomicInteger closes;
+
+    TrackingJavaIterator(List<Integer> values, AtomicInteger closes) {
+      this.values = values.iterator();
+      this.closes = closes;
+    }
+
+    @Override
+    public boolean hasNext() {
+      return values.hasNext();
+    }
+
+    @Override
+    public Integer next() {
+      return values.next();
+    }
+
+    @Override
+    public void close() {
+      closes.incrementAndGet();
+    }
   }
 }

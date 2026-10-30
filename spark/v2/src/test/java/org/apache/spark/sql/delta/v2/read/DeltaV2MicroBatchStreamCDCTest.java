@@ -80,7 +80,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         assertThrows(
             RuntimeException.class,
             () -> {
-              try (CloseableIterator<IndexedFile> iter =
+              try (ClosableIterator<IndexedFile> iter =
                   stream.getFileChangesWithRateLimitForCDC(
                       /* fromVersion= */ 0L,
                       /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
@@ -276,7 +276,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     List<IndexedFile> dsv2Files = new ArrayList<>();
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.getFileChangesWithRateLimitForCDC(
             fromVersion,
             DeltaSourceOffset.BASE_INDEX(),
@@ -521,7 +521,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     CommitActions commit = getCommitActions(tablePath, commitVersion);
 
     List<IndexedFile> files;
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
             commit,
             /* startVersion= */ commitVersion,
@@ -567,7 +567,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     CommitActions commit = getCommitActions(tablePath, commitVersion);
 
     List<IndexedFile> files;
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
             commit,
             /* startVersion= */ commitVersion,
@@ -629,7 +629,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     // Process through CDC — no-op MERGE should discard all inferred files.
     CommitActions commit = getCommitActions(tablePath, commitVersion);
     List<IndexedFile> files;
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
             commit,
             /* startVersion= */ commitVersion,
@@ -728,7 +728,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
             /* isInitialSnapshot= */ false);
 
     List<IndexedFile> files;
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
             commit,
             /* startVersion= */ commitVersion,
@@ -844,7 +844,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> files;
     // lastProcessedVersion = commitVersion - 1: fresh process, the start-boundary filter
     // doesn't run, so the barrier (which has index < BASE_INDEX) is preserved.
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
             commit,
             /* startVersion= */ commitVersion,
@@ -903,7 +903,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     //   v3: barrier at METADATA_CHANGE_INDEX
     //   v4: nothing — truncated.
     List<IndexedFile> result;
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.getFileChangesWithRateLimitForCDC(
             /* fromVersion= */ 2L,
             /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
@@ -954,7 +954,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     long commitVersion = 3L;
     CommitActions commit = getCommitActions(tablePath, commitVersion);
     List<IndexedFile> files;
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
             commit,
             /* startVersion= */ commitVersion,
@@ -1000,7 +1000,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         createAdmissionLimits(/* maxFiles= */ Optional.of(1), /* maxBytes= */ Optional.empty());
 
     List<IndexedFile> files;
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
             commit,
             /* startVersion= */ commitVersion,
@@ -1134,7 +1134,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     List<IndexedFile> files = new ArrayList<>();
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.getFileChangesWithRateLimitForCDC(
             fromVersion,
             fromIndex,
@@ -1234,7 +1234,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     }
   }
 
-  private static List<IndexedFile> collectAll(CloseableIterator<IndexedFile> iter) {
+  private static List<IndexedFile> collectAll(ClosableIterator<IndexedFile> iter) {
     List<IndexedFile> result = new ArrayList<>();
     while (iter.hasNext()) {
       result.add(iter.next());
@@ -1362,7 +1362,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     CommitActions commit = getCommitActions(tablePath, commitVersion);
 
     List<IndexedFile> files;
-    try (CloseableIterator<IndexedFile> iter =
+    try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
             commit,
             /* startVersion= */ commitVersion,

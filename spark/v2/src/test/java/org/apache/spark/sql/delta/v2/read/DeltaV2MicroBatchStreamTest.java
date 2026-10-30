@@ -17,7 +17,6 @@ package org.apache.spark.sql.delta.v2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.nio.channels.ClosedByInterruptException;
 import java.sql.Timestamp;
@@ -418,7 +417,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     Optional<DeltaSourceOffset> endOffsetOption = ScalaUtils.toJavaOptional(scalaEndOffset);
-    try (CloseableIterator<IndexedFile> kernelChanges =
+    try (ClosableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffsetOption)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
       while (kernelChanges.hasNext()) {
@@ -606,7 +605,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     Optional<DeltaSource.AdmissionLimits> dsv2Limits =
         createAdmissionLimits(deltaSource, maxFiles, maxBytes);
 
-    try (CloseableIterator<IndexedFile> kernelChanges =
+    try (ClosableIterator<IndexedFile> kernelChanges =
         stream.getFileChangesWithRateLimit(
             fromVersion, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot, dsv2Limits)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -785,7 +784,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
-    try (CloseableIterator<IndexedFile> kernelChanges =
+    try (ClosableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(
             fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset))) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -843,7 +842,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
     // Get file changes from version 0 (which will include versions 1-4)
-    CloseableIterator<IndexedFile> kernelChanges =
+    ClosableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(
             /* fromVersion= */ 0L,
             /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
@@ -960,7 +959,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             UnsupportedOperationException.class,
             () -> {
-              CloseableIterator<IndexedFile> kernelChanges =
+              ClosableIterator<IndexedFile> kernelChanges =
                   stream.getFileChanges(
                       fromVersion,
                       fromIndex,
@@ -1138,7 +1137,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
-    try (CloseableIterator<IndexedFile> kernelChanges =
+    try (ClosableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty())) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
       while (kernelChanges.hasNext()) {
@@ -1211,7 +1210,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             UnsupportedOperationException.class,
             () -> {
-              CloseableIterator<IndexedFile> kernelChanges =
+              ClosableIterator<IndexedFile> kernelChanges =
                   stream.getFileChanges(
                       fromVersion, fromIndex, isInitialSnapshot, Optional.empty());
               try {
@@ -1555,7 +1554,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
     // Get file changes from version 1 onwards
-    try (CloseableIterator<IndexedFile> kernelChanges =
+    try (ClosableIterator<IndexedFile> kernelChanges =
         stream.getFileChanges(
             /* fromVersion= */ 1L,
             /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
@@ -2906,7 +2905,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
           assertThrows(
               DeltaIllegalStateException.class,
               () -> {
-                CloseableIterator<IndexedFile> kernelChanges =
+                ClosableIterator<IndexedFile> kernelChanges =
                     stream.getFileChanges(
                         fromVersion,
                         fromIndex,
@@ -2999,7 +2998,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
           new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
       DeltaV2MicroBatchStream stream =
           createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
-      try (CloseableIterator<IndexedFile> kernelChanges =
+      try (ClosableIterator<IndexedFile> kernelChanges =
           stream.getFileChanges(
               fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset))) {
         List<IndexedFile> kernelFilesList = new ArrayList<>();
@@ -3083,7 +3082,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
           assertThrows(
               DeltaUnsupportedOperationException.class,
               () -> {
-                CloseableIterator<IndexedFile> kernelChanges =
+                ClosableIterator<IndexedFile> kernelChanges =
                     stream.getFileChanges(
                         fromVersion,
                         fromIndex,
@@ -3189,7 +3188,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
           assertThrows(
               DeltaUnsupportedOperationException.class,
               () -> {
-                CloseableIterator<IndexedFile> kernelChanges =
+                ClosableIterator<IndexedFile> kernelChanges =
                     stream.getFileChanges(
                         fromVersion,
                         fromIndex,
@@ -3997,7 +3996,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
-    try (CloseableIterator<IndexedFile> dsv2Changes =
+    try (ClosableIterator<IndexedFile> dsv2Changes =
         stream.getFileChanges(
             fromVersion, fromIndex, /* isInitialSnapshot= */ false, Optional.empty())) {
       List<IndexedFile> dsv2Files = new ArrayList<>();
@@ -4064,7 +4063,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             io.delta.kernel.exceptions.StartVersionNotFoundException.class,
             () -> {
-              try (CloseableIterator<IndexedFile> iter =
+              try (ClosableIterator<IndexedFile> iter =
                   stream.getFileChanges(
                       fromVersion, fromIndex, /* isInitialSnapshot= */ false, Optional.empty())) {
                 while (iter.hasNext()) {
@@ -4115,7 +4114,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             io.delta.kernel.exceptions.InvalidTableException.class,
             () -> {
-              try (CloseableIterator<IndexedFile> changes =
+              try (ClosableIterator<IndexedFile> changes =
                   stream.getFileChanges(
                       /* fromVersion= */ 1L,
                       /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
@@ -4799,7 +4798,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       boolean isInitialSnapshot = true;
 
       List<IndexedFile> files = new ArrayList<>();
-      try (CloseableIterator<IndexedFile> iter =
+      try (ClosableIterator<IndexedFile> iter =
           stream.getFileChanges(version, fromIndex, isInitialSnapshot, Optional.empty())) {
         while (iter.hasNext()) {
           files.add(iter.next());
@@ -4866,7 +4865,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
   private static void exhaustInitialSnapshot(
       DeltaV2MicroBatchStream stream, DeltaSourceOffset initialOffset) throws Exception {
-    try (CloseableIterator<IndexedFile> files =
+    try (ClosableIterator<IndexedFile> files =
         stream.getFileChanges(
             initialOffset.reservoirVersion(),
             initialOffset.index(),

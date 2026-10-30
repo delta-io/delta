@@ -20,8 +20,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.*;
 import java.util.stream.Stream;
@@ -38,6 +36,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
@@ -249,8 +248,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     return trackingLog;
   }
 
-  /** Collect all IndexedFiles from a CloseableIterator into a list. */
-  private static List<IndexedFile> drainIndexedFiles(CloseableIterator<IndexedFile> iter) {
+  /** Collect all IndexedFiles from a ClosableIterator into a list. */
+  private static List<IndexedFile> drainIndexedFiles(ClosableIterator<IndexedFile> iter) {
     List<IndexedFile> result = new ArrayList<>();
     try {
       while (iter.hasNext()) {
@@ -372,7 +371,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     List<IndexedFile> result =
         drainIndexedFiles(
             handler.stopIndexedFileIteratorAtSchemaChangeBarrier(
-                Utils.toCloseableIterator(inputFiles.iterator())));
+                ScalaUtils.toClosableIterator(inputFiles.iterator())));
     assertEquals(3, result.size());
   }
 
@@ -395,7 +394,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     List<IndexedFile> result =
         drainIndexedFiles(
             handler.stopIndexedFileIteratorAtSchemaChangeBarrier(
-                Utils.toCloseableIterator(inputFiles.iterator())));
+                ScalaUtils.toClosableIterator(inputFiles.iterator())));
     assertEquals(3, result.size());
     assertEquals(0L, result.get(0).getIndex());
     assertEquals(1L, result.get(1).getIndex());
@@ -412,7 +411,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     List<IndexedFile> result =
         drainIndexedFiles(
             handler.stopIndexedFileIteratorAtSchemaChangeBarrier(
-                Utils.toCloseableIterator(Collections.<IndexedFile>emptyIterator())));
+                ScalaUtils.toClosableIterator(Collections.<IndexedFile>emptyIterator())));
     assertTrue(result.isEmpty());
   }
 
