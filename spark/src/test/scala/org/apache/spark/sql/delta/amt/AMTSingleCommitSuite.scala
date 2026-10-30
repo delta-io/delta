@@ -43,7 +43,7 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase with GridTestShim {
 
   /** A [[DeltaSingleCommit]] handle for exactly `version`. */
   private def commitAt(deltaLog: DeltaLog, version: Long): DeltaSingleCommit =
-    deltaLog.getChangesIterator(startVersion = version)
+    deltaLog.getSingleCommitIterator(startVersion = version)
       .find(_.version == version)
       .getOrElse(fail(s"no commit at version $version"))
 
@@ -72,7 +72,7 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase with GridTestShim {
   test("getActionsIterator returns the commit's actions and matches getChanges") {
     withTable("amt_getactions") {
       val deltaLog = createLogCommitTable("amt_getactions", numVersions = 3)
-      val viaHandle = deltaLog.getChangesIterator(startVersion = 0).map { commit =>
+      val viaHandle = deltaLog.getSingleCommitIterator(startVersion = 0).map { commit =>
         (commit.version, commit.getActionsIterator().processAndClose(_.toList))
       }.toList
       val viaGetChanges = deltaLog.getChanges(startVersion = 0).map {
@@ -134,12 +134,12 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase with GridTestShim {
     }
   }
 
-  test("getChangesIterator yields one DeltaSingleCommit per commit with the right version") {
+  test("getSingleCommitIterator yields one DeltaSingleCommit per commit with the right version") {
     withSQLConf(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "true") {
       withTable("amt_versions") {
         val deltaLog = createLogCommitTable("amt_versions", numVersions = 3)
         // CREATE is version 0, the three INSERTs are versions 1..3.
-        val commits = deltaLog.getChangesIterator(startVersion = 0).toList
+        val commits = deltaLog.getSingleCommitIterator(startVersion = 0).toList
         assert(commits.map(_.version) === (0L to 3L).toList)
 
         val inCommitTimestamps = deltaLog.getChanges(startVersion = 0).map {
@@ -157,10 +157,10 @@ class AMTSingleCommitSuite extends AMTCheckpointTestBase with GridTestShim {
     }
   }
 
-  test("getChangesIterator endVersion override bounds the range (both inclusive)") {
+  test("getSingleCommitIterator endVersion override bounds the range (both inclusive)") {
     withTable("amt_range") {
       val deltaLog = createLogCommitTable("amt_range", numVersions = 5)
-      val commits = deltaLog.getChangesIterator(
+      val commits = deltaLog.getSingleCommitIterator(
         startVersion = 1, endVersion = 3, catalogTableOpt = None, failOnDataLoss = true).toList
       assert(commits.map(_.version) === List(1L, 2L, 3L))
     }

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CommitInfo}
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.FileStatus
 
 /**
@@ -131,5 +132,30 @@ object SingleCommit {
         delegatedIterator = createClosableIterator()
       }
     }
+  }
+}
+
+/**
+ * A commit reader paired with the inclusive version range its actions cover.
+ *
+ * Compacted files omit CommitInfo, so `commit.timestamp` is the compacted file's modification
+ * time, not the timestamp of any individual source commit. The reader is used only for actions;
+ * `commit.version` identifies the end of the range.
+ */
+private[delta] class RangedSingleCommit private (
+  val commit: DeltaSingleCommit,
+  val startVersion: Long,
+  val endVersion: Long)
+
+private[delta] object RangedSingleCommit {
+  def apply(deltaLog: DeltaLog, file: FileStatus): RangedSingleCommit = {
+    val (startVersion, endVersion) = file match {
+      case FileNames.CompactedDeltaFile(_, start, end) => (start, end)
+      case _ =>
+        val version = FileNames.deltaVersion(file)
+        (version, version)
+    }
+    val commit = SingleCommit(deltaLog, endVersion, file)
+    new RangedSingleCommit(commit, startVersion, endVersion)
   }
 }
