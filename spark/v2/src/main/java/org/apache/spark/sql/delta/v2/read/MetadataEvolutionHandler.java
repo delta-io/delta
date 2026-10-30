@@ -178,16 +178,19 @@ public class MetadataEvolutionHandler {
       ClosableIterator<IndexedFile> fileActions) {
     // Lazily include files up to and including the barrier, then break.
     boolean[] sawBarrier = {false};
-    return new IteratorCloseOps<>(fileActions).withClose(
-        iterator -> iterator.takeWhile(file -> {
-          if (sawBarrier[0]) {
-            return false;
-          }
-          if (file.getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
-            sawBarrier[0] = true;
-          }
-          return true;
-        }));
+    return new IteratorCloseOps<>(fileActions)
+        .withClose(
+            iterator ->
+                iterator.takeWhile(
+                    file -> {
+                      if (sawBarrier[0]) {
+                        return false;
+                      }
+                      if (file.getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
+                        sawBarrier[0] = true;
+                      }
+                      return true;
+                    }));
   }
 
   /**
@@ -201,8 +204,10 @@ public class MetadataEvolutionHandler {
       @Nullable Metadata metadata, @Nullable Protocol protocol, long version) {
     if (shouldTrackMetadataChange()
         && hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)) {
-      return new ClosableWrapper<>(Iterator.single(
-          IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX()))).toClosable();
+      return new ClosableWrapper<>(
+              Iterator.single(
+                  IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX())))
+          .toClosable();
     }
     return new ClosableWrapper<>(List$.MODULE$.<IndexedFile>empty().iterator()).toClosable();
   }
@@ -617,8 +622,9 @@ public class MetadataEvolutionHandler {
     try (ClosableIterator<CommitActions> commitsIter =
         // Always include CDC: the merger must stop on any file action
         // TODO: Read metadata-merging commits through V1 APIs to remove this iterator adapter.
-        ScalaUtils.toClosableIterator(StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine, commitRange, tablePath, DeltaV2MicroBatchStream.CDC_ACTION_SET))) {
+        ScalaUtils.toClosableIterator(
+            StreamingHelper.getCommitActionsFromRangeUnsafe(
+                engine, commitRange, tablePath, DeltaV2MicroBatchStream.CDC_ACTION_SET))) {
       while (commitsIter.hasNext()) {
         try (CommitActions commit = commitsIter.next()) {
           long version = commit.getVersion();

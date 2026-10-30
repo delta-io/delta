@@ -19,15 +19,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import org.apache.spark.sql.delta.storage.ClosableIterator;
-import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.junit.jupiter.api.Test;
 import scala.Option;
 
