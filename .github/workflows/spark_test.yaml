@@ -19,11 +19,11 @@ on:
 # Every PR runs:
 # 1. generate-matrix: split Spark versions (from CrossSparkVersions.scala) into published
 #    vs source-build lists.
-# 2. prepare_spark_source_cache: when source-build Spark versions exist, build Spark once and
+# 2. prepare_spark_source_cache: for each source-build Spark version, build Spark once and
 #    save the Maven cache (via the prepare-spark-env action with build-on-miss). This job is
 #    non-blocking; any source Spark build/cache failure is reported through source_spark_test.
-# 3. test: published Spark shards without waiting on step 2.
-# 4. source_spark_test: source-built Spark shards after step 2. It still runs if
+# 3. test: published Spark shards (4.0/4.1) without waiting on step 2.
+# 4. source_spark_test: source-built Spark shards (4.2 today) after step 2. It still runs if
 #    prepare_spark_source_cache fails, so the source-built Spark signal stays non-blocking.
 #
 # test and source_spark_test share two composite actions:
