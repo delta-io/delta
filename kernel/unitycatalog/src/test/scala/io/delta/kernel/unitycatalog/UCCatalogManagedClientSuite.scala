@@ -22,10 +22,14 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.{KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
+import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_RW_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import io.delta.kernel.internal.util.FileNames
+import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
+import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Unit tests for [[UCCatalogManagedClient]]. */
@@ -267,7 +271,10 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val hadoopFS = ucCommit.getFileStatus
 
     val kernelParsedDeltaData = UCCatalogManagedClient
-      .getSortedKernelParsedDeltaDataFromRatifiedCommits(testUcTableId, Seq(ucCommit).asJava)
+      .getSortedKernelParsedDeltaDataFromRatifiedCommits(
+        testUcTableId,
+        baseTestTablePath,
+        Seq(ucCommit).asJava)
       .get(0)
     val kernelFS = kernelParsedDeltaData.getFileStatus
 
@@ -277,11 +284,75 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     assert(kernelFS.getModificationTime == hadoopFS.getModificationTime)
   }
 
+  test("converts a published UC Commit into Kernel ParsedCatalogCommitData") {
+    val publishedPath = new Path(FileNames.deltaFile(baseTestLogPath, 1))
+    val ucCommit = new Commit(1, new HadoopFileStatus(1, false, 1, 1, 1, publishedPath), 1)
+
+    val kernelParsedDeltaData = UCCatalogManagedClient
+      .getSortedKernelParsedDeltaDataFromRatifiedCommits(
+        testUcTableId,
+        baseTestTablePath,
+        Seq(ucCommit).asJava)
+      .get(0)
+
+    assert(kernelParsedDeltaData.isInstanceOf[ParsedCatalogCommitData])
+    assert(kernelParsedDeltaData.getVersion == 1)
+    assert(kernelParsedDeltaData.getFileStatus.getPath == publishedPath.toString)
+  }
+
+  test("rejects a UC Commit with a published file name under _staged_commits") {
+    val badPath = new Path(s"$baseTestLogPath/_staged_commits/00000000000000000001.json")
+    val ucCommit = new Commit(1, new HadoopFileStatus(1, false, 1, 1, 1, badPath), 1)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      UCCatalogManagedClient.getSortedKernelParsedDeltaDataFromRatifiedCommits(
+        testUcTableId,
+        baseTestTablePath,
+        Seq(ucCommit).asJava)
+    }.getMessage
+    assert(exMsg.contains("published commit file name under _staged_commits"))
+  }
+
+  test("loadSnapshot succeeds when UC returns an already-published commit") {
+    withUCClientAndTestTableWithOptions(includePublishedV0 = true) {
+      (ucClient, tablePath, maxVersion) =>
+        val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+        Seq(Optional.of(java.lang.Long.valueOf(0L)), emptyLongOpt).foreach { versionToLoad =>
+          val snapshot = loadSnapshot(
+            ucCatalogManagedClient,
+            tablePath = tablePath,
+            versionToLoad = versionToLoad)
+          assert(snapshot.getVersion == versionToLoad.orElse(maxVersion))
+          val deltas = snapshot.getLogSegment.getDeltas.asScala.map(_.getPath)
+          assert(FileNames.isPublishedDeltaFile(deltas.head))
+          assert(FileNames.deltaVersion(deltas.head) == 0)
+          assert(deltas.tail.forall(FileNames.isStagedDeltaFile))
+        }
+    }
+  }
+
+  Seq((v0Ts, 0L), (v1Ts - 50L, 0L), (v1Ts, 1L), (v2Ts, 2L)).foreach {
+    case (timestamp, expectedVersion) =>
+      test(s"loadSnapshot by timestamp resolves v$expectedVersion when UC returns an " +
+        s"already-published commit -- timestamp=$timestamp") {
+        withUCClientAndTestTableWithOptions(includePublishedV0 = true) { (ucClient, tablePath, _) =>
+          val snapshot = loadSnapshot(
+            new UCCatalogManagedClient(ucClient),
+            tablePath = tablePath,
+            timestampToLoad = Optional.of(java.lang.Long.valueOf(timestamp)))
+          assert(snapshot.getVersion == expectedVersion)
+        }
+      }
+  }
+
   test("sorts UC commits by version") {
     val ucCommitsUnsorted = Seq(createCommit(1), createCommit(2), createCommit(3)).asJava
 
     val kernelParsedLogData = UCCatalogManagedClient
-      .getSortedKernelParsedDeltaDataFromRatifiedCommits(testUcTableId, ucCommitsUnsorted)
+      .getSortedKernelParsedDeltaDataFromRatifiedCommits(
+        testUcTableId,
+        baseTestTablePath,
+        ucCommitsUnsorted)
 
     assert(kernelParsedLogData.size() == 3)
     assert(kernelParsedLogData.get(0).getVersion == 1)

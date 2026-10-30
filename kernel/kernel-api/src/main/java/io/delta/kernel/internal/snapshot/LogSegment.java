@@ -312,6 +312,7 @@ public class LogSegment {
     return deltasCheckpointsCompactionsReversed.get();
   }
 
+  /** @return the staged catalog commits in this log segment; published deltas are not included */
   public List<ParsedCatalogCommitData> getAllCatalogCommits() {
     return deltas.stream()
         .map(ParsedDeltaData::forFileStatus)
