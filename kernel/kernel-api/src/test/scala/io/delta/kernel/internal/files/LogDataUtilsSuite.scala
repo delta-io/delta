@@ -27,39 +27,47 @@ class LogDataUtilsSuite extends AnyFunSuite with MockFileSystemClientUtils with 
   private val emptyInlineData = emptyColumnarBatch
 
   //////////////////////////////////////////////////////
-  // validateLogDataContainsOnlyRatifiedStagedCommits //
+  // validateLogDataContainsOnlyRatifiedCatalogCommits //
   //////////////////////////////////////////////////////
 
-  test("validateLogDataContainsOnlyRatifiedStagedCommits: empty list passes") {
+  test("validateLogDataContainsOnlyRatifiedCatalogCommits: empty list passes") {
     // Should not throw any exception
-    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(Seq.empty.asJava)
+    LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(Seq.empty.asJava)
   }
 
-  test("validateLogDataContainsOnlyRatifiedStagedCommits: valid list passes") {
+  test("validateLogDataContainsOnlyRatifiedCatalogCommits: valid list passes") {
     val logDatas = Seq(
       ParsedCatalogCommitData.forFileStatus(stagedCommitFile(1)),
       ParsedCatalogCommitData.forFileStatus(stagedCommitFile(2)))
     // Should not throw any exception
-    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(logDatas.asJava)
+    LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(logDatas.asJava)
   }
 
-  test("validateLogDataContainsOnlyRatifiedStagedCommits: inline delta fails") {
+  test("validateLogDataContainsOnlyRatifiedCatalogCommits: published catalog commit passes") {
+    val logDatas = Seq(
+      ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 1, deltaFileStatus(1)),
+      ParsedCatalogCommitData.forFileStatus(stagedCommitFile(2)))
+    // Should not throw any exception
+    LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(logDatas.asJava)
+  }
+
+  test("validateLogDataContainsOnlyRatifiedCatalogCommits: inline delta fails") {
     intercept[IllegalArgumentException] {
-      LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(
+      LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(
         Seq(ParsedCatalogCommitData.forInlineData(3, emptyInlineData)).asJava)
     }
   }
 
-  test("validateLogDataContainsOnlyRatifiedStagedCommits: published delta fails") {
+  test("validateLogDataContainsOnlyRatifiedCatalogCommits: published delta fails") {
     intercept[IllegalArgumentException] {
-      LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(
+      LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(
         Seq(ParsedPublishedDeltaData.forFileStatus(deltaFileStatus(1))).asJava)
     }
   }
 
-  test("validateLogDataContainsOnlyRatifiedStagedCommits: checkpoint data fails") {
+  test("validateLogDataContainsOnlyRatifiedCatalogCommits: checkpoint data fails") {
     intercept[IllegalArgumentException] {
-      LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(
+      LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(
         Seq(ParsedClassicCheckpointData.forFileStatus(classicCheckpointFileStatus(0))).asJava)
     }
   }

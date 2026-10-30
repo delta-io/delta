@@ -130,7 +130,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     validateProtocolAndMetadataOnlyIfVersionProvided();
     validateProtocolRead();
     // TODO: delta-io/delta#4765 support other types
-    LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
+    LogDataUtils.validateLogDataContainsOnlyRatifiedCatalogCommits(ctx.logDatas);
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
     validateMaxCatalogVersionCompatibleWithTimeTravelParams();
     validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad();
