@@ -44,6 +44,7 @@ import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
+import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
@@ -280,6 +281,20 @@ class DeltaV2MicroBatchStream
             "readSnapshotDescriptor is null");
     this.readSchemaAtSourceInit =
         Objects.requireNonNull(readSnapshotDescriptor.schema(), "readSchemaAtSourceInit is null");
+
+    // V2 retains the partition layout from DataFrame analysis. Check that the read metadata still
+    // matches that layout before the stream starts. V1 does not need this check because it loads
+    // the layout when the source starts.
+    boolean shouldValidatePartitionSchemaOnRestart =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.STREAMING_PARTITION_SCHEMA_VALIDATION_ON_RESTART());
+    if (shouldValidatePartitionSchemaOnRestart) {
+      validatePartitionSchemaOnStartup(
+          partitionSchema, readSnapshotDescriptor.metadata().partitionSchema(), tableId);
+    }
 
     this.shouldValidateOffsets =
         Objects.requireNonNull(
@@ -1593,6 +1608,36 @@ class DeltaV2MicroBatchStream
 
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true;
+  }
+
+  /**
+   * Validates the partition schema and physical names without comparing unrelated metadata.
+   *
+   * <p>Partition changes need a separate check because full-schema validation sorts the columns and
+   * does not distinguish partition columns from data columns.
+   */
+  private static void validatePartitionSchemaOnStartup(
+      StructType partitionSchema, StructType readPartitionSchemaAtSourceInit, String tableId) {
+    // Physical names identify the partition values in each file.
+    // Partition reads tolerate reordering, but keep this check consistent with the order-sensitive
+    // partition-change checks.
+    boolean namesMatch =
+        Arrays.equals(partitionSchema.fieldNames(), readPartitionSchemaAtSourceInit.fieldNames());
+    boolean typesMatch =
+        DataType.equalsStructurally(
+            partitionSchema, readPartitionSchemaAtSourceInit, /* ignoreNullability= */ false);
+    boolean physicalNamesMatch =
+        Arrays.equals(
+            Arrays.stream(partitionSchema.fields())
+                .map(DeltaColumnMapping::getPhysicalName)
+                .toArray(String[]::new),
+            Arrays.stream(readPartitionSchemaAtSourceInit.fields())
+                .map(DeltaColumnMapping::getPhysicalName)
+                .toArray(String[]::new));
+    if (!namesMatch || !typesMatch || !physicalNamesMatch) {
+      throw DeltaErrors.streamingPartitionSchemaMismatchOnRestart(
+          tableId, partitionSchema, readPartitionSchemaAtSourceInit);
+    }
   }
 
   /**
