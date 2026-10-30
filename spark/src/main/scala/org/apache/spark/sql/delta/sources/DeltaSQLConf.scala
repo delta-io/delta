@@ -2191,6 +2191,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .stringConf
       .createOptional
 
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_FLOATING_POINT_VALIDATION_ENABLED =
+    buildConf("skipping.partitionLikeDataSkipping.floatingPointValidation.enabled")
+      .internal()
+      .doc("Whether to prevent partition-like data skipping from inferring exact FLOAT or DOUBLE " +
+        "values from equal min/max statistics."
+      )
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED =
     buildConf("skipping.enhancedIsNullPushdownExprs.enabled")
       .doc("If true, support pushing down IsNull on additional null-intolerant expressions for " +
