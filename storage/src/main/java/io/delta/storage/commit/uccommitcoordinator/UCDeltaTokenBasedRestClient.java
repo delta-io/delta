@@ -109,6 +109,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private static final int HTTP_BAD_REQUEST = 400;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
+  private static final int HTTP_TOO_MANY_REQUESTS = 429;
+  private static final String RESOURCE_EXHAUSTED_ERROR_TYPE = "ResourceExhaustedException";
 
   private DeltaTablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
@@ -991,6 +993,19 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       throws IOException, CommitFailedException, UCCommitCoordinatorException {
     int statusCode = e.getCode();
     String responseBody = e.getResponseBody();
+
+    // The Delta REST API uses 429 for two error types: ResourceExhaustedException (the table
+    // already tracks the maximum number of unbackfilled commits) and TooManyRequestsException
+    // (plain throttling). Only the former is a commit limit: the coordinator backfills and retries
+    // on CommitLimitReachedException, whereas a plain IOException is only retried with backoff,
+    // which never frees up room on the UC side. Throttling keeps the IOException path below.
+    if (statusCode == HTTP_TOO_MANY_REQUESTS
+        && responseBody != null
+        && responseBody.contains(RESOURCE_EXHAUSTED_ERROR_TYPE)) {
+      throw new CommitLimitReachedException(
+          String.format("Unbackfilled commits limit reached for %s.%s.%s: %s",
+              catalog, schema, table, responseBody));
+    }
 
     switch (statusCode) {
       case HTTP_BAD_REQUEST:
