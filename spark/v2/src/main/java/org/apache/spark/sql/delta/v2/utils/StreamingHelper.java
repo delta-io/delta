@@ -153,8 +153,7 @@ public class StreamingHelper {
         getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.METADATA.colName);
     ColumnVector metadataVector = columnarBatch.getColumnVector(metadataIdx);
     io.delta.kernel.internal.actions.Metadata metadata =
-        io.delta.kernel.internal.actions.Metadata.fromColumnVector(
-            metadataVector, rowId);
+        io.delta.kernel.internal.actions.Metadata.fromColumnVector(metadataVector, rowId);
 
     return Optional.ofNullable(metadata);
   }
@@ -165,8 +164,7 @@ public class StreamingHelper {
     int protocolIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.PROTOCOL.colName);
     ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
     io.delta.kernel.internal.actions.Protocol protocol =
-        io.delta.kernel.internal.actions.Protocol.fromColumnVector(
-            protocolVector, rowId);
+        io.delta.kernel.internal.actions.Protocol.fromColumnVector(protocolVector, rowId);
 
     return Optional.ofNullable(protocol);
   }
@@ -220,8 +218,8 @@ public class StreamingHelper {
    * metadata action; {@link RuntimeException} on underlying I/O errors.
    *
    * <p>Kernel validates every protocol action encountered in the range, even though only metadata
-   * actions are returned. Unsupported reader protocol versions and reader features are rejected.
-   * It does not load a snapshot to validate the starting protocol.
+   * actions are returned. Unsupported reader protocol versions and reader features are rejected. It
+   * does not load a snapshot to validate the starting protocol.
    *
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
@@ -276,8 +274,8 @@ public class StreamingHelper {
   }
 
   /**
-   * Walks the commit range filtered to {@code actionType} and rejects commits with more than
-   * one matching action.
+   * Walks the commit range filtered to {@code actionType} and rejects commits with more than one
+   * matching action.
    */
   private static <T extends Action> Map<Long, T> collectActions(
       long startVersion,
@@ -290,7 +288,8 @@ public class StreamingHelper {
     Map<Long, T> versionToAction = new LinkedHashMap<>();
     try (ClosableIterator<DeltaSingleCommit> commitsIter =
         ScalaUtils.toClosableIterator(
-            snapshotManager.getTableChanges(engine, startVersion, endVersionOpt)
+            snapshotManager
+                .getTableChanges(engine, startVersion, endVersionOpt)
                 .getCommitActions(engine, Set.of(actionType))
                 .map(DeltaV2SingleCommit$.MODULE$::apply))) {
       while (commitsIter.hasNext()) {

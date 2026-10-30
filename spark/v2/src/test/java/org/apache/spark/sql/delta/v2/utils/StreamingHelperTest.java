@@ -15,6 +15,7 @@
  */
 package org.apache.spark.sql.delta.v2.utils;
 
+import static io.delta.kernel.internal.actions.AddFile.SCHEMA_WITHOUT_STATS;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -26,7 +27,6 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static io.delta.kernel.internal.actions.AddFile.SCHEMA_WITHOUT_STATS;
 
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
@@ -110,8 +110,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     return new ColumnarBatch() {
       @Override
       public io.delta.kernel.types.StructType getSchema() {
-        return new io.delta.kernel.types.StructType()
-            .add("add", SCHEMA_WITHOUT_STATS);
+        return new io.delta.kernel.types.StructType().add("add", SCHEMA_WITHOUT_STATS);
       }
 
       @Override
@@ -478,8 +477,8 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     DeltaV2SnapshotManager manager = mock(DeltaV2SnapshotManager.class);
     CommitRange range = mock(CommitRange.class);
     when(manager.getTableChanges(defaultEngine, 7L, Optional.of(7L))).thenReturn(range);
-    when(range.getCommitActions(
-        defaultEngine, Set.of(DeltaLogActionUtils.DeltaAction.PROTOCOL))).thenReturn(commits);
+    when(range.getCommitActions(defaultEngine, Set.of(DeltaLogActionUtils.DeltaAction.PROTOCOL)))
+        .thenReturn(commits);
     return manager;
   }
 
@@ -487,8 +486,10 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   public void testProtocolCollector_closesEmptyCommitIterator() throws IOException {
     CloseableIterator<CommitActions> commits = mockIterator();
 
-    assertTrue(StreamingHelper.collectProtocolActions(
-        7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine).isEmpty());
+    assertTrue(
+        StreamingHelper.collectProtocolActions(
+                7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine)
+            .isEmpty());
 
     verify(commits).close();
   }
@@ -499,15 +500,19 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     IOException readFailure = new IOException("commit iterator read failed");
     IOException closeFailure = new IOException("commit iterator close failed");
     CloseableIterator<CommitActions> commits = mockIterator();
-    when(commits.hasNext()).thenAnswer(ignored -> {
-      throw readFailure;
-    });
+    when(commits.hasNext())
+        .thenAnswer(
+            ignored -> {
+              throw readFailure;
+            });
     doThrow(closeFailure).when(commits).close();
 
-    RuntimeException error = assertThrows(
-        RuntimeException.class,
-        () -> StreamingHelper.collectProtocolActions(
-            7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine));
+    RuntimeException error =
+        assertThrows(
+            RuntimeException.class,
+            () ->
+                StreamingHelper.collectProtocolActions(
+                    7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
@@ -517,21 +522,25 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
   @Test
   public void testProtocolCollector_reportsCommitVersionWhenMaterializationFails()
-      throws IOException {
+      throws Exception {
     IOException readFailure = new IOException("action iterator open failed");
     CommitActions kernelCommit = mock(CommitActions.class);
     when(kernelCommit.getVersion()).thenReturn(7L);
-    when(kernelCommit.getActions()).thenAnswer(ignored -> {
-      throw readFailure;
-    });
+    when(kernelCommit.getActions())
+        .thenAnswer(
+            ignored -> {
+              throw readFailure;
+            });
     CloseableIterator<CommitActions> commits = mockIterator();
     when(commits.hasNext()).thenReturn(true);
     when(commits.next()).thenReturn(kernelCommit);
 
-    UncheckedIOException error = assertThrows(
-        UncheckedIOException.class,
-        () -> StreamingHelper.collectProtocolActions(
-            7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine));
+    UncheckedIOException error =
+        assertThrows(
+            UncheckedIOException.class,
+            () ->
+                StreamingHelper.collectProtocolActions(
+                    7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine));
 
     assertEquals("Failed to process commit at version 7", error.getMessage());
     assertSame(readFailure, error.getCause());
@@ -586,23 +595,18 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
   /** Verifies that the version → Metadata mapping returns the correct Metadata content. */
   @Test
-  public void testCollectMetadataActions_returnsCorrectMetadataPerVersion(
-      @TempDir File tempDir) {
+  public void testCollectMetadataActions_returnsCorrectMetadataPerVersion(@TempDir File tempDir) {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_metadata_content";
     setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
     snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Metadata> result =
-        StreamingHelper.collectMetadataActions(
-            0L, Optional.of(2L), snapshotManager, defaultEngine);
+        StreamingHelper.collectMetadataActions(0L, Optional.of(2L), snapshotManager, defaultEngine);
 
     StructType expectedV0Schema =
-        new StructType()
-            .add("id", DataTypes.IntegerType)
-            .add("name", DataTypes.StringType);
-    StructType expectedV2Schema =
-        expectedV0Schema.add("c3", DataTypes.IntegerType);
+        new StructType().add("id", DataTypes.IntegerType).add("name", DataTypes.StringType);
+    StructType expectedV2Schema = expectedV0Schema.add("c3", DataTypes.IntegerType);
     assertEquals(expectedV0Schema, result.get(0L).schema());
     assertEquals(expectedV2Schema, result.get(2L).schema());
   }
@@ -660,16 +664,14 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
   /** Verifies that the version → Protocol mapping returns the correct Protocol content. */
   @Test
-  public void testCollectProtocolActions_returnsCorrectProtocolPerVersion(
-      @TempDir File tempDir) {
+  public void testCollectProtocolActions_returnsCorrectProtocolPerVersion(@TempDir File tempDir) {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_protocol_content";
     setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
     snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Protocol> result =
-        StreamingHelper.collectProtocolActions(
-            0L, Optional.of(2L), snapshotManager, defaultEngine);
+        StreamingHelper.collectProtocolActions(0L, Optional.of(2L), snapshotManager, defaultEngine);
 
     // v0 default: reader=1, writer=2; v2 upgraded: reader=3, writer=7
     assertEquals(1, result.get(0L).minReaderVersion());
