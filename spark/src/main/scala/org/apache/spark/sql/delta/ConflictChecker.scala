@@ -277,7 +277,11 @@ private[delta] class ConflictChecker(
     // file-level checks run against a summary that never mentions those files, so they need no
     // changes.
     protected var winningCommitSummary: WinningCommitSummary,
-    isolationLevel: IsolationLevel)
+    isolationLevel: IsolationLevel,
+    // Whether the commit holds the table's commit lock while checking conflicts, as
+    // `OptimisticTransaction` does on stores where partial writes are visible. Readers that
+    // update the snapshot and other commits wait on it, so no data file is scanned under it.
+    protected val commitLockHeld: Boolean)
   extends DeltaLogging with ConflictCheckerPredicateElimination
   with RowLevelConcurrencyResolution {
 
@@ -372,8 +376,6 @@ private[delta] class ConflictChecker(
     // Resolve the set-aside files last, so a transaction that aborts on another conflict decodes
     // no deletion vector, scans no read and writes no merged deletion vector.
     resolveRowLevelConflicts()
-
-    recordRowLevelConflictResolution()
 
     // Fold the winning commit into our transaction info before the next attempt: this advances
     // `preCommitLatestAMTCheckpointOpt` to the winner's inline AMT checkpoint (when the winner

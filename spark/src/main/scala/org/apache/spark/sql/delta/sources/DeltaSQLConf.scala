@@ -626,11 +626,25 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc(
         """Maximum total size of the deletion vectors that row-level concurrency keeps in driver
           |memory between checking and merging the files it reconciles. The deletion vectors of
-          |the remaining files are read again, in bounded batches, when they are merged."""
+          |the remaining files are read again, in bounded batches, when they are merged. In
+          |addition, up to 8 files are decoded at a time, each with three deletion vectors."""
           .stripMargin)
       .bytesConf(ByteUnit.BYTE)
       .checkValue(_ >= 0, "rowLevelConcurrency.maxRetainedDeletionVectorBytes must be non-negative")
       .createWithDefault(64L * 1024L * 1024L)
+
+  val DELTA_ROW_LEVEL_CONCURRENCY_MAX_CANDIDATE_FILES =
+    buildConf("rowLevelConcurrency.maxCandidateFiles")
+      .internal()
+      .doc(
+        """Maximum number of files, updated by both the winning and the current transaction, that
+          |row-level concurrency tries to reconcile against one winning commit. Above it, the
+          |conflict is left to the file-level checks, as when row-level concurrency is disabled.
+          |This bounds the deletion vectors decoded and written during conflict detection, which
+          |can run under the table's commit lock.""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "rowLevelConcurrency.maxCandidateFiles must be positive")
+      .createWithDefault(1000)
 
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("properties.defaults.minWriterVersion")

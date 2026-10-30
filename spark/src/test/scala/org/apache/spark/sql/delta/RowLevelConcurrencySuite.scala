@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
+import java.io.{File, InterruptedIOException, IOException}
+import java.net.URI
+import java.util.concurrent.{Semaphore, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
 import scala.concurrent.duration.Duration
@@ -27,15 +29,22 @@ import org.apache.spark.sql.delta.concurrency.TransactionExecutionTestMixin
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
+import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{DelegateToFileSystem, FSDataOutputStream, Path, RawLocalFileSystem}
+import org.apache.hadoop.util.Progressable
 
-import org.apache.spark.{SparkConf, SparkException}
+import org.apache.spark.{SparkConf, SparkException, TaskContext}
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
+import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.LongType
+import org.apache.spark.sql.types.{IntegerType, LongType}
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.ThreadUtils
 
@@ -138,6 +147,18 @@ class RowLevelConcurrencySuite extends QueryTest
     count.get()
   }
 
+  /** Runs `f` and returns why row-level concurrency did not reconcile the set-aside files. */
+  private def notReconciledReasons(f: => Unit): Seq[String] =
+    Log4jUsageLogger.track(f)
+      .filter(_.tags.get("opType").contains("delta.rowLevelConcurrency.notReconciled"))
+      .map { r =>
+        val blob = JsonUtils.fromJson[Map[String, Any]](r.blob)
+        blob("reason").toString
+      }
+
+  private def withCommitLock[T](enabled: Boolean)(f: => T): T =
+    withSQLConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED.key -> enabled.toString)(f)
+
   private def ids(dir: File): Seq[Long] =
     spark.read.format("delta").load(dir.getAbsolutePath).select("id")
       .collect().map(_.getLong(0)).sorted.toSeq
@@ -215,7 +236,7 @@ class RowLevelConcurrencySuite extends QueryTest
       // loser is a MERGE, which *scans* the file to evaluate its ON condition, so the shared path
       // enters the current txn's readFiles as a genuine read (not merely as a delete target). The
       // winner's disjoint DELETE removes that same file, which under Serializable would trip the
-      // delete-read check -- unless row-level resolution drops the reconciled path from readFiles.
+      // delete-read check -- unless row-level resolution drops the winner's removal of that path.
       // A MERGE without a NOT MATCHED clause cannot observe the winner deleting a row it did not
       // modify, so this reconciles under the stricter isolation.
       val txnA = sqlTxn(mergeMatched(dir, 10, "DELETE"), rowLevelConcurrency = true)
@@ -236,10 +257,14 @@ class RowLevelConcurrencySuite extends QueryTest
       val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
       val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
 
-      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
-      ThreadUtils.awaitResult(futureB, Duration.Inf)
-      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      var e: SparkException = null
+      val reasons = notReconciledReasons {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      }
       assertConcurrentModificationException(e)
+      assert(reasons === Seq("sameRowDeleted"))
       // Clean abort: only the winner's delete (id=10) is applied; its DV has cardinality 1.
       assert(ids(dir) === (0L to 99L).filterNot(_ == 10))
       assert(deletionVectorCardinalities(log) === Seq(1L))
@@ -383,10 +408,14 @@ class RowLevelConcurrencySuite extends QueryTest
       val txnA = sqlTxn(mergeMatched(dir, 10, "DELETE"), rowLevelConcurrency = true)
       val txnB = sqlTxn(mergeMatched(dir, 10, "DELETE"), rowLevelConcurrency = true)
 
-      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
-      ThreadUtils.awaitResult(futureB, Duration.Inf)
-      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      var e: SparkException = null
+      val reasons = notReconciledReasons {
+        val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      }
       assertConcurrentModificationException(e)
+      assert(reasons === Seq("sameRowDeleted"))
       // Clean abort: only the winner's matched-delete (id=10) is applied; its DV has cardinality 1.
       assert(ids(dir) === (0L to 99L).filterNot(_ == 10))
       assert(deletionVectorCardinalities(log) === Seq(1L))
@@ -407,10 +436,16 @@ class RowLevelConcurrencySuite extends QueryTest
       val txnA = sqlTxn(selfMerge(sourceId = 20, targetId = 5), rowLevelConcurrency = true)
       val txnB = sqlTxn(selfMerge(sourceId = 5, targetId = 20), rowLevelConcurrency = true)
 
-      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
-      ThreadUtils.awaitResult(futureB, Duration.Inf)
-      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      var e: SparkException = null
+      val reasons = withCommitLock(enabled = false) {
+        notReconciledReasons {
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+        }
+      }
       assertConcurrentModificationException(e)
+      assert(reasons === Seq("readAffected"))
       assert(ids(dir) === (0L to 99L).filterNot(_ == 20L))
     }
   }
@@ -494,12 +529,16 @@ class RowLevelConcurrencySuite extends QueryTest
       val txnC = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
 
       // A starts; B commits; C commits (reading B's state); A commits last.
-      val (futureA, futureB, futureC) =
-        runTxnsWithOrder__A_Start__B__C__A_End(txnA, txnB, txnC)
-      ThreadUtils.awaitResult(futureB, Duration.Inf)
-      ThreadUtils.awaitResult(futureC, Duration.Inf)
-      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      var e: SparkException = null
+      val reasons = notReconciledReasons {
+        val (futureA, futureB, futureC) =
+          runTxnsWithOrder__A_Start__B__C__A_End(txnA, txnB, txnC)
+        ThreadUtils.awaitResult(futureB, Duration.Inf)
+        ThreadUtils.awaitResult(futureC, Duration.Inf)
+        e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      }
       assertConcurrentModificationException(e)
+      assert(reasons === Seq("sameRowDeleted"))
 
       // Only B (id=20) and C (id=10) applied; A aborted cleanly on the id=10 overlap.
       assert(ids(dir) === (0L to 99L).filterNot(id => id == 10 || id == 20))
@@ -734,8 +773,14 @@ class RowLevelConcurrencySuite extends QueryTest
         s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
       // The loser read row 20 ("delete 5 if 20 exists"); the winner deleted row 20. Merging the
       // DVs would commit a read the winner invalidated.
-      assertConflict(
-        deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(EqualTo(idAttr, Literal(20L))))))
+      var result: scala.util.Try[Long] = null
+      val reasons = withCommitLock(enabled = false) {
+        notReconciledReasons {
+          result = deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(EqualTo(idAttr, Literal(20L)))))
+        }
+      }
+      assertConflict(result)
+      assert(reasons === Seq("readAffected"))
       assert(ids(dir) === (0L to 99L).filterNot(_ == 20L))
     }
   }
@@ -801,14 +846,134 @@ class RowLevelConcurrencySuite extends QueryTest
       sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
         s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
       var result: scala.util.Try[Long] = null
-      val scans = countReadCheckScans {
-        result = deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(EqualTo(idAttr, Literal(30L)))))
+      val scans = withCommitLock(enabled = false) {
+        countReadCheckScans {
+          result = deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(EqualTo(idAttr, Literal(30L)))))
+        }
       }
       assert(result.isSuccess, s"Expected the DVs to merge, got: $result")
       // A read that is not the DML's own condition is checked by scanning the shared file.
       assert(scans === 1)
       assert(ids(dir) === (0L to 99L).filterNot(id => id == 5L || id == 20L))
       assert(deletionVectorCardinalities(log) === Seq(2L))
+    }
+  }
+
+  test("a read-check job that fails leaves the files to the conflict") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+      val loserActions = deleteActionsFromCopy(dir, 5)
+      var result: scala.util.Try[Long] = null
+      val reasons = withCommitLock(enabled = false) {
+        notReconciledReasons {
+          withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true") {
+            val loser = log.startTransaction()
+            loser.filterFiles(Seq(EqualTo(idAttr, Literal(30L))))
+            sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 20")
+            // The shared data file disappears, so the scan of the loser's read fails.
+            val dataFile = log.update().allFiles.head().absolutePath(log)
+            assert(new File(dataFile.toUri).delete())
+            result = scala.util.Try(loser.commit(loserActions, DeltaOperations.ManualUpdate))
+          }
+        }
+      }
+      assertConflict(result)
+      assert(reasons === Seq("readCheckFailed"))
+    }
+  }
+
+  test("a read-check job whose condition fails on a row leaves the files to the conflict") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+      withSQLConf(SQLConf.ANSI_ENABLED.key -> "true") {
+        // Only data skipping evaluated this read; the read-check scan divides by zero on row 5.
+        val failingRead = spark.read.format("delta").load(dir.getAbsolutePath)
+          .where("10 / (id - 5) > 1").queryExecution.analyzed
+          .collectFirst { case f: Filter => f.condition }.get
+        var result: scala.util.Try[Long] = null
+        val reasons = withCommitLock(enabled = false) {
+          notReconciledReasons {
+            result = deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(failingRead)))
+          }
+        }
+        assertConflict(result)
+        assert(reasons === Seq("readCheckFailed"))
+      }
+    }
+  }
+
+  test("isCancellation: cancellations and interrupts, but not timeouts or other failures") {
+    val sc = spark.sparkContext
+    def cancelled(e: Throwable): Boolean = RowLevelConcurrencyResolution.isCancellation(e, sc)
+    val jobCancelled = new SparkException(
+      errorClass = "SPARK_JOB_CANCELLED",
+      messageParameters = Map("jobId" -> "1", "reason" -> ""),
+      cause = null)
+    assert(cancelled(jobCancelled))
+    assert(cancelled(new InterruptedIOException()))
+    assert(cancelled(new java.nio.channels.ClosedByInterruptException()))
+    assert(cancelled(new java.io.UncheckedIOException(new InterruptedIOException())))
+    assert(!cancelled(new java.net.SocketTimeoutException()))
+    assert(!cancelled(new java.util.concurrent.ExecutionException(
+      new java.net.SocketTimeoutException())))
+    assert(!cancelled(new java.io.IOException("unreadable")))
+    assert(!cancelled(new SparkException("Job aborted due to stage failure")))
+    // An interrupt of this thread, however the failure that it caused looks.
+    Thread.currentThread().interrupt()
+    try assert(cancelled(new java.io.IOException("unreadable"))) finally Thread.interrupted()
+  }
+
+  test("a cancelled read-check job is thrown as is, not as a conflict") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+      // A read whose predicate holds the read-check scan until its job is cancelled, or, should
+      // the cancellation never come, until one deadline for the whole scan.
+      ReadCheckBlocker.reached.drainPermits()
+      val deadline = System.currentTimeMillis() + timeout.toMillis
+      spark.udf.register("rlcBlockReadCheck", (_: Long) => {
+        ReadCheckBlocker.reached.release()
+        val task = TaskContext.get()
+        while (!task.isInterrupted() && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        true
+      })
+      var result: scala.util.Try[Long] = null
+      val reasons = try {
+        val blockingRead = spark.read.format("delta").load(dir.getAbsolutePath)
+          .where("rlcBlockReadCheck(id)").queryExecution.analyzed
+          .collectFirst { case f: Filter => f.condition }.get
+        val loserActions = deleteActionsFromCopy(dir, 5)
+        withCommitLock(enabled = false) {
+          notReconciledReasons {
+            withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true") {
+              val loser = log.startTransaction()
+              loser.filterFiles(Seq(blockingRead))
+              sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 20")
+              val canceller = new Thread(() => {
+                if (ReadCheckBlocker.reached.tryAcquire(timeout.toSeconds, TimeUnit.SECONDS)) {
+                  spark.sparkContext.cancelAllJobs()
+                }
+              })
+              canceller.start()
+              result = scala.util.Try(loser.commit(loserActions, DeltaOperations.ManualUpdate))
+              canceller.join()
+            }
+          }
+        }
+      } finally {
+        spark.sessionState.catalog.dropTempFunction("rlcBlockReadCheck", ignoreIfNotExists = true)
+      }
+      result.failed.get match {
+        case e: SparkException => assert(e.getCondition === "SPARK_JOB_CANCELLED", e)
+        case e => fail(s"Expected the cancelled job, got: $e", e)
+      }
+      assert(reasons.isEmpty)
+      assert(log.update().version === 2)
     }
   }
 
@@ -899,13 +1064,20 @@ class RowLevelConcurrencySuite extends QueryTest
       // written by another engine). The DVs themselves show the winner's DV lost a base row.
       val winnerActions = fileActionsFromCopy(dir)(restoreTo(_, 1))
       val loserActions = deleteActionsFromCopy(dir, 50)
-      val result = withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true") {
-        val loser = log.startTransaction()
-        loser.filterFiles(Seq(EqualTo(idAttr, Literal(50L))))
-        log.startTransaction().commit(winnerActions, DeltaOperations.ManualUpdate)
-        scala.util.Try(loser.commit(loserActions, DeltaOperations.ManualUpdate))
+      var result: scala.util.Try[Long] = null
+      // Without the commit lock, the loser's read waits for a scan, so the DV check decides.
+      val reasons = withCommitLock(enabled = false) {
+        notReconciledReasons {
+          result = withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true") {
+            val loser = log.startTransaction()
+            loser.filterFiles(Seq(EqualTo(idAttr, Literal(50L))))
+            log.startTransaction().commit(winnerActions, DeltaOperations.ManualUpdate)
+            scala.util.Try(loser.commit(loserActions, DeltaOperations.ManualUpdate))
+          }
+        }
       }
       assertConflict(result)
+      assert(reasons === Seq("deletedRowsRestored"))
       assert(ids(dir) === (0L to 99L).filterNot(_ == 1L))
     }
   }
@@ -924,10 +1096,16 @@ class RowLevelConcurrencySuite extends QueryTest
         rowLevelConcurrency = true)
       val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
 
-      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
-      ThreadUtils.awaitResult(futureB, Duration.Inf)
-      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      var e: SparkException = null
+      val reasons = withCommitLock(enabled = false) {
+        notReconciledReasons {
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+        }
+      }
       assertConcurrentModificationException(e)
+      assert(reasons === Seq("readNotCheckable"))
       assert(ids(dir) === (0L to 99L).filterNot(_ == 20L))
     }
   }
@@ -952,4 +1130,307 @@ class RowLevelConcurrencySuite extends QueryTest
       assert(deletionVectorCardinalities(log).contains(2L))
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Merged deletion vectors written like DML writes them
+  // ---------------------------------------------------------------------------
+
+  test("a merged DV that deletes every row removes the file") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir, numRows = 2)
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 0", rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 1", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      assert(ids(dir).isEmpty)
+      assert(log.update().allFiles.collect().isEmpty)
+      // Only the two DELETEs' own DV files: no merged DV is written for a removed file.
+      val dvFiles = dir.listFiles().map(_.getName)
+        .filter(name => name.contains("deletion_vector_") && name.endsWith(".bin"))
+      assert(dvFiles.length === 2, dvFiles.toSeq)
+    }
+  }
+
+  test("merged DV files use the table's random file prefixes") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.RANDOMIZE_FILE_PREFIXES.key}' = 'true')")
+      val txnA = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 10", rowLevelConcurrency = true)
+      val txnB = sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id = 20", rowLevelConcurrency = true)
+
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      ThreadUtils.awaitResult(futureA, Duration.Inf)
+      ThreadUtils.awaitResult(futureB, Duration.Inf)
+
+      val mergedDv = log.update().allFiles.collect().head.deletionVector
+      assert(mergedDv.cardinality === 2L)
+      assert(mergedDv.absolutePath(log.dataPath).getParent != log.dataPath)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bounded work during conflict detection
+  // ---------------------------------------------------------------------------
+
+  test("under the commit lock, a read that needs a scan is not reconciled") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      var result: scala.util.Try[Long] = null
+      var reasons = Seq.empty[String]
+      val scans = withCommitLock(enabled = true) {
+        countReadCheckScans {
+          reasons = notReconciledReasons {
+            result =
+              deleteFiveAfterRead(dir, log)(_.filterFiles(Seq(EqualTo(idAttr, Literal(30L)))))
+          }
+        }
+      }
+      assertConflict(result)
+      assert(reasons === Seq("readCheckSkippedUnderCommitLock"))
+      assert(scans === 0)
+    }
+  }
+
+  test("under the commit lock, a read that needs a scan aborts before any DV is decoded") {
+    withTempDir { dir =>
+      val log = createSingleFileTableWithDVs(dir)
+      // The loser deletes the same row as the winner, which the DV check would report, but its
+      // read is decided first, without decoding any deletion vector.
+      val loserActions = deleteActionsFromCopy(dir, 20)
+      var result: scala.util.Try[Long] = null
+      val reasons = withCommitLock(enabled = true) {
+        notReconciledReasons {
+          result = withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true") {
+            val loser = log.startTransaction()
+            loser.filterFiles(Seq(EqualTo(idAttr, Literal(30L))))
+            sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 20")
+            scala.util.Try(loser.commit(loserActions, DeltaOperations.ManualUpdate))
+          }
+        }
+      }
+      assertConflict(result)
+      assert(reasons === Seq("readCheckSkippedUnderCommitLock"))
+    }
+  }
+
+  test("more shared files than rowLevelConcurrency.maxCandidateFiles are not reconciled") {
+    withTempDir { dir =>
+      spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      spark.range(start = 100, end = 200, step = 1, numPartitions = 1)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+      val txnA =
+        sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id IN (20, 120)", rowLevelConcurrency = true)
+      val txnB =
+        sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id IN (10, 110)", rowLevelConcurrency = true)
+
+      var e: SparkException = null
+      val reasons =
+        withSQLConf(DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_MAX_CANDIDATE_FILES.key -> "1") {
+          notReconciledReasons {
+            val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+            ThreadUtils.awaitResult(futureB, Duration.Inf)
+            e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+          }
+        }
+      assertConcurrentModificationException(e)
+      // The two shared files are left to the file-level checks, so none is set aside.
+      assert(reasons === Seq("tooManyCandidateFiles"))
+      assert(ids(dir) === (0L to 199L).filterNot(id => id == 10L || id == 110L))
+    }
+  }
+
+  for (overlap <- Seq(false, true)) {
+    test(s"concurrent DELETEs on more shared files than one merge batch (overlap: $overlap)") {
+      withTempDir { dir =>
+        // 70 files of 3 rows each, more than the 64 merged per batch; both DELETEs touch every
+        // file and leave one row in it.
+        spark.range(start = 0, end = 210, step = 1, numPartitions = 70)
+          .write.format("delta").mode("append").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        assert(log.update().allFiles.count() === 70)
+        val deletedByB = if (overlap) "id % 3 = 1 OR id = 150" else "id % 3 = 1"
+        val txnA =
+          sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id % 3 = 0", rowLevelConcurrency = true)
+        val txnB =
+          sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE $deletedByB", rowLevelConcurrency = true)
+
+        var resultA: scala.util.Try[Array[Row]] = null
+        val reasons = notReconciledReasons {
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          resultA = scala.util.Try(ThreadUtils.awaitResult(futureA, Duration.Inf))
+        }
+        if (overlap) {
+          assertConcurrentModificationException(resultA.failed.get.asInstanceOf[SparkException])
+          assert(reasons === Seq("sameRowDeleted"))
+          assert(ids(dir) === (0L to 209L).filterNot(id => id % 3 == 1 || id == 150))
+        } else {
+          assert(resultA.isSuccess, resultA)
+          assert(reasons.isEmpty)
+          assert(ids(dir) === (0L to 209L).filter(_ % 3 == 2))
+          assert(deletionVectorCardinalities(log) === Seq.fill(70)(2L))
+        }
+      }
+    }
+  }
+
+  test("a merged deletion vector that cannot be written leaves the file to the conflict") {
+    withTempDir { tempDir =>
+      withSQLConf(
+          "fs.faildvwrites.impl" -> classOf[FailDVWritesLocalFileSystem].getName,
+          "fs.AbstractFileSystem.faildvwrites.impl" ->
+            classOf[FailDVWritesAbstractFileSystem].getName) {
+        val path = s"${FailDVWritesLocalFileSystem.scheme}://${tempDir.getCanonicalPath}"
+        spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
+          .write.format("delta").save(path)
+        val log = DeltaLog.forTable(spark, path)
+        val txnA = sqlTxn(s"DELETE FROM delta.`$path` WHERE id = 10", rowLevelConcurrency = true)
+        val txnB = sqlTxn(s"DELETE FROM delta.`$path` WHERE id = 20", rowLevelConcurrency = true)
+
+        var e: SparkException = null
+        val reasons = try {
+          notReconciledReasons {
+            val Seq(futureA, futureB) = runFunctionsWithOrderingFromObserver(Seq(txnA, txnB)) {
+              case (observerA :: observerB :: Nil) =>
+                unblockUntilPreCommit(observerA)
+                busyWaitFor(observerA.phases.preparePhase.hasEntered, timeout)
+                unblockAllPhases(observerB)
+                busyWaitFor(observerB.phases.postCommitPhase.hasLeft, timeout)
+                // DV files can no longer be created once A checks conflicts.
+                FailDVWritesLocalFileSystem.failDeletionVectorWrites = true
+                unblockCommit(observerA)
+            }
+            ThreadUtils.awaitResult(futureB, Duration.Inf)
+            e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+          }
+        } finally {
+          FailDVWritesLocalFileSystem.failDeletionVectorWrites = false
+        }
+        assertConcurrentModificationException(e)
+        assert(reasons === Seq("deletionVectorWriteFailed"))
+        // A did not commit.
+        assert(log.update().version === 1)
+      }
+    }
+  }
+
+  for (numFiles <- Seq(1, 3)) {
+    test(s"a winner's unreadable deletion vector leaves the files to the conflict " +
+        s"($numFiles shared files)") {
+      withTempDir { dir =>
+        spark.range(start = 0, end = 10 * numFiles, step = 1, numPartitions = numFiles)
+          .write.format("delta").mode("append").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        assert(log.update().allFiles.count() === numFiles)
+        val txnA =
+          sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id % 10 = 0", rowLevelConcurrency = true)
+        val txnB =
+          sqlTxn(s"DELETE FROM ${tableRef(dir)} WHERE id % 10 = 1", rowLevelConcurrency = true)
+
+        var e: SparkException = null
+        val reasons = notReconciledReasons {
+          val Seq(futureA, futureB) = runFunctionsWithOrderingFromObserver(Seq(txnA, txnB)) {
+            case (observerA :: observerB :: Nil) =>
+              unblockUntilPreCommit(observerA)
+              busyWaitFor(observerA.phases.preparePhase.hasEntered, timeout)
+              unblockAllPhases(observerB)
+              busyWaitFor(observerB.phases.postCommitPhase.hasLeft, timeout)
+              // B's deletion vector files disappear before A checks conflicts.
+              val dvFiles = log.update().allFiles.collect().toSeq
+                .map(add => new File(add.deletionVector.absolutePath(log.dataPath).toUri))
+                .distinct
+              assert(dvFiles.forall(_.delete()))
+              unblockCommit(observerA)
+          }
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+        }
+        // The conflict A gets without row-level concurrency, whatever the number of files.
+        assertConcurrentModificationException(e)
+        assert(reasons === Seq("deletionVectorUnreadable"))
+        // A did not commit.
+        assert(log.update().version === 1)
+      }
+    }
+  }
+
+  private val partitionAttr = AttributeReference("p", IntegerType)()
+
+  for ((readPartition, reconciled) <- Seq(1 -> true, 0 -> false)) {
+    test(s"a read of partition $readPartition is checked on the partition values of the " +
+        s"winner's deletes in partition 0 (reconciled: $reconciled)") {
+      withTempDir { dir =>
+        spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
+          .withColumn("p", lit(0))
+          .write.partitionBy("p").format("delta").mode("append").save(dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        var result: scala.util.Try[Long] = null
+        var reasons = Seq.empty[String]
+        val scans = countReadCheckScans {
+          reasons = notReconciledReasons {
+            result = deleteFiveAfterRead(dir, log)(
+              _.filterFiles(Seq(EqualTo(partitionAttr, Literal(readPartition)))))
+          }
+        }
+        // Decided from the files' partition values even under the commit lock, without a scan.
+        assert(scans === 0)
+        if (reconciled) {
+          assert(result.isSuccess, s"Expected the DVs to merge, got: $result")
+          assert(ids(dir) === (0L to 99L).filterNot(id => id == 5L || id == 20L))
+        } else {
+          assertConflict(result)
+          assert(reasons === Seq("readAffected"))
+        }
+      }
+    }
+  }
 }
+
+/** Signals that the read-check scan of a test reached its blocking read predicate. */
+private object ReadCheckBlocker {
+  val reached = new Semaphore(0)
+}
+
+/** A local file system that fails to create DV files while `failDeletionVectorWrites` is set. */
+class FailDVWritesLocalFileSystem extends RawLocalFileSystem {
+  private var uri: URI = _
+
+  override def getScheme: String = FailDVWritesLocalFileSystem.scheme
+
+  override def initialize(name: URI, conf: Configuration): Unit = {
+    uri = URI.create(name.getScheme + ":///")
+    super.initialize(name, conf)
+  }
+
+  // RawLocalFileSystem's constructor calls this before `initialize`.
+  override def getUri(): URI = if (uri == null) super.getUri else uri
+
+  override def create(
+      f: Path,
+      overwrite: Boolean,
+      bufferSize: Int,
+      replication: Short,
+      blockSize: Long,
+      progress: Progressable): FSDataOutputStream = {
+    if (FailDVWritesLocalFileSystem.failDeletionVectorWrites &&
+        f.getName.contains("deletion_vector_")) {
+      throw new IOException(s"Injected failure creating $f")
+    }
+    super.create(f, overwrite, bufferSize, replication, blockSize, progress)
+  }
+}
+
+class FailDVWritesAbstractFileSystem(uri: URI, conf: Configuration)
+  extends DelegateToFileSystem(
+    uri, new FailDVWritesLocalFileSystem, conf, FailDVWritesLocalFileSystem.scheme, false)
+
+object FailDVWritesLocalFileSystem {
+  val scheme = "faildvwrites"
+  @volatile var failDeletionVectorWrites = false
+}
+
