@@ -16,6 +16,8 @@
 package org.apache.spark.sql.delta.v2.read;
 
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
+import static org.apache.spark.sql.delta.v2.read.DeltaSourceTestUtils.dsv1FileChangesWithRateLimit;
+import static org.apache.spark.sql.delta.v2.read.DeltaSourceTestUtils.updateSnapshot;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.CommitActions;
@@ -250,7 +252,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     setup.setup(tableName, tempDir);
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
-    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+    long latestVersion = updateSnapshot(deltaLog).version();
     // For non-initial-snapshot, start from v2 (v0=CREATE, v1=ALTER CDF, v2+=INSERTs)
     long fromVersion = isInitialSnapshot ? latestVersion : 2;
 
@@ -261,7 +263,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     DeltaSource deltaSource = createDeltaSource(deltaLog, tablePath, cdcOptions);
     List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files = new ArrayList<>();
     try (ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
-        deltaSource.getFileChangesWithRateLimit(
+        dsv1FileChangesWithRateLimit(
+            deltaSource,
             fromVersion,
             DeltaSourceOffset.BASE_INDEX(),
             isInitialSnapshot,
@@ -308,7 +311,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     // v0=CREATE, v1=ALTER CDF, v2=INSERT, v3=INSERT
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
-    deltaLog.update(false, Option.empty(), Option.empty());
+    updateSnapshot(deltaLog);
 
     // Unlimited: DSv1/DSv2 parity, should see data files from both commits (v2 and v3)
     List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Unlimited =
@@ -386,7 +389,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (1, 'A'), (2, 'B')", tableName);
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
-    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+    long latestVersion = updateSnapshot(deltaLog).version();
     long insertVersion = latestVersion;
 
     // Read all files without rate limit for reference
@@ -445,7 +448,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (2, 'B')", tableName); // v4
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
-    deltaLog.update(false, Option.empty(), Option.empty());
+    updateSnapshot(deltaLog);
 
     // Probe file sizes to craft a byte budget that admits v2 but rejects v3's batch.
     List<IndexedFile> probeFiles =
@@ -670,7 +673,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     writeSyntheticInferredCDCCommit(tablePath, commitVersion);
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
-    deltaLog.update(false, Option.empty(), Option.empty());
+    updateSnapshot(deltaLog);
 
     // DSv1/DSv2 parity: index assignment must match DSv1's zipWithIndex ordering
     List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files =
@@ -763,7 +766,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (3, 'C')", tableName);
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
-    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+    long latestVersion = updateSnapshot(deltaLog).version();
     Optional<Integer> maxFiles = Optional.of(1);
 
     // Call 1: from BASE_INDEX, should get 1 file
@@ -1106,7 +1109,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     DeltaSource deltaSource = createDeltaSource(deltaLog, tablePath, cdcOptions);
     List<org.apache.spark.sql.delta.sources.IndexedFile> files = new ArrayList<>();
     try (ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
-        deltaSource.getFileChangesWithRateLimit(
+        dsv1FileChangesWithRateLimit(
+            deltaSource,
             fromVersion,
             fromIndex,
             isInitialSnapshot,
@@ -1173,9 +1177,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
   private DeltaSource createDeltaSource(DeltaLog deltaLog, String tablePath, DeltaOptions options) {
     Seq<Expression> emptySeq = JavaConverters.asScalaBuffer(new ArrayList<Expression>()).toList();
-    Snapshot snapshot =
-        deltaLog.update(
-            /* isForce= */ false, /* timestamp= */ Option.empty(), /* version= */ Option.empty());
+    Snapshot snapshot = updateSnapshot(deltaLog);
     return new DeltaSource(
         spark,
         deltaLog,
@@ -1356,7 +1358,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     writeSyntheticSamePathNoDVCommit(tablePath, commitVersion);
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
-    deltaLog.update(false, Option.empty(), Option.empty());
+    updateSnapshot(deltaLog);
 
     DeltaV2MicroBatchStream stream = createStream(tablePath);
     CommitActions commit = getCommitActions(tablePath, commitVersion);
