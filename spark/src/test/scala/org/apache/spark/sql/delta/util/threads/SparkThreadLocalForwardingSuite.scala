@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.util.threads
 
 import java.util.Properties
-import java.util.concurrent.{LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
+import java.util.concurrent.{Callable, CyclicBarrier, LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
 
 import scala.concurrent.{ExecutionContext, ExecutionContextExecutor, Future}
 import scala.concurrent.duration._
@@ -146,6 +146,49 @@ class SparkThreadLocalForwardingSuite extends SparkFunSuite {
         assert(sc.getLocalProperty("test2") == "good")
       }
     } finally {
+      sc.stop()
+    }
+  }
+
+  test("a capture copies every local property into each run") {
+    val sc = SparkContext.getOrCreate(new SparkConf().setAppName("test").setMaster("local"))
+    try {
+      (1 to 100).foreach(i => sc.setLocalProperty(s"key$i", s"value$i"))
+      val submitterProperties = sc.getLocalProperties
+      val threadLocals = CapturedSparkThreadLocals()
+      threadLocals.runWithCaptured {
+        assert(sc.getLocalProperties ne submitterProperties)
+        assert(sc.getLocalProperties.size == submitterProperties.size)
+        (1 to 100).foreach(i => assert(sc.getLocalProperty(s"key$i") == s"value$i"))
+      }
+      assert(sc.getLocalProperties eq submitterProperties)
+    } finally {
+      sc.stop()
+    }
+  }
+
+  test("concurrent runs of one capture change only their own local properties") {
+    val sc = SparkContext.getOrCreate(new SparkConf().setAppName("test").setMaster("local"))
+    val executor = ThreadUtils.newDaemonFixedThreadPool(2, "capture-runs")
+    try {
+      sc.setLocalProperty("shared", "captured")
+      val threadLocals = CapturedSparkThreadLocals()
+      val bothChanged = new CyclicBarrier(2)
+      val runs = (1 to 2).map { i =>
+        executor.submit(new Callable[(String, String)] {
+          override def call(): (String, String) = threadLocals.runWithCaptured {
+            val before = sc.getLocalProperty("shared")
+            sc.setLocalProperty("shared", s"run $i")
+            bothChanged.await(10, TimeUnit.SECONDS)
+            (before, sc.getLocalProperty("shared"))
+          }
+        })
+      }
+      assert(runs.map(_.get(10, TimeUnit.SECONDS)) ==
+        Seq(("captured", "run 1"), ("captured", "run 2")))
+      assert(sc.getLocalProperty("shared") == "captured")
+    } finally {
+      ThreadUtils.shutdown(executor)
       sc.stop()
     }
   }
