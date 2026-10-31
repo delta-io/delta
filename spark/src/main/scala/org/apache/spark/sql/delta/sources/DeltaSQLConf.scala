@@ -616,6 +616,28 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED =
+    buildConf("conflictDetection.dataSkipping.enabled")
+      .internal()
+      .doc(
+        """When enabled, conflict detection uses column-statistics data skipping to exclude
+          |concurrently-added files whose stats prove they cannot match the current transaction's
+          |read predicates, reducing unnecessary conflicts (especially on unpartitioned tables).
+          |One-way safe: a file is excluded only when its stats prove no match.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_CONFLICT_DETECTION_DATA_SKIPPING_BATCH_SIZE =
+    buildConf("conflictDetection.dataSkipping.batchSize")
+      .internal()
+      .doc(
+        """Number of concurrently-added files evaluated per batch by conflict-time data skipping.
+          |Each batch's stats are parsed and filtered in full, so smaller batches stop sooner once a
+          |conflicting file is found.""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "must be positive")
+      .createWithDefault(1000)
+
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("properties.defaults.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
