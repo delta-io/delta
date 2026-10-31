@@ -16,10 +16,12 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.File
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.sources.DeltaLogStreamingBackend
+import org.apache.spark.sql.delta.sources.{DeltaLogStreamingBackend, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
@@ -60,10 +62,55 @@ class DeltaLogStreamingBackendSuite
         canReturnLastCommit = true,
         mustBeRecreatable = true,
         canReturnEarliestCommit = false))
+      assertCatalogTableReads(1)(backend.getChangesIterator(0, failOnDataLoss = true).toList)
       // These reads have never used the catalog table.
       assertCatalogTableReads(0)(backend.unsafeVolatileSnapshot)
       assertCatalogTableReads(0)(backend.checkVersionExists(
         version = 1, mustBeRecreatable = false, allowOutOfRange = false))
+    }
+  }
+
+  test("getChangesIterator returns the commits from the start version") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      // Versions 0, 1 and 2.
+      (0 until 3).foreach { _ =>
+        spark.range(1).write.format(writeFormat).mode("append").save(path)
+      }
+      val backend = new DeltaLogStreamingBackend(DeltaLog.forTable(spark, path), () => None)
+
+      def versions(startVersion: Long): Seq[Long] =
+        backend.getChangesIterator(startVersion, failOnDataLoss = true).map(_.version).toList
+
+      assert(versions(0) === Seq(0, 1, 2))
+      assert(versions(1) === Seq(1, 2))
+      // A start after the latest version returns no commits.
+      assert(versions(3).isEmpty)
+    }
+  }
+
+  test("getChangesIterator with a missing commit file") {
+    withSQLConf(DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS.key -> "false") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        (0 until 5).foreach { _ =>
+          spark.range(1).write.format(writeFormat).mode("append").save(path)
+        }
+        val deltaLog = DeltaLog.forTable(spark, path)
+        deltaLog.checkpoint()
+        assert(new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 2).toUri).delete())
+        val backend = new DeltaLogStreamingBackend(deltaLog, () => None)
+
+        def versions(failOnDataLoss: Boolean): Seq[Long] =
+          backend.getChangesIterator(startVersion = 0, failOnDataLoss).map(_.version).toList
+
+        val e = intercept[DeltaIllegalStateException] {
+          versions(failOnDataLoss = true)
+        }
+        checkError(e, "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
+          Map("startVersion" -> "2", "earliestVersion" -> "3", "option" -> "failOnDataLoss"))
+        assert(versions(failOnDataLoss = false) === Seq(0, 1, 3, 4))
+      }
     }
   }
 }

@@ -146,7 +146,6 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     return new MetadataEvolutionHandler(
         spark,
         "test-table-id",
-        "/tmp/fake-table",
         THROWING_SNAPSHOT_MANAGER,
         new DeltaV2StreamingBackend(THROWING_SNAPSHOT_MANAGER),
         defaultEngine,
@@ -203,7 +202,6 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new MetadataEvolutionHandler(
             spark,
             "test-table-id",
-            tablePath,
             snapshotManager,
             new DeltaV2StreamingBackend(snapshotManager),
             defaultEngine,

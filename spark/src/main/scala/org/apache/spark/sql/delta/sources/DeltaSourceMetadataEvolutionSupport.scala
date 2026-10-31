@@ -156,8 +156,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       startVersion: Long,
       endVersion: Long
   ): ClosableIterator[(Long, Action)] = {
-    deltaLog.getSingleCommitIterator(
-      startVersion, catalogTableOpt, options.failOnDataLoss).takeWhile {
+    streamingBackend.getChangesIterator(startVersion, options.failOnDataLoss).takeWhile {
       commit => commit.version <= endVersion
     }.flatMapWithClose { commit =>
       DeltaSource.createRewindableActionIterator(spark, commit)

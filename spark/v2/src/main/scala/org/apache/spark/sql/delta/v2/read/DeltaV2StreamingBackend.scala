@@ -20,7 +20,7 @@ import java.sql.Timestamp
 
 import scala.jdk.CollectionConverters._
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, Snapshot, VersionNotFoundException}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaSingleCommit, Snapshot, VersionNotFoundException}
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend
 import org.apache.spark.sql.delta.v2.exception.{VersionNotFoundException => V2VersionNotFoundException}
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
@@ -84,4 +84,10 @@ private[read] class DeltaV2StreamingBackend(snapshotManager: DeltaV2SnapshotMana
           e.getTablePath, e.getUnsupportedFeatures.asScala)
     }
   }
+
+  // DeltaV2MicroBatchStream still reads its commits itself, so nothing calls this yet.
+  override def getChangesIterator(
+      startVersion: Long,
+      failOnDataLoss: Boolean): Iterator[DeltaSingleCommit] =
+    throw new UnsupportedOperationException("DeltaV2StreamingBackend does not list commits yet")
 }
