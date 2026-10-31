@@ -786,7 +786,8 @@ case class DeltaSource(
       //    in that case, we need to recompute the start snapshot and evolve the schema if needed
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
-      streamingBackend.getChangesIterator(startVersion, options.failOnDataLoss).flatMapWithClose {
+      streamingBackend.getSingleCommitIterator(
+        startVersion, options.failOnDataLoss).flatMapWithClose {
         commit =>
           val version = commit.version
           // First pass reads the whole commit and closes the iterator.
