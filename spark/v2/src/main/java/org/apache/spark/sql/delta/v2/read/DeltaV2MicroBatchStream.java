@@ -304,7 +304,6 @@ class DeltaV2MicroBatchStream
         new MetadataEvolutionHandler(
             spark,
             tableId,
-            this.tablePath,
             snapshotManager,
             streamingBackend,
             engine,
@@ -1568,18 +1567,12 @@ class DeltaV2MicroBatchStream
         // intermediate schema changes against the stream read schema to capture corners cases such
         // as rename and rename back.
         if (batchEndVersion != null) {
-          for (Map.Entry<Long, io.delta.kernel.internal.actions.Metadata> entry :
-              StreamingHelper.collectMetadataActionsFromRangeUnsafe(
-                      batchStartVersion,
-                      Optional.of(batchEndVersion),
-                      snapshotManager,
-                      engine,
-                      snapshotAtSourceInit.getPath())
+          for (Map.Entry<Long, Metadata> entry :
+              StreamingHelper.collectMetadataActions(
+                      batchStartVersion, Optional.of(batchEndVersion), snapshotManager, engine)
                   .entrySet()) {
             long version = entry.getKey();
-            // TODO: Replace StreamingHelper's Kernel metadata range scan with V1 action
-            // iteration to remove this conversion.
-            Metadata metadata = KernelActionUtils$.MODULE$.metadataFromKernel(entry.getValue());
+            Metadata metadata = entry.getValue();
             checkReadIncompatibleSchemaChanges(
                 metadata,
                 version,
