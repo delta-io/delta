@@ -29,7 +29,9 @@ import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.VacuumCommand
+import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLockingTransactionExecutionObserver => TransactionObserver}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -53,7 +55,7 @@ import org.apache.spark.sql.functions.{col, expr, lit}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
-import org.apache.spark.util.ManualClock
+import org.apache.spark.util.{ManualClock, ThreadUtils}
 
 trait DeltaVacuumSuiteBase extends QueryTest
   with SharedSparkSession
@@ -502,7 +504,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 }
 
-class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
+class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
+  with TransactionExecutionTestMixin with PhaseLockingTestMixin {
   import testImplicits._
 
   override def sparkConf: SparkConf = {
@@ -1457,6 +1460,119 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
     retentionHours = 20, // vacuum will not delete any files
     timeGapHours = 10
   )
+
+  /** Writes a table at `path` whose first data file is removed, so VACUUM can delete it. */
+  private def createTableWithRemovedFile(path: String): Unit = {
+    spark.range(10).repartition(1).write.format("delta").save(path)
+    spark.range(10).repartition(1).write.format("delta").mode("overwrite").save(path)
+  }
+
+  private def numDataFiles(dir: File): Int = dir.listFiles().count(_.getName.endsWith(".parquet"))
+
+  private def latestOperations(path: String, numCommits: Int): Seq[String] =
+    io.delta.tables.DeltaTable.forPath(spark, path).history(numCommits)
+      .select("operation").as[String].collect().toSeq
+
+  /**
+   * Runs VACUUM RETAIN 0 HOURS on the table at `path`. Holds each of the first `numConflicts`
+   * attempts to make the VACUUM START commit, or the VACUUM END commit if `holdEndCommit` is
+   * true, just before it commits, changes the table metadata so that the attempt fails, and then
+   * lets the attempt continue. Later attempts are not held.
+   */
+  private def vacuumWithConcurrentMetadataChanges(
+      path: String,
+      holdEndCommit: Boolean,
+      numConflicts: Int): Unit = {
+    val executor = ThreadUtils.newDaemonSingleThreadExecutor("vacuum-commit-retry")
+    try {
+      val (startObserver, vacuumFuture) =
+        runQueryWithObserver("vacuum", executor, s"VACUUM '$path' RETAIN 0 HOURS")
+      // Each attempt runs in a new transaction, so use one observer per transaction up to the last
+      // held attempt. Do not observe the transactions after it, such as a retry that commits.
+      val numObservedTxns = if (holdEndCommit) numConflicts + 1 else numConflicts
+      val observers = startObserver +: (2 to numObservedTxns).map { i =>
+        new TransactionObserver(OptimisticTransactionPhases.forName(s"vacuum-txn-$i"))
+      }
+      observers.zip(observers.tail).foreach { case (observer, nextObserver) =>
+        observer.setNextObserver(nextObserver, autoAdvance = true)
+      }
+      observers.last.setNextObserver(NoOpTransactionExecutionObserver, autoAdvance = true)
+      if (holdEndCommit) {
+        prepareAndCommitWithNextObserverSet(startObserver)
+      }
+      observers.takeRight(numConflicts).zipWithIndex.foreach { case (observer, attempt) =>
+        unblockUntilPreCommit(observer)
+        waitForPrecommit(observer)
+        sql(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES ('vacuumCommitRetryTest' = '$attempt')")
+        unblockCommit(observer)
+        observer.phases.postCommitPhase.leave()
+      }
+      ThreadUtils.awaitResult(vacuumFuture, timeout)
+    } finally {
+      executor.shutdownNow()
+    }
+  }
+
+  private def withVacuumCommitRetryConfs(maxRetries: Int)(f: => Unit): Unit = {
+    withSQLConf(
+        DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_VACUUM_COMMIT_MAX_RETRIES.key -> maxRetries.toString) {
+      f
+    }
+  }
+
+  for (holdEndCommit <- DeltaTestUtils.BOOLEAN_DOMAIN) {
+    val commitName = if (holdEndCommit) "VACUUM END" else "VACUUM START"
+    test(s"$commitName commit is retried after a concurrent metadata change") {
+      withVacuumCommitRetryConfs(maxRetries = 3) {
+        withTempDir { dir =>
+          val path = dir.getAbsolutePath
+          createTableWithRemovedFile(path)
+          vacuumWithConcurrentMetadataChanges(path, holdEndCommit, numConflicts = 1)
+          val expectedOperations = if (holdEndCommit) {
+            Seq("VACUUM END", "SET TBLPROPERTIES", "VACUUM START")
+          } else {
+            Seq("VACUUM END", "VACUUM START", "SET TBLPROPERTIES")
+          }
+          assert(latestOperations(path, numCommits = 3) === expectedOperations)
+          assert(numDataFiles(dir) === 1)
+        }
+      }
+    }
+  }
+
+  test("VACUUM START commit is not retried when retries are disabled") {
+    withVacuumCommitRetryConfs(maxRetries = 0) {
+      withTempDir { dir =>
+        val path = dir.getAbsolutePath
+        createTableWithRemovedFile(path)
+        val e = intercept[SparkException] {
+          vacuumWithConcurrentMetadataChanges(path, holdEndCommit = false, numConflicts = 1)
+        }
+        assert(e.getCause.isInstanceOf[MetadataChangedException], e)
+        assert(latestOperations(path, numCommits = 1) === Seq("SET TBLPROPERTIES"))
+        assert(numDataFiles(dir) === 2)
+      }
+    }
+  }
+
+  test("VACUUM START commit fails when every retry conflicts") {
+    withVacuumCommitRetryConfs(maxRetries = 3) {
+      withTempDir { dir =>
+        val path = dir.getAbsolutePath
+        createTableWithRemovedFile(path)
+        // The first attempt and all 3 retries conflict. VACUUM must give up instead of retrying
+        // forever: a 5th attempt would not be held, so it would commit and VACUUM would succeed.
+        val e = intercept[SparkException] {
+          vacuumWithConcurrentMetadataChanges(path, holdEndCommit = false, numConflicts = 4)
+        }
+        assert(e.getCause.isInstanceOf[MetadataChangedException], e)
+        assert(latestOperations(path, numCommits = 4) === Seq.fill(4)("SET TBLPROPERTIES"))
+        assert(numDataFiles(dir) === 2)
+      }
+    }
+  }
 
   test(s"vacuum sql syntax checks") {
     val tableName = "testTable"
