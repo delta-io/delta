@@ -854,6 +854,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createOptional
 
+  val DELTA_VACUUM_COMMIT_MAX_RETRIES =
+    buildConf("vacuum.commit.maxRetries")
+      .internal()
+      .doc("Maximum number of times VACUUM retries its VACUUM START or VACUUM END commit in a " +
+        "new transaction after the commit fails because a concurrent commit changed the table " +
+        "metadata. 0 disables the retries.")
+      .intConf
+      .checkValue(_ >= 0, "vacuum.commit.maxRetries must be non-negative")
+      .createWithDefault(3)
+
   val LITE_VACUUM_ENABLED =
     buildConf("vacuum.lite.enabled")
       .doc("Allows Vacuum to be run in Lite mode")
