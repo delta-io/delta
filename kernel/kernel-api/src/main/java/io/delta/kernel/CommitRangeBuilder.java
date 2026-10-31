@@ -49,6 +49,26 @@ public interface CommitRangeBuilder {
   CommitRangeBuilder withEndBoundary(CommitBoundary endBoundary);
 
   /**
+   * Configures the builder to end the commit range at the given version, or at the latest available
+   * version if the table does not have that version yet.
+   *
+   * <p>This lets a caller read the commits of a table in bounded chunks. The log is listed only up
+   * to {@code version}, and building the range does not fail when the latest version is lower. This
+   * differs from {@link #withEndBoundary(CommitBoundary)} with a version-based boundary, which
+   * requires that exact version to exist.
+   *
+   * <p>This cannot be combined with {@link #withEndBoundary(CommitBoundary)}. The query end
+   * boundary of the resulting range ({@link CommitRange#getQueryEndBoundary()}) is empty, and
+   * {@link CommitRange#getEndVersion()} returns the resolved end version. If {@link
+   * #withMaxCatalogVersion(long)} is also used, the end version is the lower of the two versions.
+   *
+   * @param version the highest version the commit range may end at (must be {@code >= 0})
+   * @return this builder instance configured with the specified maximum end version
+   * @throws IllegalArgumentException if version is negative
+   */
+  CommitRangeBuilder withMaxEndVersion(long version);
+
+  /**
    * Provides parsed log data to optimize the commit range construction.
    *
    * <p><strong>Note:</strong> If no end boundary is provided via {@link
