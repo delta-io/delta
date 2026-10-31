@@ -435,7 +435,7 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
   override private[v2] def snapshotManager(
       catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
     throw new UnsupportedOperationException("stub")
-  override private[v2] def getChangesIterator(
+  override private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
       catalogTableOpt: Option[CatalogTable],

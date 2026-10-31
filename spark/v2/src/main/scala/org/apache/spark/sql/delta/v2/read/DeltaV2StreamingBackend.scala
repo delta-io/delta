@@ -86,7 +86,7 @@ private[read] class DeltaV2StreamingBackend(snapshotManager: DeltaV2SnapshotMana
   }
 
   // DeltaV2MicroBatchStream still reads its commits itself, so nothing calls this yet.
-  override def getChangesIterator(
+  override def getSingleCommitIterator(
       startVersion: Long,
       failOnDataLoss: Boolean): Iterator[DeltaSingleCommit] =
     throw new UnsupportedOperationException("DeltaV2StreamingBackend does not list commits yet")

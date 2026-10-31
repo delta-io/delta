@@ -61,7 +61,7 @@ object DeltaFileProviderUtils extends DeltaLogging {
     // Pass `failOnDataLoss = false` as we do an explicit contiguity validation on the result below
     // to identify that there are no gaps.
     val commits = deltaLog
-      .getChangesIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss = false)
+      .getSingleCommitIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss = false)
       .toSeq
     // Verify that we got the entire range requested.
     if (commits.size.toLong != endVersion - startVersion + 1) {
