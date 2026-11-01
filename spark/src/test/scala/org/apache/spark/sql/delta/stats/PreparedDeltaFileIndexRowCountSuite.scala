@@ -16,11 +16,13 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaTable}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaTable, DeltaTestUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.catalyst.expressions.{Expression, GreaterThanOrEqual}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -144,6 +146,42 @@ class PreparedDeltaFileIndexRowCountSuite
         assert(scan.scanned.logicalRows.isEmpty,
           "scanned.logicalRows should be None when stats are missing")
       }
+    }
+  }
+
+  test("matchingFiles reuses the prepared files when only unused filters are omitted") {
+    withTempDir { dir =>
+      spark.range(10).selectExpr("id AS a", "id % 3 AS b", "id % 2 AS p")
+        .write.format("delta").partitionBy("p").save(dir.getAbsolutePath)
+
+      DeltaLog.clearCache()
+
+      // Data skipping can use neither `b <= a + 1` nor `p <= a + 1`: each compares two columns.
+      val df = spark.read.format("delta").load(dir.getAbsolutePath)
+        .where("a >= 2 AND b <= a + 1 AND p <= a + 1")
+      val index = df.queryExecution.optimizedPlan.collectFirst {
+        case DeltaTable(prepared: PreparedDeltaFileIndex) => prepared
+      }.get
+      val prepared = index.preparedScan
+      val (mixedFilters, otherUnusedFilters) =
+        prepared.unusedFilters.toSeq.partition(_.references.exists(_.name == "p"))
+      assert(mixedFilters.size == 1 && otherUnusedFilters.size == 1)
+
+      def reusesPreparedFiles(dataFilters: Seq[Expression]): Boolean = {
+        val events = DeltaTestUtils.collectUsageLogs(
+            "delta.preparedDeltaFileIndex.reuseSkippingResult") {
+          index.matchingFiles(prepared.partitionFilters.toSeq, dataFilters)
+        }
+        assert(events.size == 1)
+        val eventData = JsonUtils.fromJson[Map[String, String]](events.head.blob)
+        eventData("reused") == "true"
+      }
+
+      // The physical scan passes every filter except `p <= a + 1`, which reads a partition column.
+      val scanDataFilters = prepared.dataFilters.toSeq ++ otherUnusedFilters
+      assert(reusesPreparedFiles(scanDataFilters))
+      // Leaving out `a >= 2`, which skipping used, selects the files again.
+      assert(!reusesPreparedFiles(scanDataFilters.filterNot(_.isInstanceOf[GreaterThanOrEqual])))
     }
   }
 
