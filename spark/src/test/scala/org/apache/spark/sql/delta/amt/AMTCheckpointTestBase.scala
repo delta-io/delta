@@ -74,6 +74,8 @@ trait AMTCheckpointTestBase
   protected def amtProvider(snapshot: Snapshot): Option[AMTCheckpointProvider] =
     snapshot.checkpointProvider match {
       case amt: AMTCheckpointProvider => Some(amt)
+      case lazyAmt: LazyCompleteAMTCheckpointProvider =>
+        Some(lazyAmt.underlyingCheckpointProvider)
       case _ => None
     }
 
