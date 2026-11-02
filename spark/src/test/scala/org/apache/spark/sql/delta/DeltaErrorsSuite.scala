@@ -3163,13 +3163,15 @@ trait DeltaErrorsSuiteBase
     }
   }
 
-  gridTest("streaming deletion vectors require restart error")(Seq(10L, 11L)) { version =>
-    checkError(
-      DeltaErrors.streamingDeletionVectorsNotReadableException(
-        version, snapshotAtSourceInitVersion = 10L),
-      "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_RESTART",
-      "55000",
-      Map.empty[String, String])
+  for (version <- Seq(10L, 11L)) {
+    test(s"streaming deletion vectors require restart error - version $version") {
+      checkError(
+        DeltaErrors.streamingDeletionVectorsNotReadableException(
+          version, snapshotAtSourceInitVersion = 10L),
+        "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_RESTART",
+        "55000",
+        Map.empty[String, String])
+    }
   }
 
   test("historical streaming deletion vectors require schema tracking error") {
