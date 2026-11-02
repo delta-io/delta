@@ -18,12 +18,14 @@ package org.apache.spark.sql.delta.amt
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaErrors, DeltaIllegalStateException, DeltaLog, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.SparkSession
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -60,6 +62,59 @@ object AMTUtils extends DeltaLogging {
   def amtRequested(configuration: Map[String, String]): Boolean =
     TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
       configuration, AdaptiveMetadataTableFeature)
+
+  /**
+   * Asserts that a commit taking a table from `snapshot` to `protocol` and `metadata` keeps AMT
+   * compatible with the table's other features.
+   *
+   * For an adaptive metadata table, fails if this commit adds a feature that is incompatible with
+   * the [[AdaptiveMetadataTableFeature]], either to the protocol or by setting a table property
+   * that enables it (e.g. `delta.checkpointPolicy` = `v2`). This runs on the final protocol and
+   * metadata, so it also covers features added after `updateMetadata`, such as defaults and
+   * protocol actions. On an existing table, features it already had are left alone, so a table
+   * that has one can still be updated.
+   *
+   * Every commit runs this check (`prepareCommit` and `commitLarge` both call it through
+   * `performTableFeatureIncompatibilityCheck`), so it catches incompatible features (e.g.
+   * v2Checkpoint and AMT) however they are added.
+   *
+   * @param isCreatingNewTable whether the commit creates the table, including by REPLACE.
+   */
+  def assertFeatureCompatibility(
+      spark: SparkSession,
+      snapshot: Snapshot,
+      protocol: Protocol,
+      metadata: Metadata,
+      isCreatingNewTable: Boolean,
+      tableName: String): Unit = {
+    if (amtEnabled(metadata, protocol)) {
+      // Adding AMT to an existing table is an unsupported upgrade. `updateMetadata` already rejects
+      // it, but CLONE adds the source's protocol after that, so REPLACE CLONE is caught here.
+      if (snapshot.version >= 0 && !amtEnabled(snapshot)) {
+        throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
+      }
+      AdaptiveMetadataTableFeature.incompatibleFeatures.foreach { feature =>
+        def enabledByMetadata(p: Protocol, m: Metadata): Boolean = feature match {
+          case f: FeatureAutomaticallyEnabledByMetadata =>
+            f.metadataRequiresFeatureToBeEnabled(p, m, spark)
+          case _ => false
+        }
+        // A feature is added when the new state has it and the table did not have it before.
+        // When creating a table, everything counts as added: the initial snapshot of a new table
+        // already has the session defaults merged into its metadata and protocol.
+        val addedToProtocol = protocol.isFeatureSupported(feature) &&
+          (isCreatingNewTable || !snapshot.protocol.isFeatureSupported(feature))
+        val enabledByNewMetadata = enabledByMetadata(protocol, metadata) &&
+          (isCreatingNewTable || !enabledByMetadata(snapshot.protocol, snapshot.metadata))
+        if (addedToProtocol || enabledByNewMetadata) {
+          throw DeltaErrors.incompatibleTableFeatures(
+            tableName = tableName,
+            feature1 = AdaptiveMetadataTableFeature.name,
+            feature2 = feature.name)
+        }
+      }
+    }
+  }
 
   /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
   def invariantCheckWithLogging(
