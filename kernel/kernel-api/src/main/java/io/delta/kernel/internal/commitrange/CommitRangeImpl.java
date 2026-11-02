@@ -116,7 +116,7 @@ public class CommitRangeImpl implements CommitRange {
         }
         if (index < deltas.size()) {
           long actualVersion = deltas.get(index).getVersion();
-          if (!commitRangeValidation && failOnDataLoss && actualVersion != expectedVersion) {
+          if (failOnDataLoss && actualVersion != expectedVersion) {
             done = true;
             if (index == 0) {
               throw startVersionNotFound(
@@ -126,7 +126,7 @@ public class CommitRangeImpl implements CommitRange {
           }
           return true;
         }
-        if (!commitRangeValidation && failOnDataLoss && expectedVersion <= endVersion) {
+        if (failOnDataLoss && expectedVersion <= endVersion) {
           done = true;
           throw missingCommitVersion(dataPath.toString(), expectedVersion);
         }
