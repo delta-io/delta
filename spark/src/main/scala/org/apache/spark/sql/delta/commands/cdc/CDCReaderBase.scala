@@ -67,7 +67,7 @@ abstract class DeltaCDFRelationBase(
     endingVersion: Option[Long]) extends BaseRelation with CatalystScan {
 
   protected val deltaLog: DeltaLog = snapshotWithSchemaMode.snapshot.deltaLog
-  protected val startingVersion: Option[Long] = startingSchemaWithVersion.map(_.version)
+  val startingVersion: Option[Long] = startingSchemaWithVersion.map(_.version)
 
   protected lazy val latestVersionOfTableDuringAnalysis: Long =
     deltaLog.update(catalogTableOpt = catalogTableOpt).version
