@@ -156,7 +156,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       startVersion: Long,
       endVersion: Long
   ): ClosableIterator[(Long, Action)] = {
-    streamingBackend.getChangesIterator(startVersion, options.failOnDataLoss).takeWhile {
+    streamingBackend.getSingleCommitIterator(startVersion, options.failOnDataLoss).takeWhile {
       commit => commit.version <= endVersion
     }.flatMapWithClose { commit =>
       DeltaSource.createRewindableActionIterator(spark, commit)
@@ -789,7 +789,7 @@ object DeltaSourceMetadataEvolutionSupport extends Logging {
     // We start from the currentSchemaVersion so that we can stop early in case the current
     // version still has file actions that potentially needs to be processed.
     val untilMetadataChange =
-      deltaLog.getChangesIterator(
+      deltaLog.getSingleCommitIterator(
         currentMetadataVersion, catalogTableOpt).map { commit =>
         var metadataAction: Option[Metadata] = None
         var protocolAction: Option[Protocol] = None

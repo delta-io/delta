@@ -158,7 +158,7 @@ class DeltaV2TableManagerImplSuite
     }
   }
 
-  test("getChangesIterator yields one DeltaSingleCommit per version in range") {
+  test("getSingleCommitIterator yields one DeltaSingleCommit per version in range") {
     withSQLConf(
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
         DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false",
@@ -175,7 +175,7 @@ class DeltaV2TableManagerImplSuite
             (1L, Some(1L), List(1L)),
             (1L, None, List(1L, 2L)))
           ranges.foreach { case (startVersion, endVersion, expectedVersions) =>
-            val changes = manager.getChangesIterator(startVersion, endVersion, catalogTableOpt)
+            val changes = manager.getSingleCommitIterator(startVersion, endVersion, catalogTableOpt)
             try {
               val versions = changes.map { commit =>
                 val actions = DeltaSource.createRewindableActionIterator(spark, commit)
@@ -227,12 +227,12 @@ class DeltaV2TableManagerImplSuite
               assert(ict.isDefined === expectsICT, s"version $version")
               version -> (if (expectsICT) ict.get else fileTimestamp)
             }.toList
-            val v1Commits = deltaLog.getChangesIterator(startVersion = 0)
+            val v1Commits = deltaLog.getSingleCommitIterator(startVersion = 0)
               .map(commit => commit.version -> commit.timestamp).toList
             assert(v1Commits === expected)
 
             forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-              val v2Commits = manager.getChangesIterator(0L, None, catalogTableOpt)
+              val v2Commits = manager.getSingleCommitIterator(0L, None, catalogTableOpt)
                 .processAndClose(_.map(commit => commit.version -> commit.timestamp).toList)
               assert(v2Commits === expected)
             }
@@ -241,15 +241,15 @@ class DeltaV2TableManagerImplSuite
       }
   }
 
-  test("getChangesIterator rejects failOnDataLoss = true before reading the table") {
+  test("getSingleCommitIterator rejects failOnDataLoss = true before reading the table") {
     withTempDir { dir =>
       forPathAndCatalogManagers(dir.getCanonicalPath) { (manager, catalogTableOpt) =>
         Seq(None, Some(1L)).foreach { endVersion =>
           val error = intercept[AssertionError] {
-            manager.getChangesIterator(0L, endVersion, catalogTableOpt, failOnDataLoss = true)
+            manager.getSingleCommitIterator(0L, endVersion, catalogTableOpt, failOnDataLoss = true)
           }
           assert(error.getMessage ===
-            "getChangesIterator does not support failOnDataLoss = true")
+            "getSingleCommitIterator does not support failOnDataLoss = true")
         }
       }
     }

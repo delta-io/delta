@@ -1070,11 +1070,7 @@ trait DeltaErrorsBase
       messageParameters = Array(
         toSQLType(from), // sourceType
         toSQLType(to), // targetType
-        toSQLId(columnName), // columnName
-        SQLConf.STORE_ASSIGNMENT_POLICY.key, // storeAssignmentPolicyFlag
-        // updateAndMergeCastingFollowsAnsiEnabledFlag
-        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
-        SQLConf.ANSI_ENABLED.key // ansiEnabledFlag
+        toSQLId(columnName) // columnName
       )
     )
   }
@@ -1529,11 +1525,28 @@ trait DeltaErrorsBase
     }
   }
 
+  def streamingPartitionSchemaMismatchOnRestart(
+      tableId: String,
+      analyzedPartitionSchema: StructType,
+      currentPartitionSchema: StructType): RuntimeException = {
+    new DeltaIllegalStateException(
+      errorClass =
+        "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.PARTITION_SCHEMA_CHANGED",
+      messageParameters = Array(
+        tableId,
+        formatSchema(analyzedPartitionSchema),
+        formatColumnList(
+          analyzedPartitionSchema.fields.toSeq.map(DeltaColumnMapping.getPhysicalName)),
+        formatSchema(currentPartitionSchema),
+        formatColumnList(
+          currentPartitionSchema.fields.toSeq.map(DeltaColumnMapping.getPhysicalName))))
+  }
+
   def streamingSchemaMismatchOnRestart(
       querySchema: StructType,
       tableSchema: StructType): RuntimeException = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART",
+      errorClass = "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED",
       messageParameters = Array(formatSchema(querySchema), formatSchema(tableSchema)))
   }
 
