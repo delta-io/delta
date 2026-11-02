@@ -248,7 +248,9 @@ class Snapshot(
               callSite = "Snapshot.lastManifestCommitOpt") { commitInfoOpt =>
             commitInfoOpt.getOrElse {
               throw DeltaErrors.missingCommitInfo(
-                AdaptiveMetadataTableFeature.name, version.toString)
+                AdaptiveMetadataTableFeatureBase.supportedBy(protocol)
+                  .getOrElse(AdaptiveMetadataPreviewTableFeature).name,
+                version.toString)
             }.lastManifestCommit
           }
         }.flatten

@@ -643,13 +643,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED =
     buildConf("adaptiveMetadataTree.preview.enabled")
       .internal()
-      .doc("When false, the `adaptiveMetadata-preview` reader/writer table feature is not " +
-        "registered in this client's supported-features map. Any attempt to enable the feature " +
-        "on a table is rejected with the standard `unsupported table feature` error, and any " +
-        "table that already has the feature in its protocol fails to be read. Acts as a " +
-        "kill-switch while the feature is in preview.")
+      .doc("When false, creating a table with the `adaptiveMetadata-preview` reader/writer " +
+        "table feature is rejected. The feature is always registered, so tables that already " +
+        "have it can still be read and written.")
       .booleanConf
       .createWithDefault(true)
+
+  val V4_ADAPTIVE_METADATA_TABLE_ENABLED =
+    buildConf("adaptiveMetadataTree.enabled")
+      .internal()
+      .doc("When false, creating a table with the `adaptiveMetadata-dev` reader/writer table " +
+        "feature (to be renamed `adaptiveMetadata` once complete) is rejected. The feature is " +
+        "always registered, so tables that already have it can still be read and written. " +
+        s"Independent of `${V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED.key}`, which gates " +
+        "creating `adaptiveMetadata-preview` tables: with both false no AMT table can be " +
+        "created, with only that one true AMT tables use the preview feature, and with this one " +
+        "true they can use `adaptiveMetadata-dev`.")
+      .booleanConf
+      .createWithDefault(false)
 
   val AMT_ENTRIES_PER_LEAF =
     buildConf("amt.entriesPerLeaf")

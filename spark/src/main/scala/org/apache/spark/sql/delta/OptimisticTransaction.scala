@@ -1165,26 +1165,32 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Enable the dependencies of the [[AdaptiveMetadataTableFeature]] in the metadata.
-   * [[AdaptiveMetadataTableFeature.requiredFeatures]] only guarantees these features are present
+   * Enable the dependencies of the AMT table feature (see [[AdaptiveMetadataTableFeatureBase]]) in
+   * the metadata. Its `requiredFeatures` only guarantees these features are present
    * in the protocol (supported); several of them additionally need a metadata flag to be truly
    * enabled(rowTracking, deletionVectors) or a specific configuration (column mapping `id` mode).
    */
   private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
-    val adaptiveMetadataEnabled =
-      AMTUtils.amtEnabled(metadata, protocol) ||
-        TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
-          metadata.configuration, AdaptiveMetadataTableFeature)
+    // The AMT feature the table has or is being given, which names it in the errors below. A table
+    // has at most one; `performTableFeatureIncompatibilityCheck` checks that on the final protocol.
+    val amtFeatureOpt = AdaptiveMetadataTableFeatureBase.features.find { feature =>
+      protocol.isFeatureSupported(feature) ||
+        TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(metadata.configuration, feature)
+    }
+    val adaptiveMetadataEnabled = amtFeatureOpt.isDefined
     if (!adaptiveMetadataEnabled) {
       return metadata
     }
+    // Iceberg-native V4 tables get the preview feature; see `IcebergNativeV4TableFeature`.
+    val amtFeature = amtFeatureOpt.getOrElse(AdaptiveMetadataPreviewTableFeature)
+    val amtFeatureName = amtFeature.name
 
     val existingTableHasAdaptiveMetadata =
       AMTUtils.amtEnabled(snapshot)
     // REPLACE counts as creating a new table, but it keeps the existing table and its history, so
     // adding AMT through it is an upgrade too.
     if (readVersion >= 0 && !existingTableHasAdaptiveMetadata) {
-      throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
+      throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeatureName)
     }
 
     // rowTracking / deletionVectors: these dependencies must be enabled via their metadata flag.
@@ -1200,7 +1206,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           case Some(v) if v.toBoolean => None
           case Some(v) =>
             throw DeltaErrors.adaptiveMetadataRequiresDependentFeatureEnabled(
-              AdaptiveMetadataTableFeature.name, key, v)
+              amtFeatureName, key, v)
         }
       }
     var updatedConfig = metadata.configuration ++ flagEnablements
@@ -1214,7 +1220,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       updatedConfig += (DeltaConfigs.COLUMN_MAPPING_MODE.key -> IdMapping.name)
     } else if (metadata.columnMappingMode != IdMapping) {
       throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
-        AdaptiveMetadataTableFeature.name, metadata.columnMappingMode.name)
+        amtFeatureName, metadata.columnMappingMode.name)
     }
 
     metadata.copy(configuration = updatedConfig)

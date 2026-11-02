@@ -31,6 +31,12 @@
     ],
     "sqlState" : "0B000"
   },
+  "DELTA_ADAPTIVE_METADATA_NOT_ENABLED" : {
+    "message" : [
+      "Enabling the table feature '<feature>' is not supported."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_ADAPTIVE_METADATA_REQUIRES_COLUMN_MAPPING_ID_MODE" : {
     "message" : [
       "The table feature '<feature>' requires column mapping mode 'id', but the table property '<prop>' is set to '<mode>'. Recreate the table with '<prop>' = 'id', or omit the property to have it set automatically."

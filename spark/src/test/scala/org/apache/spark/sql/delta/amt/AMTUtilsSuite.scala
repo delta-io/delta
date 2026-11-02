@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.AdaptiveMetadataTableFeature
+import org.apache.spark.sql.delta.AdaptiveMetadataPreviewTableFeature
 import org.apache.spark.sql.delta.actions.{
   AddFile,
   DeletionVectorDescriptor,
@@ -135,7 +135,7 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
   }
 
   test("amtEnabled: true when the protocol supports the AMT feature") {
-    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
     assert(AMTUtils.amtEnabled(Metadata(), protocol))
   }
 
@@ -144,7 +144,7 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
   }
 
   test("AMTSnapshotId fills missing AddFile and RemoveFile lifecycle IDs") {
-    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
     val dv = DeletionVectorDescriptor(
       storageType = "u",
       pathOrInlineDv = "test-dv",
@@ -203,7 +203,7 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
   }
 
   test("AMTSnapshotId preserves a materialized modification ID") {
-    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
     val add = AddFile(
       "materialized",
       Map.empty,

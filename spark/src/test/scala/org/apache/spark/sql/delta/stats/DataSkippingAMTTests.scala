@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.stats
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{defaultPropertyKey, FEATURE_PROP_SUPPORTED}
 import org.apache.spark.sql.delta.amt.AMTTriggerMode
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -42,7 +42,7 @@ trait DataSkippingAMTBase extends DataSkippingDeltaTestsBase
   override protected def sparkConf: SparkConf =
     super.sparkConf
       // Every table created in this suite is an AMT table by default.
-      .set(defaultPropertyKey(AdaptiveMetadataTableFeature), FEATURE_PROP_SUPPORTED)
+      .set(defaultPropertyKey(AdaptiveMetadataPreviewTableFeature), FEATURE_PROP_SUPPORTED)
       // Pack few entries per manifest leaf so these small tables produce a real multi-leaf AMT
       // tree (root + leaf pointers) instead of a single promoted manifest, exercising the tree
       // reconstruction path.
