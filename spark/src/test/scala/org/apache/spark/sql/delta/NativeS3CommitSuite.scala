@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.IOException
 import java.nio.file.FileAlreadyExistsException
-import java.util.concurrent.{Callable, ConcurrentLinkedQueue, TimeUnit}
+import java.util.concurrent.{Callable, ConcurrentLinkedQueue, CountDownLatch, TimeUnit}
 
 import scala.jdk.CollectionConverters._
 
@@ -138,18 +138,22 @@ class NativeS3CommitSuite
             txn.registerPostCommitHook(hook)
             (file, txn, hook)
           }
-          val gate = fixture.pause(Put, commitKey(1), arrivals = 2)
+          val ready = new CountDownLatch(writers.size)
+          val start = new CountDownLatch(1)
           val pool = ThreadUtils.newDaemonFixedThreadPool(2, "native-s3-writers")
           try {
             val results = writers.map { case (file, txn, _) =>
               pool.submit(new Callable[Long] {
                 override def call(): Long = spark.withActive {
+                  ready.countDown()
+                  assert(start.await(30, TimeUnit.SECONDS), "writers were not released")
                   txn.commit(Seq(createTestAddFile(encodedPath = file)), ManualUpdate)
                 }
               })
             }
-            assert(gate.await(), "both writers must reach the same version's conditional PUT")
-            gate.close()
+            assert(ready.await(30, TimeUnit.SECONDS), "both workers must be ready to commit")
+            // The shared path lock serializes HTTP requests, but both txns still read v0.
+            start.countDown()
             val versions = results.map(_.get(60, TimeUnit.SECONDS))
             assert(versions.sorted == Seq(1L, 2L))
             writers.zip(versions).foreach { case ((file, _, hook), version) =>
@@ -177,7 +181,7 @@ class NativeS3CommitSuite
             assert(snapshot.allFiles.collect().map(_.path).sorted.toSeq ==
               Seq("first-file", "second-file"))
           } finally {
-            gate.close()
+            start.countDown()
             pool.shutdownNow()
             assert(pool.awaitTermination(30, TimeUnit.SECONDS), "writers did not stop")
           }
