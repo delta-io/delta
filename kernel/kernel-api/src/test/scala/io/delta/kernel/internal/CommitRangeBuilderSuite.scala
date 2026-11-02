@@ -863,85 +863,75 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     intercept[NullPointerException](new CommitFileStatus(0L, null))
   }
 
-  test("relaxed getCommitFiles skips gaps when data loss is allowed") {
-    val fileList = deltaFileStatuses(Seq(0L, 2L))
-    val commitRange = buildCommitRange(
-      createMockFSListFromEngine(fileList),
-      fileList,
-      startBoundary = VersionBoundaryDef(0),
-      endBoundary = VersionBoundaryDef(2),
-      commitRangeValidation = Some(false),
-      failOnDataLoss = Some(false))
+  private case class RelaxedCommitFilesTestCase(
+      description: String,
+      availableVersions: Seq[Long],
+      endBoundary: BoundaryDef,
+      failOnDataLoss: Boolean,
+      expectedVersions: Seq[Long],
+      expectedError: Option[(Class[_ <: KernelException], Seq[String])] = None)
 
-    assert(commitRange.getCommitFiles.toInMemoryList.asScala.map(_.getVersion) == Seq(0L, 2L))
-  }
+  Seq(
+    RelaxedCommitFilesTestCase(
+      "skips gaps when data loss is allowed",
+      Seq(0L, 2L),
+      VersionBoundaryDef(2),
+      failOnDataLoss = false,
+      Seq(0L, 2L)),
+    RelaxedCommitFilesTestCase(
+      "reports an internal gap lazily and fuses",
+      Seq(0L, 2L),
+      VersionBoundaryDef(2),
+      failOnDataLoss = true,
+      Seq(0L),
+      Some(classOf[InvalidTableException] -> Seq(
+        "versions are not contiguous",
+        "Table version 1 is missing or unavailable for this log operation."))),
+    RelaxedCommitFilesTestCase(
+      "reports a missing start lazily",
+      Seq(2L, 3L),
+      VersionBoundaryDef(3),
+      failOnDataLoss = true,
+      Seq.empty,
+      Some(classOf[KernelException] -> Seq(
+        "startVersion=0",
+        "Earliest available version is 2"))),
+    RelaxedCommitFilesTestCase(
+      "reports an explicit missing suffix lazily",
+      Seq(0L, 1L),
+      VersionBoundaryDef(3),
+      failOnDataLoss = true,
+      Seq(0L, 1L),
+      Some(classOf[InvalidTableException] -> Seq(
+        "versions are not contiguous",
+        "Table version 2 is missing or unavailable for this log operation."))),
+    RelaxedCommitFilesTestCase(
+      "resolves an implicit end to the last listed commit",
+      Seq(0L, 2L),
+      DefaultBoundaryDef(2),
+      failOnDataLoss = false,
+      Seq(0L, 2L))).foreach { testCase =>
+    test(s"relaxed getCommitFiles ${testCase.description}") {
+      val fileList = deltaFileStatuses(testCase.availableVersions)
+      val commitRange = buildCommitRange(
+        createMockFSListFromEngine(fileList),
+        fileList,
+        startBoundary = VersionBoundaryDef(0),
+        endBoundary = testCase.endBoundary,
+        commitRangeValidation = Some(false),
+        failOnDataLoss = Some(testCase.failOnDataLoss))
+      val iterator = commitRange.getCommitFiles
 
-  test("relaxed getCommitFiles reports an internal gap lazily and fuses") {
-    val fileList = deltaFileStatuses(Seq(0L, 2L))
-    val commitRange = buildCommitRange(
-      createMockFSListFromEngine(fileList),
-      fileList,
-      startBoundary = VersionBoundaryDef(0),
-      endBoundary = VersionBoundaryDef(2),
-      commitRangeValidation = Some(false))
-    val iterator = commitRange.getCommitFiles
-
-    assert(iterator.next().getVersion == 0L)
-    val error = intercept[InvalidTableException](iterator.hasNext)
-    assert(error.getMessage.contains(
-      "versions are not contiguous: " +
-        "Table version 1 is missing or unavailable for this log operation."))
-    assert(!iterator.hasNext)
-    intercept[NoSuchElementException](iterator.next())
-  }
-
-  test("relaxed getCommitFiles reports a missing start lazily") {
-    val fileList = deltaFileStatuses(Seq(2L, 3L))
-    val commitRange = buildCommitRange(
-      createMockFSListFromEngine(fileList),
-      fileList,
-      startBoundary = VersionBoundaryDef(0),
-      endBoundary = VersionBoundaryDef(3),
-      commitRangeValidation = Some(false))
-    val iterator = commitRange.getCommitFiles
-
-    val error = intercept[KernelException](iterator.hasNext)
-    assert(error.getMessage.contains("startVersion=0"))
-    assert(error.getMessage.contains("Earliest available version is 2"))
-    assert(!iterator.hasNext)
-  }
-
-  test("relaxed getCommitFiles reports an explicit missing suffix lazily") {
-    val fileList = deltaFileStatuses(Seq(0L, 1L))
-    val commitRange = buildCommitRange(
-      createMockFSListFromEngine(fileList),
-      fileList,
-      startBoundary = VersionBoundaryDef(0),
-      endBoundary = VersionBoundaryDef(3),
-      commitRangeValidation = Some(false))
-    val iterator = commitRange.getCommitFiles
-
-    assert(iterator.next().getVersion == 0L)
-    assert(iterator.next().getVersion == 1L)
-    val error = intercept[InvalidTableException](iterator.hasNext)
-    assert(error.getMessage.contains(
-      "versions are not contiguous: " +
-        "Table version 2 is missing or unavailable for this log operation."))
-    assert(!iterator.hasNext)
-  }
-
-  test("relaxed implicit end resolves to the last listed commit") {
-    val fileList = deltaFileStatuses(Seq(0L, 2L))
-    val commitRange = buildCommitRange(
-      createMockFSListFromEngine(fileList),
-      fileList,
-      startBoundary = VersionBoundaryDef(0),
-      endBoundary = DefaultBoundaryDef(2),
-      commitRangeValidation = Some(false),
-      failOnDataLoss = Some(false))
-
-    assert(commitRange.getEndVersion == 2L)
-    assert(commitRange.getCommitFiles.toInMemoryList.asScala.map(_.getVersion) == Seq(0L, 2L))
+      assert(commitRange.getEndVersion == testCase.endBoundary.expectedVersion)
+      testCase.expectedVersions.foreach(version => assert(iterator.next().getVersion == version))
+      testCase.expectedError.foreach { case (errorClass, messageParts) =>
+        val error = intercept[KernelException](iterator.hasNext)
+        assert(errorClass.isInstance(error))
+        messageParts.foreach(messagePart => assert(error.getMessage.contains(messagePart)))
+      }
+      assert(!iterator.hasNext)
+      intercept[NoSuchElementException](iterator.next())
+    }
   }
 
   test("relaxed construction still rejects an empty listing") {
