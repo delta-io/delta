@@ -57,7 +57,8 @@ public final class LogDataUtils {
    * <p>The method requires but does not validate the following:
    *
    * <ul>
-   *   <li>{@code publishedDeltas} are sorted with unique versions
+   *   <li>{@code publishedDeltas} are sorted with unique versions. They may be non-contiguous when
+   *       commit range validation is disabled.
    *   <li>{@code ratifiedDeltas} are sorted and contiguous
    * </ul>
    */
