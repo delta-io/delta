@@ -36,7 +36,7 @@ import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RawLocalFileSystem;
 
-/** Shared path, listing, and legacy write behavior for the S3 LogStores. */
+/** Shared path locking, listing, and legacy write behavior for the S3 LogStores. */
 abstract class BaseS3LogStore extends HadoopFileSystemLogStore {
 
     /**
@@ -55,8 +55,8 @@ abstract class BaseS3LogStore extends HadoopFileSystemLogStore {
     ///////////////////////////
 
     /**
-     * A global path lock to ensure that no concurrent writers writing to the same path in the same
-     * JVM.
+     * Shared by native and legacy writers to the same resolved path in this JVM/classloader.
+     * Conditional writes still provide mutual exclusion between independent drivers.
      */
     private static final PathLock pathLock = new PathLock();
 
@@ -133,6 +133,30 @@ abstract class BaseS3LogStore extends HadoopFileSystemLogStore {
     // Public API Methods //
     ////////////////////////
 
+    @FunctionalInterface
+    interface WriteAction {
+        void run() throws IOException;
+    }
+
+    /** Hold the path lock through publication and any recovery of a lost acknowledgement. */
+    static void withPathLock(Path resolvedPath, WriteAction action) throws IOException {
+        try {
+            pathLock.acquire(resolvedPath);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            final InterruptedIOException failure = new InterruptedIOException(e.getMessage());
+            failure.initCause(e);
+            throw failure;
+        }
+        // Only the thread that acquired the lock may release it. An interrupted waiter must
+        // leave the current owner's entry intact.
+        try {
+            action.run();
+        } finally {
+            pathLock.release(resolvedPath);
+        }
+    }
+
     final void writeWithPathLock(
             Path path,
             Iterator<String> actions,
@@ -140,8 +164,7 @@ abstract class BaseS3LogStore extends HadoopFileSystemLogStore {
             Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
         final Path resolvedPath = resolvePathWithoutUserInfo(fs, path);
-        try {
-            pathLock.acquire(resolvedPath);
+        withPathLock(resolvedPath, () -> {
             try {
                 if (fs.exists(resolvedPath) && !overwrite) {
                     throw new java.nio.file.FileAlreadyExistsException(
@@ -160,11 +183,7 @@ abstract class BaseS3LogStore extends HadoopFileSystemLogStore {
                 // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
                 throw new java.nio.file.FileAlreadyExistsException(e.getMessage());
             }
-        } catch (java.lang.InterruptedException e) {
-            throw new InterruptedIOException(e.getMessage());
-        } finally {
-            pathLock.release(resolvedPath);
-        }
+        });
     }
 
     @Override

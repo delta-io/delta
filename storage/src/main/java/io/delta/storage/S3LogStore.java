@@ -34,7 +34,8 @@ import static org.apache.hadoop.fs.s3a.Constants.FS_S3A_CREATE_HEADER;
  * <p>Requires Hadoop S3A 3.4.2 or later, conditional creation, user metadata and abortable,
  * immediately visible output streams. Unsupported configurations fail the write. All writers
  * must use a compatible atomic publication protocol and preserve immutable destination keys
- * during recovery. Mixing this store with unconditional writers is unsafe.</p>
+ * during recovery. Mixing this store with unconditional writers in independent drivers is
+ * unsafe. Native and legacy Java S3 LogStores share a per-path lock within a JVM.</p>
  *
  * <p>A lost acknowledgement is recovered when the destination carries this invocation's UUID.
  * Inconclusive recovery throws an IOException with an unknown outcome: the write may have
@@ -85,7 +86,8 @@ public class S3LogStore extends BaseS3LogStore {
             writeWithPathLock(path, actions, true, hadoopConf);
         } else {
             final FileSystem fs = path.getFileSystem(hadoopConf);
-            S3ConditionalWrite.write(fs, resolvePathWithoutUserInfo(fs, path), actions);
+            final Path resolvedPath = resolvePathWithoutUserInfo(fs, path);
+            withPathLock(resolvedPath, () -> S3ConditionalWrite.write(fs, resolvedPath, actions));
         }
     }
 }

@@ -28,11 +28,16 @@ Capability-probe errors propagate rather than causing a fallback, and a native w
 Magic output streams are unsupported because they defer publication until a later job commit.
 AWS general-purpose S3 buckets are the intended production target; the local tests do not qualify S3 Express or other S3-compatible services.
 
-All concurrent writers must use a compatible atomic publication protocol.
-Do not overlap these writers with legacy `S3SingleDriverLogStore` writers.
+Concurrent writers in independent drivers must use a compatible atomic publication protocol.
+Do not overlap native and legacy `S3SingleDriverLogStore` writers across independent drivers.
 An unconditional writer can overwrite a conditionally created object.
 Destination keys must remain immutable during reconciliation, including protection from external deletion and replacement.
 These assumptions apply to non-overwrite writes; overwrite calls retain the existing S3 behavior.
+
+Within a JVM and classloader, the native and legacy Java S3 LogStores share a lock for each resolved file path.
+The lock covers publication and ownership recovery, so a legacy writer cannot pass its existence check and then overwrite a concurrent native commit.
+Different file paths can still be written concurrently.
+The lock does not coordinate independent JVMs or URI aliases that resolve to different lock keys.
 
 ## Publication and recovery
 
@@ -112,7 +117,7 @@ Run the relevant suites from the repository root:
 
 ```sh
 build/sbt 'storage/test'
-build/sbt 'spark/testOnly org.apache.spark.sql.delta.CapabilityBasedLogStoreSuite org.apache.spark.sql.delta.NativeS3CommitSuite org.apache.spark.sql.delta.IdempotentCommitRetrySuite org.apache.spark.sql.delta.DelegatingLogStoreSuite org.apache.spark.sql.delta.LogStoreProviderSuite org.apache.spark.sql.delta.*LogStoreSuite'
+build/sbt 'spark/testOnly org.apache.spark.sql.delta.SharedS3LogStoreLockSuite org.apache.spark.sql.delta.CapabilityBasedLogStoreSuite org.apache.spark.sql.delta.NativeS3CommitSuite org.apache.spark.sql.delta.IdempotentCommitRetrySuite org.apache.spark.sql.delta.DelegatingLogStoreSuite org.apache.spark.sql.delta.LogStoreProviderSuite org.apache.spark.sql.delta.*LogStoreSuite'
 build/sbt 'storageS3DynamoDB/test' 'spark/Test/scalastyle'
 ```
 
