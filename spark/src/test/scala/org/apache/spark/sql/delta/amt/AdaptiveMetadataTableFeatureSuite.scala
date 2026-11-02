@@ -211,34 +211,41 @@ class AdaptiveMetadataTableFeatureSuite
     }
   }
 
-  test("replacing a table that has v2Checkpoint with an AMT table is rejected") {
-    withTable("v2_checkpoint_replace_amt") {
-      // REPLACE cannot make a table catalog-managed or change its column mapping mode, both of
-      // which AMT needs, so start from such a table.
-      sql(s"CREATE TABLE v2_checkpoint_replace_amt (id INT) USING $tableProvider " +
-        s"TBLPROPERTIES ('${propertyKey(CatalogOwnedTableFeature)}' = '$FEATURE_PROP_SUPPORTED', " +
-        s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'id', " +
-        s"'${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
-      assert(protocolOf("v2_checkpoint_replace_amt").isFeatureSupported(V2CheckpointTableFeature))
+  /**
+   * Creates a non-AMT table by name that has everything else REPLACE needs to add AMT: REPLACE
+   * cannot make a table catalog-managed or change its column mapping mode, and AMT needs both.
+   */
+  private def createNonAMTTableForReplace(tableName: String, checkpointPolicy: String): Unit = {
+    sql(s"CREATE TABLE $tableName (id INT) USING $tableProvider " +
+      s"TBLPROPERTIES ('${propertyKey(CatalogOwnedTableFeature)}' = '$FEATURE_PROP_SUPPORTED', " +
+      s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'id', " +
+      s"'${DeltaConfigs.CHECKPOINT_POLICY.key}' = '$checkpointPolicy')")
+  }
 
-      // REPLACE keeps the protocol, and with it v2Checkpoint, so the AMT table is rejected.
-      assertV2CheckpointRejected("v2_checkpoint_replace_amt") {
-        createAdaptiveMetadataTable(
-          "v2_checkpoint_replace_amt", command = "CREATE OR REPLACE TABLE")
-      }
-      assert(!protocolOf("v2_checkpoint_replace_amt")
-        .isFeatureSupported(AdaptiveMetadataTableFeature))
+  /** Asserts that `f` fails because it would add AMT to the existing non-AMT table `tableName`. */
+  private def assertAMTUpgradeRejected(tableName: String)(f: => Unit): Unit = {
+    checkError(
+      intercept[DeltaAnalysisException](f),
+      condition = "DELTA_ADAPTIVE_METADATA_UPGRADE_NOT_SUPPORTED",
+      parameters = Map("feature" -> AdaptiveMetadataTableFeature.name))
+    assert(!protocolOf(tableName).isFeatureSupported(AdaptiveMetadataTableFeature))
+  }
 
-      // When REPLACE may reset the protocol, v2Checkpoint is dropped and the AMT table is created.
-      withSQLConf(DeltaSQLConf.REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key -> "true") {
-        createAdaptiveMetadataTable(
-          "v2_checkpoint_replace_amt", command = "CREATE OR REPLACE TABLE")
+  for (checkpointPolicy <- Seq("classic", "v2")) {
+    test(s"replacing a non-AMT table that has checkpointPolicy=$checkpointPolicy with an AMT " +
+        "table is rejected") {
+      withTable("non_amt_replace_amt") {
+        createNonAMTTableForReplace("non_amt_replace_amt", checkpointPolicy)
+        // REPLACE keeps the table and its history, so adding AMT is an upgrade.
+        Seq("REPLACE TABLE", "CREATE OR REPLACE TABLE").foreach { command =>
+          assertAMTUpgradeRejected("non_amt_replace_amt") {
+            createAdaptiveMetadataTable("non_amt_replace_amt", command = command)
+          }
+        }
       }
-      assert(protocolOf("v2_checkpoint_replace_amt")
-        .isFeatureSupported(AdaptiveMetadataTableFeature))
-      assertNoV2Checkpoint("v2_checkpoint_replace_amt")
     }
   }
+
 
   test("a commit that adds v2Checkpoint through a protocol action is rejected") {
     withTable("amt_protocol_action_v2") {
