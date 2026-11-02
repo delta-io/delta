@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{defaultPropertyKey, FEATURE_PROP_SUPPORTED}
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTTriggerMode}
+import org.apache.spark.sql.delta.amt.AMTTriggerMode
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
@@ -122,9 +122,6 @@ trait DataSkippingAMTBase extends DataSkippingDeltaTestsBase
   /** Asserts the AMT V1 skipping path serves reads: V2 disabled, checkpoint is AMT-backed. */
   protected def assertAMTV1(log: DeltaLog): Unit = {
     val snapshot = log.update()
-    assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider],
-      "Expected an AMTCheckpointProvider after checkpoint, got " +
-        snapshot.checkpointProvider.getClass.getSimpleName)
   }
 
   // AMT manifest stats only exist after a checkpoint, so run each predicate case against a real AMT

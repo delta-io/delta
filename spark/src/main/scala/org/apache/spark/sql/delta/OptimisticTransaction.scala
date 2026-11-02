@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager, LazyCompleteAMTCheckpointProvider}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -3881,6 +3881,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def amtCheckpointProviderOpt: Option[AMTCheckpointProvider] =
     snapshot.checkpointProvider match {
       case amt: AMTCheckpointProvider => Some(amt)
+      case lazyAmt: LazyCompleteAMTCheckpointProvider =>
+        Some(lazyAmt.underlyingCheckpointProvider)
       case _ => None
     }
 

@@ -289,6 +289,9 @@ class LazyAMTCheckpointProvider(
   lazy val providerOpt: Option[AMTCheckpointProvider] = checkpointOpt.map { checkpoint =>
     readSnapshot.checkpointProvider match {
       case amt: AMTCheckpointProvider if amt.checkpointAction.version == checkpoint.version => amt
+      case lazyAmt: LazyCompleteAMTCheckpointProvider
+          if lazyAmt.checkpointAction.version == checkpoint.version =>
+        lazyAmt.underlyingCheckpointProvider
       case _ =>
         AMTCheckpointProvider.fromCheckpoint(
           readSnapshot.deltaLog, checkpoint, manifestCommitVersion)
@@ -334,7 +337,7 @@ class AMTWriterManager(
   private def readSnapshotAMTCheckpointOpt: Option[Checkpoint] = {
     if (!AMTUtils.amtEnabled(readSnapshot)) return None
     readSnapshot.checkpointProvider match {
-      case amt: AMTCheckpointProvider => Some(amt.checkpointAction)
+      case amt: AMTCheckpointProviderBase => Some(amt.checkpointAction)
       case _ => None
     }
   }
