@@ -40,6 +40,19 @@ import java.util.Set;
 public interface CommitRange {
 
   /**
+   * Returns an iterator over commit-file metadata in ascending version order.
+   *
+   * <p>The iterator must be closed after use. Missing commit versions may be reported while the
+   * iterator advances.
+   *
+   * @return a closeable iterator over the commit files in this range
+   */
+  default CloseableIterator<CommitFileStatus> getCommitFiles() {
+    throw new UnsupportedOperationException(
+        "CommitRange.getCommitFiles is not supported by this implementation");
+  }
+
+  /**
    * Returns the starting version number (inclusive) of this commit range.
    *
    * @return the starting version number of the commit range

@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.CommitActions;
+import io.delta.kernel.CommitFileStatus;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
@@ -30,6 +31,7 @@ import io.delta.kernel.internal.TableChangesUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.util.List;
@@ -88,6 +90,14 @@ public class CommitRangeImpl implements CommitRange {
   @Override
   public Optional<CommitRangeBuilder.CommitBoundary> getQueryEndBoundary() {
     return endBoundaryOpt;
+  }
+
+  @Override
+  public CloseableIterator<CommitFileStatus> getCommitFiles() {
+    return Utils.toCloseableIterator(
+        deltas.stream()
+            .map(delta -> new CommitFileStatus(delta.getVersion(), delta.getFileStatus()))
+            .iterator());
   }
 
   @VisibleForTesting

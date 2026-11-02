@@ -841,6 +841,19 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       "Missing delta files: versions are not contiguous: ([0, 2, 3])"))
   }
 
+  test("getCommitFiles returns commit metadata") {
+    val fileList = deltaFileStatuses(Seq(0L, 1L))
+    val commitRange = buildCommitRange(
+      createMockFSListFromEngine(fileList),
+      fileList,
+      startBoundary = VersionBoundaryDef(0),
+      endBoundary = VersionBoundaryDef(1))
+
+    val commitFiles = commitRange.getCommitFiles.toInMemoryList.asScala
+    assert(commitFiles.map(_.getVersion) == Seq(0L, 1L))
+    assert(commitFiles.map(_.getFileStatus.getPath) == fileList.map(_.getPath))
+  }
+
   Seq(
     ParsedCatalogCommitData.forInlineData(1, emptyColumnarBatch),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
