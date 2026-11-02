@@ -183,14 +183,18 @@ public class CommitRangeImpl implements CommitRange {
 
   private void validateParameters(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    if (!commitRangeValidation) {
-      throw commitActionIterationNotSupported();
-    }
+    requireCommitRangeValidation();
     requireNonNull(engine, "engine cannot be null");
     requireNonNull(startSnapshot, "startSnapshot cannot be null");
     requireNonNull(actionSet, "actionSet cannot be null");
     checkArgument(
         startSnapshot.getVersion() == startVersion,
         "startSnapshot must have version = startVersion");
+  }
+
+  private void requireCommitRangeValidation() {
+    if (!commitRangeValidation) {
+      throw commitActionIterationNotSupported();
+    }
   }
 }
