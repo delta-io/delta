@@ -57,6 +57,7 @@ import org.apache.spark.sql.delta.actions.CommitInfo;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.RemoveFile;
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils$;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader$;
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
@@ -152,6 +153,7 @@ class DeltaV2MicroBatchStream
   private final String tableId;
   private final SnapshotDescriptor readSnapshotDescriptor;
   private final StructType readSchemaAtSourceInit;
+  private final boolean readerSupportsDeletionVectors;
   private final boolean shouldValidateOffsets;
   private final Optional<Regex> excludeRegex;
   private final SparkSession spark;
@@ -280,6 +282,9 @@ class DeltaV2MicroBatchStream
             "readSnapshotDescriptor is null");
     this.readSchemaAtSourceInit =
         Objects.requireNonNull(readSnapshotDescriptor.schema(), "readSchemaAtSourceInit is null");
+    this.readerSupportsDeletionVectors =
+        DeletionVectorUtils$.MODULE$.deletionVectorsReadable(
+            readSnapshotDescriptor.protocol(), readSnapshotDescriptor.metadata());
 
     this.shouldValidateOffsets =
         Objects.requireNonNull(
@@ -525,8 +530,19 @@ class DeltaV2MicroBatchStream
             previousOffset.isInitialSnapshot(),
             limits);
 
+    // TODO: Move this validation into DeltaStreamingBackend when DSv2 shares offset
+    // discovery with DSv1.
     Optional<IndexedFile> lastFileChange =
-        ScalaUtils.toJavaOptional(DeltaSource.iteratorLast(changes));
+        ScalaUtils.toJavaOptional(
+            DeltaSource.iteratorLast(
+                new IteratorCloseOps<>(changes)
+                    .withClose(
+                        iterator ->
+                            iterator.map(
+                                file -> {
+                                  checkDeletionVectorsReadable(file);
+                                  return file;
+                                }))));
 
     if (!lastFileChange.isPresent()) {
       // For the first batch, return empty to match DSv1's
@@ -584,8 +600,11 @@ class DeltaV2MicroBatchStream
                 Optional.of(endOffset))
             : getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
       while (fileChanges.hasNext()) {
-        PartitionedFile pf = buildPartitionedFile(fileChanges.next(), isCDC, caster);
+        IndexedFile indexedFile = fileChanges.next();
+        PartitionedFile pf = buildPartitionedFile(indexedFile, isCDC, caster);
         if (pf == null) continue;
+        // Also check replay of an already planned batch, which skips latestOffset validation.
+        checkDeletionVectorsReadable(indexedFile);
         totalBytesToRead += pf.fileSize();
         partitionedFiles.add(pf);
       }
@@ -623,6 +642,33 @@ class DeltaV2MicroBatchStream
         hadoopConf,
         sqlConf,
         /* isWriteTimeCDCRead */ options.readChangeFeed());
+  }
+
+  private void checkDeletionVectorsReadable(IndexedFile file) {
+    if (readerSupportsDeletionVectors || !file.hasFileAction()) return;
+    boolean needsDeletionVectors;
+    String path;
+    if (file.getAddFile() != null) {
+      needsDeletionVectors = file.getAddFile().deletionVector() != null;
+      path = file.getAddFile().path();
+    } else if (file.getCDCDataFile() != null) {
+      needsDeletionVectors = file.getCDCDataFile().hasDeletionVector();
+      path = file.getCDCDataFile().getPath();
+    } else {
+      return;
+    }
+    if (!needsDeletionVectors) return;
+    if (!isExcludedPath(path)) {
+      logger.warn(
+          "Cannot read deletion vectors for table {} at version {} with source-init snapshot "
+              + "version {} (readMode={})",
+          tableId,
+          file.getVersion(),
+          snapshotAtSourceInit.getVersion(),
+          options.readChangeFeed() ? "CDC" : "table");
+      throw DeltaErrors.streamingDeletionVectorsNotReadableException(
+          file.getVersion(), snapshotAtSourceInit.getVersion());
+    }
   }
 
   /**

@@ -3163,6 +3163,24 @@ trait DeltaErrorsSuiteBase
     }
   }
 
+  gridTest("streaming deletion vectors require restart error")(Seq(10L, 11L)) { version =>
+    checkError(
+      DeltaErrors.streamingDeletionVectorsNotReadableException(
+        version, snapshotAtSourceInitVersion = 10L),
+      "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_RESTART",
+      "55000",
+      Map.empty[String, String])
+  }
+
+  test("historical streaming deletion vectors require schema tracking error") {
+    checkError(
+      DeltaErrors.streamingDeletionVectorsNotReadableException(
+        version = 9L, snapshotAtSourceInitVersion = 10L),
+      "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_SCHEMA_TRACKING",
+      "55000",
+      Map.empty[String, String])
+  }
+
   test("starting-commit schema error reports operation") {
     val error = intercept[DeltaUnsupportedOperationException] {
       throw DeltaErrors.blockBatchCdfReadWithIncompatibleStartingCommitSchema(
