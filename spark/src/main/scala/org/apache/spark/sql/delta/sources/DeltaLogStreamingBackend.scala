@@ -64,8 +64,8 @@ private[delta] class DeltaLogStreamingBackend(
 
   override def getSnapshotToValidateProtocol(version: Long): Snapshot = getSnapshotAt(version)
 
-  override def getChangesIterator(
+  override def getSingleCommitIterator(
       startVersion: Long,
       failOnDataLoss: Boolean): Iterator[DeltaSingleCommit] =
-    deltaLog.getChangesIterator(startVersion, catalogTableOpt(), failOnDataLoss)
+    deltaLog.getSingleCommitIterator(startVersion, catalogTableOpt(), failOnDataLoss)
 }

@@ -1530,7 +1530,7 @@ object CheckpointProtectionTableFeature
       catalogTableOpt: Option[CatalogTable],
       toVersion: Long): Boolean = {
     deltaLog
-      .getChangesIterator(
+      .getSingleCommitIterator(
         startVersion = 0,
         endVersion = toVersion,
         catalogTableOpt = catalogTableOpt,

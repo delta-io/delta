@@ -79,5 +79,7 @@ trait DeltaStreamingBackend {
    *
    * @param failOnDataLoss if true, throws if a commit in the range is missing.
    */
-  def getChangesIterator(startVersion: Long, failOnDataLoss: Boolean): Iterator[DeltaSingleCommit]
+  def getSingleCommitIterator(
+      startVersion: Long,
+      failOnDataLoss: Boolean): Iterator[DeltaSingleCommit]
 }
