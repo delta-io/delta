@@ -976,15 +976,18 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     }
   }
 
-  test("withLogData: non-contiguous input throws IllegalArgumentException") {
-    val exMsg = intercept[IllegalArgumentException] {
-      TableManager.loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
-        .withLogData(parsedRatifiedStagedCommits(Seq(0, 2)).toList.asJava)
-        .withCommitRangeValidation(false)
-        .build(mockEngine())
-    }.getMessage
+  Seq(true, false).foreach { commitRangeValidation =>
+    test(s"withLogData: non-contiguous input throws IllegalArgumentException - " +
+      s"commitRangeValidation=$commitRangeValidation") {
+      val exMsg = intercept[IllegalArgumentException] {
+        TableManager.loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+          .withLogData(parsedRatifiedStagedCommits(Seq(0, 2)).toList.asJava)
+          .withCommitRangeValidation(commitRangeValidation)
+          .build(mockEngine())
+      }.getMessage
 
-    assert(exMsg.contains("Log data must be sorted and contiguous"))
+      assert(exMsg.contains("Log data must be sorted and contiguous"))
+    }
   }
 
   test("withLogData: non-sorted input throws IllegalArgumentException") {
