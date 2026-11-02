@@ -126,11 +126,10 @@ public class CommitRangeImpl implements CommitRange {
           }
           return true;
         }
+        done = true;
         if (failOnDataLoss && expectedVersion <= endVersion) {
-          done = true;
           throw missingCommitVersion(dataPath.toString(), expectedVersion);
         }
-        done = true;
         return false;
       }
 
