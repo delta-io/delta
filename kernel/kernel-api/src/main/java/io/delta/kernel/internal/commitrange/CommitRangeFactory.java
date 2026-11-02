@@ -87,7 +87,14 @@ class CommitRangeFactory {
       logger.info("{}: Resolved end-boundary to the latest version {}", tablePath, endVersion);
     }
     return new CommitRangeImpl(
-        tablePath, ctx.startBoundary, ctx.endBoundaryOpt, startVersion, endVersion, deltas);
+        tablePath,
+        ctx.startBoundary,
+        ctx.endBoundaryOpt,
+        startVersion,
+        endVersion,
+        deltas,
+        ctx.commitRangeValidation,
+        ctx.failOnDataLoss);
   }
 
   private long resolveStartVersion(Engine engine, List<ParsedCatalogCommitData> catalogCommits) {
@@ -199,7 +206,7 @@ class CommitRangeFactory {
                         && x.getVersion() <= endVersionOpt.orElse(Long.MAX_VALUE))
             .collect(Collectors.toList());
 
-    // Validate they are contiguous and valid (i.e. backfill is ordered)
+    // Validate the catalog/published relationship and, in strict mode, completeness.
     validatePublishedPlusRatifiedDeltas(publishedDeltas, ratifiedDeltas);
     List<ParsedDeltaData> combinedDeltas =
         LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
@@ -227,8 +234,8 @@ class CommitRangeFactory {
     List<ParsedDeltaData> publishedDeltas =
         commitFiles.stream().map(ParsedDeltaData::forFileStatus).collect(Collectors.toList());
 
-    // Validate listed delta files are contiguous
-    if (publishedDeltas.size() > 1) {
+    // Validate listed delta files are contiguous in strict mode.
+    if (ctx.commitRangeValidation && publishedDeltas.size() > 1) {
       for (int i = 1; i < publishedDeltas.size(); i++) {
         final ParsedLogData prev = publishedDeltas.get(i - 1);
         final ParsedLogData curr = publishedDeltas.get(i);
@@ -263,7 +270,7 @@ class CommitRangeFactory {
       long lastPublishedVersion = ListUtils.getLast(publishedDeltas).getVersion();
       // We must have publishedDeltas + ratifiedDeltas be contiguous
       // Invalid example: P0, P1 + R3, R4
-      if (lastPublishedVersion + 1 < earliestRatifiedVersion) {
+      if (ctx.commitRangeValidation && lastPublishedVersion + 1 < earliestRatifiedVersion) {
         throw publishedDeltasAndCatalogCommitsNotContiguous(
             tablePath.toString(),
             publishedDeltas.stream().map(ParsedDeltaData::getVersion).collect(Collectors.toList()),
@@ -279,9 +286,12 @@ class CommitRangeFactory {
       throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersionOpt);
     }
 
+    if (!ctx.commitRangeValidation) {
+      return;
+    }
+
     long earliestVersion = ListUtils.getFirst(deltas).getVersion();
     long latestVersion = ListUtils.getLast(deltas).getVersion();
-
     if (earliestVersion != startVersion) {
       throw startVersionNotFound(tablePath.toString(), startVersion, Optional.of(earliestVersion));
     }

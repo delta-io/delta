@@ -15,11 +15,11 @@
  */
 package io.delta.kernel.internal
 
-import java.util.{Collections, Optional}
+import java.util.{Collections, NoSuchElementException, Optional}
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.{CommitRange, TableManager}
+import io.delta.kernel.{CommitFileStatus, CommitRange, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException}
@@ -71,7 +71,9 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       startBoundary: RequiredBoundaryDef,
       endBoundary: BoundaryDef,
       logData: Option[Seq[ParsedLogData]] = None,
-      ictEnablementInfo: Option[(Long, Long)] = None): CommitRange = {
+      ictEnablementInfo: Option[(Long, Long)] = None,
+      commitRangeValidation: Option[Boolean] = None,
+      failOnDataLoss: Option[Boolean] = None): CommitRange = {
     def getVersionFromFS(fs: FileStatus): Long = FileNames.getFileVersion(new Path(fs.getPath))
     val latestVersion = fileList.map(getVersionFromFS).max
     // If we have a ratified commit file at the end version, we want to use this in the log segment
@@ -105,6 +107,12 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     }
     logData.foreach { l =>
       commitRangeBuilder = commitRangeBuilder.withLogData(l.asJava)
+    }
+    commitRangeValidation.foreach { enabled =>
+      commitRangeBuilder = commitRangeBuilder.withCommitRangeValidation(enabled)
+    }
+    failOnDataLoss.foreach { enabled =>
+      commitRangeBuilder = commitRangeBuilder.withFailOnDataLoss(enabled)
     }
     commitRangeBuilder.build(engine)
   }
@@ -852,6 +860,111 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     val commitFiles = commitRange.getCommitFiles.toInMemoryList.asScala
     assert(commitFiles.map(_.getVersion) == Seq(0L, 1L))
     assert(commitFiles.map(_.getFileStatus.getPath) == fileList.map(_.getPath))
+    assert(commitFiles.head == new CommitFileStatus(0L, fileList.head))
+    assert(commitFiles.head.hashCode == new CommitFileStatus(0L, fileList.head).hashCode)
+    intercept[NullPointerException](new CommitFileStatus(0L, null))
+  }
+
+  test("relaxed getCommitFiles skips gaps when data loss is allowed") {
+    val fileList = deltaFileStatuses(Seq(0L, 2L))
+    val commitRange = buildCommitRange(
+      createMockFSListFromEngine(fileList),
+      fileList,
+      startBoundary = VersionBoundaryDef(0),
+      endBoundary = VersionBoundaryDef(2),
+      commitRangeValidation = Some(false),
+      failOnDataLoss = Some(false))
+
+    assert(commitRange.getCommitFiles.toInMemoryList.asScala.map(_.getVersion) == Seq(0L, 2L))
+  }
+
+  test("relaxed getCommitFiles reports an internal gap lazily and fuses") {
+    val fileList = deltaFileStatuses(Seq(0L, 2L))
+    val commitRange = buildCommitRange(
+      createMockFSListFromEngine(fileList),
+      fileList,
+      startBoundary = VersionBoundaryDef(0),
+      endBoundary = VersionBoundaryDef(2),
+      commitRangeValidation = Some(false))
+    val iterator = commitRange.getCommitFiles
+
+    assert(iterator.next().getVersion == 0L)
+    val error = intercept[KernelException](iterator.hasNext)
+    assert(error.getMessage.contains("Missing commit version 1"))
+    assert(!iterator.hasNext)
+    intercept[NoSuchElementException](iterator.next())
+  }
+
+  test("relaxed getCommitFiles reports a missing start lazily") {
+    val fileList = deltaFileStatuses(Seq(2L, 3L))
+    val commitRange = buildCommitRange(
+      createMockFSListFromEngine(fileList),
+      fileList,
+      startBoundary = VersionBoundaryDef(0),
+      endBoundary = VersionBoundaryDef(3),
+      commitRangeValidation = Some(false))
+    val iterator = commitRange.getCommitFiles
+
+    val error = intercept[KernelException](iterator.hasNext)
+    assert(error.getMessage.contains("startVersion=0"))
+    assert(error.getMessage.contains("Earliest available version is 2"))
+    assert(!iterator.hasNext)
+  }
+
+  test("relaxed getCommitFiles reports an explicit missing suffix lazily") {
+    val fileList = deltaFileStatuses(Seq(0L, 1L))
+    val commitRange = buildCommitRange(
+      createMockFSListFromEngine(fileList),
+      fileList,
+      startBoundary = VersionBoundaryDef(0),
+      endBoundary = VersionBoundaryDef(3),
+      commitRangeValidation = Some(false))
+    val iterator = commitRange.getCommitFiles
+
+    assert(iterator.next().getVersion == 0L)
+    assert(iterator.next().getVersion == 1L)
+    val error = intercept[KernelException](iterator.hasNext)
+    assert(error.getMessage.contains("Missing commit version 2"))
+    assert(!iterator.hasNext)
+  }
+
+  test("relaxed implicit end resolves to the last listed commit") {
+    val fileList = deltaFileStatuses(Seq(0L, 2L))
+    val commitRange = buildCommitRange(
+      createMockFSListFromEngine(fileList),
+      fileList,
+      startBoundary = VersionBoundaryDef(0),
+      endBoundary = DefaultBoundaryDef(2),
+      commitRangeValidation = Some(false),
+      failOnDataLoss = Some(false))
+
+    assert(commitRange.getEndVersion == 2L)
+    assert(commitRange.getCommitFiles.toInMemoryList.asScala.map(_.getVersion) == Seq(0L, 2L))
+  }
+
+  test("relaxed construction still rejects an empty listing") {
+    val engine = createMockFSListFromEngine(Seq.empty)
+    val error = intercept[KernelException] {
+      TableManager.loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+        .withCommitRangeValidation(false)
+        .build(engine)
+    }
+    assert(error.getMessage.contains("no log files found"))
+  }
+
+  test("relaxed ranges reject action iteration") {
+    val fileList = deltaFileStatuses(Seq(0L, 1L))
+    val commitRange = buildCommitRange(
+      createMockFSListFromEngine(fileList),
+      fileList,
+      startBoundary = VersionBoundaryDef(0),
+      endBoundary = VersionBoundaryDef(1),
+      commitRangeValidation = Some(false))
+
+    val actionsError = intercept[KernelException](commitRange.getActions(null, null, null))
+    assert(actionsError.getMessage.contains("Commit action iteration is not supported"))
+    val commitsError = intercept[KernelException](commitRange.getCommitActions(null, null, null))
+    assert(commitsError.getMessage.contains("Commit action iteration is not supported"))
   }
 
   Seq(
@@ -875,6 +988,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     val exMsg = intercept[IllegalArgumentException] {
       TableManager.loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
         .withLogData(parsedRatifiedStagedCommits(Seq(0, 2)).toList.asJava)
+        .withCommitRangeValidation(false)
         .build(mockEngine())
     }.getMessage
 

@@ -44,6 +44,8 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
     public Optional<CommitBoundary> endBoundaryOpt = Optional.empty();
     public List<ParsedLogData> logDatas = Collections.emptyList();
     public Optional<Long> maxCatalogVersion = Optional.empty();
+    public boolean commitRangeValidation = true;
+    public boolean failOnDataLoss = true;
 
     public Context(String unresolvedPath, CommitBoundary startBoundary) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
@@ -77,6 +79,18 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
   public CommitRangeBuilderImpl withMaxCatalogVersion(long version) {
     checkArgument(version >= 0, "maxCatalogVersion must be >= 0, but got: %d", version);
     ctx.maxCatalogVersion = Optional.of(version);
+    return this;
+  }
+
+  @Override
+  public CommitRangeBuilderImpl withCommitRangeValidation(boolean enabled) {
+    ctx.commitRangeValidation = enabled;
+    return this;
+  }
+
+  @Override
+  public CommitRangeBuilderImpl withFailOnDataLoss(boolean enabled) {
+    ctx.failOnDataLoss = enabled;
     return this;
   }
 

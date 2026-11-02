@@ -133,6 +133,18 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException missingCommitVersion(String tablePath, long version) {
+    return new KernelException(
+        String.format(
+            "%s: Missing commit version %d while iterating commit files.", tablePath, version));
+  }
+
+  public static KernelException commitActionIterationNotSupported() {
+    return new KernelException(
+        "Commit action iteration is not supported for a range built with commit range validation "
+            + "disabled.");
+  }
+
   public static KernelException invalidVersionRange(long startVersion, long endVersion) {
     String message =
         String.format(
