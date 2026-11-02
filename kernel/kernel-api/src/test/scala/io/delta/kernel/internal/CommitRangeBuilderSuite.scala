@@ -860,8 +860,6 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     val commitFiles = commitRange.getCommitFiles.toInMemoryList.asScala
     assert(commitFiles.map(_.getVersion) == Seq(0L, 1L))
     assert(commitFiles.map(_.getFileStatus.getPath) == fileList.map(_.getPath))
-    assert(commitFiles.head == new CommitFileStatus(0L, fileList.head))
-    assert(commitFiles.head.hashCode == new CommitFileStatus(0L, fileList.head).hashCode)
     intercept[NullPointerException](new CommitFileStatus(0L, null))
   }
 

@@ -20,7 +20,6 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.utils.FileStatus;
-import java.util.Objects;
 
 /** Immutable metadata for one commit JSON file in a {@link CommitRange}. */
 @Evolving
@@ -41,23 +40,5 @@ public final class CommitFileStatus {
   /** Returns the commit file metadata. */
   public FileStatus getFileStatus() {
     return fileStatus;
-  }
-
-  @Override
-  public boolean equals(Object other) {
-    if (this == other) return true;
-    if (!(other instanceof CommitFileStatus)) return false;
-    CommitFileStatus that = (CommitFileStatus) other;
-    return version == that.version && fileStatus.equals(that.fileStatus);
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hash(version, fileStatus);
-  }
-
-  @Override
-  public String toString() {
-    return String.format("CommitFileStatus{version=%d, fileStatus=%s}", version, fileStatus);
   }
 }
