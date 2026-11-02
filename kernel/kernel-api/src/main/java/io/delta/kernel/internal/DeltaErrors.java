@@ -133,10 +133,13 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException missingCommitVersion(String tablePath, long version) {
-    return new KernelException(
+  public static InvalidTableException missingCommitVersion(String tablePath, long version) {
+    return new InvalidTableException(
+        tablePath,
         String.format(
-            "%s: Missing commit version %d while iterating commit files.", tablePath, version));
+            "versions are not contiguous: "
+                + "Table version %d is missing or unavailable for this log operation.",
+            version));
   }
 
   public static KernelException commitActionIterationNotSupported() {

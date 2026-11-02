@@ -887,8 +887,10 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     val iterator = commitRange.getCommitFiles
 
     assert(iterator.next().getVersion == 0L)
-    val error = intercept[KernelException](iterator.hasNext)
-    assert(error.getMessage.contains("Missing commit version 1"))
+    val error = intercept[InvalidTableException](iterator.hasNext)
+    assert(error.getMessage.contains(
+      "versions are not contiguous: " +
+        "Table version 1 is missing or unavailable for this log operation."))
     assert(!iterator.hasNext)
     intercept[NoSuchElementException](iterator.next())
   }
@@ -921,8 +923,10 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
 
     assert(iterator.next().getVersion == 0L)
     assert(iterator.next().getVersion == 1L)
-    val error = intercept[KernelException](iterator.hasNext)
-    assert(error.getMessage.contains("Missing commit version 2"))
+    val error = intercept[InvalidTableException](iterator.hasNext)
+    assert(error.getMessage.contains(
+      "versions are not contiguous: " +
+        "Table version 2 is missing or unavailable for this log operation."))
     assert(!iterator.hasNext)
   }
 
