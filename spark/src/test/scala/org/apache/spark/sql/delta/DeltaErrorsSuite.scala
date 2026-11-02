@@ -308,11 +308,7 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", "22003", Map(
         "sourceType" -> toSQLType(sourceType),
         "targetType" -> toSQLType(targetType),
-        "columnName" -> toSQLId(columnName),
-        "storeAssignmentPolicyFlag" -> SQLConf.STORE_ASSIGNMENT_POLICY.key,
-        "updateAndMergeCastingFollowsAnsiEnabledFlag" ->
-          DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
-        "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key))
+        "columnName" -> toSQLId(columnName)))
     }
     {
       val e = intercept[DeltaAnalysisException] {

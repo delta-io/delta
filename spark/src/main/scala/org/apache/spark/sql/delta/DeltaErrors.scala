@@ -1070,11 +1070,7 @@ trait DeltaErrorsBase
       messageParameters = Array(
         toSQLType(from), // sourceType
         toSQLType(to), // targetType
-        toSQLId(columnName), // columnName
-        SQLConf.STORE_ASSIGNMENT_POLICY.key, // storeAssignmentPolicyFlag
-        // updateAndMergeCastingFollowsAnsiEnabledFlag
-        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
-        SQLConf.ANSI_ENABLED.key // ansiEnabledFlag
+        toSQLId(columnName) // columnName
       )
     )
   }
