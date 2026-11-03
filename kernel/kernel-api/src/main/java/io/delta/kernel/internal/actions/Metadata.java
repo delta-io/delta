@@ -50,7 +50,8 @@ public class Metadata implements Serializable {
 
     final String schemaJson =
         requireNonNull(vector.getChild(4), rowId, "schemaString").getString(rowId);
-    StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaJson);
+    Lazy<StructType> lazySchema =
+        new Lazy<>(() -> DataTypeJsonSerDe.deserializeStructType(schemaJson));
 
     return new Metadata(
         requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
@@ -60,7 +61,7 @@ public class Metadata implements Serializable {
             vector.getChild(2).isNullAt(rowId) ? null : vector.getChild(2).getString(rowId)),
         Format.fromColumnVector(requireNonNull(vector.getChild(3), rowId, "format"), rowId),
         schemaJson,
-        schema,
+        lazySchema,
         vector.getChild(5).getArray(rowId),
         Optional.ofNullable(
             vector.getChild(6).isNullAt(rowId) ? null : vector.getChild(6).getLong(rowId)),
@@ -89,7 +90,7 @@ public class Metadata implements Serializable {
   private final Optional<String> description;
   private final Format format;
   private final String schemaString;
-  private final StructType schema;
+  private final Lazy<StructType> schema;
   private final ArrayValue partitionColumns;
   private final Optional<Long> createdTime;
   private final MapValue configurationMapValue;
@@ -109,14 +110,40 @@ public class Metadata implements Serializable {
       ArrayValue partitionColumns,
       Optional<Long> createdTime,
       MapValue configurationMapValue) {
-    ensureNoMetadataColumns(schema);
+    this(
+        id,
+        name,
+        description,
+        format,
+        schemaString,
+        new Lazy<>(() -> schema),
+        partitionColumns,
+        createdTime,
+        configurationMapValue);
+  }
 
+  private Metadata(
+      String id,
+      Optional<String> name,
+      Optional<String> description,
+      Format format,
+      String schemaString,
+      Lazy<StructType> lazySchema,
+      ArrayValue partitionColumns,
+      Optional<Long> createdTime,
+      MapValue configurationMapValue) {
     this.id = requireNonNull(id, "id is null");
     this.name = name;
     this.description = requireNonNull(description, "description is null");
     this.format = requireNonNull(format, "format is null");
     this.schemaString = requireNonNull(schemaString, "schemaString is null");
-    this.schema = schema;
+    this.schema =
+        new Lazy<>(
+            () -> {
+              StructType s = lazySchema.get();
+              ensureNoMetadataColumns(s);
+              return s;
+            });
     this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
     this.createdTime = createdTime;
     this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
@@ -126,7 +153,7 @@ public class Metadata implements Serializable {
         new Lazy<>(
             () ->
                 new StructType(
-                    schema.fields().stream()
+                    this.schema.get().fields().stream()
                         .filter(
                             field ->
                                 !partitionColNames
@@ -168,7 +195,7 @@ public class Metadata implements Serializable {
         this.description,
         this.format,
         this.schemaString,
-        this.schema,
+        this.schema, // pass Lazy directly to avoid forcing evaluation
         this.partitionColumns,
         this.createdTime,
         VectorUtils.stringStringMapValue(newConfiguration));
@@ -226,7 +253,7 @@ public class Metadata implements Serializable {
   }
 
   public StructType getSchema() {
-    return schema;
+    return schema.get();
   }
 
   public ArrayValue getPartitionColumns() {
@@ -280,7 +307,7 @@ public class Metadata implements Serializable {
   public StructType getPhysicalSchema() {
     ColumnMapping.ColumnMappingMode mappingMode =
         ColumnMapping.getColumnMappingMode(getConfiguration());
-    return ColumnMapping.convertToPhysicalSchema(schema, schema, mappingMode);
+    return ColumnMapping.convertToPhysicalSchema(getSchema(), getSchema(), mappingMode);
   }
 
   /**
@@ -325,7 +352,7 @@ public class Metadata implements Serializable {
         name,
         description,
         format,
-        schema,
+        schema.get(),
         partitionColNames.get(),
         createdTime,
         configuration.get());
@@ -341,7 +368,7 @@ public class Metadata implements Serializable {
         && name.equals(other.name)
         && description.equals(other.description)
         && format.equals(other.format)
-        && schema.equals(other.schema)
+        && schema.get().equals(other.schema.get())
         && partitionColNames.get().equals(other.partitionColNames.get())
         && createdTime.equals(other.createdTime)
         && configuration.get().equals(other.configuration.get());
@@ -405,7 +432,8 @@ public class Metadata implements Serializable {
     // Reconstruct Metadata from serialized data
     private Object readResolve() {
       Format format = new Format(formatProvider, formatOptions);
-      StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaString);
+      Lazy<StructType> lazySchema =
+          new Lazy<>(() -> DataTypeJsonSerDe.deserializeStructType(schemaString));
       ArrayValue partitionColumns =
           VectorUtils.buildArrayValue(partitionColumnsList, StringType.STRING);
       MapValue configurationMapValue = VectorUtils.stringStringMapValue(configuration);
@@ -416,7 +444,7 @@ public class Metadata implements Serializable {
           Optional.ofNullable(description),
           format,
           schemaString,
-          schema,
+          lazySchema,
           partitionColumns,
           Optional.ofNullable(createdTime),
           configurationMapValue);

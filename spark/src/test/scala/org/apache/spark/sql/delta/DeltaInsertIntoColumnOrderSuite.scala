@@ -27,18 +27,10 @@ import org.apache.spark.sql.internal.SQLConf
  */
 class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
-
-  /** Collects inserts that don't support implicit casting and will fail if the input data type
-   * doesn't match the expected column type.
-   * These are all dataframe inserts that use by name resolution, except for streaming writes.
-   */
-  private val insertsWithoutImplicitCastSupport: Set[Insert] =
-    insertsByName.intersect(insertsDataframe) - StreamingInsert
 
   test("all test cases are implemented") {
     checkAllTestCasesImplemented()
@@ -96,23 +88,18 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
     includeInserts = insertsWithoutImplicitCastSupport
   )
 
-  // Inserting using a different ordering for struct fields is full of surprises...
   for { (inserts: Set[Insert], expectedAnswer) <- Seq(
-    // Most inserts use name based resolution for struct fields when there's no implicit cast
-    // required due to mismatching data types, except for `INSERT INTO/OVERWRITE (columns)` and
-    // `INSERT OVERWRITE PARTITION (partition) (columns)` which use position based resolution - even
-    // though these are by name inserts.
-    insertsAppend -
-      SQLInsertColList(SaveMode.Append) ->
+    insertsAppend.intersect(insertsByName) - SQLInsertColList(SaveMode.Append) ->
       TestData("a int, s struct <x int, y: int>",
         Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
-    insertsOverwrite -
-      SQLInsertColList(SaveMode.Overwrite) - SQLInsertOverwritePartitionColList ->
+    insertsOverwrite.intersect(insertsByName) -
+        SQLInsertColList(SaveMode.Overwrite) - SQLInsertOverwritePartitionColList ->
       TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
-    Set(SQLInsertColList(SaveMode.Append)) ->
+    insertsAppend.intersect(insertsByPosition) + SQLInsertColList(SaveMode.Append) ->
       TestData("a int, s struct <x int, y: int>",
         Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
-    Set(SQLInsertColList(SaveMode.Overwrite), SQLInsertOverwritePartitionColList) ->
+    insertsOverwrite.intersect(insertsByPosition) +
+        SQLInsertColList(SaveMode.Overwrite) + SQLInsertOverwritePartitionColList ->
       TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 5, "y": 4 } }"""))
     )
   } {
@@ -125,25 +112,26 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
       insertData = TestData("a int, s struct <y int, x: int>",
         Seq("""{ "a": 1, "s": { "y": 5, "x": 4 } }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "true")
     )
   }
 
   for { (inserts: Set[Insert], expectedAnswer) <- Seq(
-    // When there's a type mismatch and an implicit cast is required, then all inserts use position
-    // based resolution for struct fields, except for `INSERT OVERWRITE PARTITION (partition)` and
-    // streaming insert which use name based resolution, and dataframe inserts by name which don't
-    // support implicit cast and fail - see negative test below.
-    insertsAppend - StreamingInsert ->
-      TestData("a int, s struct <x int, y: int>",
-        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
-    insertsOverwrite - SQLInsertOverwritePartitionByPosition ->
-      TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
-    Set(StreamingInsert) ->
+    (insertsAppend.intersect(insertsByName) -- insertsWithoutImplicitCastSupport) -
+        SQLInsertColList(SaveMode.Append) ->
       TestData("a int, s struct <x int, y: int>",
         Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
-    Set(SQLInsertOverwritePartitionByPosition) ->
-      TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }"""))
+    (insertsOverwrite.intersect(insertsByName) -- insertsWithoutImplicitCastSupport) -
+        SQLInsertColList(SaveMode.Overwrite) - SQLInsertOverwritePartitionColList ->
+      TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
+    insertsAppend.intersect(insertsByPosition) + SQLInsertColList(SaveMode.Append) ->
+      TestData("a int, s struct <x int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
+    insertsOverwrite.intersect(insertsByPosition) +
+        SQLInsertColList(SaveMode.Overwrite) + SQLInsertOverwritePartitionColList ->
+      TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 5, "y": 4 } }"""))
     )
   } {
     testInserts(s"insert with implicit cast and different struct fields ordering")(
@@ -155,8 +143,10 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
       insertData = TestData("a long, s struct <y int, x: int>",
         Seq("""{ "a": 1, "s": { "y": 5, "x": 4 } }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      // Inserts that don't support implicit cast are failing, these are covered in the test below.
-      includeInserts = inserts -- insertsWithoutImplicitCastSupport
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "true"
+      )
     )
   }
 
@@ -205,8 +195,62 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
         // mismatch.
         DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY.key -> "true",
         DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
+          -> preserveNullSourceStructs.toString,
+        // With null preservation disabled, both implicit-casting paths expand a null struct for a
+        // field-order-only mismatch. This narrow case does not justify extra casting complexity.
+        DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key
+          -> preserveNullSourceStructs.toString,
+        DeltaSQLConf.DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS.key
           -> preserveNullSourceStructs.toString
       )
     )
+  }
+
+  // Tests that DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED controls whether
+  // DeltaImplicitCast handles non-DF-by-name inserts.
+
+  test("DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED=false: SQL BY NAME uses old behavior") {
+    withTable("target") {
+      withConf(DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "false") {
+        TestData("a int, b long", Seq("""{ "a": 1, "b": 2 }""")).toDF
+          .write.format("delta").saveAsTable("target")
+        // With the fix disabled, SQL BY NAME should still succeed via DeltaAnalysis.
+        sql("INSERT INTO target BY NAME SELECT 1 as a, CAST(3 as int) as b")
+        checkAnswer(spark.table("target"),
+          TestData("a int, b long",
+            Seq("""{ "a": 1, "b": 2 }""", """{ "a": 1, "b": 3 }""")).toDF)
+      }
+    }
+  }
+
+  test("DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED=false: " +
+      "DF by-name still uses DeltaImplicitCast") {
+    withTable("target") {
+      withConf(DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "false") {
+        TestData("a int, b long", Seq("""{ "a": 1, "b": 2 }""")).toDF
+          .write.format("delta").saveAsTable("target")
+        // DF by-name is controlled by DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS, not this flag.
+        TestData("a int, b int", Seq("""{ "a": 1, "b": 3 }""")).toDF
+          .writeTo("target").append()
+        checkAnswer(spark.table("target"),
+          TestData("a int, b long",
+            Seq("""{ "a": 1, "b": 2 }""", """{ "a": 1, "b": 3 }""")).toDF)
+      }
+    }
+  }
+
+  test("DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED=false: by-position uses old behavior") {
+    withTable("target") {
+      withConf(DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "false") {
+        TestData("a int, b long", Seq("""{ "a": 1, "b": 2 }""")).toDF
+          .write.format("delta").saveAsTable("target")
+        // With the fix disabled, insertInto (by-position) should still succeed via DeltaAnalysis.
+        TestData("a int, b int", Seq("""{ "a": 1, "b": 3 }""")).toDF
+          .write.mode(SaveMode.Append).format("delta").insertInto("target")
+        checkAnswer(spark.table("target"),
+          TestData("a int, b long",
+            Seq("""{ "a": 1, "b": 2 }""", """{ "a": 1, "b": 3 }""")).toDF)
+      }
+    }
   }
 }

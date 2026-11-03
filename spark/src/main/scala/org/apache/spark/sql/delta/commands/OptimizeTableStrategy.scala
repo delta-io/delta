@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf.{DELTA_OPTIMIZE_CLUSTERIN
 import org.apache.spark.sql.delta.zorder.ZCubeInfo
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.Literal
 
 object OptimizeTableMode extends Enumeration {
   type OptimizeTableMode = Value
@@ -109,7 +110,9 @@ object OptimizeTableStrategy {
       zOrderBy: Seq[String]): OptimizeTableStrategy = getMode(snapshot, zOrderBy) match {
     case OptimizeTableMode.CLUSTERING =>
       ClusteringStrategy(
-        sparkSession, ClusteringColumnInfo.extractLogicalNames(snapshot), optimizeContext)
+        sparkSession,
+        ClusteringColumnInfo.extractLogicalNames(snapshot),
+        optimizeContext)
     case OptimizeTableMode.ZORDER => ZOrderStrategy(sparkSession, zOrderBy)
     case OptimizeTableMode.COMPACTION =>
       CompactionStrategy(sparkSession, optimizeContext)
@@ -271,7 +274,13 @@ case class ClusteringStrategy(
     // Note that ZCube.filterOutLargeZCubes requires clustered files have
     // the same clustering columns, so skippedClusteredFiles are not included.
     val smallZCubeFiles = ZCube.filterOutLargeZCubes(
-      candidateFiles.map(AddFileWithNumRecords.createFromFile), targetSize)
+      candidateFiles.map { file =>
+        assert(file.partitionValues.isEmpty, "Clustered tables are always unpartitioned")
+        AddFileWithNumRecords.createFromFile(
+          file,
+          /* normalizedPartitionValues= */ Map.empty[String, Literal])
+      },
+      targetSize)
 
     if (optimizeContext.isFull && skippedClusteredFiles.nonEmpty) {
       // Clustered files with different clustering columns have to be re-clustered.

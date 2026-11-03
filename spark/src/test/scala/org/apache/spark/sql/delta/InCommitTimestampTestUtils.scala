@@ -16,11 +16,29 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 object InCommitTimestampTestUtils {
+  def getICTEnablementInfo(metadata: Metadata): Map[String, String] =
+    metadata.configuration
+      .filterKeys(InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains).toMap
+
+  def assertICTEnabledWithoutEnablementInfo(metadata: Metadata): Unit = {
+    assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata))
+    assert(getICTEnablementInfo(metadata).isEmpty)
+  }
+
+  /** The ICT enablement info a table should carry if ICT was enabled by commit `version`. */
+  def expectedICTEnablementInfo(deltaLog: DeltaLog, version: Long): Map[String, String] = {
+    deltaLog.update()
+    Map(
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key -> version.toString,
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key ->
+        getInCommitTimestamp(deltaLog, version).toString)
+  }
+
   /**
    * Overwrites the in-commit-timestamp in the delta file with the given timestamp.
    * It will also set operationParameters to an empty map because operationParameters

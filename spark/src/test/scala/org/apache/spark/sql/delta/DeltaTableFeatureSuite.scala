@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.util.Locale
 
 import scala.collection.mutable
 
@@ -146,6 +147,19 @@ class DeltaTableFeatureSuite
           TestWriterFeatureWithTransitiveDependency.name,
           TestFeatureWithDependency.name,
           TestReaderWriterFeature.name))
+  }
+
+  test("isFeatureSupportedInTableConfigs checks only the requested feature") {
+    val lowerCaseFeatureKey = propertyKey(TestReaderWriterFeature).toLowerCase(Locale.ROOT)
+    val configs = Map(
+      lowerCaseFeatureKey -> "Supported",
+      propertyKey("unknownFeatureForTargetedLookupTest") -> FEATURE_PROP_SUPPORTED)
+
+    assert(isFeatureSupportedInTableConfigs(configs, TestReaderWriterFeature))
+    assert(!isFeatureSupportedInTableConfigs(configs, TestWriterFeature))
+    assert(!isFeatureSupportedInTableConfigs(
+      Map(propertyKey(TestReaderWriterFeature) -> FEATURE_PROP_ENABLED),
+      TestReaderWriterFeature))
   }
 
   test("implicitly-enabled features") {
@@ -460,6 +474,34 @@ class DeltaTableFeatureSuite
     }
   }
 
+  test("fileType-preview is a registered, removable, and addable feature") {
+    // Registered and recognized by name.
+    val feature = TableFeature.featureNameToFeature(FileTypePreviewTableFeature.name)
+    assert(feature.contains(FileTypePreviewTableFeature))
+    // Removable, so it can be dropped once a table no longer contains `file` columns.
+    assert(feature.exists(_.isInstanceOf[RemovableFeature]))
+    // There is no `file` type in the schema yet, so no action references the feature.
+    assert(!FileTypePreviewTableFeature.actionUsesFeature(Metadata()))
+
+    // The feature can be added to a table and then shows up in the protocol.
+    val table = "tbl"
+    withTable(table) {
+      spark.range(0).write.format("delta").saveAsTable(table)
+      val log = DeltaLog.forTable(spark, TableIdentifier(table))
+      assert(!log.update().protocol.readerAndWriterFeatureNames.contains(
+        FileTypePreviewTableFeature.name))
+
+      sql(buildTablePropertyModifyingCommand(
+        "ALTER",
+        targetTableName = table,
+        sourceTableName = table,
+        Seq(s"'$FEATURE_PROP_PREFIX${FileTypePreviewTableFeature.name}' = 'supported', " +
+          s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION")))
+      assert(log.update().protocol.readerAndWriterFeatureNames.contains(
+        FileTypePreviewTableFeature.name))
+    }
+  }
+
   test("drop table feature works with coordinated commits") {
     val table = "tbl"
     withTable(table) {
@@ -469,43 +511,49 @@ class DeltaTableFeatureSuite
       assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
 
       // Add coordinated commits table feature to the table
-      CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(batchSize = 100))
-      val tblProperties1 =
-        Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'",
-          s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}'")
-      sql(buildTablePropertyModifyingCommand(
-        "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
+      CommitCoordinatorProvider.clearNonDefaultBuilders()
+      try {
+        CommitCoordinatorProvider.registerBuilder(
+          InMemoryCommitCoordinatorBuilder(batchSize = 100))
+        val tblProperties1 =
+          Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'",
+            s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}'")
+        sql(buildTablePropertyModifyingCommand(
+          "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
 
-      // Add TestRemovableReaderWriterFeature to the table in unbackfilled delta files
-      val tblProperties2 = Seq(s"'$FEATURE_PROP_PREFIX$featureName' = 'supported', " +
-        s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION, " +
-        s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'true'")
-      sql(buildTablePropertyModifyingCommand(
-        "ALTER", targetTableName = table, sourceTableName = table, tblProperties2))
-      assert(log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
+        // Add TestRemovableReaderWriterFeature to the table in unbackfilled delta files
+        val tblProperties2 = Seq(s"'$FEATURE_PROP_PREFIX$featureName' = 'supported', " +
+          s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION, " +
+          s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'true'")
+        sql(buildTablePropertyModifyingCommand(
+          "ALTER", targetTableName = table, sourceTableName = table, tblProperties2))
+        assert(log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
 
-      // Disable feature on the latest snapshot
-      val tblProperties3 = Seq(s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'false'")
-      sql(buildTablePropertyModifyingCommand(
-        "ALTER", targetTableName = table, sourceTableName = table, tblProperties3))
+        // Disable feature on the latest snapshot
+        val tblProperties3 = Seq(s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'false'")
+        sql(buildTablePropertyModifyingCommand(
+          "ALTER", targetTableName = table, sourceTableName = table, tblProperties3))
 
-      val tableFeature =
-        TableFeature.featureNameToFeature(featureName).get.asInstanceOf[RemovableFeature]
-      assert(tableFeature.historyContainsFeature(
-        spark, DeltaTableV2(spark, log.dataPath), log.update()))
+        val tableFeature =
+          TableFeature.featureNameToFeature(featureName).get.asInstanceOf[RemovableFeature]
+        assert(tableFeature.historyContainsFeature(
+          spark, DeltaTableV2(spark, log.dataPath), log.update()))
 
-      // Dropping feature should fail because the feature still has traces in deltas.
-      val e = intercept[DeltaTableFeatureException] {
+        // Dropping feature should fail because the feature still has traces in deltas.
+        val e = intercept[DeltaTableFeatureException] {
+          sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+        }
+        assert(e.getCondition == "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST", e)
+
+        // Add in a checkpoint and cleanUp up older logs containing feature traces
+        log.startTransaction().commitManually()
+        log.checkpoint()
+        log.cleanUpExpiredLogs(log.update(), deltaRetentionMillisOpt = Some(-1000000000000L))
         sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+        assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
+      } finally {
+        CommitCoordinatorProvider.clearNonDefaultBuilders()
       }
-      assert(e.getMessage.contains("DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST"), e)
-
-      // Add in a checkpoint and cleanUp up older logs containing feature traces
-      log.startTransaction().commitManually()
-      log.checkpoint()
-      log.cleanUpExpiredLogs(log.update(), deltaRetentionMillisOpt = Some(-1000000000000L))
-      sql(s"ALTER TABLE $table DROP FEATURE $featureName")
-      assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
     }
   }
 

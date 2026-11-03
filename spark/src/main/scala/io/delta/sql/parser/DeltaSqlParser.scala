@@ -72,7 +72,8 @@ import org.apache.spark.sql.types._
  * forward the call to `delegate`.
  */
 class DeltaSqlParser(val delegate: ParserInterface)
-    extends ParserInterface {
+    extends ParserInterface
+    with DeltaSqlParserShims {
   private val builder = new DeltaSqlAstBuilder
   private val substitution = new VariableSubstitution
 
@@ -418,8 +419,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     }
 
     val targetIdentifier = visitTableIdentifier(ctx.table)
-    val tableNameParts = targetIdentifier.database.toSeq :+ targetIdentifier.table
-    val targetTable = UnresolvedTable(tableNameParts, "REORG")
+    val targetTable = UnresolvedTable(targetIdentifier.nameParts, "REORG")
 
     val reorgTableSpec = if (ctx.PURGE != null) {
       DeltaReorgTableSpec(DeltaReorgTableMode.PURGE, None)

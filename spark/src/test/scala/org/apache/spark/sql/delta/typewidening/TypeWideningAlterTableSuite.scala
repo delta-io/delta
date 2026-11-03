@@ -35,10 +35,12 @@ class TypeWideningAlterTableSuite
   extends TypeWideningAlterTableTests
     with ParquetTest
     with TypeWideningTestMixin
+    with DeltaDMLTestUtilsNameBased
 
 trait TypeWideningAlterTableTests extends QueryTest
     with QueryErrorsBase
-    with TypeWideningTestCases {
+    with TypeWideningTestCases
+    with DeltaTableProvider {
   self: QueryTest with ParquetTest with TypeWideningTestMixin =>
 
   import testImplicits._
@@ -57,11 +59,11 @@ trait TypeWideningAlterTableTests extends QueryTest
       }
 
       writeData(testCase.initialValuesDF)
-      sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}")
+      sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN value TYPE ${testCase.toType.sql}")
       withAllParquetReaders {
-        assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+        assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.toType)
         checkAnswerWithTolerance(
-          actualDf = readDeltaTable(tempPath).select("value"),
+          actualDf = readDeltaTableByIdentifier().select("value"),
           expectedDf = testCase.initialValuesDF.select($"value".cast(testCase.toType)),
           toType = testCase.toType
         )
@@ -69,7 +71,7 @@ trait TypeWideningAlterTableTests extends QueryTest
       writeData(testCase.additionalValuesDF)
       withAllParquetReaders {
         checkAnswerWithTolerance(
-          actualDf = readDeltaTable(tempPath).select("value"),
+          actualDf = readDeltaTableByIdentifier().select("value"),
           expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
           toType = testCase.toType
         )
@@ -91,7 +93,7 @@ trait TypeWideningAlterTableTests extends QueryTest
       }
 
       val alterTableSql =
-        s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}"
+        s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN value TYPE ${testCase.toType.sql}"
 
       // Type changes that aren't upcast are rejected early during analysis by Spark, while upcasts
       // are rejected in Delta when the ALTER TABLE command is executed.
@@ -115,7 +117,7 @@ trait TypeWideningAlterTableTests extends QueryTest
           "NOT_SUPPORTED_CHANGE_COLUMN",
           sqlState = None,
           parameters = Map(
-            "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+            "table" -> qualifiedErrorTableName,
             "originName" -> toSQLId("value"),
             "originType" -> toSQLType(testCase.fromType),
             "newName" -> toSQLId("value"),
@@ -131,12 +133,12 @@ trait TypeWideningAlterTableTests extends QueryTest
 
   test("type widening using ALTER TABLE REPLACE COLUMNS") {
     append(Seq(1, 2).toDF("value").select($"value".cast(ShortType)))
-    assert(readDeltaTable(tempPath).schema === new StructType().add("value", ShortType))
-    sql(s"ALTER TABLE delta.`$tempPath` REPLACE COLUMNS (value INT)")
-    assert(readDeltaTable(tempPath).schema === new StructType().add("value", IntegerType))
-    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))
+    assert(readDeltaTableByIdentifier().schema === new StructType().add("value", ShortType))
+    sql(s"ALTER TABLE $tableSQLIdentifier REPLACE COLUMNS (value INT)")
+    assert(readDeltaTableByIdentifier().schema === new StructType().add("value", IntegerType))
+    checkAnswer(readDeltaTableByIdentifier(), Seq(Row(1), Row(2)))
     append(Seq(3, 4).toDF("value"))
-    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3), Row(4)))
+    checkAnswer(readDeltaTableByIdentifier(), Seq(Row(1), Row(2), Row(3), Row(4)))
   }
 
   def withTimestampNTZDisabled(f: => Unit): Unit = {
@@ -156,7 +158,7 @@ trait TypeWideningAlterTableTests extends QueryTest
   test(
     "widening Date -> TimestampNTZ rejected when TimestampNTZ feature isn't supported") {
     withTimestampNTZDisabled {
-      sql(s"CREATE TABLE delta.`$tempPath` (a date) USING DELTA")
+      sql(createTableSQL(tableSQLIdentifier, "a date"))
       val currentProtocol = deltaLog.unsafeVolatileSnapshot.protocol
       val currentFeatures = currentProtocol.implicitlyAndExplicitlySupportedFeatures
         .map(_.name)
@@ -166,7 +168,7 @@ trait TypeWideningAlterTableTests extends QueryTest
 
       checkError(
         intercept[DeltaTableFeatureException] {
-          sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE TIMESTAMP_NTZ")
+          sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN a TYPE TIMESTAMP_NTZ")
         },
         "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
         parameters = Map(
@@ -178,9 +180,9 @@ trait TypeWideningAlterTableTests extends QueryTest
   }
 
   test("type widening type change metrics") {
-    sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
+    sql(createTableSQL(tableSQLIdentifier, "a byte"))
     val usageLogs = Log4jUsageLogger.track {
-      sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+      sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN a TYPE int")
     }
 
     val metrics = filterUsageRecords(usageLogs, "delta.typeWidening.typeChanges")
@@ -199,11 +201,11 @@ trait TypeWideningAlterTableTests extends QueryTest
     val dataWithUDT =
       (1 to 10).map(x => Tuple2(x.toByte, new TestUDT.MyDenseVector(Array(x*0.5, x*2.0))))
     append(dataWithUDT.toDF("a", "udt"))
-    sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+    sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN a TYPE int")
   }
 
   test("type widening with null type in table") {
-    sql(s"CREATE TABLE delta.`$tempDir` (a byte, n VOID) USING DELTA")
-    sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
+    sql(createTableSQL(tableSQLIdentifier, "a byte, n VOID"))
+    sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN a TYPE int")
   }
 }

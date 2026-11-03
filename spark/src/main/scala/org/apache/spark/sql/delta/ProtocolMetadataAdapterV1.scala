@@ -48,6 +48,7 @@ case class ProtocolMetadataAdapterV1(
 
   override def assertTableReadable(sparkSession: SparkSession): Unit = {
     TypeWidening.assertTableReadable(sparkSession.sessionState.conf, protocol, metadata)
+    DeltaGeoSpatial.assertTableReadable(sparkSession.sessionState.conf, protocol, metadata)
   }
 
   override def createRowTrackingMetadataFields(

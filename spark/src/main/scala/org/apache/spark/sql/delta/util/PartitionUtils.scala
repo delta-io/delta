@@ -47,7 +47,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaGeoSpatial}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -56,10 +56,11 @@ import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, DateFormatClass, Expression, Literal}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 /**
  * This file is forked from [[org.apache.spark.sql.execution.datasources.PartitioningUtils]].
@@ -120,7 +121,9 @@ object PartitionSpec {
 private[delta] object PartitionUtils {
 
   lazy val timestampPartitionPattern = s"yyyy-MM-dd HH:mm:ss${precisionMatchPatterns(6)}"
-  lazy val utcFormatter = TimestampFormatter(s"yyyy-MM-dd'T'HH:mm:ss.SSSSSSz", ZoneId.of("Z"))
+  private val utcZoneId: ZoneId = ZoneId.of("Z")
+  private val utcTimestampPartitionFormat = s"yyyy-MM-dd'T'HH:mm:ss.SSSSSSz"
+  lazy val utcFormatter = TimestampFormatter(utcTimestampPartitionFormat, utcZoneId)
 
   private def precisionMatchPatterns(maxDigits: Int): String =
     (maxDigits to 1 by -1)
@@ -447,7 +450,7 @@ private[delta] object PartitionUtils {
     }
 
     checkColumnNameDuplication(
-      normalizedPartSpec.map(_._1), "in the partition schema", resolver)
+      normalizedPartSpec.map(_._1), "PARTITION_SCHEMA", resolver)
 
     normalizedPartSpec.toMap
   }
@@ -610,13 +613,15 @@ private[delta] object PartitionUtils {
       caseSensitive: Boolean): Unit = {
     checkColumnNameDuplication(
       partitionColumns,
-      "in the partition columns",
+      "PARTITION_COLUMNS",
       caseSensitive)
 
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
-        // Variant types are not orderable and thus cannot be partition columns.
-        case a: AtomicType if !a.isInstanceOf[VariantType] => // OK
+        // Variant, Geometry and Geography types are not orderable and thus cannot be partition
+        // columns.
+        case a: AtomicType
+          if !a.isInstanceOf[VariantType] && !DeltaGeoSpatial.isGeoSpatialType(a) => // OK
         case _ => throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(field)
       }
     }
@@ -712,12 +717,13 @@ private[delta] object PartitionUtils {
    * the duplication exists.
    *
    * @param columnNames column names to check
-   * @param colType column type name, used in an exception message
+   * @param errorSubClass error sub-class for DELTA_DUPLICATE_COLUMNS_FOUND indicating where the
+   *                      duplicate was found (e.g. "PARTITION_SCHEMA", "CLUSTER_BY").
    * @param resolver resolver used to determine if two identifiers are equal
    */
   def checkColumnNameDuplication(
-      columnNames: Seq[String], colType: String, resolver: Resolver): Unit = {
-    checkColumnNameDuplication(columnNames, colType, isCaseSensitiveAnalysis(resolver))
+      columnNames: Seq[String], errorSubClass: String, resolver: Resolver): Unit = {
+    checkColumnNameDuplication(columnNames, errorSubClass, isCaseSensitiveAnalysis(resolver))
   }
 
   /**
@@ -725,11 +731,12 @@ private[delta] object PartitionUtils {
    * the duplication exists.
    *
    * @param columnNames column names to check
-   * @param colType column type name, used in an exception message
+   * @param errorSubClass error sub-class for DELTA_DUPLICATE_COLUMNS_FOUND indicating where the
+   *                      duplicate was found (e.g. "PARTITION_COLUMNS", "CLUSTER_BY").
    * @param caseSensitiveAnalysis whether duplication checks should be case sensitive or not
    */
   def checkColumnNameDuplication(
-      columnNames: Seq[String], colType: String, caseSensitiveAnalysis: Boolean): Unit = {
+      columnNames: Seq[String], errorSubClass: String, caseSensitiveAnalysis: Boolean): Unit = {
     // scalastyle:off caselocale
     val names = if (caseSensitiveAnalysis) columnNames else columnNames.map(_.toLowerCase)
     // scalastyle:on caselocale
@@ -737,7 +744,7 @@ private[delta] object PartitionUtils {
       val duplicateColumns = names.groupBy(identity).collect {
         case (x, ys) if ys.length > 1 => s"`$x`"
       }
-      throw DeltaErrors.foundDuplicateColumnsException(colType,
+      throw DeltaErrors.foundDuplicateColumnsException(errorSubClass,
         duplicateColumns.mkString(", "))
     }
   }
@@ -756,6 +763,13 @@ private[delta] object PartitionUtils {
 
   /**
    * Converts a typed literal to a normalized string representation for correct comparisons.
+   * This must be kept in sync with [[expressionToNormalizedString]].
+   *
+   * TODO(v4amt): make this delegate to [[expressionToNormalizedString]] so the two cannot drift.
+   *   The duplication is what makes drift possible at all: a partition value written through the
+   *   literal path and read back through the expression path has to render identically, and only
+   *   the two implementations agreeing enforces that today.
+   *
    * @param literal The Literal to convert to a string. Must have the correct type set.
    * @param timeZoneId Optional timezone ID for timestamp types.
    * @param useUtcNormalizedTimestamp If true, formats timestamp types into UTC ISO 8601 format.
@@ -772,13 +786,52 @@ private[delta] object PartitionUtils {
     literal.dataType match {
       case TimestampType if useUtcNormalizedTimestamp =>
         // Format timestamp in UTC ISO 8601 format: "2000-01-01T12:00:00.000000Z"
-        utcFormatter.format(literal.value.asInstanceOf[Long])
+        val normalized = utcFormatter.format(literal.value.asInstanceOf[Long])
+        if (Utils.isTesting) {
+          val fromExpression = expressionToNormalizedString(
+            value = literal,
+            dataType = literal.dataType,
+            timeZoneId = timeZoneId,
+            useUtcNormalizedTimestamp = useUtcNormalizedTimestamp).eval()
+          assert(Option(fromExpression).map(_.toString).orNull == normalized,
+            s"literalToNormalizedString and expressionToNormalizedString disagree on " +
+              s"${literal.dataType}: '$normalized' vs '$fromExpression'.")
+        }
+        normalized
 
       case _ =>
         // All other types can safely be converted to a string.
         val castedValue = Cast(literal, StringType, timeZoneId, ansiEnabled = false).eval()
         Option(castedValue).map(_.toString).orNull
     }
+  }
+
+  /**
+   * Converts a typed value to a normalized string representation for correct comparisons.
+   * This must be kept in sync with [[literalToNormalizedString]].
+   * @param value The value expression to convert to a string.
+   * @param dataType The data type of the value.
+   * @param timeZoneId Optional timezone ID for timestamp types.
+   * @param useUtcNormalizedTimestamp If true, formats timestamp types into UTC ISO 8601 format.
+   * @return The string representation of the value as an expression.
+   */
+  def expressionToNormalizedString(
+      value: Expression,
+      dataType: DataType,
+      timeZoneId: Option[String] = None,
+      useUtcNormalizedTimestamp: Boolean = false): Expression = dataType match {
+    // TODO(v4amt): follow the Iceberg rule for timestamps that carry a zone. Per the spec such a
+    //   value "represents a point in time: values are stored as UTC and do not retain a source time
+    //   zone", so `2017-11-16 17:10:34 PST` and `2017-11-17 01:10:34 UTC` are the same value. The
+    //   UTC normalization below gives that for a TimestampType read through this path, but the rule
+    //   has to hold for every path that compares partition values, not just this one.
+    case TimestampType if useUtcNormalizedTimestamp =>
+      // Format timestamp in UTC ISO 8601 format: "2000-01-01T12:00:00.000000Z"
+      DateFormatClass(value, Literal(utcTimestampPartitionFormat), Some(utcZoneId.getId))
+
+    case _ =>
+      // All other types can safely be converted to a string.
+      Cast(value, StringType, timeZoneId, ansiEnabled = false)
   }
 
   /**
@@ -839,7 +892,12 @@ private[delta] object PartitionUtils {
    * @param rawValue The raw string value of the partition.
    * @param dataType Optional data type from the schema. If None, type inference is used.
    * @param typeInference Whether to infer the type when dataType is None.
-   * @param timeZone Time zone for timestamp parsing.
+   * @param timeZone Time zone used as a fallback for timestamp parsing. The timestampFormatter is
+   *                 always tried first. Only when it fails (e.g., "2026-01-01T12:00:00" with a 'T'
+   *                 separator) and the timestamp does not have a timezone identifier, the Cast
+   *                 fallback uses this timezone to interpret the timestamp. For data written by
+   *                 Spark this will not happen as the timestamp format always matches the
+   *                 timestampFormatter format.
    * @param dateFormatter Formatter for date parsing.
    * @param timestampFormatter Formatter for timestamp parsing.
    * @param validatePartitionColumns Throw an error when casting fails.

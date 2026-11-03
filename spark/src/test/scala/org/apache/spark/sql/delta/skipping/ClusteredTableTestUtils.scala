@@ -296,6 +296,10 @@ trait ClusteredTableTestUtilsBase
       skipCatalogCheck: Boolean = false
     ): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+    // Wait for async catalog updates before verification. SHOW TBLPROPERTIES reads from the
+    // Hive catalog which is updated asynchronously by the UpdateCatalog hook, so we need to
+    // ensure the async update has completed before checking catalog-dependent properties.
+    UpdateCatalog.awaitCompletion(10000)
     verifyClusteringColumnsInternal(
       snapshot,
       tableIdentifier.table,
@@ -309,7 +313,6 @@ trait ClusteredTableTestUtilsBase
     val updateCatalogEnabled = spark.conf.get(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)
     assert(updateCatalogEnabled,
       "need to enable [[DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED]] to verify catalog updates.")
-    UpdateCatalog.awaitCompletion(10000)
     val catalog = spark.sessionState.catalog
     catalog.refreshTable(tableIdentifier)
     val table = catalog.getTableMetadata(tableIdentifier)

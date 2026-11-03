@@ -24,6 +24,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.encoders.encoderFor
 import org.apache.spark.sql.expressions.{SparkUserDefinedFunction, UserDefinedFunction}
 import org.apache.spark.sql.functions.udf
+import org.apache.spark.unsafe.types.VariantVal
 
 /**
  * Define a few templates for udfs used by Delta. Use these templates to create
@@ -75,6 +76,9 @@ object DeltaUDF {
   def booleanFromByte(x: Byte => Boolean): UserDefinedFunction =
     createUdfFromTemplateUnsafe(booleanFromByteTemplate, x, udf(x))
 
+  def variantFromVariant(f: VariantVal => VariantVal): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(variantFromVariantTemplate, f, udf(f))
+
   private lazy val stringFromStringTemplate =
     udf[String, String](identity).asInstanceOf[SparkUserDefinedFunction]
 
@@ -114,6 +118,10 @@ object DeltaUDF {
   private lazy val booleanFromByteTemplate =
     udf((_: Byte) => true).asInstanceOf[SparkUserDefinedFunction]
 
+  private lazy val variantFromVariantTemplate =
+    udf((_: VariantVal) => new VariantVal(Array.empty, Array.empty))
+      .asInstanceOf[SparkUserDefinedFunction]
+
   /**
    * Return a `UserDefinedFunction` for the given `f` from `template` if
    * `INTERNAL_UDF_OPTIMIZATION_ENABLED` is enabled. Otherwise, `orElse` will be called to create a
@@ -123,8 +131,11 @@ object DeltaUDF {
       template: SparkUserDefinedFunction,
       f: AnyRef,
       orElse: => UserDefinedFunction): UserDefinedFunction = {
-    if (SparkSession.active.sessionState.conf
-      .getConf(DeltaSQLConf.INTERNAL_UDF_OPTIMIZATION_ENABLED)) {
+    // Use getActiveSession instead of active to avoid IllegalStateException when the SparkContext
+    // is stopped (e.g. during query cancellation or cluster shutdown). If no session is available,
+    // fall through to orElse which creates a fresh UDF safely.
+    if (SparkSession.getActiveSession
+      .exists(_.sessionState.conf.getConf(DeltaSQLConf.INTERNAL_UDF_OPTIMIZATION_ENABLED))) {
       val inputEncoders = template.inputEncoders.map(_.map(e => encoderFor(e)))
       val outputEncoder = template.outputEncoder.map(e => encoderFor(e))
       template.copy(f = f, inputEncoders = inputEncoders, outputEncoder = outputEncoder)

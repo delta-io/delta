@@ -16,24 +16,35 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.io.File
 import java.util.Optional
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable
 import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.DeltaOperations._
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, TableDescriptor, TableIdentifier, UpdatedActions, GetCommitsResponse => JGetCommitsResponse}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.scalactic.source.Position
+import org.scalatest.Tag
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
+
+case object CatalogManagedMaintenanceIncompatible
+  extends Tag("CatalogManagedMaintenanceIncompatible")
 
 // This trait is built to serve as a base trait for tests built for both CatalogOwned
 // and commit-coordinators table feature.
@@ -160,6 +171,17 @@ trait CatalogOwnedTestBaseSuite
       if (oldConfig.isDefined) {
         spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
       }
+    }
+  }
+
+  override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(
+      implicit pos: Position): Unit = {
+    super.test(testName, testTags: _*) {
+      if (catalogOwnedDefaultCreationEnabledInTests &&
+          testTags.contains(CatalogManagedMaintenanceIncompatible)) {
+        cancel("Maintenance operation is not supported for catalog-managed tables")
+      }
+      testFun
     }
   }
 
@@ -403,6 +425,33 @@ trait CatalogOwnedTestBaseSuite
     validateRowTrackingEnablement(
       tableName,
       expected)
+  }
+
+  /**
+   * Helper function to manually populate `UCCommitCoordinatorClient.UC_TABLE_ID_KEY` in the
+   * latest snapshot's metadata so the table looks as if the UC commit coordinator early path had
+   * populated it. The `tableSource` selects between a path-based table (`Left(tempDir)`) and a
+   * catalog table (`Right(tableName)`).
+   */
+  def addUCTableIdToTable(
+      tableSource: Either[File, String],
+      ucTableId: Option[String] = None): String = {
+    val tableIdToUse = ucTableId.getOrElse(UUID.randomUUID().toString)
+    val (txn, initialSnapshot) = tableSource match {
+      case Left(tempDir) =>
+        val (log, initialSnapshot) = DeltaLog.forTableWithSnapshot(spark, tempDir.getCanonicalPath)
+        (log.startTransaction(), initialSnapshot)
+      case Right(tableName) =>
+        val deltaTable = DeltaTableV2(spark, CatalystTableIdentifier(tableName))
+        val txn = deltaTable.startTransaction()
+        (txn, txn.snapshot)
+    }
+    txn.commitActions(
+      op = ManualUpdate,
+      actions = initialSnapshot.metadata.copy(
+        configuration = initialSnapshot.metadata.configuration ++
+          Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableIdToUse)))
+    tableIdToUse
   }
 }
 
@@ -745,4 +794,16 @@ trait CoordinatedCommitsBaseSuite
       spark.conf.getOption(
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")
   }
+}
+
+trait WithCatalogOwnedBatch1 { self: CatalogOwnedTestBaseSuite =>
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+trait WithCatalogOwnedBatch2 { self: CatalogOwnedTestBaseSuite =>
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+trait WithCatalogOwnedBatch100 { self: CatalogOwnedTestBaseSuite =>
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -170,13 +170,21 @@ public class LogReplay {
   }
 
   /**
+   * Returns the last-seen CRC info from the log segment if available. Lazily loads and caches the
+   * CRC file on first access. Returns empty if no CRC file exists in the log segment.
+   */
+  public Optional<CRCInfo> getLastSeenCrcInfo() {
+    return lazyLatestCrcInfo.get();
+  }
+
+  /**
    * Returns the CRC info for the current snapshot version if available. Lazily loads and caches the
    * CRC file on first access. Returns empty if no CRC file exists at the snapshot version.
    */
   public Optional<CRCInfo> getCrcInfoAtSnapshotVersion() {
     // TODO: We should first just check if the checksum file in the LogSegment is at this snapshot
     //       version.
-    return lazyLatestCrcInfo.get().filter(crcInfo -> crcInfo.getVersion() == getVersion());
+    return getLastSeenCrcInfo().filter(crcInfo -> crcInfo.getVersion() == getVersion());
   }
 
   /**

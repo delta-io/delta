@@ -32,11 +32,13 @@ class VerifyVersionCommand(install):
 with open("python/README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-install_requires_arg = ['pyspark>=4.0.1', 'importlib_metadata>=1.0.0']
+# Upper bounds: last known good versions before the Python CI uv_exclude_newer date.
+# pyspark 4.2.0 (2026-07-14), importlib_metadata 8.7.1 (2025-12-21)
+install_requires_arg = ['pyspark>=4.0.1,<=4.2.0', 'importlib_metadata>=1.0.0,<=8.7.1']
 python_requires_arg = '>=3.10'
 
 setup(
-    name="delta-spark",
+    name="delta_spark",
     version=VERSION,
     description="Python APIs for using Delta Lake with Apache Spark",
     long_description=long_description,

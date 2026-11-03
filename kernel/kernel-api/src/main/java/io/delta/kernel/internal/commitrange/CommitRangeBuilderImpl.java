@@ -42,6 +42,7 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
     public final String unresolvedPath;
     public final CommitBoundary startBoundary;
     public Optional<CommitBoundary> endBoundaryOpt = Optional.empty();
+    public Optional<Long> maxEndVersionOpt = Optional.empty();
     public List<ParsedLogData> logDatas = Collections.emptyList();
     public Optional<Long> maxCatalogVersion = Optional.empty();
     public boolean commitRangeValidation = true;
@@ -66,6 +67,13 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
   @Override
   public CommitRangeBuilderImpl withEndBoundary(CommitBoundary endBoundary) {
     ctx.endBoundaryOpt = Optional.of(requireNonNull(endBoundary, "endBoundary is null"));
+    return this;
+  }
+
+  @Override
+  public CommitRangeBuilderImpl withMaxEndVersion(long version) {
+    checkArgument(version >= 0, "maxEndVersion must be >= 0, but got: %d", version);
+    ctx.maxEndVersionOpt = Optional.of(version);
     return this;
   }
 
@@ -105,6 +113,20 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
   ////////////////////////////
 
   private void validateInputOnBuild() {
+    // An exact end boundary and an upper limit for the end version would contradict each other
+    checkArgument(
+        !(ctx.endBoundaryOpt.isPresent() && ctx.maxEndVersionOpt.isPresent()),
+        "withEndBoundary and withMaxEndVersion cannot be used together");
+
+    // A timestamp-based start boundary is checked once it is resolved, in CommitRangeFactory
+    if (ctx.maxEndVersionOpt.isPresent() && ctx.startBoundary.isVersion()) {
+      checkArgument(
+          ctx.startBoundary.getVersion() <= ctx.maxEndVersionOpt.get(),
+          String.format(
+              "startVersion (%d) must be <= maxEndVersion (%d)",
+              ctx.startBoundary.getVersion(), ctx.maxEndVersionOpt.get()));
+    }
+
     // Validate that start boundary is less than or equal to end boundary if end boundary is
     // provided
     if (ctx.endBoundaryOpt.isPresent()) {

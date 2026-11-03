@@ -123,9 +123,7 @@ object TypeWideningMode {
   case object AllTypeWideningToCommonWiderType extends TypeWideningMode {
     private def getDecimalType(t: IntegralType): DecimalType = {
       t match {
-        case _: ByteType => DecimalType(3, 0)
-        case _: ShortType => DecimalType(5, 0)
-        case _: IntegerType => DecimalType(10, 0)
+        case _: ByteType | _: ShortType | _: IntegerType => DecimalType(10, 0)
         case _: LongType => DecimalType(20, 0)
       }
     }
@@ -182,9 +180,7 @@ object TypeWideningMode {
   case object AllTypeWideningWithDecimalCoercion extends TypeWideningMode {
     private def getDecimalType(t: IntegralType): DecimalType = {
       t match {
-        case _: ByteType => DecimalType(3, 0)
-        case _: ShortType => DecimalType(5, 0)
-        case _: IntegerType => DecimalType(10, 0)
+        case _: ByteType | _: ShortType | _: IntegerType => DecimalType(10, 0)
         case _: LongType => DecimalType(20, 0)
       }
     }

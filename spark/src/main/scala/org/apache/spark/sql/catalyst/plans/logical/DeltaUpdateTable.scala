@@ -75,13 +75,13 @@ object DeltaUpdateTable {
 
       case _: ExtractValue =>
         throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0009",
+          errorClass = "DELTA_UNSUPPORTED_NESTED_FIELD_IN_UPDATE",
           messageParameters = Array(Option(errMsg).map(_ + " - ").getOrElse(""))
         )
 
       case other =>
         throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0010",
+          errorClass = "DELTA_UNSUPPORTED_EXPRESSION_IN_TARGET_COLUMN",
           messageParameters = Array(Option(errMsg).map(_ + " - ").getOrElse(""), other.sql)
         )
     }

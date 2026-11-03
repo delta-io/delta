@@ -71,7 +71,8 @@ object ShadedIcebergBuild {
    * Here's an overview:
    *  PartitionSpec: sets checkConflicts to false to honor field ID assigned by Delta
    *  HiveCatalog, HiveTableOperations: allow metadataUpdates to overwrite schema and partition spec
-   *  RESTFileScanTaskParser: fixes NoSuchElementException on empty delete-file-references arrays
+   *  Delegates: does not suppress the explicit first_row_id on added DataFiles, so UniForm can
+   *    preserve Delta row IDs (baseRowId) as Iceberg first_row_id.
    */
   def updateMergeStrategy(prev: String => MergeStrategy): String => MergeStrategy = {
     case PathList("shadedForDelta", "org", "apache", "iceberg", s)
@@ -80,11 +81,12 @@ object ShadedIcebergBuild {
     case PathList("shadedForDelta", "org", "apache", "iceberg", s)
       if s.matches("MetadataUpdate(\\$.*)?\\.class") =>
       MergeStrategy.first
+    case PathList("shadedForDelta", "org", "apache", "iceberg", s)
+      if s.matches("Delegates(\\$.*)?\\.class") =>
+      MergeStrategy.first
     case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
       MergeStrategy.first
     case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec.class") =>
-      MergeStrategy.first
-    case PathList("shadedForDelta", "org", "apache", "iceberg", "rest", "RESTFileScanTaskParser.class") =>
       MergeStrategy.first
     case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog.class") =>
       MergeStrategy.first
@@ -126,6 +128,8 @@ object ShadedIcebergBuild {
     "HiveTableOperations$1.class"
     ) =>
       MergeStrategy.first
+    case PathList("META-INF", "versions", _*) =>
+      MergeStrategy.discard
     case PathList("org", "slf4j", xs @ _*) =>
       // SLF4J is provided by Spark runtime, exclude from assembly
       MergeStrategy.discard

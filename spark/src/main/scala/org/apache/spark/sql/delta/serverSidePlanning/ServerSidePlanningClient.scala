@@ -35,7 +35,7 @@ case class ScanFile(
  * representation for filter pushdown. This keeps the interface catalog-agnostic while allowing
  * each server-side planning catalog implementation to convert filters to their own native format.
  */
-trait ServerSidePlanningClient {
+trait ServerSidePlanningClient extends AutoCloseable {
   /**
    * Plan a table scan and return the list of files to read.
    *
@@ -61,6 +61,12 @@ trait ServerSidePlanningClient {
    * @return true if ALL filters can be converted, false if ANY filter cannot be converted
    */
   def canConvertFilters(filters: Array[Filter]): Boolean
+
+  /**
+   * Close any resources held by this client.
+   * Default implementation is a no-op for clients that don't hold resources.
+   */
+  override def close(): Unit = {}
 }
 
 /**

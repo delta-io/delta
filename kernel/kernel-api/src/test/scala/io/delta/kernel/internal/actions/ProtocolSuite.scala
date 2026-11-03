@@ -290,6 +290,11 @@ class ProtocolSuite extends AnyFunSuite with TestUtils {
       7,
       Set[String]("variantType", "variantShredding-preview"),
       Set[String]("variantType", "variantShredding-preview")),
+    Set("variantShredding") -> (
+      3,
+      7,
+      Set[String]("variantType", "variantShredding"),
+      Set[String]("variantType", "variantShredding")),
     Set("rowTracking") -> (
       1,
       7,

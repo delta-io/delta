@@ -77,10 +77,10 @@ case class MergeIntoCommand(
   with ClassicMergeExecutor {
 
   override val output: Seq[Attribute] = Seq(
-    AttributeReference("num_affected_rows", LongType)(),
-    AttributeReference("num_updated_rows", LongType)(),
-    AttributeReference("num_deleted_rows", LongType)(),
-    AttributeReference("num_inserted_rows", LongType)())
+    AttributeReference("num_affected_rows", LongType, nullable = false)(),
+    AttributeReference("num_updated_rows", LongType, nullable = false)(),
+    AttributeReference("num_deleted_rows", LongType, nullable = false)(),
+    AttributeReference("num_inserted_rows", LongType, nullable = false)())
 
   protected def runMerge(spark: SparkSession): Seq[Row] = {
     recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
@@ -101,7 +101,8 @@ case class MergeIntoCommand(
           protocol = targetFileIndex.protocol,
           metadata = targetFileIndex.metadata,
           otherProtocol = deltaTxn.protocol,
-          otherMetadata = deltaTxn.metadata
+          otherMetadata = deltaTxn.metadata,
+          tableNameOrPath = deltaTxn.tableNameOrPath
         )
 
         if (canMergeSchema) {

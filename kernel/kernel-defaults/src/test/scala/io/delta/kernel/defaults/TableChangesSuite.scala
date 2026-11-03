@@ -523,6 +523,47 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
   }
 }
 
+class CommitRangeNoSnapshotTableChangesSuite extends TableChangesSuite {
+
+  override def getChanges(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long,
+      actionSet: Set[DeltaAction]): Seq[ColumnarBatch] = {
+    val commitRange =
+      TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(startVersion))
+        .withEndBoundary(CommitBoundary.atVersion(endVersion))
+        .build(defaultEngine)
+    commitRange.getActions(defaultEngine, actionSet.asJava).toSeq
+  }
+
+  test("getCommitActions(Engine, Set) matches the Snapshot overload commit-by-commit") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      (0 to 4).foreach { _ =>
+        spark.range(10).write.format("delta").mode("append").save(tablePath)
+      }
+      val commitRange =
+        TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+          .withEndBoundary(CommitBoundary.atVersion(4))
+          .build(defaultEngine)
+      val startSnapshot =
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 0)
+
+      val withSnapshot =
+        commitRange.getCommitActions(defaultEngine, startSnapshot, FULL_ACTION_SET.asJava).toSeq
+      val withoutSnapshot =
+        commitRange.getCommitActions(defaultEngine, FULL_ACTION_SET.asJava).toSeq
+
+      assert(withSnapshot.size == withoutSnapshot.size)
+      withSnapshot.zip(withoutSnapshot).foreach { case (a, b) =>
+        assert(a.getVersion == b.getVersion)
+        assert(a.getActions.toSeq.map(_.getSize).sum == b.getActions.toSeq.map(_.getSize).sum)
+      }
+    }
+  }
+}
+
 abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
 
   /* actionSet including all currently supported actions */

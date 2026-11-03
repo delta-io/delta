@@ -177,6 +177,22 @@ public class CommitRangeImpl implements CommitRange {
         engine, dataPath.toString(), getDeltaFiles(), actionSet);
   }
 
+  @Override
+  public CloseableIterator<ColumnarBatch> getActions(
+      Engine engine, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    validateParameters(engine, actionSet);
+    CloseableIterator<CommitActions> commits = getCommitActions(engine, actionSet);
+    return TableChangesUtils.flattenCommitsAndAddMetadata(engine, commits);
+  }
+
+  @Override
+  public CloseableIterator<CommitActions> getCommitActions(
+      Engine engine, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    validateParameters(engine, actionSet);
+    return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
+        engine, dataPath.toString(), getDeltaFiles(), actionSet);
+  }
+
   //////////////////////
   // Private helpers //
   //////////////////////
@@ -192,5 +208,10 @@ public class CommitRangeImpl implements CommitRange {
     checkArgument(
         startSnapshot.getVersion() == startVersion,
         "startSnapshot must have version = startVersion");
+  }
+
+  private void validateParameters(Engine engine, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    requireNonNull(engine, "engine cannot be null");
+    requireNonNull(actionSet, "actionSet cannot be null");
   }
 }

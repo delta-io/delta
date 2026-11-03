@@ -147,7 +147,17 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         m.resolvedActions.map(_.targetColNameParts))
 
       val targetColNames = m.resolvedActions.map(_.targetColNameParts.head)
-      if (targetColNames.distinct.size < targetColNames.size) {
+      // Without this, case-variant INSERT duplicates would crash `resolveImplicitColumns`
+      // with an internal assertion on tables with generated or identity columns.
+      val hasGeneratedOrIdentityColumns = generatedColumns.nonEmpty || identityColumns.nonEmpty
+      val shouldNormalizeColumnCase =
+        conf.getConf(DeltaSQLConf.DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS) &&
+          hasGeneratedOrIdentityColumns &&
+          !conf.caseSensitiveAnalysis
+      val normalizedColNames =
+        if (shouldNormalizeColumnCase) targetColNames.map(_.toLowerCase(Locale.ROOT))
+        else targetColNames
+      if (normalizedColNames.distinct.size < targetColNames.size) {
         throw DeltaErrors.duplicateColumnOnInsert()
       }
 
@@ -248,7 +258,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     }
   }
 
-  private def transformTimestamps(plan: LogicalPlan, instant: Instant): LogicalPlan = {
+  private[delta] def transformTimestamps(plan: LogicalPlan, instant: Instant): LogicalPlan = {
     import org.apache.spark.sql.delta.implicits._
 
     val currentTimestampMicros = instantToMicros(instant)

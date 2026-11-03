@@ -110,6 +110,8 @@ object TestRow {
         case _: ArrayType => arrayValueToScalaSeq(row.getArray(i))
         case _: MapType => mapValueToScalaMap(row.getMap(i))
         case _: StructType => TestRow(row.getStruct(i))
+        case _: GeometryType => row.getString(i)
+        case _: GeographyType => row.getString(i)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     }.toSeq)

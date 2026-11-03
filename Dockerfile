@@ -13,55 +13,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-FROM ubuntu:focal-20221019
+# From 2022-10-19
+FROM ubuntu:focal-20221019@sha256:450e066588f42ebe1551f3b1a535034b6aa46cd936fe7f2c6b0d72997ec61dbd
 
-ENV DEBIAN_FRONTEND noninteractive
-ENV DEBCONF_NONINTERACTIVE_SEEN true
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBCONF_NONINTERACTIVE_SEEN=true
 
-RUN apt-get update
-RUN apt-get install -y software-properties-common
-RUN apt-get install -y curl
-RUN apt-get install -y wget
-RUN apt-get install -y openjdk-8-jdk
-RUN apt-get install -y python3.8
-RUN apt-get install -y python3-pip
-RUN apt-get install -y git
+# SECURITY: Temporal lockdown — refuse any package version published after this date.
+ENV UV_EXCLUDE_NEWER="2026-02-10T00:00:00Z"
 
-# Upgrade pip. This is needed to use prebuilt wheels for packages cffi (dep of cryptography) and
-# cryptography. Otherwise, building wheels for these packages fails.
-RUN pip3 install --upgrade pip
+# Optional: pass --build-arg UV_INDEX_URL=https://your-proxy/simple/ to use a PyPI mirror
+ARG UV_INDEX_URL
+ENV UV_INDEX_URL=${UV_INDEX_URL}
 
-# Update the pip version to 24.0. By default `pyenv.run` installs the latest pip version
-# available. From version 24.1, `pip` doesn't allow installing python packages
-# with version string containing `-`. In Delta-Spark case, the pypi package generated has
-# `-SNAPSHOT` in version (e.g. `3.3.0-SNAPSHOT`) as the version is picked up from
-# the`version.sbt` file.
-RUN pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    curl \
+    wget \
+    openjdk-8-jdk \
+    python3.8 \
+    python3-distutils \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install pyspark==3.5.3
+# Install uv (SHA-verified; version+checksum defined in project/scripts/install-uv.sh)
+COPY project/scripts/install-uv.sh /tmp/install-uv.sh
+RUN bash /tmp/install-uv.sh && rm /tmp/install-uv.sh
 
-RUN pip3 install mypy==0.982
+# Create venv with Python 3.8 and install hash-verified locked dependencies
+COPY docker-build-requirements.lock /tmp/requirements.lock
+RUN uv venv /opt/venv --python python3.8 && \
+    uv pip install --python /opt/venv/bin/python --require-hashes -r /tmp/requirements.lock && \
+    rm /tmp/requirements.lock
 
-RUN pip3 install pydocstyle==3.0.0
+ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
 
-RUN pip3 install pandas==1.0.5
-
-RUN pip3 install pyarrow==8.0.0
-
-RUN pip3 install numpy==1.20.3
-
-RUN pip3 install importlib_metadata==3.10.0
-
-RUN pip3 install cryptography==37.0.4
-
-# We must install cryptography before twine. Else, twine will pull a newer version of
-# cryptography that requires a newer version of Rust and may break tests.
-RUN pip3 install twine==4.0.1
-
-RUN pip3 install wheel==0.33.4
-
-RUN pip3 install setuptools==41.0.1
-
-# Do not add any non-deterministic changes (e.g., copy from files 
-# from repo) in this Dockerfile, so that the  docker image 
+# Do not add any non-deterministic changes (e.g., copy from files
+# from repo) in this Dockerfile, so that the docker image
 # generated from this can be reused across builds.

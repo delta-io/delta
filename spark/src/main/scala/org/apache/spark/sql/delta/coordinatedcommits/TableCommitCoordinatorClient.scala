@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.storage.{LogStore, LogStoreInverseAdaptor}
 import io.delta.storage.commit.{
   CommitCoordinatorClient => JCommitCoordinatorClient,
@@ -27,6 +28,7 @@ import io.delta.storage.commit.{
   TableDescriptor,
   UpdatedActions
 }
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -49,7 +51,8 @@ case class TableCommitCoordinatorClient(
     logPath: Path,
     tableConf: Map[String, String],
     hadoopConf: Configuration,
-    logStore: LogStore) {
+    logStore: LogStore
+  ) {
 
   private def makeTableDesc(
       tableIdentifierOpt: Option[CatalystTableIdentifier]): TableDescriptor = {
@@ -61,14 +64,27 @@ case class TableCommitCoordinatorClient(
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions,
-      tableIdentifierOpt: Option[CatalystTableIdentifier]): CommitResponse = {
-    commitCoordinatorClient.commit(
-      LogStoreInverseAdaptor(logStore, hadoopConf),
-      hadoopConf,
-      makeTableDesc(tableIdentifierOpt),
-      commitVersion,
-      actions.asJava,
-      updatedActions)
+      tableIdentifierOpt: Option[CatalystTableIdentifier],
+      catalogTrackedInfo: CatalogTrackedInfo): CommitResponse = {
+    commitCoordinatorClient match {
+      case ucClient: UCCommitCoordinatorClient =>
+        ucClient.commit(
+          LogStoreInverseAdaptor(logStore, hadoopConf),
+          hadoopConf,
+          makeTableDesc(tableIdentifierOpt),
+          commitVersion,
+          actions.asJava,
+          catalogTrackedInfo,
+          updatedActions)
+      case _ =>
+        commitCoordinatorClient.commit(
+          LogStoreInverseAdaptor(logStore, hadoopConf),
+          hadoopConf,
+          makeTableDesc(tableIdentifierOpt),
+          commitVersion,
+          actions.asJava,
+          updatedActions)
+    }
   }
 
   def getCommits(
@@ -115,13 +131,15 @@ object TableCommitCoordinatorClient {
     def apply(
       commitCoordinatorClient: JCommitCoordinatorClient,
       deltaLog: DeltaLog,
-      coordinatedCommitsTableConf: Map[String, String]): TableCommitCoordinatorClient = {
+      coordinatedCommitsTableConf: Map[String, String]
+    ): TableCommitCoordinatorClient = {
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     new TableCommitCoordinatorClient(
       commitCoordinatorClient,
       deltaLog.logPath,
       coordinatedCommitsTableConf,
       hadoopConf,
-      deltaLog.store)
+      deltaLog.store
+    )
   }
 }

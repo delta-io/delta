@@ -17,14 +17,20 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
-import java.net.URI
 import java.util.UUID
 
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import org.apache.spark.sql.delta.commands.{CreateDeltaTableCommand, TableCreationModes}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.commands.{
+  CreateDeltaTableCommand,
+  CreateDeltaTableLike,
+  CreateTableFuncParams,
+  TableCreationModes
+}
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.scalatest.exceptions.TestFailedException
 
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -35,7 +41,8 @@ import org.apache.spark.sql.types.StructType
 
 class DeltaCreateTableLikeSuite extends QueryTest
   with SharedSparkSession
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaSQLTestUtils {
 
   def checkTableEmpty(tblName: String): Boolean = {
     val numRows = spark.sql(s"SELECT * FROM $tblName")
@@ -195,7 +202,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl)
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -205,7 +212,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl, addComment = false)
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -215,7 +222,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl, addTblProperties = false)
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -225,7 +232,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
       spark.sql(s"CREATE TABLE $srcTbl USING DELTA")
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -236,7 +243,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl
       )
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -277,10 +284,10 @@ class DeltaCreateTableLikeSuite extends QueryTest
         .format("delta")
         .saveAsTable(targetTbl)
 
-      val msg = intercept[DeltaAnalysisException] {
-        spark.sql(s"CREATE TABLE $targetTbl LIKE  $srcTbl")
+      val msg = intercept[AnalysisException] {
+        spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       }.getMessage
-      msg.contains("Table `default`.`targetTbl` already exists.")
+      assert(msg.contains("already exists"))
     }
   }
 
@@ -289,7 +296,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
       withTable("t") {
         def getCatalogTable: CatalogTable = {
           val storage = CatalogStorageFormat.empty.copy(
-            locationUri = Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
+            locationUri = Some(dir.toPath.resolve(UUID.randomUUID().toString).toUri))
           val catalogTableTarget = CatalogTable(
             identifier = TableIdentifier("t"),
             tableType = CatalogTableType.MANAGED,
@@ -316,6 +323,104 @@ class DeltaCreateTableLikeSuite extends QueryTest
           query = None,
           operation = TableCreationModes.Create).run(spark)
         assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+      }
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE creates missing tables") {
+    withTempDir { dir =>
+      withTable("t") {
+        val storage = CatalogStorageFormat.empty.copy(
+          locationUri = Some(dir.toPath.resolve(UUID.randomUUID().toString).toUri))
+        val catalogTableTarget = CatalogTable(
+          identifier = TableIdentifier("t"),
+          tableType = CatalogTableType.MANAGED,
+          storage = storage,
+          provider = Some("delta"),
+          schema = new StructType().add("id", "long"))
+        val command = CreateDeltaTableCommand(
+          new DeltaCatalog().verifyTableAndSolidify(
+            tableDesc = catalogTableTarget,
+            query = None,
+            maybeClusterBySpec = None),
+          existingTableOpt = None,
+          mode = SaveMode.ErrorIfExists,
+          query = None,
+          operation = TableCreationModes.CreateOrReplace,
+          allowCatalogManaged = true,
+          createTableFunc = None)
+
+        command.run(spark)
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+      }
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE skips catalog create callback " +
+      "when metadata is unchanged") {
+    withCatalogManagedTable(createTable = false) { tableName =>
+      spark.sql(
+        s"""CREATE TABLE $tableName (id LONG) USING DELTA
+           |TBLPROPERTIES ('delta.feature.catalogManaged' = 'supported')
+           |""".stripMargin)
+
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
+      val snapshot = DeltaLog.forTable(spark, existingTable).update()
+      var createCallbackCalls = 0
+
+      val command = new CreateDeltaTableLike {
+        override val table: CatalogTable = existingTable
+        override val existingTableOpt: Option[CatalogTable] = Some(existingTable)
+        override val operation: TableCreationModes.CreationMode =
+          TableCreationModes.CreateOrReplace
+        override val mode: SaveMode = SaveMode.ErrorIfExists
+        override val allowCatalogManaged: Boolean = true
+
+        def runUpdateCatalog(): Unit = {
+          updateCatalog(
+            spark,
+            table,
+            snapshot,
+            query = None,
+            didNotChangeMetadata = true,
+            createTableFunc =
+              Some((_: CreateTableFuncParams) => {
+                createCallbackCalls += 1
+              })
+          )
+        }
+      }
+
+      command.runUpdateCatalog()
+      assert(createCallbackCalls === 0)
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE rejects query-derived nullable schema") {
+    withCatalogManagedTable(createTable = false) { tableName =>
+      withTable("source") {
+        spark.sql(
+          s"""CREATE TABLE $tableName (id LONG NOT NULL) USING DELTA
+             |TBLPROPERTIES ('delta.feature.catalogManaged' = 'supported')
+             |""".stripMargin)
+        spark.sql(s"INSERT INTO $tableName VALUES (1)")
+        spark.sql("CREATE TABLE source (id LONG) USING DELTA")
+        spark.sql("INSERT INTO source VALUES (2)")
+
+        val existingTable =
+          spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
+        val versionBefore = DeltaLog.forTable(spark, existingTable).update().version
+        val query = spark.sql("SELECT id FROM source").logicalPlan
+        val err = intercept[AssertionError] {
+          new DeltaCatalog().verifyTableAndSolidify(
+            tableDesc = existingTable.copy(schema = query.schema.asNullable),
+            query = Some(query),
+            maybeClusterBySpec = None)
+        }
+
+        assert(err.getMessage.contains("Can't specify table schema in CTAS."))
+        assert(DeltaLog.forTable(spark, existingTable).update().version === versionBefore)
+        checkAnswer(spark.sql(s"SELECT * FROM $tableName"), Seq(org.apache.spark.sql.Row(1L)))
       }
     }
   }
@@ -360,7 +465,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
         spark.sql(s"ALTER TABLE $srcTbl" +
           s" SET TBLPROPERTIES(this.is.my.key = 14, 'this.is.my.key2' = false)")
         spark.sql(s"COMMENT ON TABLE $srcTbl IS 'srcTbl'")
-        spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+        spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
 
         checkTableCopyDelta(srcTbl, targetTbl)
       }
@@ -370,10 +475,11 @@ class DeltaCreateTableLikeSuite extends QueryTest
   test("CREATE TABLE LIKE where target table is a named external table") {
     val srcTbl = "srcTbl"
     val targetTbl = "targetTbl"
-    withTempDir { dir =>
+    withTempDir(prefix = "sparkdirprefix") { dir =>
       withTable(srcTbl) {
         createTable(srcTbl)
-        spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl LOCATION '${dir.toURI.toString}'")
+        spark.sql(
+          s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA LOCATION '${dir.toURI.toString}'")
         checkTableCopyDelta(srcTbl, targetTbl, checkLocation = Some(dir.toURI.toString))
       }
     }
@@ -384,8 +490,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTempDir { dir =>
       withTable(srcTbl) {
         createTable(srcTbl)
-        spark.sql(s"CREATE TABLE delta.`${dir.toURI.toString}` LIKE $srcTbl")
-        checkTableCopyDelta(srcTbl, dir.toString, checkTargetTableByPath = true
+        spark.sql(s"CREATE TABLE delta.`${dir.toURI.toString}` LIKE $srcTbl USING DELTA")
+        checkTableCopyDelta(srcTbl, dir.toURI.toString, checkTargetTableByPath = true
         )
       }
     }
@@ -454,8 +560,9 @@ class DeltaCreateTableLikeSuite extends QueryTest
       spark.sql(s"ALTER TABLE $expectedTbl" +
         " SET TBLPROPERTIES(this.is.my.key = 14, 'this.is.my.key2' = false, " +
         "'this.is.my.key3' = true, 'delta.appendOnly' = 'true')")
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl TBLPROPERTIES('this.is.my.key3' = true, " +
-        s"'delta.appendOnly' = 'true')")
+      spark.sql(
+        s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA " +
+          s"TBLPROPERTIES('this.is.my.key3' = true, 'delta.appendOnly' = 'true')")
       checkTableCopyDelta(expectedTbl, targetTbl)
     }
   }

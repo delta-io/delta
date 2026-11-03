@@ -28,6 +28,7 @@ import scala.math.min
 import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -35,13 +36,13 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperat
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import io.delta.exceptions.MetadataChangedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
-import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
@@ -167,19 +168,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val snapshot = table.update()
       deltaLog.protocolWrite(snapshot.protocol)
 
-      // VACUUM can break clones by removing files that clones still references for managed tables.
-      // Eventually the catalog should track this dependency to avoid breaking clones,
-      // but for now we block running VACUUM on CC tables.
-      if (snapshot.isCatalogOwned) {
-        table.catalogTable.foreach { catalogTable =>
-          assert(
-            catalogTable.tableType == CatalogTableType.MANAGED,
-            s"All Catalog Owned tables should be MANAGED tables, " +
-              s"but found ${catalogTable.tableType} for table ${catalogTable.identifier}."
-          )
-        }
-        throw DeltaErrors.deltaCannotVacuumManagedTable()
-      }
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_CLEANUP,
+        snapshot,
+        table.catalogTable)
 
       // By default, we will do full vacuum unless LITE vacuum conf is set
       val isLiteVacuumEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.LITE_VACUUM_ENABLED)
@@ -220,6 +212,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         .getOrElse(spark.sessionState.conf.numShufflePartitions)
       val startTimeToIdentifyEligibleFiles = System.currentTimeMillis()
 
+      val sourceTombstonesFromCommits = spark.sessionState.conf.getConf(
+        DeltaSQLConf.VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED)
+
 
       val validFilesResult =
         getValidFilesFromSnapshot(
@@ -233,7 +228,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             checkAbsolutePathOnly = false,
             performRetentionSafetyCheck = true,
             relativizeIgnoreError = None,
-            dvDiscoveryDisabled = None
+            dvDiscoveryDisabled = None,
+            sourceTombstonesFromCommits = sourceTombstonesFromCommits
           )
         )
 
@@ -241,7 +237,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
-      val shouldIcebergMetadataDirBeHidden = UniversalFormat.icebergEnabled(snapshot.metadata)
+      val isAdaptiveMetadataTable = AMTUtils.amtEnabled(snapshot)
+      val shouldIcebergMetadataDirBeHidden =
+         isAdaptiveMetadataTable || UniversalFormat.icebergEnabled(snapshot.metadata)
       val latestCommitVersionOutsideOfRetentionWindowOpt: Option[Long] =
         if (vacuumType == VacuumType.LITE) {
           try {
@@ -551,16 +549,18 @@ trait VacuumCommandImpl extends DeltaCommand {
     if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val checkEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
-      val txn = table.startTransaction()
+      // Count before starting the transaction. The count runs a Spark job that can take a long
+      // time on large tables, and a metadata change committed while the transaction is open makes
+      // this empty commit fail with a MetadataChangedException.
+      val numFilesToDelete = diff.count()
       val metrics = Map[String, SQLMetric](
         "numFilesToDelete" -> createMetric(spark.sparkContext, "number of files to deleted"),
         "sizeOfDataToDelete" -> createMetric(spark.sparkContext,
           "The total amount of data to be deleted in bytes")
       )
-      metrics("numFilesToDelete").set(diff.count())
+      metrics("numFilesToDelete").set(numFilesToDelete)
       metrics("sizeOfDataToDelete").set(sizeOfDataToDelete)
-      txn.registerSQLMetrics(spark, metrics)
-      val version = txn.commit(actions = Seq(), DeltaOperations.VacuumStart(
+      val version = commitWithRetries(spark, table, metrics, DeltaOperations.VacuumStart(
         checkEnabled,
         specifiedRetentionMillis,
         defaultRetentionMillis
@@ -587,9 +587,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       dirCounts: Option[Long] = None): Unit = {
     val deltaLog = table.deltaLog
     if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
-      val txn = table.startTransaction()
       val status = if (filesDeleted.isEmpty && dirCounts.isEmpty) { "FAILED" } else { "COMPLETED" }
-      if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
+      val endMetrics = if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
         // Populate top level metrics.
         commandMetrics.get("numDeletedFiles").foreach(_.set(filesDeleted.get))
         commandMetrics.get("numVacuumedDirectories").foreach(_.set(dirCounts.get))
@@ -602,9 +601,11 @@ trait VacuumCommandImpl extends DeltaCommand {
         )
         metrics("numDeletedFiles").set(filesDeleted.get)
         metrics("numVacuumedDirectories").set(dirCounts.get)
-        txn.registerSQLMetrics(spark, metrics)
+        metrics
+      } else {
+        Map.empty[String, SQLMetric]
       }
-      val version = txn.commit(actions = Seq(), DeltaOperations.VacuumEnd(
+      val version = commitWithRetries(spark, table, endMetrics, DeltaOperations.VacuumEnd(
         status
       ))
       setCommitClock(deltaLog, version)
@@ -615,6 +616,36 @@ trait VacuumCommandImpl extends DeltaCommand {
         s"of ${dirCounts.get} directories.")
     }
   }
+
+  /**
+   * Commits the empty VACUUM START or VACUUM END commit. These commits only record the VACUUM in
+   * the table history. If the commit fails with a [[MetadataChangedException]], commit again, at
+   * most [[DeltaSQLConf.DELTA_VACUUM_COMMIT_MAX_RETRIES]] times. Each attempt starts a new
+   * transaction, so a retry reads the latest snapshot, which includes the concurrent change.
+   *
+   * @return the committed version
+   */
+  private def commitWithRetries(
+      spark: SparkSession,
+      table: DeltaTableV2,
+      metrics: Map[String, SQLMetric],
+      operation: DeltaOperations.Operation): Long = {
+    def commit(retriesRemaining: Int): Long = {
+      val txn = table.startTransaction()
+      txn.registerSQLMetrics(spark, metrics)
+      try {
+        txn.commit(actions = Seq(), operation)
+      } catch {
+        case _: MetadataChangedException if retriesRemaining > 0 =>
+          logInfo(log"Retrying the ${MDC(DeltaLogKeys.OP_NAME, operation.name)} commit on " +
+            log"${MDC(DeltaLogKeys.PATH, table.deltaLog.dataPath)} after a concurrent change " +
+            log"to the table metadata.")
+          commit(retriesRemaining - 1)
+      }
+    }
+    commit(spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_COMMIT_MAX_RETRIES))
+  }
+
   protected def setCommitClock(deltaLog: DeltaLog, version: Long) = {
     // This is done to make sure that the commit timestamp reflects the one provided by the clock
     // object.
@@ -685,7 +716,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       fs: FileSystem,
       basePath: Path,
       relativizeIgnoreError: Boolean): Option[String] = {
-    getRelativePath(action.path, fs, basePath, relativizeIgnoreError)
+    getRelativePath(action.path, fs, basePath,
+      relativizeIgnoreError = relativizeIgnoreError)
   }
   /** Returns the relative path of a file or None if the file lives outside of the table. */
   protected def getRelativePath(
@@ -720,7 +752,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       relativizeIgnoreError: Boolean,
       dvDiscoveryDisabled: Boolean
   ): Seq[String] = {
-    val paths = getActionRelativePath(action, fs, basePath, relativizeIgnoreError)
+    val paths = getActionRelativePath(action, fs, basePath,
+        relativizeIgnoreError = relativizeIgnoreError)
       .map {
         relativePath =>
         Seq(relativePath) ++ getAllSubdirs("/", relativePath, fs)
@@ -747,7 +780,7 @@ trait VacuumCommandImpl extends DeltaCommand {
 
     dv match {
       case Some(dv) if dv.isOnDisk =>
-        if (dv.isRelative) {
+        if (dv.isUuidRelative || dv.isUnencodedRelative) {
           // We actually want a relative path here.
           Some((pathToUrlEncodedString(dv.absolutePath(new Path("."))), dv.sizeInBytes))
         } else {
@@ -790,12 +823,18 @@ trait VacuumCommandImpl extends DeltaCommand {
    * @param performRetentionSafetyCheck If true, validates retention period is safe
    * @param relativizeIgnoreError If None, reads from config; if Some(value), uses that value
    * @param dvDiscoveryDisabled If None, reads from config+test; if Some(value), uses that value
+   * @param sourceTombstonesFromCommits When true, RemoveFile tombstones are NOT emitted from the
+   *                                    reconstructed snapshot state; the "files removed within the
+   *                                    retention window" part of the protection set is instead
+   *                                    sourced from commit traversal, removing Vacuum's dependency
+   *                                    on checkpoints carrying tombstones.
    */
   case class ValidFilesConfig(
     checkAbsolutePathOnly: Boolean,
     performRetentionSafetyCheck: Boolean,
     relativizeIgnoreError: Option[Boolean],
-    dvDiscoveryDisabled: Option[Boolean]
+    dvDiscoveryDisabled: Option[Boolean],
+    sourceTombstonesFromCommits: Boolean
   )
 
   /**
@@ -812,38 +851,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       eligibleEndCommitVersion: Long,
       relativizeIgnoreError: Option[Boolean]): Dataset[SerializableFileStatus] = {
     import org.apache.spark.sql.delta.implicits._
-    // When coordinated commits are enabled, commit files could be found in _delta_log directory
-    // as well as in commit directory. We get the delta log files outside of the retention window
-    // from both the places.
-    val prefix = listingPrefix(deltaLog.logPath, eligibleStartCommitVersion)
-    val eligibleDeltaLogFilesFromDeltaLogDirectory =
-      deltaLog.store.listFrom(prefix, deltaLog.newDeltaHadoopConf)
-        .collect { case DeltaFile(f, deltaFileVersion) => (f, deltaFileVersion) }
-        .takeWhile(_._2 <= eligibleEndCommitVersion)
-        .toSeq
-
-    val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-    val commitDirPath = FileNames.commitDirPath(deltaLog.logPath)
-    val updatedStartCommitVersion =
-      eligibleDeltaLogFilesFromDeltaLogDirectory.lastOption.map(_._2)
-        .getOrElse(eligibleStartCommitVersion)
-    val eligibleDeltaLogFilesFromCommitDirectory = if (fs.exists(commitDirPath)) {
-      deltaLog.store
-        .listFrom(listingPrefix(commitDirPath, updatedStartCommitVersion),
-          deltaLog.newDeltaHadoopConf)
-        .collect { case UnbackfilledDeltaFile(f, deltaFileVersion, _) => (f, deltaFileVersion) }
-        .takeWhile(_._2 <= eligibleEndCommitVersion)
-        .toSeq
-    } else {
-      Seq.empty
-    }
-
-    val allDeltaLogFilesOutsideTheRetentionWindow = eligibleDeltaLogFilesFromDeltaLogDirectory ++
-      eligibleDeltaLogFilesFromCommitDirectory
-    val deltaLogFileIndex = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT,
-      allDeltaLogFilesOutsideTheRetentionWindow.map(_._1)).get
-
-    val allActions = deltaLog.loadIndex(deltaLogFileIndex).as[SingleAction]
+    val allActions = new DeltaHistoryManager(deltaLog)
+      .getAllStagedAndCommittedFileActions(eligibleStartCommitVersion, eligibleEndCommitVersion)
     val nonCDFFiles = allActions
       .where("remove IS NOT NULL")
       .select(col("remove")
@@ -874,7 +883,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       iter.flatMap { f =>
         // if file path is outside of the table base path, those files are not considered as they
         // are not part of this table. Shallow clone is one example where this happens.
-        getRelativePath(f.path, fs, tableBasePath, relativizeIgnoreErrorValue)
+        getRelativePath(f.path, fs, tableBasePath,
+            relativizeIgnoreError = relativizeIgnoreErrorValue)
           .map(SerializableFileStatus(_, f.length, f.isDir, f.modificationTime))
       }
     }
@@ -977,11 +987,22 @@ trait VacuumCommandImpl extends DeltaCommand {
     val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
 
 
+    // Source the "removed within retention" protection files from commit traversal
+    // rather than the reconstructed checkpoint state when either the conf opts in, or the table
+    // has the Adaptive Metadata Tree (AMT / Delta on Iceberg V4) feature enabled -- V4 checkpoints
+    // do not carry tombstones, so the checkpoint state cannot supply them. Evaluated per snapshot
+    // so the base table and each clone independently pick the right source for their own protocol.
+    val sourceTombstonesFromCommits = config.sourceTombstonesFromCommits ||
+      AMTUtils.amtEnabled(snapshot)
+
     val files = snapshot.stateDS.mapPartitions { actions =>
       val reservoirBase = new Path(basePath)
       val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
       actions.flatMap {
         _.unwrap match {
+          // When tombstones are sourced from commit traversal instead of checkpoint state,
+          // do not emit any RemoveFile-derived paths from the reconstructed state here.
+          case _: RemoveFile if sourceTombstonesFromCommits => Nil
           // Existing tables may not store canonicalized paths, so we check both the canonicalized
           // and non-canonicalized paths to ensure we don't accidentally delete wrong files.
           case fa: FileAction if config.checkAbsolutePathOnly &&
@@ -1000,11 +1021,106 @@ trait VacuumCommandImpl extends DeltaCommand {
       }
     }
 
-    val validFiles = files
+    val validFilesFromSnapshot = files
     .toDF("path")
+    // When tombstones are excluded from the reconstructed state above, source the
+    // "files removed within the retention window" part of the protection set by
+    // traversing this snapshot's own commits in [ECV .. snapshot.version], where ECV is the
+    // earliest commit within the retention window. This makes the protection set independent of
+    // checkpoints carrying tombstones, and applies uniformly to the base table and to each
+    // clone snapshot (each uses its own deltaLog and retention window).
+    // Note: We don't have to protect tombstones part of a commit exactly at deleteBeforeTimestamp
+    // as time-travel to that version doesn't need to access those tombstones files as they are
+    // no longer part of table snapshot at that version.
+    val validFiles = if (sourceTombstonesFromCommits) {
+      val cloneOrBaseDeltaLog = snapshot.deltaLog
+      val tombstoneStartVersion =
+        try {
+          val commit = new DeltaHistoryManager(cloneOrBaseDeltaLog).getActiveCommitAtTime(
+            new Timestamp(deleteBeforeTimestamp),
+            catalogTableOpt = None,
+            canReturnLastCommit = true,
+            mustBeRecreatable = false)
+          commit.version + 1
+        } catch {
+          case _: DeltaErrors.TimestampEarlierThanCommitRetentionException =>
+            DeltaHistoryManager.getEarliestDeltaFile(cloneOrBaseDeltaLog)
+        }
+      validFilesFromSnapshot
+        .union(getTombstoneProtectionFromCommits(
+          cloneOrBaseDeltaLog, basePath, hadoopConf,
+          startVersion = tombstoneStartVersion,
+          endVersion = snapshot.version,
+          deleteBeforeTimestamp = deleteBeforeTimestamp,
+          relativizeIgnoreErrorValue = relativizeIgnoreErrorValue,
+          dvDiscoveryDisabledValue = dvDiscoveryDisabledValue
+          , checkAbsolutePathOnly = config.checkAbsolutePathOnly))
+    } else {
+      validFilesFromSnapshot
+    }
     VacuumCommand.ValidFilesResult(
       validFiles
       )
+  }
+
+  /**
+   * Returns the protection-set paths for files removed within the retention window, sourced via
+   * [[DeltaHistoryManager.getRemoveFileActions]] rather than from the reconstructed checkpoint
+   * state. Used when
+   * [[DeltaSQLConf.VACUUM_PROTECTION_SET_TOMBSTONES_FROM_COMMITS_ENABLED]] is set.
+   *
+   * @param checkAbsolutePathOnly When true (clone snapshots), tombstones whose paths are not under
+   *                              the base path are ignored rather than relativized, matching the
+   *                              reconstructed-state path in [[getValidFilesFromSnapshot]].
+   * @return a DataFrame with a single `path` column of url-encoded, table-relative paths.
+   */
+  // scalastyle:off argcount
+  protected def getTombstoneProtectionFromCommits(
+      deltaLog: DeltaLog,
+      basePath: String,
+      hadoopConf: Broadcast[SerializableConfiguration],
+      startVersion: Long,
+      endVersion: Long,
+      deleteBeforeTimestamp: Long,
+      relativizeIgnoreErrorValue: Boolean,
+      dvDiscoveryDisabledValue: Boolean
+      , checkAbsolutePathOnly: Boolean): DataFrame = {
+    // scalastyle:on argcount
+    import org.apache.spark.sql.delta.implicits._
+
+    if (startVersion > endVersion) {
+      // Empty retention range: no commits to source tombstones from.
+      return SparkSession.active.emptyDataset[String].toDF("path")
+    }
+
+    // For clone snapshots (checkAbsolutePathOnly), drop tombstones whose paths are not under the
+    // table base path -- these point at another filesystem (e.g. a cross-bucket shallow clone) and
+    // must be ignored rather than relativized, matching the reconstructed-state path in
+    // getValidFilesFromSnapshot. Existing tables may not store canonicalized paths, so check both.
+    val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
+
+    val tombstones =
+      new DeltaHistoryManager(deltaLog).getRemoveFileActions(startVersion, endVersion)
+        .filter(_.delTimestamp >= deleteBeforeTimestamp)
+
+    tombstones.mapPartitions { removes =>
+      val reservoirBase = new Path(basePath)
+      val fs = reservoirBase.getFileSystem(hadoopConf.value.value)
+      removes.flatMap { remove =>
+        if (checkAbsolutePathOnly &&
+            !remove.path.contains(basePath) && !remove.path.contains(canonicalizedBasePath)) {
+          Nil
+        } else {
+          getValidRelativePathsAndSubdirs(
+            remove,
+            fs,
+            reservoirBase,
+            relativizeIgnoreErrorValue,
+            dvDiscoveryDisabledValue
+          )
+        }
+      }
+    }.toDF("path")
   }
 
   /**

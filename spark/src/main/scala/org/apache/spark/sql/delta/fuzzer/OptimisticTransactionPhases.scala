@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.fuzzer
 
 case class OptimisticTransactionPhases(
+    analysisPhase: ExecutionPhaseLock,
     initialPhase: ExecutionPhaseLock,
     preparePhase: ExecutionPhaseLock,
     commitPhase: ExecutionPhaseLock,
@@ -27,6 +28,7 @@ object OptimisticTransactionPhases {
 
   private final val PREFIX = "TXN_"
 
+  final val ANALYSIS_PHASE_LABEL = PREFIX + "ANALYSIS"
   final val INITIAL_PHASE_LABEL = PREFIX + "INIT"
   final val PREPARE_PHASE_LABEL = PREFIX + "PREPARE"
   final val COMMIT_PHASE_LABEL = PREFIX + "COMMIT"
@@ -39,6 +41,7 @@ object OptimisticTransactionPhases {
       txnName + "-" + phaseLabel
 
     OptimisticTransactionPhases(
+      analysisPhase = ExecutionPhaseLock(toTxnPhaseLabel(ANALYSIS_PHASE_LABEL)),
       initialPhase = ExecutionPhaseLock(toTxnPhaseLabel(INITIAL_PHASE_LABEL)),
       preparePhase = ExecutionPhaseLock(toTxnPhaseLabel(PREPARE_PHASE_LABEL)),
       commitPhase = ExecutionPhaseLock(toTxnPhaseLabel(COMMIT_PHASE_LABEL)),

@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, D
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.commons.io.FileUtils
@@ -37,41 +37,40 @@ import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.{DataFrame, QueryTest, RuntimeConfig, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
-import org.apache.spark.sql.test.SharedSparkSession
 
-trait MergePersistentDVDisabled extends SharedSparkSession {
+trait MergePersistentDVDisabled extends DeltaSQLCommandTest {
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
 }
 
-trait PersistentDVDisabled extends SharedSparkSession {
+trait PersistentDVDisabled extends DeltaSQLCommandTest {
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
 }
 
 trait PersistentDVEnabled extends DeletionVectorsTestUtils {
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectorsInNewTables(spark.conf)
   }
 }
 
-trait PredicatePushdownDisabled extends SharedSparkSession {
-  override def beforeAll(): Unit = {
+trait PredicatePushdownDisabled extends DeltaSQLCommandTest {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 }
 
-trait PredicatePushdownEnabled extends SharedSparkSession {
-  override def beforeAll(): Unit = {
+trait PredicatePushdownEnabled extends DeltaSQLCommandTest {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
 }
 
 /** Collection of test utilities related with persistent Deletion Vectors. */
-trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with DeltaSQLTestUtils {
+trait DeletionVectorsTestUtils extends QueryTest with DeltaSQLCommandTest with DeltaSQLTestUtils {
 
   def enableDeletionVectors(
       spark: SparkSession,
@@ -131,7 +130,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
   /** Run a thunk with Deletion Vectors enabled/disabled. */
   def withDeletionVectorsEnabled(enabled: Boolean = true)(thunk: => Unit): Unit = {
     val enabledStr = enabled.toString
-    withSQLConf(
+    withConf(
       DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> enabledStr,
       DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> enabledStr,
       DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> enabledStr,
@@ -160,7 +159,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     def createTable(tableNameOpt: Option[String], tablePathOpt: Option[Path]): Unit = {
       assert((tableNameOpt.isDefined && tablePathOpt.isEmpty) ||
         (tableNameOpt.isEmpty && tablePathOpt.isDefined))
-      withSQLConf(conf: _*) {
+      withConf(conf: _*) {
         val df = dataDF.write
           .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, enableDVs.toString)
           .partitionBy(partitionBy: _*)
@@ -382,7 +381,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     withDVWriter(log, dvFileId) { writer =>
       filesWithDVs.flatMap { case (currentFile, dv) =>
         val range = writer.write(serializeRoaringBitmapArrayWithDefaultFormat(dv))
-        val dvData = DeletionVectorDescriptor.onDiskWithRelativePath(
+        val dvData = DeletionVectorDescriptor.onDiskWithUuidRelativePath(
           id = dvFileId,
           sizeInBytes = range.length,
           cardinality = dv.cardinality,
@@ -406,7 +405,7 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     var numFiles: Option[Int] = None
     // This is needed to make the manual commit work correctly, since we are not actually
     // running a command that produces metrics.
-    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
       val txn = log.startTransaction()
       val allAddFiles = txn.snapshot.allFiles.collect()
       numFiles = Some(allAddFiles.length)
@@ -457,11 +456,74 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     val dvFileId = UUID.randomUUID()
     withDVWriter(log, dvFileId) { writer =>
       val range = writer.write(serializeRoaringBitmapArrayWithDefaultFormat(bitmapArray))
-      DeletionVectorDescriptor.onDiskWithRelativePath(
+      DeletionVectorDescriptor.onDiskWithUuidRelativePath(
         id = dvFileId,
         sizeInBytes = range.length,
         cardinality = bitmapArray.cardinality,
         offset = Some(range.offset))
     }
+  }
+
+  val addedDvsFilePrefix = "test-copy-of"
+
+  /**
+   * Adds DVs to a Delta table by copying each Parquet file and adding DVs that shard the rows
+   * between the two files. When `toAllFiles` is false, DV will be added to only one random file.
+   */
+  def addDeletionVectorsToTableLog(log: DeltaLog, toAllFiles: Boolean = true): Unit = {
+    import java.nio.file.{Files, Paths}
+
+    val txn = log.startTransaction()
+
+    val dataPath = log.dataPath.toUri.getPath
+    var actions = Seq.empty[Action]
+    val filesToBeAdded =
+      if (toAllFiles) txn.snapshot.allFiles.collect()
+      else txn.snapshot.allFiles.take(1)
+    for (origFile <- filesToBeAdded if origFile.deletionVector == null) {
+      assert(origFile.numLogicalRecords.isDefined)
+
+      val oldRelPath = origFile.toPath
+      val newFileName = s"$addedDvsFilePrefix-${oldRelPath.getName}"
+      val newFileRelPath = new Path(oldRelPath.getParent, newFileName)
+
+      val oldFileAbsPath = Paths.get(dataPath, oldRelPath.toString)
+      val newFileAbsPath = Paths.get(dataPath, newFileRelPath.toString)
+      Files.copy(oldFileAbsPath, newFileAbsPath)
+
+      val newFileDv = new RoaringBitmapArray()
+      val oldFileDv = new RoaringBitmapArray()
+      for (i <- 0 until origFile.numLogicalRecords.get.toInt) {
+        if (i % 2 == 0) {
+          oldFileDv.add(i)
+        } else {
+          newFileDv.add(i)
+        }
+      }
+
+      actions ++= writeFileWithDV(log, origFile, oldFileDv)
+
+      val modTime = new File(newFileAbsPath.toString).lastModified()
+      val newFile = origFile.copy(
+        modificationTime = modTime,
+        path = newFileRelPath.toUri.toString)
+      val newFileWithDV :: _ = writeFileWithDV(log, newFile, newFileDv)
+      actions = actions :+ newFileWithDV
+    }
+
+    val dummyOp = DeltaOperations.Truncate()
+    txn.commit(actions, dummyOp)
+  }
+
+  /** Add DVs to all files, or to only one random file when `toAllFiles` is false. */
+  def addDeletionVectorsToTable(tableName: String, toAllFiles: Boolean = true): Unit = {
+    val deltaLog =
+      if (tableName.startsWith("delta.`")) {
+        DeltaLog.forTable(spark, tableName.stripPrefix("delta.`").stripSuffix("`"))
+      } else {
+        DeltaLog.forTable(spark, TableIdentifier(tableName))
+      }
+
+    addDeletionVectorsToTableLog(deltaLog, toAllFiles)
   }
 }

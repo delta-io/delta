@@ -24,7 +24,7 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{KernelException, UnsupportedProtocolVersionException, UnsupportedTableFeatureException}
+import io.delta.kernel.exceptions.{KernelException, MaxCatalogVersionException, UnsupportedProtocolVersionException, UnsupportedTableFeatureException}
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData, ParsedPublishedDeltaData}
@@ -422,26 +422,27 @@ class SnapshotBuilderSuite extends AnyFunSuite
   }
 
   test("validateMaxCatalogVersionPresence: catalogManaged table requires maxCatalogVersion") {
-    val exMsg = intercept[IllegalArgumentException] {
+    val error = intercept[MaxCatalogVersionException] {
       TableManager.loadSnapshot(dataPath.toString)
         .atVersion(1)
         .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
         .build(emptyMockEngine)
-    }.getMessage
+    }
 
-    assert(exMsg === "Must provide maxCatalogVersion for catalogManaged tables")
+    assert(error.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
   }
 
   test(
     "validateMaxCatalogVersionPresence: non-catalogManaged table cannot have maxCatalogVersion") {
-    val exMsg = intercept[IllegalArgumentException] {
+    val error = intercept[MaxCatalogVersionException] {
       TableManager.loadSnapshot(dataPath.toString)
         .atVersion(1)
         .withProtocolAndMetadata(protocol, metadata) // protocol without catalogManaged
         .withMaxCatalogVersion(1)
         .build(emptyMockEngine)
-    }.getMessage
+    }
 
-    assert(exMsg === "Should not provide maxCatalogVersion for file-system managed tables")
+    assert(error.getMessage ===
+      "Should not provide maxCatalogVersion for file-system managed tables")
   }
 }

@@ -126,8 +126,11 @@ class DeltaColumnRenameSuite extends QueryTest
        val e = intercept[AnalysisException] {
         spark.sql(s"Alter table t1 RENAME COLUMN map to map1")
        }
-      assert(e.getMessage.contains("enable Column Mapping") &&
-        e.getMessage.contains("mapping mode 'name'"))
+      checkError(
+        e,
+        "DELTA_UNSUPPORTED_RENAME_COLUMN.ENABLE_COLUMN_MAPPING",
+        sqlState = Some("0AKDC"),
+        parameters = Map("readerVersion" -> "2", "writerVersion" -> "5"))
 
       alterTableWithProps("t1", Map(
         DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name",
@@ -179,8 +182,11 @@ class DeltaColumnRenameSuite extends QueryTest
        val e = intercept[AnalysisException] {
         spark.sql(s"Alter table t1 RENAME COLUMN map to map1")
        }
-      assert(e.getMessage.contains("enable Column Mapping") &&
-        e.getMessage.contains("mapping mode 'name'"))
+      checkError(
+        e,
+        "DELTA_UNSUPPORTED_RENAME_COLUMN.ENABLE_COLUMN_MAPPING",
+        sqlState = Some("0AKDC"),
+        parameters = Map("readerVersion" -> "2", "writerVersion" -> "5"))
 
       // Upgrading this schema shouldn't cause any errors even if there are leaf column name
       // duplications such as a.c, b.c.

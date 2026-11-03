@@ -36,9 +36,18 @@ class JarSuite extends AnyFunSuite {
     "org/apache/spark/sql/delta/serverSidePlanning/",
     // We explicitly include all the /delta/commands/convert classes we want, to ensure we don't
     // accidentally pull in some from delta-spark package.
+    "org/apache/spark/sql/delta/commands/convert/DataFileWrapper",
+    "org/apache/spark/sql/delta/commands/convert/DelegatingIcebergTable",
     "org/apache/spark/sql/delta/commands/convert/IcebergFileManifest",
+    "org/apache/spark/sql/delta/commands/convert/IcebergPartitionConverter",
     "org/apache/spark/sql/delta/commands/convert/IcebergSchemaUtils",
+    "org/apache/spark/sql/delta/commands/convert/IcebergSparkWrappers",
+    "org/apache/spark/sql/delta/commands/convert/IcebergStatsUtils",
     "org/apache/spark/sql/delta/commands/convert/IcebergTable",
+    "org/apache/spark/sql/delta/commands/convert/IcebergTableLike",
+    "org/apache/spark/sql/delta/commands/convert/ManifestFileWrapper",
+    "org/apache/spark/sql/delta/commands/convert/PartitionFieldSummaryWrapper",
+    "org/apache/spark/sql/delta/commands/convert/TypeToSparkTypeWithCustomCast",
     // e.g. org/apache/iceberg/transforms/IcebergPartitionUtil.class
     "com/github/benmanes/caffeine/",
     "org/apache/avro/"

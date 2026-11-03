@@ -21,7 +21,7 @@ import java.util.{Base64, Optional}
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
- * Tests for DeletionVectorDescriptor.serializeToBase64().
+ * Tests for DeletionVectorDescriptor.
  */
 class DeletionVectorDescriptorSuite extends AnyFunSuite {
 
@@ -56,6 +56,46 @@ class DeletionVectorDescriptorSuite extends AnyFunSuite {
 
       assert(dis.readUTF() === pathOrInlineDv)
       dis.close()
+    }
+  }
+
+  // Regression test: isInline() must use .equals() not == for String comparison.
+  // Using `new String(...)` creates non-interned Strings that would fail with ==.
+  testCases.foreach { case (storageType, pathOrInlineDv, offset, sizeInBytes, cardinality) =>
+    test(s"isInline with non-interned string - $storageType storage type") {
+      val dv = new DeletionVectorDescriptor(
+        new String(storageType), // deliberately non-interned
+        pathOrInlineDv,
+        offset.map(Integer.valueOf).map(Optional.of[Integer]).getOrElse(Optional.empty[Integer]()),
+        sizeInBytes,
+        cardinality)
+
+      assert(dv.isInline() === (storageType == "i"))
+    }
+  }
+
+  // Regression test for https://github.com/delta-io/delta/issues/6261:
+  // getUniqueId() must unwrap Optional<Integer> offset instead of concatenating
+  // its toString() representation (e.g. "Optional[4]" instead of "4").
+  testCases.foreach { case (storageType, pathOrInlineDv, offset, sizeInBytes, cardinality) =>
+    test(s"getUniqueId - $storageType storage type") {
+      val dv = new DeletionVectorDescriptor(
+        storageType,
+        pathOrInlineDv,
+        offset.map(Integer.valueOf).map(Optional.of[Integer]).getOrElse(Optional.empty[Integer]()),
+        sizeInBytes,
+        cardinality)
+
+      val uniqueId = dv.getUniqueId
+      val expectedFileId = storageType + pathOrInlineDv
+      offset match {
+        case Some(o) =>
+          assert(uniqueId === s"$expectedFileId@$o")
+          // Verify the offset is the raw integer, not "Optional[...]"
+          assert(!uniqueId.contains("Optional"))
+        case None =>
+          assert(uniqueId === expectedFileId)
+      }
     }
   }
 

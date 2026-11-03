@@ -105,6 +105,14 @@ case class IcebergStatsConverter(statsRow: InternalRow, statsSchema: StructType)
         // If the stats schema contains a struct type, there is a corresponding struct in the data
         // schema. The struct's per-field stats are also stored in the Delta stats struct. See the
         // `StatisticsCollection` trait comment for more.
+        // Variant stats are encoded as the concatenation of the variant's metadata bytes
+        // followed by its value bytes, matching the Iceberg variant binary format.
+        case _: VariantType =>
+          val variantVal = stats.getVariant(idx)
+          val variantBytes = ByteBuffer.wrap(variantVal.getMetadata ++
+            variantVal.getValue)
+          Map[Integer, ByteBuffer](Integer.valueOf(DeltaColumnMapping.getColumnId(field)) ->
+            variantBytes)
         case st: StructType =>
           generateIcebergByteBufferMetricMap(stats.getStruct(idx, st.fields.length), st)
         // Ignore the Delta statistic if the conversion doesn't support the given data type or the
