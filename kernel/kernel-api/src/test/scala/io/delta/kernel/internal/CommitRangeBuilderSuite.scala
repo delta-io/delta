@@ -836,6 +836,27 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         "ratified commits for versions [2]"))
   }
 
+  test("build CommitRange allows published/catalog gaps with relaxed validation") {
+    val catalogCommitFiles = Seq(stagedCommitFile(2))
+    val parsedLogData = catalogCommitFiles.map(ParsedCatalogCommitData.forFileStatus(_))
+    val publishedDeltaFiles = Seq(deltaFileStatus(0))
+    val fileList = publishedDeltaFiles ++ catalogCommitFiles
+    val versionToICT = Map(0L -> 50L, 1L -> 1050L, 2L -> 2050L)
+
+    val commitRange = buildCommitRange(
+      createMockFSAndJsonEngineForICT(fileList, versionToICT),
+      fileList,
+      startBoundary = VersionBoundaryDef(0),
+      endBoundary = VersionBoundaryDef(2),
+      logData = Some(parsedLogData),
+      ictEnablementInfo = Some((0, 0)),
+      commitRangeValidation = Some(false),
+      failOnDataLoss = Some(false))
+
+    val commitVersions = commitRange.getCommitFiles.toInMemoryList.asScala.map(_.getVersion)
+    assert(commitVersions == Seq(0L, 2L))
+  }
+
   test("build CommitRange fails if published deltas are not contiguous") {
     val publishedDeltaFiles = Seq(deltaFileStatus(0), deltaFileStatus(2), deltaFileStatus(3))
     val e = intercept[InvalidTableException] {
