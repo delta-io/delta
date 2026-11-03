@@ -372,7 +372,7 @@ class DeltaLog private(
    * Callers are encouraged to use the other override which takes the endVersion if available to
    * avoid I/O and improve performance of this method.
    */
-  private[sql] def getChangesIterator(
+  private[sql] def getSingleCommitIterator(
       startVersion: Long,
       catalogTableOpt: Option[CatalogTable] = None,
       failOnDataLoss: Boolean = false): Iterator[DeltaSingleCommit] =
@@ -380,7 +380,7 @@ class DeltaLog private(
       case (version, status) => SingleCommit(this, version, status)
     }
 
-  private[sql] def getChangesIterator(
+  private[sql] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Long,
       catalogTableOpt: Option[CatalogTable],
@@ -394,12 +394,13 @@ class DeltaLog private(
    * [[FileStatus]].
    *
    * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
-   * callers should use [[getChangesIterator]] instead, which returns [[DeltaSingleCommit]] handles
-   * and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
+   * callers should use [[getSingleCommitIterator]] instead, which returns [[DeltaSingleCommit]]
+   * handles and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata
+   * Tree).
    */
   @deprecated(
     "This method exposes the log's raw file statuses and will be removed in the " +
-    "future. Use getChanges and variants instead"
+    "future. Use getSingleCommitIterator instead"
   )
   private[sql] def getChangeLogFiles(
       startVersion: Long,
@@ -437,12 +438,13 @@ class DeltaLog private(
    * avoid I/O and improve performance of this method.
    *
    * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
-   * callers should use [[getChangesIterator]] instead, which returns [[DeltaSingleCommit]] handles
-   * and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
+   * callers should use [[getSingleCommitIterator]] instead, which returns [[DeltaSingleCommit]]
+   * handles and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata
+   * Tree).
    */
   @deprecated(
     "This method exposes the log's raw file statuses and will be removed in the " +
-    "future. Use getChanges and variants instead"
+    "future. Use getSingleCommitIterator instead"
   )
   def getChangeLogFiles(
       startVersion: Long,

@@ -27,9 +27,10 @@ import io.delta.kernel.internal.commitrange.{CommitRangeBuilderImpl, CommitRange
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedDeltaData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromFileSystemClient, MockReadICTFileJsonHandler, MockSnapshotUtils, VectorTestUtils}
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.test.{BaseMockFileSystemClient, MockFileSystemClientUtils, MockListFromFileSystemClient, MockReadICTFileJsonHandler, MockSnapshotUtils, VectorTestUtils}
 import io.delta.kernel.test.MockSnapshotUtils.getMockSnapshot
-import io.delta.kernel.utils.FileStatus
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -1119,5 +1120,160 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     val commitRange = builder.build(createMockFSListFromEngine(fileList))
     assert(commitRange.getStartVersion == 0)
     assert(commitRange.getEndVersion == 3)
+  }
+
+  ///////////////////////////////
+  // withMaxEndVersion Tests
+  ///////////////////////////////
+
+  private def getDeltaFileVersions(commitRange: CommitRange): Seq[Long] = {
+    commitRange.asInstanceOf[CommitRangeImpl].getDeltaFiles.asScala
+      .map(fs => FileNames.getFileVersion(new Path(fs.getPath)))
+      .toSeq
+  }
+
+  test("withMaxEndVersion: negative version throws IllegalArgumentException") {
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+        .withMaxEndVersion(-1)
+    }.getMessage
+
+    assert(exMsg.contains("maxEndVersion must be >= 0"))
+  }
+
+  test("withMaxEndVersion: range ends at maxEndVersion when the table has later versions") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val commitRange = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(2))
+      .withMaxEndVersion(5)
+      .build(createMockFSListFromEngine(fileList))
+
+    assert(commitRange.getStartVersion == 2)
+    assert(commitRange.getEndVersion == 5)
+    assert(!commitRange.getQueryEndBoundary.isPresent)
+    assert(getDeltaFileVersions(commitRange) == (2L to 5L))
+  }
+
+  test("withMaxEndVersion: range ends at the latest version when the table ends before " +
+    "maxEndVersion") {
+    val fileList = deltaFileStatuses(0L to 3L)
+    val commitRange = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(1))
+      .withMaxEndVersion(10)
+      .build(createMockFSListFromEngine(fileList))
+
+    assert(commitRange.getStartVersion == 1)
+    assert(commitRange.getEndVersion == 3)
+    assert(!commitRange.getQueryEndBoundary.isPresent)
+    assert(getDeltaFileVersions(commitRange) == (1L to 3L))
+  }
+
+  test("withMaxEndVersion: maxEndVersion equal to the start version gives a single version") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val commitRange = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(4))
+      .withMaxEndVersion(4)
+      .build(createMockFSListFromEngine(fileList))
+
+    assert(commitRange.getStartVersion == 4)
+    assert(commitRange.getEndVersion == 4)
+    assert(getDeltaFileVersions(commitRange) == Seq(4L))
+  }
+
+  test("withMaxEndVersion: start version must be <= maxEndVersion") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(6))
+        .withMaxEndVersion(5)
+        .build(createMockFSListFromEngine(fileList))
+    }.getMessage
+
+    assert(exMsg.contains("startVersion (6) must be <= maxEndVersion (5)"))
+  }
+
+  test("withMaxEndVersion: cannot be combined with withEndBoundary") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(3))
+        .withMaxEndVersion(5)
+        .build(createMockFSListFromEngine(fileList))
+    }.getMessage
+
+    assert(exMsg.contains("withEndBoundary and withMaxEndVersion cannot be used together"))
+  }
+
+  test("withMaxEndVersion: start timestamp boundary") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val mockLatestSnapshot = getMockSnapshot(dataPath, 10)
+    val commitRange = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atTimestamp(20, mockLatestSnapshot))
+      .withMaxEndVersion(4)
+      .build(createMockFSListFromEngine(fileList))
+
+    assert(commitRange.getStartVersion == 2) // timestamp 20 maps to version 2
+    assert(commitRange.getEndVersion == 4)
+  }
+
+  test("withMaxEndVersion: start timestamp boundary resolving after maxEndVersion fails") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val mockLatestSnapshot = getMockSnapshot(dataPath, 10)
+    val exMsg = intercept[KernelException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atTimestamp(70, mockLatestSnapshot))
+        .withMaxEndVersion(5)
+        .build(createMockFSListFromEngine(fileList))
+    }.getMessage
+
+    assert(exMsg.contains("startVersion=7 > endVersion=5"))
+  }
+
+  Seq(
+    // (maxEndVersion, maxCatalogVersion, expectedEndVersion)
+    (3L, 5L, 3L),
+    (5L, 5L, 5L),
+    (8L, 5L, 5L)).foreach { case (maxEndVersion, maxCatalogVersion, expectedEndVersion) =>
+    test(s"withMaxEndVersion: with maxCatalogVersion, maxEndVersion=$maxEndVersion and " +
+      s"maxCatalogVersion=$maxCatalogVersion ends at $expectedEndVersion") {
+      val fileList = deltaFileStatuses(0L to 10L)
+      val commitRange = TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+        .withMaxCatalogVersion(maxCatalogVersion)
+        .withMaxEndVersion(maxEndVersion)
+        .build(createMockFSListFromEngine(fileList))
+
+      assert(commitRange.getStartVersion == 0)
+      assert(commitRange.getEndVersion == expectedEndVersion)
+      assert(getDeltaFileVersions(commitRange) == (0L to expectedEndVersion))
+    }
+  }
+
+  test("withMaxEndVersion: the log is not listed past maxEndVersion") {
+    val fileList = (0L to 1000L).flatMap(v => Seq(deltaFileStatus(v), checksumFileStatus(v)))
+    var filesListed = 0
+    val fileSystemClient = new BaseMockFileSystemClient {
+      override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+        val files = listFromProvider(fileList)(filePath).iterator.map { fs =>
+          filesListed += 1
+          fs
+        }
+        toCloseableIterator(files.asJava)
+      }
+
+      override def resolvePath(path: String): String = path
+    }
+
+    val commitRange = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withMaxEndVersion(5)
+      .build(mockEngine(fileSystemClient = fileSystemClient))
+
+    assert(commitRange.getEndVersion == 5)
+    // 2 files for each of the versions 0 to 5, then the checksum and the commit file of version 6.
+    // Reading the commit file of version 6 stops the listing.
+    assert(filesListed == 14)
   }
 }

@@ -19,15 +19,19 @@ package org.apache.spark.sql.delta.amt
 import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
+import scala.concurrent.duration.Duration
 
 import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterProvider}
-import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
+import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot, UninitializedCheckpointProvider}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
+import org.apache.spark.sql.delta.SnapshotManagement.checkpointThreadPool
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, FileAction, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.DeltaEncoder
+import org.apache.spark.sql.delta.util.threads.NonFateSharingFuture
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.paths.SparkPath
@@ -39,6 +43,44 @@ import org.apache.spark.sql.expressions.Window
 import org.apache.spark.sql.functions.{coalesce, col, lit, struct, sum, when}
 import org.apache.spark.sql.types.StructType
 
+/** Common checkpoint information available before and after the AMT root has been loaded. */
+trait AMTCheckpointProviderBase
+  extends UninitializedCheckpointProvider
+  with DeltaLogging {
+  /** The version of the manifest commit that wrote this checkpoint. */
+  def manifestCommitVersion: Long
+
+  /** The inline action describing this AMT checkpoint. */
+  def checkpointAction: Checkpoint
+
+  /** The table data path used to resolve manifest paths. */
+  def tableRoot: Path
+
+  override def version: Long = checkpointAction.version
+
+  /** The number of leaf manifests referenced by the root. */
+  private[delta] def numLeaves: Long
+
+  override def topLevelFiles: Seq[FileStatus] = {
+    val contentRoot = checkpointAction.contentRoot
+    Seq(contentRoot.toFileStatus(tableRoot))
+  }
+
+  // Protocol and Metadata are carried inline on the Checkpoint action (not in the AMT), so convert
+  // them to a DataFrame with the required schema without waiting for the root-manifest read.
+  override def loadProtocolMetadataActions(
+      spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame] = {
+    import org.apache.spark.sql.delta.implicits._
+    val rows = Seq(
+      SingleAction(protocol = checkpointAction.protocol),
+      SingleAction(metaData = checkpointAction.metaData))
+    val df = spark.createDataset(rows).toDF()
+      .select(Snapshot.pAndMQuerySchema.fieldNames.toIndexedSeq.map(col): _*)
+      .withColumn(COMMIT_VERSION_COLUMN, lit(version))
+    Some(df)
+  }
+}
+
 /**
  * A [[CheckpointProvider]] backed by an AMT (Adaptive Metadata Tree) manifest tree.
  *
@@ -48,18 +90,87 @@ import org.apache.spark.sql.types.StructType
  * @param manifestCommitVersion The version of the manifest commit that wrote this checkpoint.
  * @param checkpointAction The inline-emitted Checkpoint action this tree was committed with;
  *                         carries the version, contentRoot, and inline non-file state.
- * @param leaves           The root's `DATA_MANIFEST` pointer entries, one per leaf reachable from
- *                         the root. Each entry's `location` is stored table-root-relative; use
- *                         [[liveLeafManifestAbsolutePaths]] to resolve them against the table root.
+ * @param leaves           The root's `DATA_MANIFEST` pointer entries, one per reachable leaf.
+ *                         Each entry's `location` is stored table-root-relative; use
+ *                         [[liveLeafManifestAbsolutePaths]] to resolve it against the table root.
  * @param tableRoot        The table's data path.
  */
 final class AMTCheckpointProvider(
-    val manifestCommitVersion: Long,
-    val checkpointAction: Checkpoint,
+    override val manifestCommitVersion: Long,
+    override val checkpointAction: Checkpoint,
     val leaves: Seq[DataManifestEntry],
-    val tableRoot: Path)
-  extends AMTCheckpointProviderImpl
+    override val tableRoot: Path)
+  extends AMTCheckpointProviderBase
+  with AMTCheckpointProviderImpl
 {
+  override private[delta] def numLeaves: Long =
+    checkpointAction.contentRoot.numLeaves.getOrElse(leaves.size.toLong)
+}
+
+/**
+ * An AMT checkpoint whose root-manifest read starts immediately and completes asynchronously.
+ */
+final class UninitializedAMTCheckpointProvider(
+    val deltaLog: DeltaLog,
+    override val checkpointAction: Checkpoint,
+    override val manifestCommitVersion: Long)
+  extends AMTCheckpointProviderBase {
+
+  override val tableRoot: Path = deltaLog.dataPath
+
+  private[delta] val nonFateSharingCheckpointReadFuture
+      : NonFateSharingFuture[Seq[DataManifestEntry]] =
+    checkpointThreadPool.submitNonFateSharing { _: SparkSession =>
+      AMTCheckpointProvider.loadLeavesFromCheckpoint(
+        deltaLog, checkpointAction, manifestCommitVersion)
+    }
+
+  override private[delta] def numLeaves: Long =
+    checkpointAction.contentRoot.numLeaves.getOrElse {
+      // ContentRoot.tags normally provides numLeaves without waiting. Only when that information
+      // is absent from the tags must we wait for the existing prefetch future to derive the count.
+      nonFateSharingCheckpointReadFuture.get(Duration.Inf).size.toLong
+    }
+}
+
+/**
+ * A complete-provider facade which waits for the prefetched AMT root only when an API requiring
+ * the complete checkpoint is first used.
+ */
+abstract class LazyCompleteAMTCheckpointProvider(
+    uninitializedCheckpointProvider: UninitializedAMTCheckpointProvider)
+  extends AMTCheckpointProviderBase
+  with CheckpointProvider {
+
+  override val manifestCommitVersion: Long =
+    uninitializedCheckpointProvider.manifestCommitVersion
+  override val checkpointAction: Checkpoint = uninitializedCheckpointProvider.checkpointAction
+  override val tableRoot: Path = uninitializedCheckpointProvider.tableRoot
+
+  protected def createCheckpointProvider(): AMTCheckpointProvider
+
+  lazy val underlyingCheckpointProvider: AMTCheckpointProvider = createCheckpointProvider()
+
+  override private[delta] def numLeaves: Long = uninitializedCheckpointProvider.numLeaves
+
+  override def effectiveCheckpointSizeInBytes(): Long =
+    underlyingCheckpointProvider.effectiveCheckpointSizeInBytes()
+
+  override def checkpointPolicyForLogging: Option[CheckpointPolicy.Policy] =
+    underlyingCheckpointProvider.checkpointPolicyForLogging
+
+  override def createCompatibilityCheckpoint(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      logPath: Path,
+      hadoopConf: Configuration): Unit =
+    underlyingCheckpointProvider.createCompatibilityCheckpoint(
+      spark, deltaLog, logPath, hadoopConf)
+
+  override def loadActionsForStateReconstruction(
+      spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame] =
+    underlyingCheckpointProvider.loadActionsForStateReconstruction(spark, deltaLog)
+
 }
 
 trait AMTCheckpointProviderImpl extends CheckpointProvider {
@@ -86,38 +197,10 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   /** The root manifest as a [[FileStatus]]. */
   private lazy val rootFile: FileStatus = contentRoot.toFileStatus(tableRoot)
 
-  override def version: Long = checkpointAction.version
-
-  override def topLevelFiles: Seq[FileStatus] = {
-    Seq(new FileStatus(
-      /* length = */ contentRoot.sizeInBytes,
-      /* isdir = */ false,
-      /* block_replication = */ 0,
-      /* blocksize = */ 0L,
-      // modificationTime is not tracked on the ContentRoot, so report 0.
-      // This should not impact readers.
-      /* modification_time = */ 0L,
-      rootManifestAbsolutePath))
-  }
-
   override def effectiveCheckpointSizeInBytes(): Long =
     contentRoot.sizeInBytes + liveLeaves.map(_.file_size_in_bytes).sum
 
   override def checkpointPolicyForLogging: Option[CheckpointPolicy.Policy] = None
-
-  // Protocol and Metadata are carried inline on the Checkpoint action (not in the AMT), so convert
-  // them to a DataFrame with the required schema.
-  override def loadProtocolMetadataActions(
-      spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame] = {
-    import org.apache.spark.sql.delta.implicits._
-    val rows = Seq(
-      SingleAction(protocol = checkpointAction.protocol),
-      SingleAction(metaData = checkpointAction.metaData))
-    val df = spark.createDataset(rows).toDF()
-      .select(Snapshot.pAndMQuerySchema.fieldNames.toIndexedSeq.map(col): _*)
-      .withColumn(COMMIT_VERSION_COLUMN, lit(version))
-    Some(df)
-  }
 
   override def loadActionsForStateReconstruction(
       spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame] = {
@@ -731,6 +814,18 @@ object AMTCheckpointProvider extends DeltaLogging {
       deltaLog: DeltaLog,
       checkpoint: Checkpoint,
       manifestCommitVersion: Long): AMTCheckpointProvider = {
+    val leaves = loadLeavesFromCheckpoint(deltaLog, checkpoint, manifestCommitVersion)
+    new AMTCheckpointProvider(
+      manifestCommitVersion = manifestCommitVersion,
+      checkpointAction = checkpoint,
+      leaves = leaves,
+      tableRoot = deltaLog.dataPath)
+  }
+
+  private[delta] def loadLeavesFromCheckpoint(
+      deltaLog: DeltaLog,
+      checkpoint: Checkpoint,
+      manifestCommitVersion: Long): Seq[DataManifestEntry] = {
     val startNanos = System.nanoTime()
     val tableRoot = deltaLog.dataPath
     val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
@@ -743,11 +838,6 @@ object AMTCheckpointProvider extends DeltaLogging {
         .toSeq
         .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
         .map(_.unwrap.asInstanceOf[DataManifestEntry])
-    val provider = new AMTCheckpointProvider(
-      manifestCommitVersion = manifestCommitVersion,
-      checkpointAction = checkpoint,
-      leaves = leaves,
-      tableRoot = tableRoot)
     recordDeltaEvent(
       deltaLog,
       opType = AMTUsageLogs.CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION,
@@ -759,7 +849,7 @@ object AMTCheckpointProvider extends DeltaLogging {
         "numLeaves" -> leaves.size.toLong,
         "contentRootSizeInBytes" -> checkpoint.contentRoot.sizeInBytes)
     )
-    provider
+    leaves
   }
 
   /**

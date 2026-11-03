@@ -163,11 +163,7 @@ abstract class ImplicitDMLCastingSuite extends QueryTest
           assert(sparkThrowable.getMessageParameters ==
             Map("sourceType" -> ("\"" + testConfig.sourceTypeInErrorMessage + "\""),
                 "targetType" -> ("\"" + testConfig.targetTypeInErrorMessage + "\""),
-                "columnName" -> "`value`",
-                "storeAssignmentPolicyFlag" -> SQLConf.STORE_ASSIGNMENT_POLICY.key,
-                "updateAndMergeCastingFollowsAnsiEnabledFlag" ->
-                  DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
-                "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key).asJava)
+                "columnName" -> "`value`").asJava)
         } else {
           assert(sparkThrowable.getErrorClass == "CAST_INVALID_INPUT")
           assert(sparkThrowable.getMessageParameters.get("sourceType") == "\"STRING\"")

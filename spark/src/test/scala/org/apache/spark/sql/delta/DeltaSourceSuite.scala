@@ -2978,13 +2978,17 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             .start()
           try q.processAllAvailable() finally q.stop()
         }
-        // V1 fails with an internal batch schema assertion ("Invalid batch"),
-        // V2 fails with DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART.
-        assert(
-          e.getMessage.contains("Invalid batch") ||
-            e.getMessage.contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
-          s"Expected schema mismatch error but got: ${e.getMessage}"
-        )
+        if (useDsv2) {
+          checkError(
+            e.getCause.asInstanceOf[DeltaIllegalStateException],
+            "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED",
+            "KD007",
+            Map(
+              "querySchema" -> DeltaErrors.formatSchema(df.schema),
+              "tableSchema" -> DeltaErrors.formatSchema(deltaLog.update().metadata.schema)))
+        } else {
+          assert(e.getMessage.contains("Invalid batch"))
+        }
       }
     }
   }

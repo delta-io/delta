@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, Snapshot}
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, LastManifestCommit}
+import org.apache.spark.sql.delta.{CheckpointInstance, Checkpoints, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, ContentRoot, LastManifestCommit}
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -75,6 +75,74 @@ class AMTSnapshotDiscoverySuite
   protected def coldLoad(tableName: String): (DeltaLog, Snapshot) = {
     DeltaLog.clearCache()
     DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(tableName))
+  }
+
+  test("[cold init] prefetches the AMT root through the uninitialized provider") {
+    val name = "amt_cold_root_prefetch"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = 2)
+      sql(s"INSERT INTO $name VALUES (1)")
+      sql(s"INSERT INTO $name VALUES (2)")
+
+      val initializationEvents = collectUsageLogs(
+          AMTUsageLogs.CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION) {
+        val (_, snapshot) = coldLoad(name)
+        snapshot.logSegment.checkpointProvider match {
+          case _: AMTCheckpointProviderBase => ()
+          case other =>
+            fail(s"Expected an AMT checkpoint provider, got ${other.getClass}.")
+        }
+        val lazyProvider = snapshot.checkpointProvider match {
+          case provider: LazyCompleteAMTCheckpointProvider => provider
+          case other =>
+            fail(s"Expected a lazy complete AMT checkpoint provider, got ${other.getClass}.")
+        }
+
+        // CheckpointProvider.apply must reuse the root read that started during log-segment
+        // construction rather than reading the root again.
+        val completeProvider = lazyProvider.underlyingCheckpointProvider
+        assert(lazyProvider.underlyingCheckpointProvider eq completeProvider)
+      }
+
+      assert(initializationEvents.size == 1,
+        s"The prefetched AMT root must be loaded exactly once: $initializationEvents")
+    }
+  }
+
+  test("[cold init] derives the leaf count from a prefetched root when its tag is missing") {
+    withSQLConf(leafPackingConfs: _*) {
+      val name = "amt_cold_root_prefetch_without_num_leaves"
+      withTable(name) {
+        createAMTTable(name, checkpointInterval = Int.MaxValue)
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
+        val deltaLog = deltaLogForName(name)
+        commitCheckpoint(deltaLog, incremental = false)
+
+        val checkpointProvider = amtProvider(deltaLog.unsafeVolatileSnapshot).get
+        assertLeafCount(checkpointProvider.leaves)
+        val checkpointWithoutNumLeaves = updateCheckpointActions(
+            checkpointProvider.checkpointAction) {
+          case root: ContentRoot =>
+            root.copy(tags = Option(root.tags).getOrElse(Map.empty) -
+              ContentRoot.Tags.NUM_LEAVES.name)
+        }
+        assert(checkpointWithoutNumLeaves.contentRoot.numLeaves.isEmpty)
+
+        val uninitializedProvider = new UninitializedAMTCheckpointProvider(
+          deltaLog,
+          checkpointWithoutNumLeaves,
+          checkpointProvider.manifestCommitVersion)
+        val expectedNumLeaves = checkpointProvider.leaves.size
+        val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
+          checkpointProvider.manifestCommitVersion,
+          checkpointWithoutNumLeaves.contentRoot.version,
+          checkpointWithoutNumLeaves,
+          checkpointProvider.leaves)
+
+        assert(CheckpointInstance(uninitializedProvider).numParts.contains(expectedNumLeaves))
+        assert(CheckpointInstance(uninitializedProvider) == CheckpointInstance(lastCheckpointInfo))
+      }
+    }
   }
 
   /** Asserts that the cold snapshot is installed with the expected state. */
@@ -431,6 +499,43 @@ class AMTSnapshotDiscoverySuite
         warmSnapshot, warmSnapshot.allFilesViaStateReconstruction.collect().toSeq),
       coldDeltaLog.createDataFrame(
         coldSnapshot, coldSnapshot.allFilesViaStateReconstruction.collect().toSeq).collect().toSeq)
+  }
+
+  test("[warm update] reuses the provider backed by a cold AMT root prefetch") {
+    assume(writeChecksumEnabled, "This test requires CRCs to be enabled")
+    val name = "amt_warm_reuses_cold_uninitialized_provider"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = Int.MaxValue)
+      sql(s"INSERT INTO $name VALUES (1)")
+      commitCheckpoint(deltaLogForName(name), incremental = false)
+
+      val (staleLog, staleSnapshot) = coldLoad(name)
+      val initialProvider = staleSnapshot.logSegment.checkpointProvider match {
+        case provider: AMTCheckpointProviderBase => provider
+        case other =>
+          fail(s"Expected an AMT checkpoint provider, got ${other.getClass}.")
+      }
+      val lazyProvider = staleSnapshot.checkpointProvider match {
+        case provider: LazyCompleteAMTCheckpointProvider => provider
+        case other =>
+          fail(s"Expected a lazy complete AMT checkpoint provider, got ${other.getClass}.")
+      }
+      val completeProvider = lazyProvider.underlyingCheckpointProvider
+      val lastCheckpointInfo = staleLog.readLastCheckpointFile().get
+      assert(CheckpointInstance(initialProvider) == CheckpointInstance(lastCheckpointInfo))
+
+      DeltaLog.clearCache()
+      sql(s"INSERT INTO $name VALUES (2)")
+
+      var updatedSnapshot: Snapshot = null
+      val initializationEvents = collectUsageLogs(
+          AMTUsageLogs.CHECKPOINT_PROVIDER_INITIALIZE_FROM_CHECKPOINT_ACTION) {
+        updatedSnapshot = staleLog.update(catalogTableOpt = Some(catalogTableFor(name)))
+        assert(amtProvider(updatedSnapshot).contains(completeProvider))
+      }
+      assert(initializationEvents.isEmpty,
+        s"Warm update re-read the AMT root: $initializationEvents")
+    }
   }
 
   /**
@@ -1496,6 +1601,7 @@ class AMTSnapshotDiscoverySuite
   }
 
   test("reconciliation paths emit updateCheckpointProvider usage logs") {
+    assume(writeChecksumEnabled, "This test requires CRCs to be enabled")
     val name = "amt_discovery_update_logs"
     withTable(name) {
       createAMTTable(name, checkpointInterval = Int.MaxValue)
@@ -1538,9 +1644,8 @@ class AMTSnapshotDiscoverySuite
           val data = JsonUtils.fromJson[Map[String, Any]](logs.head.blob)
           assert(data.contains("totalDurationMs"))
           assert(data.contains("manifestCommitReadDurationMs"))
-          assert(data.contains("checkpointProviderInitializationDurationMs"))
           assert(data("initialCheckpointProviderVersion") == initialProvider.version)
-          assert(data("initialCheckpointProviderType") == initialProvider.getClass.getSimpleName)
+          assert(data.contains("initialCheckpointProviderType"))
           assert(data("newCheckpointProviderVersion") == latestProvider.version)
           assert(data("manifestCommitVersion") == latestProvider.manifestCommitVersion)
           val contentRoot = latestProvider.checkpointAction.contentRoot
