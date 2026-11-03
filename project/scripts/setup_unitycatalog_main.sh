@@ -35,8 +35,8 @@
 #   for debugging or for experimenting with an override ref.
 #
 # How to bump the pin:
-#   1. Replace UC_PIN_SHA below and set UC_PIN_REF to main or the upstream pull request ref
-#      that contains the commit.
+#   1. Replace UC_PIN_SHA below with a newer commit from
+#      https://github.com/unitycatalog/unitycatalog/commits/main
 #   2. If UC's version.sbt string differs at the new SHA, also update UC_BASE_VERSION below (this
 #      script sanity-checks the two match when the slow path runs, so you'll get a loud error
 #      if not).
@@ -80,11 +80,10 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------------------------
-# The pin. Update UC_BASE_VERSION if UC's version.sbt changed at the new SHA. build.sbt's
+# The pin. Bump both lines together if UC's version.sbt changed at the new SHA. build.sbt's
 # `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
 # values are the single source of truth.
-UC_PIN_SHA=e03ecfd2612a24215f62ba5c9788483da1635af3
-UC_PIN_REF=refs/pull/2093/head
+UC_PIN_SHA=4113f9b7eeb326be304a15c700135f7a8ffe2475
 UC_BASE_VERSION=0.8.0-SNAPSHOT
 # ---------------------------------------------------------------------------------------------
 
@@ -152,19 +151,21 @@ mkdir -p "$UC_DIR"
 git -C "$UC_DIR" init --quiet
 git -C "$UC_DIR" remote add origin "$UC_REPO"
 # Full fetch (not --depth=1) so merge-base --is-ancestor can verify the pin.
-if [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
-  git -C "$UC_DIR" fetch --quiet origin "$UC_PIN_REF"
+if [[ "$UC_REF" == "$UC_PIN_SHA" || "$UC_REF" == "main" ]]; then
+  git -C "$UC_DIR" fetch --quiet origin main
 else
   git -C "$UC_DIR" fetch --quiet origin "$UC_REF"
 fi
 
 cd "$UC_DIR"
 
-# Verify that the upstream ref contains the pinned commit before checking it out.
-# A pull request ref lets CI test the pin before UC merges it. Skipped in release mode.
+# Safety check: the pinned SHA must be reachable from UC main. Local `merge-base --is-ancestor`
+# on the history we just fetched - no GitHub API, no token needed. Only applies when UC_REF is
+# the pinned SHA; UC_REF=main is trivially on main. Skipped in release mode.
 if [[ "$DELTA_RELEASE_MODE" != "1" && "$UC_REF" == "$UC_PIN_SHA" ]]; then
-  if ! git merge-base --is-ancestor "$UC_PIN_SHA" FETCH_HEAD 2>/dev/null; then
-    echo "ERROR: UC_PIN_SHA=$UC_PIN_SHA is not reachable from $UC_PIN_REF in $UC_REPO." >&2
+  if ! git merge-base --is-ancestor "$UC_PIN_SHA" origin/main 2>/dev/null; then
+    echo "ERROR: UC_PIN_SHA=$UC_PIN_SHA is not reachable from unitycatalog/unitycatalog main." >&2
+    echo "       Pin must reference a commit on https://github.com/unitycatalog/unitycatalog/commits/main" >&2
     exit 1
   fi
 fi
