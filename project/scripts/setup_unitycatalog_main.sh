@@ -83,7 +83,7 @@ set -euo pipefail
 # The pin. Update UC_BASE_VERSION if UC's version.sbt changed at the new SHA. build.sbt's
 # `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
 # values are the single source of truth.
-UC_PIN_SHA=12e517ac3cd0846b2b01e8386db411489b7509f4
+UC_PIN_SHA=e03ecfd2612a24215f62ba5c9788483da1635af3
 UC_PIN_REF=refs/pull/2093/head
 UC_BASE_VERSION=0.8.0-SNAPSHOT
 # ---------------------------------------------------------------------------------------------
