@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager, LazyCompleteAMTCheckpointProvider}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -1165,24 +1165,32 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Enable the dependencies of the [[AdaptiveMetadataTableFeature]] in the metadata.
-   * [[AdaptiveMetadataTableFeature.requiredFeatures]] only guarantees these features are present
+   * Enable the dependencies of the AMT table feature (see [[AdaptiveMetadataTableFeatureBase]]) in
+   * the metadata. Its `requiredFeatures` only guarantees these features are present
    * in the protocol (supported); several of them additionally need a metadata flag to be truly
    * enabled(rowTracking, deletionVectors) or a specific configuration (column mapping `id` mode).
    */
   private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
-    val adaptiveMetadataEnabled =
-      AMTUtils.amtEnabled(metadata, protocol) ||
-        TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
-          metadata.configuration, AdaptiveMetadataTableFeature)
+    // The AMT feature the table has or is being given, which names it in the errors below. A table
+    // has at most one; `performTableFeatureIncompatibilityCheck` checks that on the final protocol.
+    val amtFeatureOpt = AdaptiveMetadataTableFeatureBase.features.find { feature =>
+      protocol.isFeatureSupported(feature) ||
+        TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(metadata.configuration, feature)
+    }
+    val adaptiveMetadataEnabled = amtFeatureOpt.isDefined
     if (!adaptiveMetadataEnabled) {
       return metadata
     }
+    // Iceberg-native V4 tables get the preview feature; see `IcebergNativeV4TableFeature`.
+    val amtFeature = amtFeatureOpt.getOrElse(AdaptiveMetadataPreviewTableFeature)
+    val amtFeatureName = amtFeature.name
 
     val existingTableHasAdaptiveMetadata =
       AMTUtils.amtEnabled(snapshot)
-    if (!isCreatingNewTable && !existingTableHasAdaptiveMetadata) {
-      throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
+    // REPLACE counts as creating a new table, but it keeps the existing table and its history, so
+    // adding AMT through it is an upgrade too.
+    if (readVersion >= 0 && !existingTableHasAdaptiveMetadata) {
+      throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeatureName)
     }
 
     // rowTracking / deletionVectors: these dependencies must be enabled via their metadata flag.
@@ -1198,7 +1206,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           case Some(v) if v.toBoolean => None
           case Some(v) =>
             throw DeltaErrors.adaptiveMetadataRequiresDependentFeatureEnabled(
-              AdaptiveMetadataTableFeature.name, key, v)
+              amtFeatureName, key, v)
         }
       }
     var updatedConfig = metadata.configuration ++ flagEnablements
@@ -1212,7 +1220,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       updatedConfig += (DeltaConfigs.COLUMN_MAPPING_MODE.key -> IdMapping.name)
     } else if (metadata.columnMappingMode != IdMapping) {
       throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
-        AdaptiveMetadataTableFeature.name, metadata.columnMappingMode.name)
+        amtFeatureName, metadata.columnMappingMode.name)
     }
 
     metadata.copy(configuration = updatedConfig)
@@ -1598,40 +1606,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /**
    * Rejects incompatible feature combinations in the protocol and metadata being committed.
-   *
-   * For an adaptive metadata table, fails if this commit adds a feature that is incompatible with
-   * the [[AdaptiveMetadataTableFeature]], either to the protocol or by setting a table property
-   * that enables it (e.g. `delta.checkpointPolicy` = `v2`). This runs on the final protocol and
-   * metadata, so it also covers features added after [[updateMetadata]], such as defaults and
-   * protocol actions. On an existing table, features it already had are left alone, so a table
-   * that has one can still be updated and can drop it.
-   *
-   * Every commit runs this check (`prepareCommit` and `commitLarge` both call it), so it catches
-   * incompatible features (e.g. v2Checkpoint and AMT) however they are added.
    */
   protected def performTableFeatureIncompatibilityCheck(): Unit = {
-    if (AMTUtils.amtEnabled(metadata, protocol)) {
-      AdaptiveMetadataTableFeature.incompatibleFeatures.foreach { feature =>
-        def enabledByMetadata(p: Protocol, m: Metadata): Boolean = feature match {
-          case f: FeatureAutomaticallyEnabledByMetadata =>
-            f.metadataRequiresFeatureToBeEnabled(p, m, spark)
-          case _ => false
-        }
-        // A feature is added when the new state has it and the table did not have it before.
-        // When creating a table, everything counts as added: the initial snapshot of a new table
-        // already has the session defaults merged into its metadata and protocol.
-        val addedToProtocol = protocol.isFeatureSupported(feature) &&
-          (isCreatingNewTable || !snapshot.protocol.isFeatureSupported(feature))
-        val enabledByNewMetadata = enabledByMetadata(protocol, metadata) &&
-          (isCreatingNewTable || !enabledByMetadata(snapshot.protocol, snapshot.metadata))
-        if (addedToProtocol || enabledByNewMetadata) {
-          throw DeltaErrors.incompatibleTableFeatures(
-            tableName = catalogTable.map(_.qualifiedName).getOrElse(dataPath.toString),
-            feature1 = AdaptiveMetadataTableFeature.name,
-            feature2 = feature.name)
-        }
-      }
-    }
+    val tableName = catalogTable.map(_.qualifiedName).getOrElse(dataPath.toString)
+    AMTUtils.assertFeatureCompatibility(
+      spark, snapshot, protocol, metadata, isCreatingNewTable, tableName)
   }
 
   /**
@@ -3908,6 +3887,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def amtCheckpointProviderOpt: Option[AMTCheckpointProvider] =
     snapshot.checkpointProvider match {
       case amt: AMTCheckpointProvider => Some(amt)
+      case lazyAmt: LazyCompleteAMTCheckpointProvider =>
+        Some(lazyAmt.underlyingCheckpointProvider)
       case _ => None
     }
 

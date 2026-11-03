@@ -104,7 +104,7 @@ class CommitInfoDataChangeSuite
   test("dataChange write flag applies only to non-AMT tables") {
     val metadata = Metadata()
     val nonAMTProtocol = Protocol(1, 2)
-    val amtProtocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val amtProtocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
 
     withSQLConf(
         DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED.key -> "false") {

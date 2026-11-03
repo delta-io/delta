@@ -26,7 +26,7 @@ import scala.util.Try
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTUtils}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCheckpointProviderBase, AMTUsageLogs, AMTUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
@@ -248,7 +248,9 @@ class Snapshot(
               callSite = "Snapshot.lastManifestCommitOpt") { commitInfoOpt =>
             commitInfoOpt.getOrElse {
               throw DeltaErrors.missingCommitInfo(
-                AdaptiveMetadataTableFeature.name, version.toString)
+                AdaptiveMetadataTableFeatureBase.supportedBy(protocol)
+                  .getOrElse(AdaptiveMetadataPreviewTableFeature).name,
+                version.toString)
             }.lastManifestCommit
           }
         }.flatten
@@ -492,7 +494,7 @@ class Snapshot(
       s"LastManifestCommit[version=${lastManifestCommit.version}, " +
         s"contentRootVersion=${lastManifestCommit.contentRootVersion}]"
     }
-    def toStrCP(amtCheckpointProvider: AMTCheckpointProvider): String = {
+    def toStrCP(amtCheckpointProvider: AMTCheckpointProviderBase): String = {
       s"AMTCheckpointProvider[version=${amtCheckpointProvider.version}]"
     }
 
@@ -503,7 +505,7 @@ class Snapshot(
       "checkpointProviderType" -> logSegment.checkpointProvider.getClass.getSimpleName)
 
     val amtCheckpointProviderOpt = logSegment.checkpointProvider match {
-      case amtCheckpointProvider: AMTCheckpointProvider =>
+      case amtCheckpointProvider: AMTCheckpointProviderBase =>
         deltaAssert(
           check = amtCheckpointProvider.version <= version,
           name = AMTUsageLogs.CHECKPOINT_EXCEEDS_SNAPSHOT_VERSION,

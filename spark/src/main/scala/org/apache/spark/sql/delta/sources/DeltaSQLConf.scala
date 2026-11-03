@@ -643,13 +643,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED =
     buildConf("adaptiveMetadataTree.preview.enabled")
       .internal()
-      .doc("When false, the `adaptiveMetadata-preview` reader/writer table feature is not " +
-        "registered in this client's supported-features map. Any attempt to enable the feature " +
-        "on a table is rejected with the standard `unsupported table feature` error, and any " +
-        "table that already has the feature in its protocol fails to be read. Acts as a " +
-        "kill-switch while the feature is in preview.")
+      .doc("When false, creating a table with the `adaptiveMetadata-preview` reader/writer " +
+        "table feature is rejected. The feature is always registered, so tables that already " +
+        "have it can still be read and written.")
       .booleanConf
       .createWithDefault(true)
+
+  val V4_ADAPTIVE_METADATA_TABLE_ENABLED =
+    buildConf("adaptiveMetadataTree.enabled")
+      .internal()
+      .doc("When false, creating a table with the `adaptiveMetadata-dev` reader/writer table " +
+        "feature (to be renamed `adaptiveMetadata` once complete) is rejected. The feature is " +
+        "always registered, so tables that already have it can still be read and written. " +
+        s"Independent of `${V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED.key}`, which gates " +
+        "creating `adaptiveMetadata-preview` tables: with both false no AMT table can be " +
+        "created, with only that one true AMT tables use the preview feature, and with this one " +
+        "true they can use `adaptiveMetadata-dev`.")
+      .booleanConf
+      .createWithDefault(false)
 
   val AMT_ENTRIES_PER_LEAF =
     buildConf("amt.entriesPerLeaf")
@@ -853,6 +864,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         " supports concurrent writes.")
       .booleanConf
       .createOptional
+
+  val DELTA_VACUUM_COMMIT_MAX_RETRIES =
+    buildConf("vacuum.commit.maxRetries")
+      .internal()
+      .doc("Maximum number of times VACUUM retries its VACUUM START or VACUUM END commit in a " +
+        "new transaction after the commit fails because a concurrent commit changed the table " +
+        "metadata. 0 disables the retries.")
+      .intConf
+      .checkValue(_ >= 0, "vacuum.commit.maxRetries must be non-negative")
+      .createWithDefault(3)
 
   val LITE_VACUUM_ENABLED =
     buildConf("vacuum.lite.enabled")
@@ -2125,6 +2146,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val STREAMING_PARTITION_SCHEMA_VALIDATION_ON_RESTART =
+    buildConf("streaming.partitionSchemaValidationOnRestart.enabled")
+      .internal()
+      .doc("Whether to validate that the analysis-time partition schema matches the read " +
+        "partition schema when a V2 streaming query starts. This check is independent of " +
+        s"${STREAMING_SCHEMA_VALIDATION_ON_RESTART.key}.")
+      .booleanConf
+      .createWithDefault(true)
+
   val STREAMING_TRAILING_COMMIT_VALIDATION =
     buildConf("streaming.trailingCommitValidation.enabled")
       .internal()
@@ -2190,6 +2220,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "partition-like data skipping can be safely applied.")
       .stringConf
       .createOptional
+
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_FLOATING_POINT_VALIDATION_ENABLED =
+    buildConf("skipping.partitionLikeDataSkipping.floatingPointValidation.enabled")
+      .internal()
+      .doc("Whether to prevent partition-like data skipping from inferring exact FLOAT or DOUBLE " +
+        "values from equal min/max statistics."
+      )
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED =
     buildConf("skipping.enhancedIsNullPushdownExprs.enabled")

@@ -44,6 +44,7 @@ import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
+import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
@@ -57,6 +58,7 @@ import org.apache.spark.sql.delta.actions.CommitInfo;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.RemoveFile;
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils$;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader$;
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
@@ -152,6 +154,7 @@ class DeltaV2MicroBatchStream
   private final String tableId;
   private final SnapshotDescriptor readSnapshotDescriptor;
   private final StructType readSchemaAtSourceInit;
+  private final boolean readerSupportsDeletionVectors;
   private final boolean shouldValidateOffsets;
   private final Optional<Regex> excludeRegex;
   private final SparkSession spark;
@@ -280,6 +283,23 @@ class DeltaV2MicroBatchStream
             "readSnapshotDescriptor is null");
     this.readSchemaAtSourceInit =
         Objects.requireNonNull(readSnapshotDescriptor.schema(), "readSchemaAtSourceInit is null");
+    this.readerSupportsDeletionVectors =
+        DeletionVectorUtils$.MODULE$.deletionVectorsReadable(
+            readSnapshotDescriptor.protocol(), readSnapshotDescriptor.metadata());
+
+    // V2 retains the partition layout from DataFrame analysis. Check that the read metadata still
+    // matches that layout before the stream starts. V1 does not need this check because it loads
+    // the layout when the source starts.
+    boolean shouldValidatePartitionSchemaOnRestart =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.STREAMING_PARTITION_SCHEMA_VALIDATION_ON_RESTART());
+    if (shouldValidatePartitionSchemaOnRestart) {
+      validatePartitionSchemaOnStartup(
+          partitionSchema, readSnapshotDescriptor.metadata().partitionSchema(), tableId);
+    }
 
     this.shouldValidateOffsets =
         Objects.requireNonNull(
@@ -304,7 +324,6 @@ class DeltaV2MicroBatchStream
         new MetadataEvolutionHandler(
             spark,
             tableId,
-            this.tablePath,
             snapshotManager,
             streamingBackend,
             engine,
@@ -526,8 +545,19 @@ class DeltaV2MicroBatchStream
             previousOffset.isInitialSnapshot(),
             limits);
 
+    // TODO: Move this validation into DeltaStreamingBackend when DSv2 shares offset
+    // discovery with DSv1.
     Optional<IndexedFile> lastFileChange =
-        ScalaUtils.toJavaOptional(DeltaSource.iteratorLast(changes));
+        ScalaUtils.toJavaOptional(
+            DeltaSource.iteratorLast(
+                new IteratorCloseOps<>(changes)
+                    .withClose(
+                        iterator ->
+                            iterator.map(
+                                file -> {
+                                  checkDeletionVectorsReadable(file);
+                                  return file;
+                                }))));
 
     if (!lastFileChange.isPresent()) {
       // For the first batch, return empty to match DSv1's
@@ -585,8 +615,11 @@ class DeltaV2MicroBatchStream
                 Optional.of(endOffset))
             : getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
       while (fileChanges.hasNext()) {
-        PartitionedFile pf = buildPartitionedFile(fileChanges.next(), isCDC, caster);
+        IndexedFile indexedFile = fileChanges.next();
+        PartitionedFile pf = buildPartitionedFile(indexedFile, isCDC, caster);
         if (pf == null) continue;
+        // Also check replay of an already planned batch, which skips latestOffset validation.
+        checkDeletionVectorsReadable(indexedFile);
         totalBytesToRead += pf.fileSize();
         partitionedFiles.add(pf);
       }
@@ -624,6 +657,33 @@ class DeltaV2MicroBatchStream
         hadoopConf,
         sqlConf,
         /* isWriteTimeCDCRead */ options.readChangeFeed());
+  }
+
+  private void checkDeletionVectorsReadable(IndexedFile file) {
+    if (readerSupportsDeletionVectors || !file.hasFileAction()) return;
+    boolean needsDeletionVectors;
+    String path;
+    if (file.getAddFile() != null) {
+      needsDeletionVectors = file.getAddFile().deletionVector() != null;
+      path = file.getAddFile().path();
+    } else if (file.getCDCDataFile() != null) {
+      needsDeletionVectors = file.getCDCDataFile().hasDeletionVector();
+      path = file.getCDCDataFile().getPath();
+    } else {
+      return;
+    }
+    if (!needsDeletionVectors) return;
+    if (!isExcludedPath(path)) {
+      logger.warn(
+          "Cannot read deletion vectors for table {} at version {} with source-init snapshot "
+              + "version {} (readMode={})",
+          tableId,
+          file.getVersion(),
+          snapshotAtSourceInit.getVersion(),
+          options.readChangeFeed() ? "CDC" : "table");
+      throw DeltaErrors.streamingDeletionVectorsNotReadableException(
+          file.getVersion(), snapshotAtSourceInit.getVersion());
+    }
   }
 
   /**
@@ -1568,18 +1628,12 @@ class DeltaV2MicroBatchStream
         // intermediate schema changes against the stream read schema to capture corners cases such
         // as rename and rename back.
         if (batchEndVersion != null) {
-          for (Map.Entry<Long, io.delta.kernel.internal.actions.Metadata> entry :
-              StreamingHelper.collectMetadataActionsFromRangeUnsafe(
-                      batchStartVersion,
-                      Optional.of(batchEndVersion),
-                      snapshotManager,
-                      engine,
-                      snapshotAtSourceInit.getPath())
+          for (Map.Entry<Long, Metadata> entry :
+              StreamingHelper.collectMetadataActions(
+                      batchStartVersion, Optional.of(batchEndVersion), snapshotManager, engine)
                   .entrySet()) {
             long version = entry.getKey();
-            // TODO: Replace StreamingHelper's Kernel metadata range scan with V1 action
-            // iteration to remove this conversion.
-            Metadata metadata = KernelActionUtils$.MODULE$.metadataFromKernel(entry.getValue());
+            Metadata metadata = entry.getValue();
             checkReadIncompatibleSchemaChanges(
                 metadata,
                 version,
@@ -1593,6 +1647,36 @@ class DeltaV2MicroBatchStream
 
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true;
+  }
+
+  /**
+   * Validates the partition schema and physical names without comparing unrelated metadata.
+   *
+   * <p>Partition changes need a separate check because full-schema validation sorts the columns and
+   * does not distinguish partition columns from data columns.
+   */
+  private static void validatePartitionSchemaOnStartup(
+      StructType partitionSchema, StructType readPartitionSchemaAtSourceInit, String tableId) {
+    // Physical names identify the partition values in each file.
+    // Partition reads tolerate reordering, but keep this check consistent with the order-sensitive
+    // partition-change checks.
+    boolean namesMatch =
+        Arrays.equals(partitionSchema.fieldNames(), readPartitionSchemaAtSourceInit.fieldNames());
+    boolean typesMatch =
+        DataType.equalsStructurally(
+            partitionSchema, readPartitionSchemaAtSourceInit, /* ignoreNullability= */ false);
+    boolean physicalNamesMatch =
+        Arrays.equals(
+            Arrays.stream(partitionSchema.fields())
+                .map(DeltaColumnMapping::getPhysicalName)
+                .toArray(String[]::new),
+            Arrays.stream(readPartitionSchemaAtSourceInit.fields())
+                .map(DeltaColumnMapping::getPhysicalName)
+                .toArray(String[]::new));
+    if (!namesMatch || !typesMatch || !physicalNamesMatch) {
+      throw DeltaErrors.streamingPartitionSchemaMismatchOnRestart(
+          tableId, partitionSchema, readPartitionSchemaAtSourceInit);
+    }
   }
 
   /**

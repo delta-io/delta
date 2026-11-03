@@ -15,11 +15,15 @@
  */
 package org.apache.spark.sql.delta.v2.interop
 
+import java.io.{IOException, UncheckedIOException}
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaSingleCommit
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.v2.utils.KernelCommitActionsTestUtil._
+import org.mockito.Mockito.{doReturn, doThrow, inOrder, mock, spy, verify, when}
+import io.delta.kernel.{CommitActions => KernelCommitActions}
 import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
 import io.delta.kernel.defaults.internal.json.{JsonUtils => KernelJsonUtils}
 import io.delta.kernel.internal.actions.{SingleAction => KernelSingleAction}
@@ -99,6 +103,110 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
       } finally {
         actions.close()
       }
+    }
+  }
+
+  // Mocks let these tests inject resource failures and verify close order.
+  test("construction closes actions before closing each Kernel commit") {
+    val kernelFirstCommit = mock(classOf[KernelCommitActions])
+    val kernelSecondCommit = mock(classOf[KernelCommitActions])
+    val kernelFirstActions = mock(classOf[KernelCloseableIterator[KernelColumnarBatch]])
+    val kernelSecondActions = mock(classOf[KernelCloseableIterator[KernelColumnarBatch]])
+    when(kernelFirstCommit.getActions()).thenReturn(kernelFirstActions)
+    when(kernelSecondCommit.getActions()).thenReturn(kernelSecondActions)
+
+    Seq(kernelFirstCommit, kernelSecondCommit).foreach { kernelCommit =>
+      DeltaV2SingleCommit(kernelCommit).getActionsIterator().processAndClose { actions =>
+        assert(actions.isEmpty)
+      }
+    }
+
+    val order = inOrder(
+      kernelFirstActions, kernelFirstCommit, kernelSecondActions, kernelSecondCommit)
+    order.verify(kernelFirstActions).close()
+    order.verify(kernelFirstCommit).close()
+    order.verify(kernelSecondCommit).getActions()
+    order.verify(kernelSecondActions).close()
+    order.verify(kernelSecondCommit).close()
+  }
+
+  test("construction reports the commit version and closes the commit when opening actions fails") {
+    val failure = new IOException("action iterator open failed")
+    val kernelCommit = mock(classOf[KernelCommitActions])
+    when(kernelCommit.getVersion()).thenReturn(7L)
+    when(kernelCommit.getActions()).thenAnswer { _ => throw failure }
+
+    val error = intercept[UncheckedIOException] {
+      DeltaV2SingleCommit(kernelCommit)
+    }
+
+    assert(error.getMessage === "Failed to process commit at version 7")
+    assert(error.getCause eq failure)
+    verify(kernelCommit).close()
+  }
+
+  test("construction preserves the read failure when resource cleanup fails") {
+    val readFailure = new IOException("action iterator read failed")
+    val actionCloseFailure = new IOException("action iterator close failed")
+    val commitCloseFailure = new IOException("commit close failed")
+    val kernelCommit = mock(classOf[KernelCommitActions])
+    val kernelActions = mock(classOf[KernelCloseableIterator[KernelColumnarBatch]])
+    when(kernelCommit.getVersion()).thenReturn(7L)
+    when(kernelCommit.getActions()).thenReturn(kernelActions)
+    when(kernelActions.hasNext).thenAnswer { _ => throw readFailure }
+    doThrow(actionCloseFailure).when(kernelActions).close()
+    doThrow(commitCloseFailure).when(kernelCommit).close()
+
+    val error = intercept[UncheckedIOException] {
+      DeltaV2SingleCommit(kernelCommit)
+    }
+
+    assert(error.getMessage === "Failed to process commit at version 7")
+    assert(error.getCause eq readFailure)
+    assert(readFailure.getSuppressed.toSeq === Seq(actionCloseFailure))
+    assert(error.getSuppressed.length === 1)
+    assert(error.getSuppressed.head.getCause eq commitCloseFailure)
+    val order = inOrder(kernelActions, kernelCommit)
+    order.verify(kernelActions).close()
+    order.verify(kernelCommit).close()
+  }
+
+  test("construction propagates cleanup failures after successful materialization") {
+    Seq((true, false), (false, true), (true, true)).foreach {
+      case (failClosingActions, failClosingCommit) =>
+        val actionCloseFailure = new IOException("action iterator close failed")
+        val commitCloseFailure = new IOException("commit close failed")
+        val kernelCommit = mock(classOf[KernelCommitActions])
+        val kernelActions = mock(classOf[KernelCloseableIterator[KernelColumnarBatch]])
+        when(kernelCommit.getVersion()).thenReturn(7L)
+        when(kernelCommit.getActions()).thenReturn(kernelActions)
+        if (failClosingActions) {
+          doThrow(actionCloseFailure).when(kernelActions).close()
+        }
+        if (failClosingCommit) {
+          doThrow(commitCloseFailure).when(kernelCommit).close()
+        }
+
+        val error = intercept[RuntimeException] {
+          DeltaV2SingleCommit(kernelCommit)
+        }
+
+        if (failClosingActions) {
+          assert(error.getClass === classOf[UncheckedIOException])
+          assert(error.getMessage === "Failed to process commit at version 7")
+          assert(error.getCause eq actionCloseFailure)
+        } else {
+          assert(error.getCause eq commitCloseFailure)
+        }
+        if (failClosingActions && failClosingCommit) {
+          assert(error.getSuppressed.length === 1)
+          assert(error.getSuppressed.head.getCause eq commitCloseFailure)
+        } else {
+          assert(error.getSuppressed.isEmpty)
+        }
+        val order = inOrder(kernelActions, kernelCommit)
+        order.verify(kernelActions).close()
+        order.verify(kernelCommit).close()
     }
   }
 

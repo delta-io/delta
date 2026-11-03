@@ -1070,11 +1070,7 @@ trait DeltaErrorsBase
       messageParameters = Array(
         toSQLType(from), // sourceType
         toSQLType(to), // targetType
-        toSQLId(columnName), // columnName
-        SQLConf.STORE_ASSIGNMENT_POLICY.key, // storeAssignmentPolicyFlag
-        // updateAndMergeCastingFollowsAnsiEnabledFlag
-        DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
-        SQLConf.ANSI_ENABLED.key // ansiEnabledFlag
+        toSQLId(columnName) // columnName
       )
     )
   }
@@ -1529,11 +1525,28 @@ trait DeltaErrorsBase
     }
   }
 
+  def streamingPartitionSchemaMismatchOnRestart(
+      tableId: String,
+      analyzedPartitionSchema: StructType,
+      currentPartitionSchema: StructType): RuntimeException = {
+    new DeltaIllegalStateException(
+      errorClass =
+        "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.PARTITION_SCHEMA_CHANGED",
+      messageParameters = Array(
+        tableId,
+        formatSchema(analyzedPartitionSchema),
+        formatColumnList(
+          analyzedPartitionSchema.fields.toSeq.map(DeltaColumnMapping.getPhysicalName)),
+        formatSchema(currentPartitionSchema),
+        formatColumnList(
+          currentPartitionSchema.fields.toSeq.map(DeltaColumnMapping.getPhysicalName))))
+  }
+
   def streamingSchemaMismatchOnRestart(
       querySchema: StructType,
       tableSchema: StructType): RuntimeException = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART",
+      errorClass = "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED",
       messageParameters = Array(formatSchema(querySchema), formatSchema(tableSchema)))
   }
 
@@ -2623,6 +2636,13 @@ trait DeltaErrorsBase
       errorClass = "DELTA_ADAPTIVE_METADATA_REQUIRES_DEPENDENT_FEATURE_ENABLED",
       // Template order: <feature>, <prop>, <value>, <prop>.
       messageParameters = Array(featureName, propertyKey, actualValue, propertyKey)
+    )
+  }
+
+  def adaptiveMetadataNotEnabled(featureName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADAPTIVE_METADATA_NOT_ENABLED",
+      messageParameters = Array(featureName)
     )
   }
 
@@ -3724,6 +3744,27 @@ trait DeltaErrorsBase
         generateDocsLink(
           sparkConf, "/delta-utility.html#convert-a-parquet-table-to-a-delta-table")),
       cause = cause)
+  }
+
+  /**
+   * Returns a schema-tracking error for file versions older than the latest snapshot at source
+   * initialization. Otherwise, returns a restart error.
+   *
+   * @param version the commit version of the file that requires deletion-vector filtering.
+   * @param snapshotAtSourceInitVersion the latest snapshot version at source initialization,
+   *                                   not the tracked read snapshot version.
+   */
+  def streamingDeletionVectorsNotReadableException(
+      version: Long,
+      snapshotAtSourceInitVersion: Long): DeltaRuntimeException = {
+    val errorClass = if (version < snapshotAtSourceInitVersion) {
+      "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_SCHEMA_TRACKING"
+    } else {
+      "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_RESTART"
+    }
+    new DeltaRuntimeException(
+      errorClass = errorClass,
+      messageParameters = Array.empty)
   }
 
   def streamingMetadataEvolutionException(

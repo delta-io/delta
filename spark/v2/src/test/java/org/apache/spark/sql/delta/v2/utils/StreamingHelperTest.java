@@ -16,25 +16,33 @@
 package org.apache.spark.sql.delta.v2.utils;
 
 import static io.delta.kernel.internal.actions.AddFile.SCHEMA_WITHOUT_STATS;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import io.delta.kernel.CommitActions;
+import io.delta.kernel.CommitRange;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.Collections;
@@ -46,9 +54,14 @@ import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.actions.Metadata;
+import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -96,8 +109,8 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   private static ColumnarBatch createAddFileBatch(ColumnVector adds) {
     return new ColumnarBatch() {
       @Override
-      public StructType getSchema() {
-        return new StructType().add("add", SCHEMA_WITHOUT_STATS);
+      public io.delta.kernel.types.StructType getSchema() {
+        return new io.delta.kernel.types.StructType().add("add", SCHEMA_WITHOUT_STATS);
       }
 
       @Override
@@ -451,7 +464,92 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   }
 
   // ---------------------------------------------------------------------------
-  // collectMetadataActionsFromRangeUnsafe
+  // Metadata and protocol action collectors
+  // ---------------------------------------------------------------------------
+
+  // Mocks let these tests inject commit and action read failures.
+  @SuppressWarnings("unchecked")
+  private static <T> CloseableIterator<T> mockIterator() {
+    return mock(CloseableIterator.class, CALLS_REAL_METHODS);
+  }
+
+  private DeltaV2SnapshotManager mockSnapshotManager(CloseableIterator<CommitActions> commits) {
+    DeltaV2SnapshotManager manager = mock(DeltaV2SnapshotManager.class);
+    CommitRange range = mock(CommitRange.class);
+    when(manager.getTableChanges(defaultEngine, 7L, Optional.of(7L))).thenReturn(range);
+    when(range.getCommitActions(defaultEngine, Set.of(DeltaLogActionUtils.DeltaAction.PROTOCOL)))
+        .thenReturn(commits);
+    return manager;
+  }
+
+  @Test
+  public void testProtocolCollector_closesEmptyCommitIterator() throws IOException {
+    CloseableIterator<CommitActions> commits = mockIterator();
+
+    assertTrue(
+        StreamingHelper.collectProtocolActions(
+                7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine)
+            .isEmpty());
+
+    verify(commits).close();
+  }
+
+  @Test
+  public void testProtocolCollector_preservesIteratorReadFailureWhenClosureFails()
+      throws IOException {
+    IOException readFailure = new IOException("commit iterator read failed");
+    IOException closeFailure = new IOException("commit iterator close failed");
+    CloseableIterator<CommitActions> commits = mockIterator();
+    when(commits.hasNext())
+        .thenAnswer(
+            ignored -> {
+              throw readFailure;
+            });
+    doThrow(closeFailure).when(commits).close();
+
+    RuntimeException error =
+        assertThrows(
+            RuntimeException.class,
+            () ->
+                StreamingHelper.collectProtocolActions(
+                    7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine));
+
+    assertEquals("Failed to process commits", error.getMessage());
+    assertSame(readFailure, error.getCause());
+    assertArrayEquals(new Throwable[] {closeFailure}, readFailure.getSuppressed());
+    verify(commits).close();
+  }
+
+  @Test
+  public void testProtocolCollector_reportsCommitVersionWhenMaterializationFails()
+      throws Exception {
+    IOException readFailure = new IOException("action iterator open failed");
+    CommitActions kernelCommit = mock(CommitActions.class);
+    when(kernelCommit.getVersion()).thenReturn(7L);
+    when(kernelCommit.getActions())
+        .thenAnswer(
+            ignored -> {
+              throw readFailure;
+            });
+    CloseableIterator<CommitActions> commits = mockIterator();
+    when(commits.hasNext()).thenReturn(true);
+    when(commits.next()).thenReturn(kernelCommit);
+
+    UncheckedIOException error =
+        assertThrows(
+            UncheckedIOException.class,
+            () ->
+                StreamingHelper.collectProtocolActions(
+                    7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine));
+
+    assertEquals("Failed to process commit at version 7", error.getMessage());
+    assertSame(readFailure, error.getCause());
+    verify(kernelCommit).close();
+    verify(commits).close();
+  }
+
+  // ---------------------------------------------------------------------------
+  // collectMetadataActions
   //
   // Fixture for parameterized cases below: v0 CREATE, v1 INSERT, v2 ALTER ADD COLUMNS.
   // Versions with a Metadata action: {v0, v2}. v1 has none.
@@ -477,7 +575,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("collectMetadataTestCases")
-  public void testCollectMetadataActionsFromRangeUnsafe(
+  public void testCollectMetadataActions(
       String scenario,
       long startVersion,
       Optional<Long> endVersionOpt,
@@ -489,38 +587,32 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Metadata> result =
-        StreamingHelper.collectMetadataActionsFromRangeUnsafe(
-            startVersion, endVersionOpt, snapshotManager, defaultEngine, testTablePath);
+        StreamingHelper.collectMetadataActions(
+            startVersion, endVersionOpt, snapshotManager, defaultEngine);
 
-    assertEquals(expectedVersions, result.keySet());
+    assertArrayEquals(expectedVersions.stream().sorted().toArray(), result.keySet().toArray());
   }
 
   /** Verifies that the version → Metadata mapping returns the correct Metadata content. */
   @Test
-  public void testCollectMetadataActionsFromRangeUnsafe_returnsCorrectMetadataPerVersion(
-      @TempDir File tempDir) {
+  public void testCollectMetadataActions_returnsCorrectMetadataPerVersion(@TempDir File tempDir) {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_metadata_content";
     setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
     snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Metadata> result =
-        StreamingHelper.collectMetadataActionsFromRangeUnsafe(
-            0L, Optional.of(2L), snapshotManager, defaultEngine, testTablePath);
+        StreamingHelper.collectMetadataActions(0L, Optional.of(2L), snapshotManager, defaultEngine);
 
     StructType expectedV0Schema =
-        new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
-    StructType expectedV2Schema =
-        new StructType()
-            .add("id", IntegerType.INTEGER)
-            .add("name", StringType.STRING)
-            .add("c3", IntegerType.INTEGER);
-    assertEquals(expectedV0Schema, result.get(0L).getSchema());
-    assertEquals(expectedV2Schema, result.get(2L).getSchema());
+        new StructType().add("id", DataTypes.IntegerType).add("name", DataTypes.StringType);
+    StructType expectedV2Schema = expectedV0Schema.add("c3", DataTypes.IntegerType);
+    assertEquals(expectedV0Schema, result.get(0L).schema());
+    assertEquals(expectedV2Schema, result.get(2L).schema());
   }
 
   // ---------------------------------------------------------------------------
-  // collectProtocolActionsFromRangeUnsafe
+  // collectProtocolActions
   //
   // Fixture for parameterized cases below: v0 CREATE, v1 INSERT, v2 SET TBLPROPERTIES (upgrade).
   // Versions with a Protocol action: {v0, v2}. v1 has none.
@@ -552,7 +644,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("collectProtocolTestCases")
-  public void testCollectProtocolActionsFromRangeUnsafe(
+  public void testCollectProtocolActions(
       String scenario,
       long startVersion,
       Optional<Long> endVersionOpt,
@@ -564,29 +656,27 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Protocol> result =
-        StreamingHelper.collectProtocolActionsFromRangeUnsafe(
-            startVersion, endVersionOpt, snapshotManager, defaultEngine, testTablePath);
+        StreamingHelper.collectProtocolActions(
+            startVersion, endVersionOpt, snapshotManager, defaultEngine);
 
-    assertEquals(expectedVersions, result.keySet());
+    assertArrayEquals(expectedVersions.stream().sorted().toArray(), result.keySet().toArray());
   }
 
   /** Verifies that the version → Protocol mapping returns the correct Protocol content. */
   @Test
-  public void testCollectProtocolActionsFromRangeUnsafe_returnsCorrectProtocolPerVersion(
-      @TempDir File tempDir) {
+  public void testCollectProtocolActions_returnsCorrectProtocolPerVersion(@TempDir File tempDir) {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_protocol_content";
     setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
     snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Protocol> result =
-        StreamingHelper.collectProtocolActionsFromRangeUnsafe(
-            0L, Optional.of(2L), snapshotManager, defaultEngine, testTablePath);
+        StreamingHelper.collectProtocolActions(0L, Optional.of(2L), snapshotManager, defaultEngine);
 
     // v0 default: reader=1, writer=2; v2 upgraded: reader=3, writer=7
-    assertEquals(1, result.get(0L).getMinReaderVersion());
-    assertEquals(2, result.get(0L).getMinWriterVersion());
-    assertEquals(3, result.get(2L).getMinReaderVersion());
-    assertEquals(7, result.get(2L).getMinWriterVersion());
+    assertEquals(1, result.get(0L).minReaderVersion());
+    assertEquals(2, result.get(0L).minWriterVersion());
+    assertEquals(3, result.get(2L).minReaderVersion());
+    assertEquals(7, result.get(2L).minWriterVersion());
   }
 }
