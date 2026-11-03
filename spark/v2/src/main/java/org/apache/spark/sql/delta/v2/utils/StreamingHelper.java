@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
@@ -295,8 +296,9 @@ public class StreamingHelper {
       while (commitsIter.hasNext()) {
         DeltaSingleCommit commit = commitsIter.next();
         long version = commit.version();
-        try (ClosableIterator<Action> actionsIter =
-            commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) {
+        try (DeltaV2SingleCommit v2Commit = (DeltaV2SingleCommit) commit;
+            ClosableIterator<Action> actionsIter =
+                v2Commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) {
           while (actionsIter.hasNext()) {
             Action action = actionsIter.next();
             if (actionClass.isInstance(action)) {

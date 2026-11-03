@@ -15,7 +15,7 @@
  */
 package org.apache.spark.sql.delta.v2.interop
 
-import java.io.{IOException, UncheckedIOException}
+import java.io.IOException
 
 import scala.collection.JavaConverters._
 
@@ -31,6 +31,7 @@ import io.delta.kernel.internal.data.{GenericColumnVector => KernelColumnVectorI
 import io.delta.kernel.utils.{CloseableIterator => KernelCloseableIterator}
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.util.Utils
 
 class DeltaV2SingleCommitSuite extends SparkFunSuite {
 
@@ -55,12 +56,14 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
   test("getActionsIterator supports rewind after partial consumption and exhaustion") {
     val kernelCommit = kernelCommitActions
     val commit = new DeltaV2SingleCommit(kernelCommit)
-    assert(kernelCommit.closed)
+    assert(!kernelCommit.closed)
+    assert(kernelCommit.actionBatchesRead === 0)
     assert(commit.version === 1L)
     assert(commit.timestamp === 0L)
     val actions = commit.getActionsIterator()
     try {
       assert(actions.next() === expectedActions.head)
+      assert(kernelCommit.actionBatchesRead === 1)
       actions.rewind()
       assert(actions.toList === expectedActions)
       assert(!actions.hasNext)
@@ -71,43 +74,53 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
       assert(actions.toList === expectedActions)
     } finally {
       actions.close()
+      commit.close()
     }
+    assert(kernelCommit.closed)
   }
 
   test("each getActionsIterator call opens an independent stream") {
     val kernelCommit = kernelCommitActions
     val commit = new DeltaV2SingleCommit(kernelCommit)
-    assert(kernelCommit.closed)
+    assert(!kernelCommit.closed)
     val first = commit.getActionsIterator()
     val second = commit.getActionsIterator(maxInMemoryFileSizeBytes = 0)
     try {
       assert(first.next() === expectedActions.head)
       first.close()
+      assert(!kernelCommit.closed)
       assert(second.toList === expectedActions)
       first.rewind()
       assert(first.toList === expectedActions)
     } finally {
       first.close()
       second.close()
+      commit.close()
     }
+    assert(kernelCommit.closed)
   }
 
   Seq(-1L, 0L, 1L, Long.MaxValue).foreach { threshold =>
-    test(s"getActionsIterator supports rewinds regardless of the memory threshold ($threshold)") {
-      val commit: DeltaSingleCommit = DeltaV2SingleCommit(kernelCommitActions)
+    test(s"getActionsIterator streams regardless of the memory threshold ($threshold)") {
+      val kernelCommit = kernelCommitActions
+      val commit: DeltaSingleCommit = DeltaV2SingleCommit(kernelCommit)
       val actions = commit.getActionsIterator(maxInMemoryFileSizeBytes = threshold)
       try {
-        assert(actions.toList === expectedActions)
+        assert(kernelCommit.actionBatchesRead === 0)
+        assert(actions.next() === expectedActions.head)
+        assert(kernelCommit.actionBatchesRead === 1)
         actions.rewind()
         assert(actions.toList === expectedActions)
       } finally {
         actions.close()
+        commit.asInstanceOf[DeltaV2SingleCommit].close()
       }
+      assert(kernelCommit.closed)
     }
   }
 
   // Mocks let these tests inject resource failures and verify close order.
-  test("construction closes actions before closing each Kernel commit") {
+  test("action iterators close before closing each Kernel commit") {
     val kernelFirstCommit = mock(classOf[KernelCommitActions])
     val kernelSecondCommit = mock(classOf[KernelCommitActions])
     val kernelFirstActions = mock(classOf[KernelCloseableIterator[KernelColumnarBatch]])
@@ -116,8 +129,13 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
     when(kernelSecondCommit.getActions()).thenReturn(kernelSecondActions)
 
     Seq(kernelFirstCommit, kernelSecondCommit).foreach { kernelCommit =>
-      DeltaV2SingleCommit(kernelCommit).getActionsIterator().processAndClose { actions =>
-        assert(actions.isEmpty)
+      val commit = new DeltaV2SingleCommit(kernelCommit)
+      try {
+        commit.getActionsIterator().processAndClose { actions =>
+          assert(actions.isEmpty)
+        }
+      } finally {
+        commit.close()
       }
     }
 
@@ -130,22 +148,27 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
     order.verify(kernelSecondCommit).close()
   }
 
-  test("construction reports the commit version and closes the commit when opening actions fails") {
+  test("opening actions propagates IO failures and leaves the commit for caller cleanup") {
     val failure = new IOException("action iterator open failed")
     val kernelCommit = mock(classOf[KernelCommitActions])
     when(kernelCommit.getVersion()).thenReturn(7L)
     when(kernelCommit.getActions()).thenAnswer { _ => throw failure }
 
-    val error = intercept[UncheckedIOException] {
-      DeltaV2SingleCommit(kernelCommit)
+    val commit = new DeltaV2SingleCommit(kernelCommit)
+    assert(commit.version === 7L)
+    val error = try {
+      intercept[IOException] {
+        commit.getActionsIterator()
+      }
+    } finally {
+      commit.close()
     }
 
-    assert(error.getMessage === "Failed to process commit at version 7")
-    assert(error.getCause eq failure)
+    assert(error eq failure)
     verify(kernelCommit).close()
   }
 
-  test("construction preserves the read failure when resource cleanup fails") {
+  test("action iteration preserves the read failure when resource cleanup fails") {
     val readFailure = new IOException("action iterator read failed")
     val actionCloseFailure = new IOException("action iterator close failed")
     val commitCloseFailure = new IOException("commit close failed")
@@ -157,21 +180,30 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
     doThrow(actionCloseFailure).when(kernelActions).close()
     doThrow(commitCloseFailure).when(kernelCommit).close()
 
-    val error = intercept[UncheckedIOException] {
-      DeltaV2SingleCommit(kernelCommit)
+    val commit = new DeltaV2SingleCommit(kernelCommit)
+    val error = intercept[IOException] {
+      Utils.tryWithSafeFinally {
+        val actions = commit.getActionsIterator()
+        Utils.tryWithSafeFinally {
+          actions.toVector
+        } {
+          actions.close()
+        }
+      } {
+        commit.close()
+      }
     }
 
-    assert(error.getMessage === "Failed to process commit at version 7")
-    assert(error.getCause eq readFailure)
-    assert(readFailure.getSuppressed.toSeq === Seq(actionCloseFailure))
-    assert(error.getSuppressed.length === 1)
-    assert(error.getSuppressed.head.getCause eq commitCloseFailure)
+    assert(error eq readFailure)
+    assert(error.getSuppressed.length === 2)
+    assert(error.getSuppressed.head eq actionCloseFailure)
+    assert(error.getSuppressed(1).getCause eq commitCloseFailure)
     val order = inOrder(kernelActions, kernelCommit)
     order.verify(kernelActions).close()
     order.verify(kernelCommit).close()
   }
 
-  test("construction propagates cleanup failures after successful materialization") {
+  test("cleanup propagates failures after successfully reading actions") {
     Seq((true, false), (false, true), (true, true)).foreach {
       case (failClosingActions, failClosingCommit) =>
         val actionCloseFailure = new IOException("action iterator close failed")
@@ -187,14 +219,22 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
           doThrow(commitCloseFailure).when(kernelCommit).close()
         }
 
-        val error = intercept[RuntimeException] {
-          DeltaV2SingleCommit(kernelCommit)
+        val commit = new DeltaV2SingleCommit(kernelCommit)
+        val error = intercept[Exception] {
+          Utils.tryWithSafeFinally {
+            val actions = commit.getActionsIterator()
+            Utils.tryWithSafeFinally {
+              assert(actions.isEmpty)
+            } {
+              actions.close()
+            }
+          } {
+            commit.close()
+          }
         }
 
         if (failClosingActions) {
-          assert(error.getClass === classOf[UncheckedIOException])
-          assert(error.getMessage === "Failed to process commit at version 7")
-          assert(error.getCause eq actionCloseFailure)
+          assert(error eq actionCloseFailure)
         } else {
           assert(error.getCause eq commitCloseFailure)
         }
@@ -210,7 +250,7 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
     }
   }
 
-  test("construction preserves unrelated failures and closes the Kernel commit") {
+  test("opening actions preserves unrelated failures") {
     Seq(
       new IllegalStateException("Cannot read action batches"),
       new IllegalArgumentException("Invalid action batch")
@@ -218,11 +258,28 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
       val kernelCommit = new TestCommitActions(Seq.empty) {
         override def getActions(): KernelCloseableIterator[KernelColumnarBatch] = throw failure
       }
-      val error = intercept[RuntimeException] {
-        DeltaV2SingleCommit(kernelCommit)
+      val commit = DeltaV2SingleCommit(kernelCommit)
+      val error = try {
+        intercept[RuntimeException] {
+          commit.getActionsIterator()
+        }
+      } finally {
+        commit.asInstanceOf[DeltaV2SingleCommit].close()
       }
       assert(error eq failure)
       assert(kernelCommit.closed)
     }
+  }
+
+  test("construction closes the Kernel commit when reading its timestamp fails") {
+    val failure = new IllegalStateException("Cannot read commit timestamp")
+    val kernelCommit = new TestCommitActions(Seq.empty) {
+      override def getTimestamp: Long = throw failure
+    }
+    val error = intercept[IllegalStateException] {
+      DeltaV2SingleCommit(kernelCommit)
+    }
+    assert(error eq failure)
+    assert(kernelCommit.closed)
   }
 }

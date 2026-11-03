@@ -42,7 +42,6 @@ import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.Collections;
@@ -521,7 +520,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testProtocolCollector_reportsCommitVersionWhenMaterializationFails()
+  public void testProtocolCollector_closesCommitWhenOpeningActionsFails()
       throws Exception {
     IOException readFailure = new IOException("action iterator open failed");
     CommitActions kernelCommit = mock(CommitActions.class);
@@ -535,14 +534,14 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     when(commits.hasNext()).thenReturn(true);
     when(commits.next()).thenReturn(kernelCommit);
 
-    UncheckedIOException error =
+    RuntimeException error =
         assertThrows(
-            UncheckedIOException.class,
+            RuntimeException.class,
             () ->
                 StreamingHelper.collectProtocolActions(
                     7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine));
 
-    assertEquals("Failed to process commit at version 7", error.getMessage());
+    assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
     verify(kernelCommit).close();
     verify(commits).close();

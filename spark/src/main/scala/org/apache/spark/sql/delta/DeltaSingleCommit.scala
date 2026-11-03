@@ -44,7 +44,8 @@ trait DeltaSingleCommit {
    *
    * @param maxInMemoryFileSizeBytes threshold for caching a commit's actions in memory for rewinds.
    *   File-backed implementations stream when the file is not smaller than this threshold.
-   *   Implementations that already hold all actions in memory may ignore the threshold.
+   *   Implementations that always stream or already hold all actions in memory may ignore the
+   *   threshold.
    */
   def getActionsIterator(
       maxInMemoryFileSizeBytes: Long = 0): ClosableIterator[Action] with SupportsRewinding[Action]

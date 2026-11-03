@@ -71,6 +71,7 @@ import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper;
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseOp;
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
@@ -1178,8 +1179,10 @@ class DeltaV2MicroBatchStream
                                       IndexedFile.sentinel(
                                           version, DeltaSourceOffset.END_INDEX()))));
 
-      return inner;
+      return wrapIteratorWithCommitClose(inner, commit);
     } catch (Exception e) {
+      // commit is not a CloseableIterator, we need to close it manually.
+      Utils.closeCloseables((DeltaV2SingleCommit) commit);
       throw (e instanceof RuntimeException) ? (RuntimeException) e : new RuntimeException(e);
     }
   }
