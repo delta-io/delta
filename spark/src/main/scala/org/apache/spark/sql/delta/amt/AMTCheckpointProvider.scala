@@ -23,6 +23,7 @@ import scala.concurrent.duration.Duration
 
 import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterProvider}
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot, UninitializedCheckpointProvider}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.SnapshotManagement.checkpointThreadPool
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, FileAction, Metadata, Protocol, RemoveFile, SingleAction}
@@ -35,13 +36,14 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.paths.SparkPath
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, Row, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.expressions.Window
-import org.apache.spark.sql.functions.{coalesce, col, lit, struct, sum, when}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.functions.{coalesce, col, concat, element_at, lit, raise_error, struct, sum, udf, when}
+import org.apache.spark.sql.types.{IntegerType, LongType, MapType, StringType, StructField, StructType}
 
 /** Common checkpoint information available before and after the AMT root has been loaded. */
 trait AMTCheckpointProviderBase
@@ -217,7 +219,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   private def allActions(spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
     val nonFileActions = spark.createDataset(nonContentSingleActions)
-    liveAddSingleActions(spark, deltaLog).union(nonFileActions)
+    liveAddSingleActions(deltaLog).union(nonFileActions)
   }
 
   /** The inline, non-content actions carried directly on the [[Checkpoint]] action. */
@@ -231,10 +233,9 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   /**
    * Reconstructs the live-file AddFile actions from the AMT as a [[Dataset]].
    */
-  private def liveAddSingleActions(
-      spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
+  private def liveAddSingleActions(deltaLog: DeltaLog): Dataset[SingleAction] = {
     val root = rootLiveAddSingleActions(deltaLog)
-    if (liveLeaves.isEmpty) root else root.union(liveLeafAddSingleActions(deltaLog))
+    if (liveLeaves.isEmpty) root else root.union(leafLiveAddSingleActions(deltaLog))
   }
 
   /**
@@ -248,17 +249,283 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   }
 
   /** Reconstructs the AddFiles of every live leaf, taking care of inheritance. */
-  private def liveLeafAddSingleActions(
-      deltaLog: DeltaLog): Dataset[SingleAction] = {
-    val leavesWithFilters = liveLeaves.map { leaf =>
+  private def leafLiveAddSingleActions(
+      deltaLog: DeltaLog): Dataset[SingleAction] =
+    toAddSingleActions(
+      loadLeafDataEntriesWithRowIdPrefix(deltaLog, liveLeavesWithManifestFilters),
+      dataEntryResolverProvider(parentLeaves = liveLeaves))
+
+  /**
+   * The AddFile actions [[liveAddSingleActions]] reconstructs, built as columns over the persisted
+   * manifest rows rather than decoded and converted per row. State reconstruction does not use it
+   * yet.
+   */
+  private[amt] def liveAddSingleActionsFromColumns(deltaLog: DeltaLog): Dataset[SingleAction] = {
+    val rootIndex = DeltaLogFileIndex(new AMTParquetFileFormat, Array(rootFile))
+    val root = toAddSingleActions(
+      withRootEntryContext(liveEntries(dataEntries(loadPersistedEntries(deltaLog, rootIndex)))),
+      baseRowId = col("tracking.first_row_id"))
+    if (liveLeaves.isEmpty) {
+      root
+    } else {
+      root.union(toAddSingleActions(
+        leafEntriesWithRowIdPrefix(deltaLog, liveLeavesWithManifestFilters),
+        baseRowId = inheritedBaseRowId))
+    }
+  }
+
+  /**
+   * Like [[loadLeafDataEntriesWithRowIdPrefix]], but returns the persisted rows of the entries,
+   * with their entry context (see [[withLeafEntryContext]]), rather than decoded ones.
+   */
+  private def leafEntriesWithRowIdPrefix(
+      deltaLog: DeltaLog,
+      leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
+      : DataFrame = {
+    val index = leafFileIndex(leavesWithRowIndexFilters)
+    val withPrefix =
+      dataEntries(loadPersistedEntries(deltaLog, index, includeRowIndexFilterMarker = true))
+        .withColumn(PRECEDING_RECORDS_COLUMN, precedingNullRowIdRecords())
+    withLeafEntryContext(
+      filterOutRowIndexFilterEntries(liveEntries(withPrefix)),
+      leavesWithRowIndexFilters.map { case (leaf, _) => leaf })
+  }
+
+  /** The DATA entries of persisted manifest rows. */
+  private def dataEntries(entries: DataFrame): DataFrame =
+    entries.where(col("content_type") === lit(AMTSingleAction.ContentType.Type.Data))
+
+  /** The entries of persisted manifest rows whose status makes them part of the table. */
+  private def liveEntries(entries: DataFrame): DataFrame =
+    entries.where(col("tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
+
+  /**
+   * The persisted rows of the manifests in `index`, read with the checkpoint's persisted schema,
+   * with their manifest (`leafPath`) and their position in it (`pos`). The optional
+   * row-index-filter marker is carried along so callers can apply it after computing any row-ID
+   * prefix.
+   */
+  private def loadPersistedEntries(
+      deltaLog: DeltaLog,
+      index: DeltaLogFileIndex,
+      includeRowIndexFilterMarker: Boolean = false): DataFrame = {
+    val persistedSchema =
+      AMTSingleAction.persistedSchema(checkpointAction.metaData, checkpointAction.protocol)
+    val readSchema =
+      if (includeRowIndexFilterMarker) rowIndexFilterReadSchema(persistedSchema)
+      else persistedSchema
+    val markerColumns =
+      if (includeRowIndexFilterMarker) Seq(rowIndexFilterMarkerColumn)
+      else Seq.empty
+    deltaLog.loadIndex(index, readSchema)
+      .select(
+        (persistedSchema.fieldNames.toIndexedSeq.map(col) :+
+          col(s"$METADATA_NAME.$FILE_PATH").as("leafPath") :+
+          col(s"$METADATA_NAME.${ParquetFileFormat.ROW_INDEX}").as("pos")) ++ markerColumns: _*)
+  }
+
+  /**
+   * Adds the entry context of root entry rows, which the AddFile columns read instead of the
+   * manifest a row was read from: root entries have no parent, so they keep their own tracking and
+   * carry no back reference.
+   */
+  private def withRootEntryContext(entries: DataFrame): DataFrame =
+    entries.select(col("*") +: Seq(
+      lit(true).as(IS_ROOT_ENTRY_COLUMN),
+      lit(null).cast(StringType).as(MANIFEST_LOCATION_COLUMN),
+      lit(null).cast(LongType).as(PARENT_SNAPSHOT_ID_COLUMN),
+      lit(null).cast(LongType).as(PARENT_FILE_SEQUENCE_NUMBER_COLUMN),
+      lit(null).cast(LongType).as(PARENT_FIRST_ROW_ID_COLUMN)): _*)
+
+  /**
+   * Adds the entry context of entry rows read from `leaves`: the location of the leaf a row was
+   * read from and the tracking its entries inherit from the leaf's root pointer.
+   */
+  private def withLeafEntryContext(
+      entries: DataFrame, leaves: Seq[DataManifestEntry]): DataFrame = {
+    val tableRootString = tableRoot.toString
+    val contextType = StructType(Seq(
+      StructField(MANIFEST_LOCATION_COLUMN, StringType),
+      StructField(PARENT_SNAPSHOT_ID_COLUMN, LongType),
+      StructField(PARENT_FILE_SEQUENCE_NUMBER_COLUMN, LongType),
+      StructField(PARENT_FIRST_ROW_ID_COLUMN, LongType)))
+    val contextByManifestPath = leaves.map { leaf =>
+      val leafPath = leaf.getAbsolutePath(tableRoot)
+      val parent = InheritableTracking(leaf)
+      SparkPath.fromPath(leafPath).urlEncoded -> Row(
+        AMTUtils.relativizeLocation(tableRootString, leafPath.toString),
+        parent.snapshot_id,
+        parent.file_sequence_number,
+        parent.first_row_id)
+    }.toMap
+    val context = element_at(
+      Column(Literal.create(contextByManifestPath, MapType(StringType, contextType))),
+      col("leafPath"))
+    entries.select(col("*") +: lit(false).as(IS_ROOT_ENTRY_COLUMN) +:
+      contextType.fieldNames.toIndexedSeq.map(name => context.getField(name).as(name)): _*)
+  }
+
+  /**
+   * Like the conversion above, but converts live DATA entry rows, with their entry context, as
+   * columns.
+   *
+   * @param baseRowId The entry's first row ID; leaf entries may inherit it from their parent.
+   */
+  private def toAddSingleActions(entries: DataFrame, baseRowId: Column): Dataset[SingleAction] = {
+    import org.apache.spark.sql.delta.implicits._
+    addFileEntries(entries, baseRowId).select(Action.logSchema.fields.toIndexedSeq.map { field =>
+      (if (field.name == "add") col("add") else lit(null).cast(field.dataType)).as(field.name)
+    }: _*).as[SingleAction]
+  }
+
+  /**
+   * `entries` with the AddFile of each in an `add` column (see [[addFileStruct]]), failing the read
+   * if an entry is malformed.
+   *
+   * @param baseRowId The entry's first row ID; leaf entries may inherit it from their parent.
+   */
+  private def addFileEntries(entries: DataFrame, baseRowId: Column): DataFrame =
+    entries.withColumn("add", addFileStruct(entries.sparkSession, baseRowId))
+
+  /**
+   * The AddFile of a DATA entry row, failing the read if the row is malformed. The row must
+   * carry its entry context (see [[withRootEntryContext]] and [[withLeafEntryContext]]).
+   *
+   * @param baseRowId The entry's first row ID; leaf entries may inherit it from their parent.
+   */
+  private def addFileStruct(spark: SparkSession, baseRowId: Column): Column = {
+    val fields = struct(Action.addFileSchema.fields.toIndexedSeq.map { field =>
+      addFileColumn(spark, field, baseRowId).as(field.name)
+    }: _*)
+    // Casting the whole struct keeps its type fixed when the optimizer drops a no-op field cast,
+    // which would otherwise expose the manifest column's Parquet field-id metadata in the type.
+    entryChecks.foldRight(fields) { case ((malformed, error), checked) =>
+      when(malformed, error).otherwise(checked)
+    }.cast(Action.addFileSchema)
+  }
+
+  /**
+   * The checks of a live DATA entry row that no AddFile field depends on, as conditions on a
+   * malformed row paired with the error they raise. Only state reconstruction runs them; callers
+   * that build only some fields with [[addFileColumn]] get just the checks of those fields.
+   */
+  private def entryChecks: Seq[(Column, Column)] = Seq(
+    // Scoped to DATA rows: filter CSE may evaluate this before the DATA filter, on root pointers.
+    (col("content_type") === lit(AMTSingleAction.ContentType.Type.Data) &&
+      col("manifest_info").isNotNull) ->
+      AMTCheckpointProvider.malformedEntry(
+        lit("manifest_info must be null for a DATA entry.")),
+    // No AddFile field uses `sequence_number`, but `Tracking.resolve` requires it like the rest.
+    (!col(IS_ROOT_ENTRY_COLUMN) && col("tracking.sequence_number").isNull &&
+      col("tracking.status") =!= lit(Tracking.Status.Added)) ->
+      missingTrackingField("sequence_number"))
+
+  /**
+   * The AddFile field `field` of a DATA entry row, as [[DataEntry.toAddFile]] derives it,
+   * failing the read if the entry row is malformed in a way the field depends on. The row must
+   * carry its entry context (see [[withRootEntryContext]] and [[withLeafEntryContext]]).
+   *
+   * @param baseRowId The entry's first row ID; leaf entries may inherit it from their parent.
+   */
+  private def addFileColumn(
+      spark: SparkSession, field: StructField, baseRowId: Column): Column = {
+    val metadata = checkpointAction.metaData
+    val value = field.name match {
+      case "path" => AMTCheckpointProvider.encodePath(col("location"))
+      case "partitionValues" =>
+        coalesce(
+          AMTPartitionValues.toStringMap(metadata.partitionSchema),
+          Column(Literal.create(Map.empty[String, String], MapType(StringType, StringType))))
+      case "size" => col("file_size_in_bytes")
+      case "modificationTime" => lit(0L)
+      // Must not be null: V2 data skipping drops rows with a null `dataChange`.
+      case "dataChange" => lit(false)
+      case "stats" =>
+        AMTContentStats.addFileStatsJson(spark, metadata, checkpointAction.protocol)
+      case "tags" => col("tags")
+      case "deletionVector" =>
+        AMTCheckpointProvider.toDescriptor(tableRoot)(col("deletion_vector"))
+      case "baseRowId" => baseRowId
+      case "defaultRowCommitVersion" =>
+        inheritedTrackingField(
+          "file_sequence_number", col(PARENT_FILE_SEQUENCE_NUMBER_COLUMN))
+      case "backReference" => backReference
+      case AMTPassthrough.FIELD_NAME => passthrough
+      case "snapshotId" =>
+        inheritedTrackingField("snapshot_id", col(PARENT_SNAPSHOT_ID_COLUMN))
+      case "modifiedSnapshotId" => col("tracking.modified_snapshot_id")
+      // AMT entries carry neither; no fallback, so a new AddFile field fails here until mapped.
+      case "clusteringProvider" => lit(null)
+    }
+    value.cast(field.dataType)
+  }
+
+  /**
+   * The tracking field `name` of a DATA entry row, as [[Tracking.resolve]] resolves it: an `ADDED`
+   * leaf entry that leaves it null inherits `inherited`; any other leaf entry must materialize it.
+   * Root entries have no parent and keep the persisted value.
+   */
+  private def inheritedTrackingField(name: String, inherited: Column): Column = {
+    val persisted = col("tracking." + name)
+    when(persisted.isNotNull || col(IS_ROOT_ENTRY_COLUMN), persisted)
+      .when(col("tracking.status") === lit(Tracking.Status.Added), inherited)
+      .otherwise(missingTrackingField(name))
+  }
+
+  private def missingTrackingField(name: String): Column =
+    AMTCheckpointProvider.malformedEntry(
+      lit("tracking." + name + " is null but the entry's status is "), statusName,
+      lit(". Only ADDED entries inherit " + name + " from the root DATA_MANIFEST entry; " +
+        "every other status must materialize it."))
+
+  /** The `first_row_id` of a leaf entry row, inheriting its parent's plus the row-ID prefix. */
+  private def inheritedBaseRowId: Column =
+    inheritedTrackingField(
+      "first_row_id", col(PARENT_FIRST_ROW_ID_COLUMN) + col(PRECEDING_RECORDS_COLUMN))
+
+  private def statusName: Column = {
+    val names = Tracking.Status.all.map(status => status -> Tracking.Status.nameOf(status)).toMap
+    coalesce(
+      element_at(Column(Literal.create(names, MapType(IntegerType, StringType))),
+        col("tracking.status")),
+      col("tracking.status").cast(StringType))
+  }
+
+  /** The (leaf, position) of a leaf-resident entry; root-resident entries have none. */
+  private def backReference: Column =
+    when(!col(IS_ROOT_ENTRY_COLUMN), struct(
+      col(MANIFEST_LOCATION_COLUMN).as("manifest"),
+      col("pos").cast(IntegerType).as("pos")))
+
+  /**
+   * The AMT-only DataEntry fields AddFile carries through; null when none is set. Like
+   * [[AMTPassthrough.fromDataEntry]], it only supports Parquet data files.
+   */
+  private def passthrough: Column = {
+    val fields = AMTPassthrough.STRUCT_TYPE.fieldNames.toIndexedSeq
+    val fileFormat = col("file_format")
+    when(fileFormat =!= lit(AMTSingleAction.FileFormatParquet),
+      AMTCheckpointProvider.malformedEntry(
+        lit("amtPassthrough only supports parquet. got "), fileFormat, lit(".")))
+      .when(fields.map(name => col(name).isNotNull).reduce(_ || _),
+        struct(fields.map(name => col(name).as(name)): _*))
+  }
+
+  // The entry context of an entry row (see [[withRootEntryContext]] and [[withLeafEntryContext]]).
+  private val IS_ROOT_ENTRY_COLUMN: String = "isRootEntry"
+  private val MANIFEST_LOCATION_COLUMN: String = "manifestLocation"
+  private val PARENT_SNAPSHOT_ID_COLUMN: String = "parentSnapshotId"
+  private val PARENT_FILE_SEQUENCE_NUMBER_COLUMN: String = "parentFileSequenceNumber"
+  private val PARENT_FIRST_ROW_ID_COLUMN: String = "parentFirstRowId"
+
+  /** The live leaves, each with the row-index filter of its manifest DV, if it has one. */
+  protected def liveLeavesWithManifestFilters
+      : Seq[(DataManifestEntry, Option[RowIndexFilterProvider])] =
+    liveLeaves.map { leaf =>
       leaf -> leaf.manifestDV.map { case (dvBytes, _) =>
         AMTUtils.deserializeMdv(dvBytes).toRowIndexFilterProvider(tableRoot)
       }
     }
-    toAddSingleActions(
-      loadLeafDataEntriesWithRowIdPrefix(deltaLog, leavesWithFilters),
-      dataEntryResolverProvider(parentLeaves = liveLeaves))
-  }
 
   /**
    * Reads all live DATA entries of the given leaves, computes their row-ID prefix over each
@@ -269,18 +536,12 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       deltaLog: DeltaLog,
       leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
       : Dataset[AMTDataEntryExtended] = {
-    val files =
-      leavesWithRowIndexFilters.map { case (leaf, _) => leaf.toFileStatus(tableRoot) }.toArray
-    val perFileRowIndexFilters: Map[String, RowIndexFilterProvider] =
-      leavesWithRowIndexFilters.collect { case (leaf, Some(provider)) =>
-        leaf.getAbsolutePath(tableRoot).toString -> provider
-      }.toMap
-    val index = DeltaLogFileIndex(new AMTParquetFileFormat, files, perFileRowIndexFilters)
+    val index = leafFileIndex(leavesWithRowIndexFilters)
     val withPrefix = loadEntriesWithExtendedMetadata(
         deltaLog, index, checkpointAction.metaData, checkpointAction.protocol,
         includeRowIndexFilterMarker = true)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
-      .withColumn(PRECEDING_RECORDS_COLUMN, precedingNullRowIdRecords)
+      .withColumn(PRECEDING_RECORDS_COLUMN, precedingNullRowIdRecords(fieldPrefix = "entry."))
       .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
     asExtendedEntries(filterOutRowIndexFilterEntries(withPrefix))
   }
@@ -296,6 +557,19 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
         .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
         .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
         .withColumn(PRECEDING_RECORDS_COLUMN, lit(0L)))
+
+  /** Builds an index over the given leaves that applies each leaf's row-index filter, if any. */
+  protected def leafFileIndex(
+      leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
+      : DeltaLogFileIndex = {
+    val files =
+      leavesWithRowIndexFilters.map { case (leaf, _) => leaf.toFileStatus(tableRoot) }.toArray
+    val perFileRowIndexFilters: Map[String, RowIndexFilterProvider] =
+      leavesWithRowIndexFilters.collect { case (leaf, Some(provider)) =>
+        leaf.getAbsolutePath(tableRoot).toString -> provider
+      }.toMap
+    DeltaLogFileIndex(new AMTParquetFileFormat, files, perFileRowIndexFilters)
+  }
 
   /** Extends the Parquet read schema with the keep/drop marker. */
   protected def rowIndexFilterReadSchema(persistedSchema: StructType): StructType =
@@ -351,16 +625,19 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   /**
    * The `first_row_id` prefix sum of a manifest row: the total `record_count` of the entries that
    * precede it in the same manifest, have `ADDED` status, and carry a null `first_row_id`.
+   *
+   * @param fieldPrefix The prefix of the row's manifest fields: `entry.` for rows decoded by
+   *                    [[loadEntriesWithExtendedMetadata]], none for persisted rows.
    */
-  private def precedingNullRowIdRecords: Column = {
+  private def precedingNullRowIdRecords(fieldPrefix: String = ""): Column = {
     val precedingRowsOfManifest = Window
       .partitionBy(col("leafPath"))
       .orderBy(col("pos"))
       .rowsBetween(Window.unboundedPreceding, -1)
     val contribution = when(
-      col("entry.tracking.status") === lit(Tracking.Status.Added) &&
-        col("entry.tracking.first_row_id").isNull,
-      col("entry.record_count")).otherwise(lit(0L))
+      col(fieldPrefix + "tracking.status") === lit(Tracking.Status.Added) &&
+        col(fieldPrefix + "tracking.first_row_id").isNull,
+      col(fieldPrefix + "record_count")).otherwise(lit(0L))
     // The frame is empty for the first row of a manifest, where the sum is null and the offset 0.
     coalesce(sum(contribution).over(precedingRowsOfManifest), lit(0L))
   }
@@ -402,7 +679,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     val resolverProvider = dataEntryResolverProvider(addedLeaves)
     // Only leaf entries inherit a row ID, so skip the prefix's shuffle when there is no leaf.
     val precedingRecords =
-      if (addedLeaves.isEmpty) lit(0L) else precedingNullRowIdRecords
+      if (addedLeaves.isEmpty) lit(0L) else precedingNullRowIdRecords(fieldPrefix = "entry.")
 
     asExtendedEntries(
       loadEntriesWithExtendedMetadata(
@@ -513,7 +790,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     if (committedFiles.isEmpty) return
 
     val expectedKeyToBackreferenceMap =
-        liveAddSingleActions(spark, deltaLog).collect()
+        liveAddSingleActions(deltaLog).collect()
         .map { singleAction =>
           singleAction.add.toUniqueFileActionTuple(tableRoot, useObjectIdentity = true) ->
             singleAction.add.backReference
@@ -548,7 +825,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       spark: SparkSession,
       deltaLog: DeltaLog,
       filePaths: Set[String]): Map[UniqueFileActionTuple, Option[BackReference]] =
-    liveAddSingleActions(spark, deltaLog)
+    liveAddSingleActions(deltaLog)
       .where(col("add.path").isin(filePaths.toSeq: _*))
       .collect()
       .map { singleAction =>
@@ -799,6 +1076,28 @@ object AMTCheckpointProvider extends DeltaLogging {
         case other => throw new IllegalStateException(
           s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
       }
+  }
+
+  /** RFC-2396 encoding of an AMT `location`, as [[DataEntry.toAddFile]] does. */
+  private[amt] val encodePath =
+    udf((location: String) => SparkPath.fromPathString(location).urlEncoded)
+
+  /** Fails the read of an entry row with `reason`, naming the entry's data file. */
+  private[amt] def malformedEntry(reason: Column*): Column =
+    raise_error(concat(
+      Seq(lit("Malformed AMT data entry '"), col("location"), lit("': ")) ++ reason: _*))
+
+  /** An AMT deletion vector struct -> Delta's descriptor, as [[DeletionVector.toDescriptor]]. */
+  private[amt] def toDescriptor(tableRoot: Path) = udf { (dv: Row) =>
+    Option(dv).map { dv =>
+      DeletionVector.toDescriptor(
+        DeletionVector(
+          location = dv.getAs[String]("location"),
+          offset = dv.getAs[Long]("offset"),
+          size_in_bytes = dv.getAs[Long]("size_in_bytes"),
+          cardinality = dv.getAs[Long]("cardinality")),
+        tableRoot)
+    }.orNull
   }
 
   /**
