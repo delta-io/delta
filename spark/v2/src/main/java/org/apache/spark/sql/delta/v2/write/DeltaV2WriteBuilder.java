@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.DeltaConfigs;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
-import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -49,7 +49,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
   private final Optional<CatalogTable> catalogTable;
-  private final DeltaV2TableManager tableManager;
+  private final DeltaV2SnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final LogicalWriteInfo writeInfo;
@@ -60,7 +60,8 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param hadoopConf Hadoop configuration (with merged table options)
    * @param initialSnapshot snapshot loaded at table construction time
    * @param catalogTable the catalog table containing table metadata
-   * @param tableManager supplies the shared snapshot manager for batch and streaming commits
+   * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
+   *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
    * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
    * @param partitionSchema the table's partition columns in partition order (empty if
    *     unpartitioned), from DeltaV2Table's SchemaProvider
@@ -72,7 +73,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       Configuration hadoopConf,
       Snapshot initialSnapshot,
       Optional<CatalogTable> catalogTable,
-      DeltaV2TableManager tableManager,
+      DeltaV2SnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
@@ -81,7 +82,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.catalogTable = requireNonNull(catalogTable, "catalogTable is null");
-    this.tableManager = requireNonNull(tableManager, "tableManager is null");
+    this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
@@ -118,14 +119,14 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     boolean variantShreddingEnabled = isVariantShreddingEnabled(initialSnapshot);
     // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
     // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
-    // snapshot via the table manager). Both modes share the executor-side write-state construction.
+    // snapshot via snapshotManager). Both modes share the executor-side write-state construction.
     return new DeltaV2Write(
         engine,
         hadoopConf,
         tablePath,
         initialSnapshot,
         catalogTable,
-        tableManager,
+        snapshotManager,
         dataSchema,
         partitionSchema,
         writeInfo,
