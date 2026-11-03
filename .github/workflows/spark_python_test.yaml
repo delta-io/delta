@@ -12,7 +12,7 @@ on:
       - '**.txt'
 env:
   # SECURITY: Temporal lockdown — refuse any package version published after this date.
-  # PySpark 4.3.0 was uploaded on 2026-10-30 at 15:30 UTC.
+  # Keep this after the pyspark 4.3.0 upload time so Spark 4.3 Python tests can install it.
   UV_EXCLUDE_NEWER: "2026-10-30T16:00:00Z"
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
