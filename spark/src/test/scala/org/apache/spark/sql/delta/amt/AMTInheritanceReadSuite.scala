@@ -19,10 +19,12 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
-import org.apache.spark.sql.delta.implicits.amtSingleActionEncoder
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
+import org.apache.spark.sql.execution.window.WindowExec
 import org.apache.spark.sql.functions.col
 
 /**
@@ -89,7 +91,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
      * Writes `rootEntries` as the root manifest and returns the files a reader reconstructs from
      * the resulting tree.
      */
-    def reconstruct(rootEntries: Seq[AMTSingleAction]): Map[String, ReconstructedFile] = {
+    def reconstructedActions(rootEntries: Seq[AMTSingleAction]): DataFrame = {
       val metadataDir = FileNames.amtMetadataDirPath(deltaLog.dataPath)
       val (location, sizeInBytes) =
         writeManifest(FileNames.newAMTRootManifestFile(metadataDir), rootEntries)
@@ -101,6 +103,13 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
         deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
       provider.loadActionsForStateReconstruction(spark, deltaLog)
         .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+    }
+
+    def reconstruct(rootEntries: Seq[AMTSingleAction]): Map[String, ReconstructedFile] =
+      collectFiles(reconstructedActions(rootEntries))
+
+    def collectFiles(actions: DataFrame): Map[String, ReconstructedFile] = {
+      actions
         .where("add is not null")
         .select(
           col("add.path"),
@@ -229,6 +238,78 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
       assert(files("data/a.parquet").baseRowId.contains(1000L))
       assert(files("data/b.parquet").baseRowId.contains(1010L))
       assert(files("data/c.parquet").baseRowId.contains(1030L))
+    }
+  }
+
+  test("leaves without ADDED entries skip the row-ID inheritance window") {
+    withSyntheticTree("amt_materialized_row_ids") { tree =>
+      def existingTracking(firstRowId: Long): Tracking =
+        unassignedTracking(Tracking.Status.Existing).copy(
+          snapshot_id = Some(10L),
+          sequence_number = Some(11L),
+          file_sequence_number = Some(11L),
+          first_row_id = Some(firstRowId))
+
+      val leaf = tree.writeLeaf(Seq(
+        dataEntry("data/a.parquet", recordCount = 10L, tracking = existingTracking(100L)),
+        dataEntry("data/b.parquet", recordCount = 20L, tracking = existingTracking(110L))))
+      val basePointer = leafPointer(leaf)
+      val pointer = basePointer.copy(manifest_info = basePointer.manifest_info.copy(
+        added_files_count = 0,
+        existing_files_count = 2,
+        added_rows_count = 0L,
+        existing_rows_count = 30L))
+
+      val actions = tree.reconstructedActions(Seq(pointer.wrap))
+      val plan = AdaptiveSparkPlanHelper.stripAQEPlan(actions.queryExecution.executedPlan)
+      assert(plan.collect { case window: WindowExec => window }.isEmpty, s"$plan")
+      val files = tree.collectFiles(actions)
+      assert(files("data/a.parquet").baseRowId.contains(100L))
+      assert(files("data/b.parquet").baseRowId.contains(110L))
+    }
+  }
+
+  test("a zero-ADDED leaf summary rejects an ADDED entry") {
+    withSyntheticTree("amt_inconsistent_added_count") { tree =>
+      val leaf = tree.writeLeaf(Seq(dataEntry("data/a.parquet", recordCount = 10L)))
+      val basePointer = leafPointer(leaf)
+      val pointer = basePointer.copy(manifest_info = basePointer.manifest_info.copy(
+        added_files_count = 0,
+        existing_files_count = 1,
+        added_rows_count = 0L,
+        existing_rows_count = 10L))
+
+      val error = intercept[Exception] {
+        tree.reconstruct(Seq(pointer.wrap))
+      }
+      assert(causeMessages(error).contains(
+        "AMT leaf contains an ADDED entry but manifest_info.added_files_count is 0."))
+    }
+  }
+
+  test("mixed leaves preserve row IDs when only zero-ADDED leaves skip the window") {
+    withSyntheticTree("amt_mixed_added_and_existing") { tree =>
+      val existingTracking = unassignedTracking(Tracking.Status.Existing).copy(
+        snapshot_id = Some(10L),
+        sequence_number = Some(11L),
+        file_sequence_number = Some(11L),
+        first_row_id = Some(100L))
+      val existingLeaf = tree.writeLeaf(Seq(
+        dataEntry("data/existing.parquet", recordCount = 10L, tracking = existingTracking)))
+      val baseExistingPointer = leafPointer(existingLeaf)
+      val existingPointer = baseExistingPointer.copy(
+        manifest_info = baseExistingPointer.manifest_info.copy(
+          added_files_count = 0,
+          existing_files_count = 1,
+          added_rows_count = 0L,
+          existing_rows_count = 10L))
+
+      val addedLeaf = tree.writeLeaf(Seq(
+        dataEntry("data/added.parquet", recordCount = 20L)))
+      val files = tree.reconstruct(Seq(existingPointer.wrap, leafPointer(addedLeaf).wrap))
+
+      assert(files("data/existing.parquet").baseRowId.contains(100L))
+      assert(files("data/added.parquet").baseRowId.contains(1000L))
     }
   }
 
