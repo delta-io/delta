@@ -2639,6 +2639,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def adaptiveMetadataNotEnabled(featureName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ADAPTIVE_METADATA_NOT_ENABLED",
+      messageParameters = Array(featureName)
+    )
+  }
+
   def adaptiveMetadataUpgradeNotSupported(featureName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ADAPTIVE_METADATA_UPGRADE_NOT_SUPPORTED",

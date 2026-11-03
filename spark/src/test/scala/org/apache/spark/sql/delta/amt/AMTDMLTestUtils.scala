@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, DeltaConfigs, DeltaLog, DeltaTable, DeltaTestUtils, RowCommitVersion, RowId, Snapshot}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, DeltaConfigs, DeltaLog, DeltaTable, DeltaTestUtils, RowCommitVersion, RowId, Snapshot}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
@@ -39,7 +39,7 @@ trait AMTDMLTestUtils extends AMTCheckpointTestBase {
 
   override protected def sparkConf: SparkConf = {
     val conf = super.sparkConf
-      .set(defaultPropertyKey(AdaptiveMetadataTableFeature), FEATURE_PROP_SUPPORTED)
+      .set(defaultPropertyKey(AdaptiveMetadataPreviewTableFeature), FEATURE_PROP_SUPPORTED)
       // Disable periodic checkpoints so the only AMT checkpoints are the ones the harness commits
       // around each DML.
       .set(DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey, Int.MaxValue.toString)

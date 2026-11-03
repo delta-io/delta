@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaErrors, DeltaIllegalStateException, DeltaLog, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaErrors, DeltaIllegalStateException, DeltaLog, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -38,14 +38,14 @@ import org.apache.spark.sql.SparkSession
 object AMTUtils extends DeltaLogging {
   /** Whether AMT is **supported** as per the protocol. */
   def amtSupported(protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+    AdaptiveMetadataTableFeatureBase.isSupportedBy(protocol)
 
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
    * `metadata`.
    */
   def amtEnabled(metadata: Metadata, protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+    AdaptiveMetadataTableFeatureBase.isSupportedBy(protocol)
 
   /** Whether AMT writes are enabled for `snapshot`. */
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
@@ -60,23 +60,27 @@ object AMTUtils extends DeltaLogging {
 
   /** Whether a new table's `configuration` asks for AMT. */
   def amtRequested(configuration: Map[String, String]): Boolean =
-    TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
-      configuration, AdaptiveMetadataTableFeature)
+    AdaptiveMetadataTableFeatureBase.features.exists(
+      TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(configuration, _))
 
   /**
-   * Asserts that a commit taking a table from `snapshot` to `protocol` and `metadata` keeps AMT
-   * compatible with the table's other features.
+   * Asserts that a commit taking a table from `snapshot` to `protocol` and `metadata` follows the
+   * rules for the AMT table features (see [[AdaptiveMetadataTableFeatureBase]]):
+   *  - a table has at most one of them;
+   *  - AMT cannot be added to an existing table, including through REPLACE and REPLACE CLONE;
+   *  - adding an AMT feature needs its creation SQL conf (`creationConf`). Tables that already
+   *    have it stay readable and writable with the conf off;
+   *  - an AMT table cannot add a feature AMT is incompatible with, either to the protocol or by
+   *    setting a table property that enables it (e.g. `delta.checkpointPolicy` = `v2`).
    *
-   * For an adaptive metadata table, fails if this commit adds a feature that is incompatible with
-   * the [[AdaptiveMetadataTableFeature]], either to the protocol or by setting a table property
-   * that enables it (e.g. `delta.checkpointPolicy` = `v2`). This runs on the final protocol and
-   * metadata, so it also covers features added after `updateMetadata`, such as defaults and
-   * protocol actions. On an existing table, features it already had are left alone, so a table
-   * that has one can still be updated.
-   *
-   * Every commit runs this check (`prepareCommit` and `commitLarge` both call it through
-   * `performTableFeatureIncompatibilityCheck`), so it catches incompatible features (e.g.
-   * v2Checkpoint and AMT) however they are added.
+   * Every commit runs this on its final protocol and metadata (`prepareCommit` and `commitLarge`
+   * both call it through `performTableFeatureIncompatibilityCheck`), so it also catches features
+   * added after `updateMetadata`: session defaults, CLONE, CREATE TABLE LIKE, protocol actions
+   * and the deprecated `enabled` feature property status. A feature counts as added when the new
+   * state has it and the table did not. When creating a table every feature counts as added,
+   * because the initial snapshot of a new table already has the session defaults merged into its
+   * metadata and protocol. Features an existing table already had are left alone, so the table
+   * can still be updated.
    *
    * @param isCreatingNewTable whether the commit creates the table, including by REPLACE.
    */
@@ -87,30 +91,35 @@ object AMTUtils extends DeltaLogging {
       metadata: Metadata,
       isCreatingNewTable: Boolean,
       tableName: String): Unit = {
-    if (amtEnabled(metadata, protocol)) {
+    def added(feature: TableFeature): Boolean = protocol.isFeatureSupported(feature) &&
+      (isCreatingNewTable || !snapshot.protocol.isFeatureSupported(feature))
+
+    val amtFeatures = AdaptiveMetadataTableFeatureBase.features.filter(protocol.isFeatureSupported)
+    if (amtFeatures.size > 1) {
+      throw DeltaErrors.incompatibleTableFeatures(
+        tableName, feature1 = amtFeatures(0).name, feature2 = amtFeatures(1).name)
+    }
+    amtFeatures.foreach { amtFeature =>
       // Adding AMT to an existing table is an unsupported upgrade. `updateMetadata` already rejects
       // it, but CLONE adds the source's protocol after that, so REPLACE CLONE is caught here.
       if (snapshot.version >= 0 && !amtEnabled(snapshot)) {
-        throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
+        throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeature.name)
       }
-      AdaptiveMetadataTableFeature.incompatibleFeatures.foreach { feature =>
+      val creationConf = AdaptiveMetadataTableFeatureBase.creationConf(amtFeature)
+      if (added(amtFeature) && !spark.sessionState.conf.getConf(creationConf)) {
+        throw DeltaErrors.adaptiveMetadataNotEnabled(amtFeature.name)
+      }
+      amtFeature.incompatibleFeatures.foreach { feature =>
         def enabledByMetadata(p: Protocol, m: Metadata): Boolean = feature match {
           case f: FeatureAutomaticallyEnabledByMetadata =>
             f.metadataRequiresFeatureToBeEnabled(p, m, spark)
           case _ => false
         }
-        // A feature is added when the new state has it and the table did not have it before.
-        // When creating a table, everything counts as added: the initial snapshot of a new table
-        // already has the session defaults merged into its metadata and protocol.
-        val addedToProtocol = protocol.isFeatureSupported(feature) &&
-          (isCreatingNewTable || !snapshot.protocol.isFeatureSupported(feature))
         val enabledByNewMetadata = enabledByMetadata(protocol, metadata) &&
           (isCreatingNewTable || !enabledByMetadata(snapshot.protocol, snapshot.metadata))
-        if (addedToProtocol || enabledByNewMetadata) {
+        if (added(feature) || enabledByNewMetadata) {
           throw DeltaErrors.incompatibleTableFeatures(
-            tableName = tableName,
-            feature1 = AdaptiveMetadataTableFeature.name,
-            feature2 = feature.name)
+            tableName, feature1 = amtFeature.name, feature2 = feature.name)
         }
       }
     }

@@ -22,7 +22,7 @@ import scala.collection.immutable.ListMap
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, AMTCheckpointAction, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
@@ -85,7 +85,7 @@ trait AMTCheckpointTestBase
    */
   protected def fakeAMTProviderAt(
       cpVersion: Long,
-      protocol: Protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature),
+      protocol: Protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature),
       metadata: Metadata = Metadata()): AMTCheckpointProvider = {
     val checkpoint = Checkpoint(
       version = cpVersion,
@@ -144,7 +144,8 @@ trait AMTCheckpointTestBase
       checkpointInterval: Int = 2,
       location: Option[String] = None,
       tableSchema: String = "id INT",
-      partitionColumns: Seq[String] = Seq.empty): Unit = {
+      partitionColumns: Seq[String] = Seq.empty,
+      amtFeature: TableFeature = AdaptiveMetadataPreviewTableFeature): Unit = {
     val locationClause = location.map(l => s"LOCATION '$l'").getOrElse("")
     val partitionClause =
       if (partitionColumns.isEmpty) ""
@@ -154,7 +155,7 @@ trait AMTCheckpointTestBase
          |$locationClause
          |$partitionClause
          |TBLPROPERTIES (
-         |  '${propertyKey(AdaptiveMetadataTableFeature)}' = '$FEATURE_PROP_SUPPORTED',
+         |  '${propertyKey(amtFeature)}' = '$FEATURE_PROP_SUPPORTED',
          |  'delta.columnMapping.mode' = 'id',
          |  'delta.enableDeletionVectors' = 'true',
          |  'delta.checkpointInterval' = '$checkpointInterval')""".stripMargin)
