@@ -22,8 +22,9 @@ import org.apache.spark.sql.delta.actions.Format
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.{Column, DataFrame}
+import org.apache.spark.sql.{Column, DataFrame, QueryTest}
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType
 import org.scalactic.source.Position
@@ -49,10 +50,13 @@ trait DeltaSourceConnectorTrait {
   }
 }
 
-trait DeltaSourceSuiteBase extends StreamTest
+trait DeltaSourceSuiteBase
+  extends QueryTest
+  with DeltaSQLCommandTest
   with DeltaSQLTestUtils
   with CatalogOwnedTestBaseSuite
-  with DeltaSourceConnectorTrait {
+  with DeltaSourceConnectorTrait
+  with StreamTest {
 
   /**
    * Creates 3 temporary directories for use within a function.

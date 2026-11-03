@@ -83,7 +83,7 @@ case class DeltaTimeTravelSpec(
   }
 }
 
-object DeltaTimeTravelSpec {
+object DeltaTimeTravelSpec extends DeltaLogging {
   /** A regex which looks for the pattern ...@v(some numbers) for extracting the version number */
   private val VERSION_URI_FOR_TIME_TRAVEL = ".*@[vV](\\d+)$".r
 
@@ -116,11 +116,14 @@ object DeltaTimeTravelSpec {
         val timestamp = parseTimestamp(ts, conf.sessionLocalTimeZone)
         // Drop the 18 characters in the right, which is the timestamp format and the @ character.
         val realIdentifier = identifier.dropRight(TIMESTAMP_FORMAT_LENGTH + 1)
-
+        recordDeltaEvent(null, "delta.timeTravel.atSyntaxUsage",
+          data = Map("source" -> "atSyntax.path", "atTimestamp" -> ts))
         DeltaTimeTravelSpec(Some(timestamp), None, Some("atSyntax.path")) -> realIdentifier
       case VERSION_URI_FOR_TIME_TRAVEL(v) =>
         // Drop the version, and `@v` characters from the identifier
         val realIdentifier = identifier.dropRight(v.length + 2)
+        recordDeltaEvent(null, "delta.timeTravel.atSyntaxUsage",
+          data = Map("source" -> "atSyntax.path", "atVersion" -> v))
         DeltaTimeTravelSpec(None, Some(v.toLong), Some("atSyntax.path")) -> realIdentifier
     }
   }

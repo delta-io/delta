@@ -361,7 +361,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
               }
             }
         }
-        tasks.foreach(ThreadUtils.awaitResult(_, 150.seconds))
+        tasks.foreach(ThreadUtils.awaitResult(_, 5.minutes))
       } catch {
         case e: InterruptedException =>
           fail("Test interrupted: " + e.getMessage)

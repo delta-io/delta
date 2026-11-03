@@ -19,21 +19,21 @@ package org.apache.spark.sql.delta
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.Tag
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions.{array, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
-import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, LongType, MapType, NullType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, LongType, MapType, NullType, StringType, StructType}
 import org.apache.spark.util.Utils
 
 /**
  * Trait collecting schema evolution test runner methods and other helpers.
  */
-trait MergeIntoSchemaEvolutionMixin extends QueryTest {
-  self: SharedSparkSession with MergeIntoTestUtils =>
+trait MergeIntoSchemaEvolutionMixin extends QueryTest with DeltaSQLCommandTest {
+  self: MergeIntoTestUtils =>
 
   protected implicit def strToJsonSeq(str: String): Seq[String] = {
     str.split("\n").filter(_.trim.length > 0)
@@ -57,7 +57,7 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest {
       withTable("target", "source") {
         targetData.write.format("delta").saveAsTable("target")
         sourceData.write.format("delta").saveAsTable("source")
-        withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolutionEnabled.toString) {
+        withConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolutionEnabled.toString) {
           if (!schemaEvolutionEnabled && expectErrorWithoutEvolutionContains != null) {
             val ex = intercept[AnalysisException] {
               executeMerge(tgt = "target", src = "source", cond = "1 = 1", clauses: _*)
@@ -124,14 +124,14 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest {
 
     val tagsWithSchemaEvolution = testTags :+ DSv2DMLSchemaEvolution
     test(s"schema evolution - $name - with evolution disabled", tagsWithSchemaEvolution: _*) {
-      withSQLConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
+      withConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
         executeMergeAndAssert(expectedWithoutEvolution, expectedSchemaWithoutEvolution,
           expectErrorWithoutEvolutionContains)
       }
     }
 
     test(s"schema evolution - $name", tagsWithSchemaEvolution: _*) {
-      withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
+      withConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
         executeMergeAndAssert(expected, expectedSchema, expectErrorContains)
       }
     }
@@ -190,7 +190,7 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest {
  * features, e.g. CDF, DVs.
  */
 trait MergeIntoSchemaEvolutionCoreTests extends MergeIntoSchemaEvolutionMixin {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import testImplicits._
 
@@ -259,8 +259,7 @@ trait MergeIntoSchemaEvolutionCoreTests extends MergeIntoSchemaEvolutionMixin {
  * Trait collecting all base and new column tests for schema evolution.
  */
 trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutionMixin {
-  self: MergeIntoTestUtils
-    with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import testImplicits._
 
@@ -746,7 +745,7 @@ trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutio
     expectErrorWithoutEvolutionContains = "cannot resolve s.value in UPDATE clause")
 
   test("schema evolution enabled for the current command", DSv2DMLSchemaEvolution) {
-    withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
       withTable("target", "source") {
         Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value")
           .write.format("delta").saveAsTable("target")
@@ -805,8 +804,7 @@ trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutio
  * Trait collecting all base and existing column tests for schema evolution.
  */
 trait MergeIntoSchemaEvolutionBaseExistingColumnTests extends MergeIntoSchemaEvolutionMixin {
-  self: MergeIntoTestUtils
-    with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import testImplicits._
 
@@ -1043,7 +1041,7 @@ trait MergeIntoSchemaEvolutionBaseExistingColumnTests extends MergeIntoSchemaEvo
 }
 
 trait MergeIntoSchemaEvoStoreAssignmentPolicyTests extends MergeIntoSchemaEvolutionMixin {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
   import testImplicits._
 
   // Upcasting is always allowed.
@@ -1166,7 +1164,7 @@ trait MergeIntoSchemaEvoStoreAssignmentPolicyTests extends MergeIntoSchemaEvolut
  * Trait collecting tests for schema evolution with a NOT MATCHED BY SOURCE clause.
  */
 trait MergeIntoSchemaEvolutionNotMatchedBySourceTests extends MergeIntoSchemaEvolutionMixin {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import testImplicits._
 
@@ -1233,7 +1231,7 @@ trait MergeIntoSchemaEvolutionNotMatchedBySourceTests extends MergeIntoSchemaEvo
  * Trait collecting all tests for nested struct evolution.
  */
 trait MergeIntoNestedStructInMapEvolutionTests extends MergeIntoSchemaEvolutionMixin {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import testImplicits._
 
@@ -1585,7 +1583,7 @@ trait MergeIntoNestedStructInMapEvolutionTests extends MergeIntoSchemaEvolutionM
 }
 
 trait MergeIntoNestedStructEvolutionInsertTests extends MergeIntoSchemaEvolutionMixin {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import testImplicits._
 
@@ -2788,7 +2786,7 @@ trait MergeIntoNestedStructEvolutionInsertTests extends MergeIntoSchemaEvolution
 }
 
 trait MergeIntoNestedStructEvolutionUpdateOnlyTests extends MergeIntoSchemaEvolutionMixin {
-  self: MergeIntoTestUtils with SharedSparkSession =>
+  self: MergeIntoTestUtils =>
 
   import testImplicits._
 

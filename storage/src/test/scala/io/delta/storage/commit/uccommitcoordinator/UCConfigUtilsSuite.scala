@@ -84,8 +84,11 @@ class UCConfigUtilsSuite extends AnyFunSuite {
   }
 
   test("credential flags default to true and honor explicit values") {
+    assert(UCConfigUtils.isCredentialVendingEnabled(config("uri" -> "u")))
     assert(UCConfigUtils.isCredentialRenewalEnabled(config("uri" -> "u")))
     assert(UCConfigUtils.isCredentialScopedFsEnabled(config("uri" -> "u")))
+    assert(!UCConfigUtils.isCredentialVendingEnabled(
+      config("credentialVending.enabled" -> "false")))
     assert(!UCConfigUtils.isCredentialRenewalEnabled(config("renewCredential.enabled" -> "false")))
     assert(!UCConfigUtils.isCredentialScopedFsEnabled(config("credScopedFs.enabled" -> "false")))
   }

@@ -90,7 +90,7 @@ abstract class TahoeFileIndex(
    * set by the partition and data filters. Essentially, this is a collection of all the files
    * associated with the identified partitions.
    */
-  def listPartitionsAsAddFiles(
+  private[delta] def listPartitionsAsAddFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): (Seq[(InternalRow, Seq[AddFile])], Seq[AddFile]) = {
     val matchedFiles = matchingFiles(partitionFilters, dataFilters)
@@ -142,7 +142,7 @@ abstract class TahoeFileIndex(
     FileStatusWithMetadata(fs, metadata.toMap)
   }
 
-  def makePartitionDirectories(
+  private[delta] def makePartitionDirectories(
       partitionValuesToFiles: Seq[(InternalRow, Seq[AddFile])]): Seq[PartitionDirectory] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
     partitionValuesToFiles.map {
@@ -242,6 +242,14 @@ class ShallowSnapshotDescriptor(
 }
 
 /**
+ * Keeps [[TahoeLogFileIndex]] source-compatible with Spark versions where [[FileIndex]] does not
+ * yet define `isTimeTravel`.
+ */
+private[delta] trait TimeTravelFileIndexBridge {
+  def isTimeTravel: Boolean
+}
+
+/**
  * A [[TahoeFileIndex]] that generates the list of files from DeltaLog with given partition filters.
  *
  * NOTE: This is NOT a [[TahoeFileIndexWithSnapshotDescriptor]] because we only use
@@ -255,7 +263,8 @@ case class TahoeLogFileIndex(
     catalogTableOpt: Option[CatalogTable],
     partitionFilters: Seq[Expression],
     isTimeTravelQuery: Boolean)
-  extends TahoeFileIndex(spark, deltaLog, path) {
+  extends TahoeFileIndex(spark, deltaLog, path)
+  with TimeTravelFileIndexBridge {
 
   def this(
     spark: SparkSession,
@@ -307,6 +316,8 @@ case class TahoeLogFileIndex(
 
   /** Provides the version that's being used as part of the scan if this is a time travel query. */
   def versionToUse: Option[Long] = if (isTimeTravelQuery) Some(snapshotAtAnalysis.version) else None
+
+  override def isTimeTravel: Boolean = isTimeTravelQuery
 
   def getSnapshot: Snapshot = {
     val snapshotToScan = getSnapshotToScan

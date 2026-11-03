@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.typewidening.{
  *
  * The base lists every test from `TypeWideningStreamingSourceTests` as passing: V2 supports
  * type-widening streaming reads. Subclasses move specific tests back to `shouldFailTests` when
- * there is a concrete V2 limitation (e.g., partition-column schema bug, missing event logging).
+ * there is a concrete V2 limitation, such as missing event logging.
  */
 trait TypeWideningStreamingV2SourceSuiteBase extends V2ForceTest {
   self: TypeWideningStreamingSourceTestMixin =>

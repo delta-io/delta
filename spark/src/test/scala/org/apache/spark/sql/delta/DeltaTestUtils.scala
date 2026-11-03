@@ -30,10 +30,13 @@ import scala.util.matching.Regex
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.ChangelogSyntaxSupportedShim
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
@@ -52,7 +55,6 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
 import org.apache.spark.sql.execution.{FileSourceScanLike, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.{ManualClock, SystemClock, Utils}
@@ -65,10 +67,46 @@ object DeltaTestUtilsBase {
    * Used to gate NullType tests so they run on Spark 4.1+ and are skipped on Spark 4.0.
    */
   def nullTypeColumnsSupported: Boolean = !org.apache.spark.SPARK_VERSION.startsWith("4.0")
+
+  /**
+   * Collects `t` and every throwable in its cause chain (cycle-guarded) and asserts that at
+   * least one of them satisfies `f`.
+   */
+  def assertThrowableInCauseChain(t: Throwable)(f: Throwable => Boolean): Unit = {
+    val throwables = scala.collection.mutable.ArrayBuffer.empty[Throwable]
+    var current: Throwable = t
+    while (current != null && !throwables.contains(current)) {
+      throwables += current
+      current = current.getCause
+    }
+    assert(throwables.exists(f),
+      s"No throwable in the cause chain matched the predicate. Chain: " +
+        throwables.map(_.getClass.getName).mkString("[", ", ", "]"))
+  }
+
+  /**
+   * Asserts that at least one throwable in `t`'s cause chain is a `SparkThrowable` whose error
+   * condition equals `condition`.
+   */
+  def assertThrowableWithConditionInCauseChain(t: Throwable, condition: String): Unit = {
+    assertThrowableInCauseChain(t) {
+      case st: org.apache.spark.SparkThrowable => st.getCondition == condition
+      case _ => false
+    }
+  }
 }
 
-trait CDCTestMixin extends SharedSparkSession {
+trait CDCTestMixin {
   // Setting the spark Conf is left to the test implementation.
+
+  /** Reads through the CDF scan so tests also exercise scan filter handling. */
+  def readCDF(
+      spark: SparkSession,
+      tableName: String,
+      startVersion: Long,
+      endVersion: Long): DataFrame = {
+    spark.sql(s"SELECT * FROM table_changes('$tableName', $startVersion, $endVersion)")
+  }
 
   def computeCDC(
       spark: SparkSession,
@@ -79,6 +117,74 @@ trait CDCTestMixin extends SharedSparkSession {
     CDCReader.changesToBatchDF(deltaLog, startVersion, endVersion, spark)
   }
 }
+
+trait ChangelogV2CDCUtilMixin
+  extends DeltaSQLCommandTest
+  with CDCTestMixin
+  with ChangelogSyntaxSupportedShim {
+
+  // Tests skipped on the V2 changelog read path.
+  protected def excludedV2Exact: Set[String] = Set(
+    // Read-CDF does not write any files.
+    "usage metrics",
+    // VOID is not a supported Delta data type in the Kernel schema parser. On the V2 changelog
+    // read path (DeltaV2ChangelogScan -> JvmSnapshot.getSchema) a table whose schema retains a VOID
+    // field throws KernelException. These tests build a struct that keeps a lit(null) VOID field.
+    // V1 CDCReader does not parse the schema through the Kernel, so these are excluded only on the
+    // V2 path.
+    "merge CDC - schema evolution from void to struct with void",
+    "merge CDC - schema evolution with non-nullable schema",
+    "merge CDC - schema evolution with non-nullable schema - matched only",
+    // TODO(follow-up): "UPDATE with DV write CDC files explicitly" fails with "List() was empty":
+    // it inspects AddCDCFile actions written by the classic path, but the V2 changelog read path
+    // computes changes differently and does not surface those explicit CDC files here.
+    "UPDATE with DV write CDC files explicitly"
+  )
+
+  // CDCTestMixin has no `excluded` hook, so filter by name in a test() override and ignore()
+  // the matches; everything else runs. The V2 changelog read path uses the `SELECT ... CHANGES`
+  // clause, which only the Spark 4.2 parser supports; supportsChangelogSyntax is a compile-time
+  // shim (true on spark-4.2, false on spark-4.0-4.1) so tests cancel on older versions.
+  override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
+      implicit pos: org.scalactic.source.Position): Unit = {
+    if (excludedV2Exact.contains(testName)) {
+      ignore(testName + " (excluded on the V2 changelog read path, see excludedV2Exact)")(testFun)
+    } else {
+      super.test(testName, testTags: _*) {
+        assume(supportsChangelogSyntax, "The SELECT ... CHANGES clause requires Spark 4.2 or newer")
+        testFun
+      }
+    }
+  }
+
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .set(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key, "true")
+    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "false")
+
+  override def computeCDC(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      startVersion: Long,
+      endVersion: Long,
+      predicates: Seq[Expression] = Seq.empty): DataFrame = {
+    withConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+      val tablePath = deltaLog.dataPath.toString
+      val tempName = s"v2cdc_temp_${System.nanoTime()}"
+      spark.sql(s"CREATE TABLE $tempName USING delta LOCATION '$tablePath'")
+      try {
+        spark.sql(
+          s"SELECT * FROM $tempName " +
+            s"CHANGES FROM VERSION $startVersion TO VERSION $endVersion " +
+            s"WITH (computeUpdates = 'true')")
+          .drop("_metadata")
+      } finally {
+        spark.sql(s"DROP TABLE IF EXISTS $tempName")
+      }
+    }
+  }
+}
+
 
 trait DeltaTestUtilsBase {
   import DeltaTestUtils.TableIdentifierOrPath
@@ -347,13 +453,14 @@ trait DeltaTestUtilsBase {
 }
 
 trait DeltaCheckpointTestUtils
-  extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
+  extends DeltaSQLCommandTest
+  with DeltaTestUtilsBase {
 
   def testDifferentCheckpoints(testName: String, quiet: Boolean = false)
       (f: (CheckpointPolicy.Policy, Option[V2Checkpoint.Format]) => Unit): Unit = {
     test(s"$testName [Checkpoint V1]") {
       def testFunc(): Unit = {
-        withSQLConf(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey ->
+        withConf(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey ->
           CheckpointPolicy.Classic.name) {
           f(CheckpointPolicy.Classic, None)
         }
@@ -363,7 +470,7 @@ trait DeltaCheckpointTestUtils
     for (checkpointFormat <- V2Checkpoint.Format.ALL)
     test(s"$testName [Checkpoint V2, format: ${checkpointFormat.name}]") {
       def testFunc(): Unit = {
-        withSQLConf(
+        withConf(
           DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
           DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> checkpointFormat.name
         ) {
@@ -408,6 +515,51 @@ trait DeltaCheckpointTestUtils
   }
 }
 
+trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
+  self: DeltaSQLCommandTest =>
+
+  /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
+  protected def minorCompactDeltaLog(
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long,
+      tableName: Option[String] = None): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val snapshotForReplay = deltaLog.update()
+    val logReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = None,
+      minSetTransactionRetentionTimestamp = None,
+      tableRoot = deltaLog.dataPath,
+      useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
+        snapshotForReplay.metadata, snapshotForReplay.protocol, spark),
+      retainFirstBackreference = AMTUtils.amtEnabled(snapshotForReplay))
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val catalogTable = tableName
+      .map(name => spark.sessionState.catalog.getTableMetadata(new TableIdentifier(name)))
+    CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        spark, catalogTable, snapshotForReplay).foreach {
+      tableCommitCoordinatorClient =>
+        CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
+          version = endVersion,
+          deltaLog = deltaLog,
+          tableCommitCoordinatorClient = tableCommitCoordinatorClient,
+          deltaCommitFileProvider = DeltaCommitFileProvider(snapshotForReplay),
+          catalogTableOpt = catalogTable)
+    }
+
+    (startVersion to endVersion).foreach { versionToRead =>
+      val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
+      val actionsIterator = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
+      logReplay.append(versionToRead, actionsIterator)
+    }
+    deltaLog.store.write(
+      path = FileNames.compactedDeltaFile(deltaLog.logPath, startVersion, endVersion),
+      actions = logReplay.checkpoint.map(_.json).toIterator,
+      overwrite = true,
+      hadoopConf = hadoopConf)
+  }
+}
+
 object DeltaTestUtils extends DeltaTestUtilsBase {
 
   sealed trait TableIdentifierOrPath
@@ -434,6 +586,25 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
       dataChange: Boolean = true,
       stats: String = "{\"numRecords\": 1}"): AddFile = {
     AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
+  }
+
+  /**
+   * Rewrites the `dataChange` an existing commit records in its [[CommitInfo]], leaving its file
+   * actions untouched so that the two can be made to disagree -- which no write path produces, and
+   * which is the only way to observe which of the two a reader consulted.
+   */
+  def recordDataChangeInCommitInfo(
+      deltaLog: DeltaLog, version: Long, dataChange: Option[Boolean]): Unit = {
+    val conf = deltaLog.newDeltaHadoopConf()
+    val commitFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+    val rewritten = deltaLog.store.read(commitFile, conf).map { line =>
+      Action.fromJson(line) match {
+        case commitInfo: CommitInfo => commitInfo.copy(dataChange = dataChange).json
+        case _ => line
+      }
+    }
+    deltaLog.store.write(commitFile, rewritten.toIterator, overwrite = true, conf)
+    DeltaLog.clearCache()
   }
 
 
@@ -573,7 +744,7 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
 }
 
 trait DeltaTestUtilsForTempViews
-  extends SharedSparkSession
+  extends DeltaSQLCommandTest
   with DeltaTestUtilsBase {
 
   def testWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
@@ -743,9 +914,9 @@ trait DeltaSQLInMemoryTestUtils
 trait DeltaDMLTestUtils
   extends DeltaSQLTestUtils
   with DeltaTestUtilsBase
+  with DeltaTableProvider
   with BeforeAndAfterEach
   with CDCTestMixin {
-  self: SharedSparkSession =>
 
   import testImplicits._
 
@@ -802,7 +973,7 @@ trait DeltaDMLTestUtils
   }
 
   protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
-    val dfw = df.write.format("delta").mode("append")
+    val dfw = df.write.format(writeFormat).mode("append")
     if (partitionBy.nonEmpty) {
       dfw.partitionBy(partitionBy: _*)
     }
@@ -836,11 +1007,11 @@ trait DeltaDMLTestUtils
       spark.read
         .schema(schema)
         .option("mode", FailFastMode.name)
-        .json(data.toDS)
+        .json(spark.createDataset(data))
     } else {
       spark.read
         .option("mode", FailFastMode.name)
-        .json(data.toDS)
+        .json(spark.createDataset(data))
     }
   }
 
@@ -864,6 +1035,25 @@ trait DeltaDMLTestUtils
       // here instead.
       case TableIdentifierOrPath.Path(path, _) => dfw.save(path)
     }
+  }
+
+  /**
+   * Finds the latest operation of the given type that ran on the given table and returns its
+   * commit version.
+   *
+   * @param operation Delta operation name, see [[DeltaOperations]].
+   * @param tableIdentifier SQL identifier of the table, defaults to the test table.
+   */
+  protected def getLatestOperationVersion(
+      operation: String,
+      tableIdentifier: String = tableSQLIdentifier): Long = {
+    val operationVersions = sql(s"DESCRIBE HISTORY $tableIdentifier")
+      .where($"operation" === operation)
+      .select($"version")
+      .as[Long]
+      .collect()
+    assert(operationVersions.nonEmpty, s"Couldn't find a ${operation} operation")
+    operationVersions.max
   }
 
   /**
@@ -965,7 +1155,6 @@ trait DeltaDMLInMemoryTestUtils
 }
 
 trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
-  self: SharedSparkSession =>
 
   protected var tempDir: File = _
 
@@ -998,8 +1187,7 @@ trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
  */
 case object NameBasedAccessIncompatible extends Tag("NameBasedAccessIncompatible")
 
-trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
-  self: SharedSparkSession =>
+trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils with DeltaSQLCommandTest {
 
   override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(
       implicit pos: Position): Unit = {

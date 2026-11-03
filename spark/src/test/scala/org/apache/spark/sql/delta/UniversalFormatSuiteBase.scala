@@ -227,7 +227,7 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
           executeSql(s"ALTER TABLE $id SET TBLPROPERTIES " +
             s"('delta.universalFormat.enabledFormats' = 'iceberg')")
         }
-        assert(e.getErrorClass === "DELTA_UNIVERSAL_FORMAT_VIOLATION")
+        assert(e.getErrorClass === "DELTA_UNIVERSAL_FORMAT_VIOLATION.ICEBERG_COMPAT_REQUIRED")
       }
     }
   }
@@ -453,7 +453,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
       val e = intercept[DeltaUnsupportedOperationException] {
         updatedConfiguration = getUpdatedConfiguration(configurationUnderTest)
       }
-      assert(e.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION")
+      assert(e.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION.ICEBERG_COMPAT_REQUIRED")
 
       for (icv <- allCompatObjects.map(_.version)) {
         configurationUnderTest = Map(
@@ -571,7 +571,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
                  |  'delta.minWriterVersion' = $w
                  |)""".stripMargin)
         }
-        assert(e.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION")
+        assert(e.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION.ICEBERG_COMPAT_REQUIRED")
 
         val e1 = intercept[DeltaUnsupportedOperationException] {
           executeSql(s"""
@@ -581,7 +581,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
                  |  'delta.minWriterVersion' = $w
                  |) AS SELECT 1""".stripMargin)
         }
-        assert(e1.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION")
+        assert(e1.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION.ICEBERG_COMPAT_REQUIRED")
       }
     }
   }
@@ -599,7 +599,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
           executeSql(s"ALTER TABLE $id SET TBLPROPERTIES " +
             s"('delta.universalFormat.enabledFormats' = 'iceberg')")
         }
-        assert(e.getErrorClass === "DELTA_UNIVERSAL_FORMAT_VIOLATION")
+        assert(e.getErrorClass === "DELTA_UNIVERSAL_FORMAT_VIOLATION.ICEBERG_COMPAT_REQUIRED")
       }
     }
   }

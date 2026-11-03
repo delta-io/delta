@@ -53,7 +53,8 @@ object DeltaV2SinkSuite {
     "append mode",
     "work with aggregation + watermark",
     "do not trust user nullability, so that parquet files aren't corrupted",
-    "can't write out with all columns being partition columns"
+    "can't write out with all columns being partition columns",
+    "streaming write shreds variant columns only when the table enables it"
   )
 
   val FailingTests: Set[String] = Set(
@@ -71,6 +72,7 @@ object DeltaV2SinkSuite {
     // No partition support: the V2 write rejects a partitioned target, surfaced as an async
     // StreamingQueryException, not the outcome these tests expect.
     "partitioned writing and batch reading",
+    "partitioned writing into a column-mapped table",
     "SPARK-21167: encode and decode path correctly",
     "throw exception when users are trying to write in batch with different partitioning",
     // No NullType support, creating a table with void column fails.

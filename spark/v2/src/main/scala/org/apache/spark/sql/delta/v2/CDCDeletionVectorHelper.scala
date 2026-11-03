@@ -18,17 +18,15 @@ package org.apache.spark.sql.delta.v2
 import java.util.{ArrayList => JArrayList, List => JList}
 import javax.annotation.Nullable
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor => SparkDvDescriptor}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-
+import org.apache.spark.sql.delta.v2.read.CDCDataFile
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 import io.delta.kernel.internal.actions.{AddFile, RemoveFile}
-import io.delta.spark.internal.v2.read.CDCDataFile
 
 /**
  * Helper for DV-diff operations needed by DSv2 CDC streaming. Lives in the

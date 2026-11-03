@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -29,7 +27,7 @@ import org.apache.spark.sql.types._
  */
 class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }

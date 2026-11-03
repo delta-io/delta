@@ -50,18 +50,18 @@ object DeltaFileProviderUtils extends DeltaLogging {
 
   /**
    * List the commits in the version range [startVersion, endVersion] (both inclusive) as
-   * [[SingleCommit]]. Returns in sorted order, and throws if any in the range are missing.
+   * [[DeltaSingleCommit]]. Returns in sorted order, and throws if any in the range are missing.
    */
   def getCommitsInVersionRange(
       spark: SparkSession,
       deltaLog: DeltaLog,
       startVersion: Long,
       endVersion: Long,
-      catalogTableOpt: Option[CatalogTable]): Seq[SingleCommit] = {
+      catalogTableOpt: Option[CatalogTable]): Seq[DeltaSingleCommit] = {
     // Pass `failOnDataLoss = false` as we do an explicit contiguity validation on the result below
     // to identify that there are no gaps.
     val commits = deltaLog
-      .getChangesIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss = false)
+      .getSingleCommitIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss = false)
       .toSeq
     // Verify that we got the entire range requested.
     if (commits.size.toLong != endVersion - startVersion + 1) {
@@ -102,9 +102,8 @@ object DeltaFileProviderUtils extends DeltaLogging {
    */
   def parallelReadAndParseDeltaFilesAsIterator(
       spark: SparkSession,
-      deltaLog: DeltaLog,
-      commits: Seq[SingleCommit]): Seq[ClosableIterator[Action]] =
-    parallelReadDeltaFiles(spark, deltaLog, commits)(_.getActionsIterator())
+      commits: Seq[DeltaSingleCommit]): Seq[ClosableIterator[Action]] =
+    parallelReadDeltaFiles(spark, commits)(_.getActionsIterator())
 
   /**
    * Parallel-read a set of commits off the driver, materializing each commit's [[Action]]s into a
@@ -112,23 +111,28 @@ object DeltaFileProviderUtils extends DeltaLogging {
    */
   def parallelReadAndParseDeltaFilesAsSeq(
       spark: SparkSession,
-      deltaLog: DeltaLog,
-      commits: Seq[SingleCommit]): Seq[Seq[Action]] =
-    parallelReadDeltaFiles(spark, deltaLog, commits) { commit =>
+      commits: Seq[DeltaSingleCommit]): Seq[Seq[Action]] =
+    parallelReadDeltaFiles(spark, commits) { commit =>
       commit.getActionsIterator().processAndClose(_.toSeq)
+    }
+
+  /**
+   * Like [[parallelReadAndParseDeltaFilesAsSeq]], but asserts each commit is a log commit.
+   */
+  private[delta] def parallelReadAndParseLogCommitsAsSeqUnsafe(
+      spark: SparkSession,
+      commits: Seq[DeltaSingleCommit]): Seq[Seq[Action]] =
+    parallelReadDeltaFiles(spark, commits) { commit =>
+      commit.asInstanceOf[SingleCommit].getLogCommitActionsIteratorUnsafe().processAndClose(_.toSeq)
     }
 
   /**
    * Parallel-read a set of commits off the driver, applying `f` to each. The commits are read
    * concurrently on the driver delta-log thread pool; results are returned in the input order.
+   * Only derive `A` from `commits`.
    */
   protected def parallelReadDeltaFiles[A](
       spark: SparkSession,
-      deltaLog: DeltaLog,
-      commits: Seq[SingleCommit])(f: SingleCommit => A): Seq[A] = {
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-    readThreadPool.parallelMap(spark, commits) { commit =>
-      f(commit)
-    }.toSeq
-  }
+      commits: Seq[DeltaSingleCommit])(f: DeltaSingleCommit => A): Seq[A] =
+    readThreadPool.parallelMap(spark, commits)(f).toSeq
 }

@@ -31,6 +31,8 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterable;
@@ -46,6 +48,12 @@ import java.util.stream.IntStream;
 import org.apache.flink.metrics.groups.UnregisteredMetricsGroup;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.StringData;
+import org.apache.flink.table.data.binary.BinaryRowData;
+import org.apache.flink.table.data.writer.BinaryRowWriter;
+import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
+import org.apache.flink.table.types.logical.IntType;
+import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.types.RowKind;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Disabled;
@@ -55,6 +63,65 @@ import org.slf4j.LoggerFactory;
 
 /** JUnit test suite for {@link DeltaSinkWriter}. */
 class DeltaSinkWriterTest extends TestHelper {
+
+  @Test
+  void testWriteCopiesReusedInsertRowData() {
+    assertWriteCopiesReusedRowData(false);
+  }
+
+  @Test
+  void testWriteCopiesReusedUpdateAfterRowData() {
+    assertWriteCopiesReusedRowData(true);
+  }
+
+  private void assertWriteCopiesReusedRowData(boolean upsert) {
+    withTempDir(
+        dir -> {
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(dir.getAbsolutePath()),
+                  Collections.emptyMap(),
+                  schema,
+                  Collections.emptyList());
+          table.open();
+          DeltaSinkWriter sinkWriter =
+              newSinkWriter(
+                  table,
+                  upsert
+                      ? upsertConf(schema, new int[] {0})
+                      : new DeltaSinkConf(schema, Collections.emptyMap()));
+
+          BinaryRowData reusedRow = new BinaryRowData(2);
+          RowKind rowKind = upsert ? RowKind.UPDATE_AFTER : RowKind.INSERT;
+          BinaryRowWriter rowWriter = new BinaryRowWriter(reusedRow);
+          rowWriter.writeInt(0, 100);
+          rowWriter.writeString(1, StringData.fromString("Alice"));
+          rowWriter.complete();
+          reusedRow.setRowKind(rowKind);
+          sinkWriter.write(reusedRow, new TestSinkWriterContext(0, 0));
+
+          rowWriter.reset();
+          rowWriter.writeInt(0, 101);
+          rowWriter.writeString(1, StringData.fromString("Bob"));
+          rowWriter.complete();
+          reusedRow.setRowKind(rowKind);
+          sinkWriter.write(reusedRow, new TestSinkWriterContext(0, 0));
+
+          DeltaWriterResult result = sinkWriter.prepareCommit().iterator().next();
+          AddFile addFile =
+              new AddFile(result.getDeltaActions().get(0).getStruct(SingleAction.ADD_FILE_ORDINAL));
+          List<Row> rows = readParquet(dir.toPath().resolve(addFile.getPath()), schema);
+
+          assertEquals(2, rows.size());
+          assertEquals(
+              Set.of("100:Alice", "101:Bob"),
+              rows.stream()
+                  .map(row -> row.getInt(0) + ":" + row.getString(1))
+                  .collect(Collectors.toSet()));
+        });
+  }
 
   @Test
   void testWriteToEmptyTableWithNoPartition() {
@@ -76,6 +143,7 @@ class DeltaSinkWriterTest extends TestHelper {
                   .withAttemptNumber(1)
                   .withDeltaTable(table)
                   .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .withInputSerializer(testSerializer(schema))
                   .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
                   .build();
 
@@ -153,6 +221,16 @@ class DeltaSinkWriterTest extends TestHelper {
   }
 
   @Test
+  void testPrepareCommitPropagatesAppendWriterFailure() {
+    assertPrepareCommitPropagatesWriterFailure(/* upsert= */ false);
+  }
+
+  @Test
+  void testPrepareCommitPropagatesUpsertWriterFailure() {
+    assertPrepareCommitPropagatesWriterFailure(/* upsert= */ true);
+  }
+
+  @Test
   void testWriteToEmptyTableUsingMultiplePartitions() {
     withTempDir(
         dir -> {
@@ -172,6 +250,7 @@ class DeltaSinkWriterTest extends TestHelper {
                   .withAttemptNumber(1)
                   .withDeltaTable(table)
                   .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .withInputSerializer(testSerializer(schema))
                   .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
                   .build();
 
@@ -231,6 +310,7 @@ class DeltaSinkWriterTest extends TestHelper {
                   .withSubtaskId(0)
                   .withAttemptNumber(1)
                   .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .withInputSerializer(testSerializer(schema))
                   .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
                   .build();
 
@@ -288,6 +368,7 @@ class DeltaSinkWriterTest extends TestHelper {
                   .withAttemptNumber(1)
                   .withDeltaTable(table)
                   .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .withInputSerializer(testSerializer(schema))
                   .withMetricGroup(writerMetrics)
                   .build();
 
@@ -331,6 +412,7 @@ class DeltaSinkWriterTest extends TestHelper {
                   .withAttemptNumber(1)
                   .withDeltaTable(table)
                   .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .withInputSerializer(testSerializer(schema))
                   .withMetricGroup(writerMetrics)
                   .build();
 
@@ -370,6 +452,7 @@ class DeltaSinkWriterTest extends TestHelper {
                   .withAttemptNumber(1)
                   .withDeltaTable(table)
                   .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .withInputSerializer(testSerializer(schema))
                   .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
                   .build();
 
@@ -744,14 +827,66 @@ class DeltaSinkWriterTest extends TestHelper {
 
   /** Build a {@link DeltaSinkWriter} with the standard test wiring. */
   private static DeltaSinkWriter newSinkWriter(HadoopTable table, DeltaSinkConf conf) {
+    return newSinkWriter(table, conf, testSerializer(conf.getSinkSchema()));
+  }
+
+  private static DeltaSinkWriter newSinkWriter(
+      HadoopTable table, DeltaSinkConf conf, RowDataSerializer inputSerializer) {
     return new DeltaSinkWriter.Builder()
         .withJobId("test-job")
         .withSubtaskId(0)
         .withAttemptNumber(1)
         .withDeltaTable(table)
         .withConf(conf)
+        .withInputSerializer(inputSerializer)
         .withMetricGroup(UnregisteredMetricsGroup.createSinkWriterMetricGroup())
         .build();
+  }
+
+  private static RowDataSerializer testSerializer(StructType schema) {
+    LogicalType[] types =
+        schema.fields().stream()
+            .map(
+                field -> {
+                  if (field.getDataType() instanceof IntegerType) {
+                    return new IntType();
+                  } else if (field.getDataType() instanceof StringType) {
+                    return new VarCharType(VarCharType.MAX_LENGTH);
+                  }
+                  throw new IllegalArgumentException(
+                      "Unsupported test data type: " + field.getDataType());
+                })
+            .toArray(LogicalType[]::new);
+    return new RowDataSerializer(types);
+  }
+
+  private void assertPrepareCommitPropagatesWriterFailure(boolean upsert) {
+    withTempDir(
+        dir -> {
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(dir.getAbsolutePath()),
+                  Collections.emptyMap(),
+                  schema,
+                  Collections.emptyList());
+          table.open();
+
+          DeltaSinkConf conf =
+              upsert
+                  ? upsertConf(schema, new int[] {0})
+                  : new DeltaSinkConf(schema, Collections.emptyMap());
+          // Keep this malformed row intact so the test exercises failure propagation from the
+          // asynchronous file writer instead of the input serializer's arity check.
+          RowDataSerializer malformedInputSerializer =
+              testSerializer(new StructType().add("id", IntegerType.INTEGER));
+          DeltaSinkWriter sinkWriter = newSinkWriter(table, conf, malformedInputSerializer);
+
+          // The missing string field is detected while the cached writer task is completed.
+          sinkWriter.write(GenericRowData.of(1), new TestSinkWriterContext(0, 0));
+          assertThrows(ArrayIndexOutOfBoundsException.class, sinkWriter::prepareCommit);
+        });
   }
 
   /**

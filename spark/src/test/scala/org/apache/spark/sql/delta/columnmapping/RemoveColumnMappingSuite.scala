@@ -18,7 +18,11 @@ package org.apache.spark.sql.delta.columnmapping
 
 import io.delta.tables.DeltaTable
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.DeltaColumnMappingUnsupportedException
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.GeneratedColumn
 import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 

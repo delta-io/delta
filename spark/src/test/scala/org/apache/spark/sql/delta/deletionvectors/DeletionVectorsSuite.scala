@@ -18,11 +18,12 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.{File, FileNotFoundException}
 import java.net.URISyntaxException
+import java.util.UUID
 
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor._
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
@@ -38,6 +39,7 @@ import org.apache.parquet.hadoop.ParquetFileReader
 
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkException
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
@@ -45,6 +47,7 @@ import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
 class DeletionVectorsSuite extends QueryTest
   with SharedSparkSession
@@ -160,6 +163,108 @@ class DeletionVectorsSuite extends QueryTest
 
     assert(deltaLog.createDataFrame(snapshot, selectFiles).count() == rowCount - deletedRowCount)
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // Regression tests for https://github.com/delta-io/delta/issues/4794
+  //
+  // Bug: When reading a Delta table that has Deletion Vectors and writing the result through the
+  // DataSource V2 write path (e.g. `df.write.format("noop").save()` or `df.writeTo(...).append()`
+  // / DataFrameWriterV2), the query failed with:
+  //
+  //   java.lang.IllegalArgumentException: requirement failed:
+  //   Cannot work with a non-pinned table snapshot of the TahoeFileIndex
+  //
+  // (raised by PreprocessTableWithDVs.ScanWithDeletionVectors.dvEnabledScanFor).
+  //
+  // Root cause: PrepareDeltaScan unconditionally skipped every V2WriteCommand plan. That skip was
+  // originally added so that Delta-to-Delta V2 writes are re-planned via Spark's V1 batch write
+  // fallback inside the OptimisticTransaction (preserving isBlindAppend semantics - see commit
+  // 8553b1c2). However, for V2 sinks that do NOT fall back to V1 (e.g. `noop`, Iceberg), nothing
+  // else replaces the TahoeLogFileIndex with a PreparedDeltaFileIndex, so PreprocessTableWithDVs
+  // hit a non-pinned file index and threw.
+  //
+  // Fix: PrepareDeltaScan now skips a V2WriteCommand only when its target DataSourceV2Relation
+  // advertises the V1_BATCH_WRITE capability - i.e. when Spark will actually re-plan the write
+  // through the V1 fallback (the same gate DataSourceV2Strategy uses). Delta-to-Delta V2 writes
+  // still get skipped (DeltaTableV2 declares V1_BATCH_WRITE), while V2 sinks like noop/Iceberg
+  // now correctly flow through PrepareDeltaScan.
+  //
+  // All tests below exercise this fix from slightly different angles.
+  // ---------------------------------------------------------------------------------------------
+
+  test("read Delta table with DV, write to Data Source V2") {
+    // Original repro from the bug report: a plain DataFrame read from a DV-enabled Delta table
+    // piped into a V2 sink without V1 fallback (`format("noop")`). Before the fix this threw
+    // "Cannot work with a non-pinned table snapshot of the TahoeFileIndex" because the V2 write
+    // plan was incorrectly skipped by PrepareDeltaScan and PreprocessTableWithDVs subsequently
+    // saw a TahoeLogFileIndex instead of a PreparedDeltaFileIndex.
+    withTempDir { dirName =>
+      val df = spark.read
+        .format("delta")
+        .load(table2Path)
+
+      df.write
+        .format("noop")
+        .mode("overwrite")
+        .save()
+    }
+  }
+
+  test("read Delta table with DV, write to Data Source V2 - append mode") {
+    // Same scenario as above with a different SaveMode. The bug being fixed is unrelated to
+    // mode, so this provides additional coverage that PrepareDeltaScan correctly pins the
+    // TahoeLogFileIndex for any V2 write whose target does not advertise V1_BATCH_WRITE.
+    spark.read.format("delta").load(table2Path)
+      .write.format("noop").mode("append").save()
+  }
+
+  test("read partitioned Delta table with DV, write to Data Source V2") {
+    // Exercises the fix with a partitioned source that has DVs, ensuring the partition
+    // pruning paths still work end-to-end when the target is a V2 sink without V1 fallback.
+    spark.read.format("delta").load(table3Path)
+      .write.format("noop").mode("overwrite").save()
+  }
+
+  test("read Delta table with DV via temp view, write to Data Source V2") {
+    // Routes the DV-enabled source through SQL / temp view resolution, exercising a
+    // slightly different logical plan shape (SubqueryAlias above the relation) than the
+    // direct DataFrame read above.
+    withTempView("dv_source_view") {
+      spark.read.format("delta").load(table2Path)
+        .createOrReplaceTempView("dv_source_view")
+      sql("SELECT value FROM dv_source_view WHERE value % 2 = 0")
+        .write.format("noop").mode("overwrite").save()
+    }
+  }
+
+  test("read Delta table with DV with filter, write to Data Source V2") {
+    // Sanity-check that DV filtering of the source still produces the expected rows after
+    // PrepareDeltaScan runs on this V2 plan: table2 has 0 and 9 deleted via DV, leaving
+    // (1..8); the additional WHERE keeps only odd values, so 4 rows should remain.
+    val df = spark.read.format("delta").load(table2Path).where("value % 2 = 1")
+    assert(df.count() === 4)
+    df.write.format("noop").mode("overwrite").save()
+  }
+
+  test("read DV-enabled Delta source, V2 write to a separate Delta target") {
+    // Delta-to-Delta V2 writes go through Spark's V1 batch write fallback because
+    // DeltaTableV2 advertises V1_BATCH_WRITE. PrepareDeltaScan must still skip these V2
+    // write plans so that the V1-fallback planning inside the OptimisticTransaction records
+    // the scan and sets commit metadata (e.g. isBlindAppend) correctly. This regression
+    // test confirms the new capability-based skip preserves that behavior with a DV source.
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("dv_v2_target") {
+        sql(s"CREATE TABLE dv_v2_target(value INT) USING delta LOCATION '$path'")
+        spark.read.format("delta").load(table2Path)
+          .writeTo("dv_v2_target").append()
+        checkAnswer(spark.table("dv_v2_target"), expectedTable2DataV1.toDF())
+      }
+    }
+  }
+  // ---------------------------------------------------------------------------------------------
+  // End of regression tests for https://github.com/delta-io/delta/issues/4794
+  // ---------------------------------------------------------------------------------------------
 
   for (optimizeMetadataQuery <- BOOLEAN_DOMAIN)
     test("read Delta tables with DVs in subqueries: " +
@@ -734,6 +839,56 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
+  test("object uniqueIdExpression matches descriptor uniqueId") {
+    val tableRoot = new Path("s3a://table/test path")
+    val uuid = UUID.randomUUID()
+    val uDv = onDiskWithUuidRelativePath(
+      uuid, randomPrefix = "prefix + %space", sizeInBytes = 15, cardinality = 25, offset = Some(8))
+    val rDv = rFormOf(uuid, "prefix + %space", offset = Some(8))
+    val pDv = onDiskWithAbsolutePath(
+      SparkPath.fromPath(new Path(tableRoot, "data/a space + b.bin")).urlEncoded,
+      sizeInBytes = 15,
+      cardinality = 25,
+      offset = Some(8))
+    val pElsewhere = onDiskWithAbsolutePath(
+      SparkPath.fromPath(
+        new Path(s"s3a://other-bucket/tbl/prefix/${DELETION_VECTOR_FILE_NAME_CORE}_$uuid.bin"))
+        .urlEncoded,
+      sizeInBytes = 15,
+      cardinality = 25,
+      offset = Some(8))
+
+    val testCases = Seq(uDv, rDv, pDv, pElsewhere).map { dv =>
+      (
+        dv,
+        dv.uniqueId(tableRoot, useObjectIdentity = true),
+        dv.uniqueId(tableRoot, useObjectIdentity = false))
+    }
+    val rows = testCases.map { case (dv, expectedObjectId, expectedLegacyId) =>
+      Row(dvStructRow(dv), expectedObjectId, expectedLegacyId)
+    }
+    val input = spark.createDataFrame(
+      spark.sparkContext.parallelize(rows),
+      dvExpressionTestSchema)
+    val actual = input.select(
+      DeletionVectorDescriptor
+        .uniqueIdExpression(col("dv"), tableRoot, useObjectIdentity = true)
+        .as("actualObjectId"),
+      col("expectedObjectId"),
+      DeletionVectorDescriptor
+        .uniqueIdExpression(col("dv"), tableRoot, useObjectIdentity = false)
+        .as("actualLegacyId"),
+      col("expectedLegacyId"))
+
+    checkAnswer(actual, testCases.map { case (_, expectedObjectId, expectedLegacyId) =>
+      Row(
+        expectedObjectId,
+        expectedObjectId,
+        expectedLegacyId,
+        expectedLegacyId)
+    })
+  }
+
   test("Check no resource leak when DV files are missing (table corrupted)") {
     withTempDir { tempDir =>
       val source = new File(table2Path)
@@ -837,6 +992,36 @@ class DeletionVectorsSuite extends QueryTest
     val optimizedPlan = queryDf.queryExecution.analyzed.toString()
     assert(optimizedPlan.contains(expected), s"Plan is missing `$expected`: $optimizedPlan")
   }
+
+  /** The `r` form of the `u` DV that `uuid`/`prefix` describe. */
+  private def rFormOf(
+      uuid: UUID,
+      prefix: String,
+      offset: Option[Int]): DeletionVectorDescriptor = {
+    val path = if (prefix.isEmpty) {
+      s"${DELETION_VECTOR_FILE_NAME_CORE}_$uuid.bin"
+    } else {
+      s"$prefix/${DELETION_VECTOR_FILE_NAME_CORE}_$uuid.bin"
+    }
+    createRelativePathDVDescriptor(path, sizeInBytes = 15, cardinality = 25, offset = offset)
+  }
+
+  private def dvStructRow(dv: DeletionVectorDescriptor): Row = {
+    Row.fromSeq(DeletionVectorDescriptor.STRUCT_TYPE.fieldNames.map {
+      case "storageType" => dv.storageType
+      case "pathOrInlineDv" => dv.pathOrInlineDv
+      case "offset" => dv.offset.map(Int.box).orNull
+      case "sizeInBytes" => Int.box(dv.sizeInBytes)
+      case "cardinality" => Long.box(dv.cardinality)
+      case "maxRowIndex" => dv.maxRowIndex.map(Long.box).orNull
+      case field => fail(s"Unexpected deletion vector field in test schema: $field")
+    })
+  }
+
+  private def dvExpressionTestSchema = StructType(Seq(
+    StructField("dv", DeletionVectorDescriptor.STRUCT_TYPE, nullable = false),
+    StructField("expectedObjectId", StringType, nullable = false),
+    StructField("expectedLegacyId", StringType, nullable = false)))
 }
 
 object DeletionVectorsSuite {

@@ -21,6 +21,7 @@ package org.apache.iceberg.hive;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -36,6 +37,7 @@ import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.PrincipalType;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.metastore.api.UnknownDBException;
+import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
 import org.apache.iceberg.BaseMetastoreTableOperations;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
@@ -52,6 +54,7 @@ import org.apache.iceberg.encryption.EncryptionUtil;
 import org.apache.iceberg.encryption.KeyManagementClient;
 import org.apache.iceberg.exceptions.*;
 import org.apache.iceberg.hadoop.HadoopFileIO;
+import org.apache.iceberg.io.CloseableGroup;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.MoreObjects;
@@ -73,7 +76,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * This class is directly copied from iceberg 1.11.0; The only change made is
+ * This class is directly copied from iceberg 1.12.0; The only change made is
  * 1.
  *  accept metadataUpdates in constructor and pass to HiveTableOperations
  *  to support using schema/partitionSpec with field ids assigned by Delta lake
@@ -102,6 +105,7 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
   private boolean listAllTables = false;
   private boolean uniqueTableLocation;
   private Map<String, String> catalogProperties;
+  private CloseableGroup closeableGroup;
 
   // HACK-HACK This is newly added
   private List<MetadataUpdate> metadataUpdates = new ArrayList();
@@ -154,6 +158,12 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
             CatalogProperties.UNIQUE_TABLE_LOCATION_DEFAULT);
 
     this.clients = new CachedClientPool(conf, properties);
+
+    this.closeableGroup = new CloseableGroup();
+    closeableGroup.addCloseable(fileIO);
+    closeableGroup.addCloseable(keyManagementClient);
+    closeableGroup.addCloseable(metricsReporter());
+    closeableGroup.setSuppressCloseFailure(true);
   }
 
   @Override
@@ -173,18 +183,19 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
     String database = namespace.level(0);
 
     try {
-      List<String> tableNames = clients.run(client -> client.getAllTables(database));
       List<TableIdentifier> tableIdentifiers;
 
       if (listAllTables) {
+        List<String> tableNames = clients.run(client -> client.getAllTables(database));
         tableIdentifiers =
                 tableNames.stream()
                         .map(t -> TableIdentifier.of(namespace, t))
                         .collect(Collectors.toList());
       } else {
+        // Retrieving only the matching table names from HMS via server-side filter
         tableIdentifiers =
-                listIcebergTables(
-                        tableNames, namespace, BaseMetastoreTableOperations.ICEBERG_TABLE_TYPE_VALUE);
+            listIcebergTablesByFilter(
+                namespace, BaseMetastoreTableOperations.ICEBERG_TABLE_TYPE_VALUE);
       }
 
       LOG.debug(
@@ -358,6 +369,37 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
                                     table.getParameters().get(BaseMetastoreTableOperations.TABLE_TYPE_PROP)))
             .map(table -> TableIdentifier.of(namespace, table.getTableName()))
             .collect(Collectors.toList());
+  }
+
+  /**
+   * Lists the {@link TableIdentifier} of all Iceberg tables under the given database.
+   *
+   * @param namespace the namespace corresponding to the database
+   * @param tableTypeValue the value of {@code parameters.table_type} to filter on.
+   */
+  private List<TableIdentifier> listIcebergTablesByFilter(
+      Namespace namespace, String tableTypeValue) throws TException, InterruptedException {
+    String database = namespace.level(0);
+    // HMS normalizes the `table_type` parameter value to upper case when persisting it
+    // (e.g. "iceberg" is stored as "ICEBERG"), so the filter value must be upper-cased to match.
+    // Note: `like` (rather than `=`) is used intentionally. Some HMS backends (e.g. Derby and
+    // Oracle, where PARAM_VALUE is a CLOB) do not support `=` comparison on property values and
+    // fail the filter query (see HIVE-21614); newer HMS versions internally rewrite `=` to `like`
+    // for this reason. As the value carries no `%`/`_` wildcards, `like` is equivalent to `=` here.
+    String filter =
+        hive_metastoreConstants.HIVE_FILTER_FIELD_PARAMS
+            + BaseMetastoreTableOperations.TABLE_TYPE_PROP
+            + " like \""
+            + tableTypeValue.toUpperCase(Locale.ROOT)
+            + "\"";
+
+    List<String> icebergTableNames =
+        clients.run(
+            client -> client.listTableNamesByFilter(database, filter, (short) -1 /* no limit */));
+
+    return icebergTableNames.stream()
+        .map(tableName -> TableIdentifier.of(namespace, tableName))
+        .collect(Collectors.toList());
   }
 
   @SuppressWarnings("checkstyle:CyclomaticComplexity")
@@ -862,10 +904,8 @@ public class HiveCatalog extends BaseMetastoreViewCatalog
 
   @Override
   public void close() throws IOException {
-    super.close();
-
-    if (keyManagementClient != null) {
-      keyManagementClient.close();
+    if (closeableGroup != null) {
+      closeableGroup.close();
     }
   }
 

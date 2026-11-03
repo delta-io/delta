@@ -114,6 +114,7 @@ public final class UCDeltaModels {
     private final String location;
     private final AbstractMetadata metadata;
     private final Map<String, String> storageProperties;
+    private final List<String> clientMaintenanceOperations;
     private final Optional<UniformMetadata> uniformMetadata;
 
     public TableInfo(
@@ -122,12 +123,14 @@ public final class UCDeltaModels {
         String location,
         AbstractMetadata metadata,
         Map<String, String> storageProperties,
+        List<String> clientMaintenanceOperations,
         Optional<UniformMetadata> uniformMetadata) {
       this.tableId = tableId;
       this.tableType = tableType;
       this.location = location;
       this.metadata = metadata;
       this.storageProperties = storageProperties;
+      this.clientMaintenanceOperations = clientMaintenanceOperations;
       this.uniformMetadata = uniformMetadata;
     }
 
@@ -151,6 +154,13 @@ public final class UCDeltaModels {
     /** Hadoop-style storage options (e.g. catalog-vended credentials). */
     public Map<String, String> getStorageProperties() {
       return storageProperties == null ? Collections.emptyMap() : storageProperties;
+    }
+
+    /** Maintenance operations that the catalog permits the client to run. */
+    public List<String> getClientMaintenanceOperations() {
+      return clientMaintenanceOperations == null
+          ? Collections.emptyList()
+          : clientMaintenanceOperations;
     }
 
     /** UniForm conversion metadata, or empty if the table has no UniForm enabled. */

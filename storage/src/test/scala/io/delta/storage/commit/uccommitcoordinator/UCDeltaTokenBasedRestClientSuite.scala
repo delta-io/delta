@@ -19,10 +19,12 @@ package io.delta.storage.commit.uccommitcoordinator
 import java.net.{InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
 import java.util.{Collections, Optional, Set => JSet, UUID}
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.jdk.CollectionConverters._
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
@@ -227,7 +229,72 @@ class UCDeltaTokenBasedRestClientSuite
       assert(parsed.get("fields").size() === 2)
       assert(parsed.get("fields").get(0).get("name").asText() === "date")
       assert(parsed.get("fields").get(1).get("type").asText() === "integer")
+      assert(info.getClientMaintenanceOperations.isEmpty)
+      assert(!info.getStorageProperties.containsKey("delta.clientMaintenanceOperations"))
     }
+  }
+
+  test("loadTable returns recognized client maintenance operations") {
+    val response = objectMapper.readTree(loadTableJson()).asInstanceOf[ObjectNode]
+    response.putArray("allowed-maintenance-operations")
+      .add("DATA_REORGANIZATION")
+      .add("DATA_CLEANUP")
+      .add("METADATA_CLEANUP")
+    deltaHandler = (exchange, _) => sendJson(
+      exchange,
+      HttpStatus.SC_OK,
+      objectMapper.writeValueAsString(response))
+
+    withClient { c =>
+      val info = c.loadTable(testIdentifier)
+      assert(info.getClientMaintenanceOperations.asScala.toSeq === Seq(
+        "DATA_REORGANIZATION", "DATA_CLEANUP", "METADATA_CLEANUP"))
+      assert(!info.getStorageProperties.containsKey("delta.clientMaintenanceOperations"))
+    }
+  }
+
+  test("credentialVending.enabled controls table and staging credential requests") {
+    val credentialRequests = new AtomicInteger()
+    deltaHandler = (exchange, _) => {
+      val path = exchange.getRequestURI.getPath
+      if (path.endsWith("/credentials")) {
+        credentialRequests.incrementAndGet()
+        val prefix =
+          if (path.contains("/staging-tables/")) "s3://bucket/staging"
+          else "s3://bucket/table"
+        sendJson(
+          exchange,
+          HttpStatus.SC_OK,
+          s"""{"storage-credentials":[{"prefix":"$prefix","operation":"READ_WRITE",""" +
+            """"expiration-time-ms":4102444800000,"config":{"s3.access-key-id":"ak",""" +
+            """"s3.secret-access-key":"sk","s3.session-token":"st"}}]}""")
+      } else if (path.endsWith("/staging-tables")) {
+        sendJson(
+          exchange,
+          HttpStatus.SC_OK,
+          s"""{"table-id":"$testTableId","table-type":"MANAGED",""" +
+            """"location":"s3://bucket/staging"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+
+    val config = clientConfig
+    config.put("credentialVending.enabled", "false")
+    val client = new UCDeltaTokenBasedRestClient(config, null)
+    try {
+      assert(client.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(client.createStagingTable(testIdentifier).getStorageProperties.isEmpty)
+    } finally {
+      client.close()
+    }
+    assert(credentialRequests.get() === 0)
+
+    withClient { c =>
+      assert(!c.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(!c.createStagingTable(testIdentifier).getStorageProperties.isEmpty)
+    }
+    assert(credentialRequests.get() === 2)
   }
 
   test("loadTable schema emits Delta camelCase wire format for array and map") {

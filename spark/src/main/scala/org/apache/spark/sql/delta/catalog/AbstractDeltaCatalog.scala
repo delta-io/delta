@@ -55,8 +55,8 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
-import org.apache.spark.sql.catalyst.util.{GeneratedColumn => SparkGeneratedColumn}
-import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
+import org.apache.spark.sql.catalyst.util.{GeneratedColumn => SparkGeneratedColumn, IdentityColumn => SparkIdentityColumn}
+import org.apache.spark.sql.connector.catalog.{CatalogExtension, CatalogV2Util, Column, DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
@@ -64,7 +64,7 @@ import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsTruncate,
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
-import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 
@@ -75,11 +75,28 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 class DeltaCatalogV1 extends AbstractDeltaCatalog
 
 /**
+ * Shared type for Delta catalog implementations. It bundles the catalog interfaces a Delta catalog
+ * must satisfy. This is currently implemented by the DeltaCatalog and the forwarding wrapper
+ * [[DeltaV2SparkTransactionCatalog]]. It allows the wrapper to stay castable to
+ * namespace/function/staging operations. It also makes sure the wrapper does not carry any
+ * (unwanted) state.
+ *
+ * Only declare a method here if it is NOT on a Spark catalog interface. The wrapper's forwarding
+ * completeness is enforced by the reflection test in `DeltaV2CatalogTransactionSuite`.
+ */
+trait DeltaCatalogLike
+  extends TableCatalog
+  with CatalogExtension
+  with StagingTableCatalog {
+
+}
+
+/**
  * Base class for Dsv2 catalog implementation, it contains all dsv1 based connector logic.
  * Introduced for compatibility purpose in the implementation of dsv2 based connector
  */
 class AbstractDeltaCatalog extends DelegatingCatalogExtension
-  with StagingTableCatalog
+  with DeltaCatalogLike
   with SupportsPathIdentifier
   with DeltaLogging
   with AbstractDeltaCatalogShims {
@@ -119,12 +136,16 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     super.initialize(name, options)
     catalogName = name
     catalogOptions = options
+    // V2_TRANSACTIONS_ENABLED and this catalog's transactionality must agree (enabled <=>
+    // transactional catalog). No-op below Spark 4.2 (see AbstractDeltaCatalogShims).
+    checkTransactionalCatalogConsistency()
   }
 
   override def capabilities(): util.Set[TableCatalogCapability] = {
     val capabilities = new util.HashSet[TableCatalogCapability](super.capabilities())
     capabilities.add(TableCatalogCapability.SUPPORT_COLUMN_DEFAULT_VALUE)
     capabilities.add(TableCatalogCapability.SUPPORTS_CREATE_TABLE_WITH_GENERATED_COLUMNS)
+    capabilities.add(TableCatalogCapability.SUPPORTS_CREATE_TABLE_WITH_IDENTITY_COLUMNS)
     capabilities
   }
 
@@ -145,8 +166,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
-  /** Converts Spark's generated-column metadata key into the key persisted by Delta. */
-  private def convertGeneratedColumnMetadata(schema: StructType): StructType = {
+  /** Converts Spark's generated- and identity-column metadata into the keys persisted by Delta. */
+  private def convertColumnMetadata(schema: StructType): StructType = {
     StructType(schema.fields.map { field =>
       if (field.metadata.contains(SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY)) {
         val expression = field.metadata.getString(
@@ -155,6 +176,27 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           .withMetadata(field.metadata)
           .remove(SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY)
           .putString(DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY, expression)
+          .build())
+      } else if (field.metadata.contains(SparkIdentityColumn.IDENTITY_INFO_START)) {
+        if (field.dataType != LongType) {
+          throw DeltaErrors.identityColumnDataTypeNotSupported(field.dataType)
+        }
+        val step = field.metadata.getLong(SparkIdentityColumn.IDENTITY_INFO_STEP)
+        if (step == 0L) {
+          throw DeltaErrors.identityColumnIllegalStep()
+        }
+        field.copy(metadata = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .remove(SparkIdentityColumn.IDENTITY_INFO_START)
+          .remove(SparkIdentityColumn.IDENTITY_INFO_STEP)
+          .remove(SparkIdentityColumn.IDENTITY_INFO_ALLOW_EXPLICIT_INSERT)
+          .putLong(
+            DeltaSourceUtils.IDENTITY_INFO_START,
+            field.metadata.getLong(SparkIdentityColumn.IDENTITY_INFO_START))
+          .putLong(DeltaSourceUtils.IDENTITY_INFO_STEP, step)
+          .putBoolean(
+            DeltaSourceUtils.IDENTITY_INFO_ALLOW_EXPLICIT_INSERT,
+            field.metadata.getBoolean(SparkIdentityColumn.IDENTITY_INFO_ALLOW_EXPLICIT_INSERT))
           .build())
       } else {
         field
@@ -177,7 +219,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    */
   private def createDeltaTable(
       ident: Identifier,
-      schema: StructType,
+      inputSchema: StructType,
       partitions: Array[Transform],
       allTableProperties: util.Map[String, String],
       writeOptions: Map[String, String],
@@ -185,6 +227,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation: TableCreationModes.CreationMode
     ): Table = recordFrameProfile(
         "DeltaCatalog", "createDeltaTable") {
+    var newSchema = convertColumnMetadata(inputSchema)
     // `delta.*` properties carried forward from a catalog-managed REPLACE that this Delta version
     // does not recognize arrive tagged with [[AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX]].
     // Collect them (prefix stripped) and exclude the tagged entries from `tableProperties` -- the
@@ -215,20 +258,19 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case _ => true
     }.toMap
     val (partitionColumns, maybeBucketSpec, maybeClusterBySpec) = convertTransforms(partitions)
-    validateClusterBySpec(maybeClusterBySpec, schema)
+    validateClusterBySpec(maybeClusterBySpec, newSchema)
     // Check partition columns are not IDENTITY columns.
     partitionColumns.foreach { colName =>
-      if (ColumnWithDefaultExprUtils.isIdentityColumn(schema(colName))) {
+      if (ColumnWithDefaultExprUtils.isIdentityColumn(newSchema(colName))) {
         throw DeltaErrors.identityColumnPartitionNotSupported(colName)
       }
     }
-    var newSchema = convertGeneratedColumnMetadata(schema)
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
     val conf = spark.sessionState.conf
     allTableProperties.asScala
       .get(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key)
-      .foreach(StatisticsCollection.validateDeltaStatsColumns(schema, partitionColumns, _))
+      .foreach(StatisticsCollection.validateDeltaStatsColumns(newSchema, partitionColumns, _))
     val isByPath = isPathIdentifier(ident)
     if (isByPath && !conf.getConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS)
       && allTableProperties.containsKey("location")
@@ -332,7 +374,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         withDb.properties ++ commentOpt.map("comment" -> _),
         df,
         catalogTbl,
-        schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
+        schemaInCatalog = if (newSchema != inputSchema) Some(newSchema) else None)
       if (deltaOptions.isReplaceOnOrUsingDefined &&
           CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(
             deltaOptions, operation.mode)) {
@@ -550,17 +592,31 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       super.createTable(ident, schema, partitions, properties)
   }
 
+  private def columnsToStructType(columns: Array[Column]): StructType = {
+    val schema = CatalogV2Util.v2ColumnsToStructType(columns)
+    StructType(schema.fields.zip(columns).map { case (field, column) =>
+      val metadata = new MetadataBuilder().withMetadata(field.metadata)
+      Option(column.generationExpression()).foreach { expression =>
+        metadata.putString(SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY, expression)
+      }
+      Option(column.identityColumnSpec()).foreach { identity =>
+        metadata
+          .putLong(SparkIdentityColumn.IDENTITY_INFO_START, identity.getStart)
+          .putLong(SparkIdentityColumn.IDENTITY_INFO_STEP, identity.getStep)
+          .putBoolean(
+            SparkIdentityColumn.IDENTITY_INFO_ALLOW_EXPLICIT_INSERT,
+            identity.isAllowExplicitInsert)
+      }
+      field.copy(metadata = metadata.build())
+    })
+  }
 
   override def createTable(
       ident: Identifier,
-      columns: Array[org.apache.spark.sql.connector.catalog.Column],
+      columns: Array[Column],
       partitions: Array[Transform],
       properties: util.Map[String, String]): Table = {
-    createTable(
-      ident,
-      org.apache.spark.sql.connector.catalog.CatalogV2Util.v2ColumnsToStructType(columns),
-      partitions,
-      properties)
+    createTable(ident, columnsToStructType(columns), partitions, properties)
   }
 
   override def createTable(
@@ -752,6 +808,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   override def stageReplace(
       ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    stageReplace(ident, columnsToStructType(columns), partitions, properties)
+  }
+
+  override def stageReplace(
+      ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable =
@@ -771,6 +835,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         BestEffortStagedTable(ident, table, this)
       }
     }
+
+  override def stageCreateOrReplace(
+      ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    stageCreateOrReplace(ident, columnsToStructType(columns), partitions, properties)
+  }
 
   override def stageCreateOrReplace(
       ident: Identifier,
@@ -797,6 +869,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         BestEffortStagedTable(ident, table, this)
       }
     }
+
+  override def stageCreate(
+      ident: Identifier,
+      columns: Array[Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    stageCreate(ident, columnsToStructType(columns), partitions, properties)
+  }
 
   override def stageCreate(
       ident: Identifier,

@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, DeltaCommitFileProvider,
   FileNames, JsonUtils, TimestampFormatter}
+import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
@@ -189,7 +190,8 @@ class InCommitTimestampSuite
             newProtocolOpt = None,
             DeltaOperations.ManualUpdate,
             context = Map.empty,
-            metrics = Map.empty)
+            metrics = Map.empty,
+            dataChange = true)
         } else {
           deltaLog.startTransaction().commit(
             Seq(createTestAddFile("1")),
@@ -1809,6 +1811,117 @@ class InCommitTimestampSuite
       sql(s"REPLACE TABLE $tableName USING delta AS SELECT * FROM range(3, 4)")
     }
   }
+  private def checkICTEnablementInfoBlocked(key: String)(f: => Unit): Unit = {
+    checkError(
+      intercept[DeltaUnsupportedOperationException](f),
+      "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+      parameters = Map("prop" -> key))
+  }
+
+  // Enables ICT at version `numCommitsBeforeEnablement + 1` so the table carries enablement info.
+  // Tests using this helper run via `testWithDefaultCommitCoordinatorUnset` because
+  // catalog-managed tables have ICT from creation and block ALTERing ICT properties.
+  // CatalogOwnedPropertySuite covers the catalog-managed combinations by upgrading a table.
+  private def createTableWithICTEnablementInfo(
+      tableName: String,
+      numCommitsBeforeEnablement: Int = 0,
+      numCommitsAfterEnablement: Int = 0): (DeltaLog, Map[String, String]) = {
+    withSQLConf(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      spark.range(1).write.format("delta").saveAsTable(tableName)
+      (1 to numCommitsBeforeEnablement).foreach { _ =>
+        spark.range(1).write.format("delta").mode("append").saveAsTable(tableName)
+      }
+    }
+    sql(s"ALTER TABLE $tableName " +
+      s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+    (1 to numCommitsAfterEnablement).foreach { _ =>
+      spark.range(1).write.format("delta").mode("append").saveAsTable(tableName)
+    }
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    val expectedEnablementInfo =
+      expectedICTEnablementInfo(deltaLog, version = numCommitsBeforeEnablement + 1)
+    assert(getICTEnablementInfo(deltaLog.update().metadata) == expectedEnablementInfo)
+    (deltaLog, expectedEnablementInfo)
+  }
+
+  for (key <- InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS) {
+    test(s"user cannot set $key via CREATE/REPLACE/CTAS/RTAS TBLPROPERTIES") {
+      withTempTable(createTable = false) { tableName =>
+        Seq(
+          s"CREATE TABLE $tableName (id LONG) USING delta TBLPROPERTIES ('$key' = '1170')",
+          s"CREATE OR REPLACE TABLE $tableName (id LONG) USING delta " +
+            s"TBLPROPERTIES ('$key' = '1170')",
+          s"CREATE TABLE $tableName USING delta TBLPROPERTIES ('$key' = '1170') " +
+            "AS SELECT * FROM range(1)"
+        ).foreach { command =>
+          checkICTEnablementInfoBlocked(key) { sql(command) }
+        }
+        spark.range(1).write.format("delta").saveAsTable(tableName)
+        Seq(
+          s"REPLACE TABLE $tableName (id LONG) USING delta TBLPROPERTIES ('$key' = '1170')",
+          s"REPLACE TABLE $tableName USING delta TBLPROPERTIES ('$key' = '1170') " +
+            "AS SELECT * FROM range(1)",
+          s"CREATE OR REPLACE TABLE $tableName USING delta TBLPROPERTIES ('$key' = '1170') " +
+            "AS SELECT * FROM range(1)"
+        ).foreach { command =>
+          checkICTEnablementInfoBlocked(key) { sql(command) }
+        }
+      }
+    }
+
+    test(s"user cannot set $key via ALTER TABLE SET TBLPROPERTIES") {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(1).write.format("delta").saveAsTable(tableName)
+        checkICTEnablementInfoBlocked(key) {
+          sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('$key' = '1170')")
+        }
+        assert(!DeltaLog.forTable(spark, TableIdentifier(tableName))
+          .update().metadata.configuration.contains(key))
+      }
+    }
+
+    test(s"user cannot set $key via DataFrameWriter options or session defaults") {
+      withTempDir { dir =>
+        checkICTEnablementInfoBlocked(key) {
+          spark.range(1).write.format("delta").option(key, "1170").save(dir.getCanonicalPath)
+        }
+      }
+      // Session defaults are merged into every new table's properties.
+      withSQLConf(DeltaConfigs.sqlConfPrefix + key.stripPrefix("delta.") -> "1170") {
+        withTempTable(createTable = false) { tableName =>
+          checkICTEnablementInfoBlocked(key) {
+            sql(s"CREATE TABLE $tableName (id LONG) USING delta")
+          }
+        }
+      }
+    }
+
+    test(s"user cannot set $key via the DeltaTable builder API") {
+      withTempTable(createTable = false) { tableName =>
+        checkICTEnablementInfoBlocked(key) {
+          IODeltaTable.createOrReplace(spark)
+            .tableName(tableName)
+            .addColumn("id", "LONG")
+            .property(key, "1170")
+            .execute()
+        }
+      }
+    }
+  }
+
+  testWithDefaultCommitCoordinatorUnset(
+    "CREATE TABLE LIKE does not copy ICT enablement info from the source table") {
+    withTempTable(createTable = false) { sourceTableName =>
+      withTempTable(createTable = false) { targetTableName =>
+        createTableWithICTEnablementInfo(sourceTableName)
+
+        sql(s"CREATE TABLE $targetTableName LIKE $sourceTableName")
+        assertICTEnabledWithoutEnablementInfo(
+          DeltaLog.forTable(spark, TableIdentifier(targetTableName)).update().metadata)
+      }
+    }
+  }
+
 }
 
 class InCommitTimestampWithCatalogOwnedBatch1Suite extends InCommitTimestampSuite {

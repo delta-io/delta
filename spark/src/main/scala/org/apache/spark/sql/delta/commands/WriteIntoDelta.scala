@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.commands
 
+import java.time.Instant
+
 import scala.collection.mutable
 import scala.util.Try
 
@@ -77,6 +79,7 @@ import org.apache.spark.sql.types.{StringType, StructType}
  * @param catalogTableOpt Should explicitly be set when table is accessed from catalog
  * @param schemaInCatalog The schema created in Catalog. We will use this schema to update metadata
  *                        when it is set (in CTAS code path), and otherwise use schema from `data`.
+ * @param insertReplaceOnOrUsingCurrentTimeOpt Statement time shared by DELETE and INSERT.
  */
 case class WriteIntoDelta(
     override val deltaLog: DeltaLog,
@@ -87,8 +90,8 @@ case class WriteIntoDelta(
     override val data: DataFrame,
     val catalogTableOpt: Option[CatalogTable] = None,
     schemaInCatalog: Option[StructType] = None,
-    isInsertReplaceUsingByName: Boolean = false
-    )
+    isInsertReplaceUsingByName: Boolean = false,
+    insertReplaceOnOrUsingCurrentTimeOpt: Option[Instant] = None)
   extends LeafRunnableCommand
   with ImplicitMetadataOperation
   with DeltaCommand
@@ -158,6 +161,12 @@ case class WriteIntoDelta(
         clusterBySpecOpt
       }
     val rearrangeOnly = options.rearrangeOnly
+    if (rearrangeOnly) {
+      DeltaErrors.checkCatalogManagedTableOperationAllowed(
+        CatalogManagedTableMaintenanceOperation.DATA_REORGANIZATION,
+        txn.snapshot,
+        txn.catalogTable)
+    }
     val charPadding = sparkSession.conf.get(SQLConf.READ_SIDE_CHAR_PADDING)
     val charAsVarchar = sparkSession.conf.get(SQLConf.CHAR_AS_VARCHAR)
     val dataSchema = if (!charAsVarchar && charPadding) {
@@ -382,10 +391,9 @@ case class WriteIntoDelta(
 
         if (!useDynamicPartitionOverwriteMode &&
             options.useNullIntolerantEqualityWithDPO.isDefined) {
-          throw DeltaErrors.illegalDeltaOptionException(
+          throw DeltaErrors.illegalDeltaOptionDynamicPartitionOverwriteOnly(
             name = DeltaOptions.USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
-            input = options.useNullIntolerantEqualityWithDPO.get.toString,
-            explain = "This option should be specified only in Dynamic Partition Overwrite mode.")
+            input = options.useNullIntolerantEqualityWithDPO.get.toString)
         }
 
         val deletedFiles = if (useDynamicPartitionOverwriteMode) {
@@ -477,7 +485,14 @@ case class WriteIntoDelta(
     val command = sparkWithSubqueryDelete.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     sparkWithSubqueryDelete.sessionState.analyzer.checkAnalysis(command)
-    val deleteCmd = command.asInstanceOf[DeleteCommand]
+    val deleteCmd =
+      if (sparkWithSubqueryDelete.conf.get(
+          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+        pinReplaceOnOrUsingCurrentTime(
+          command.asInstanceOf[DeleteCommand], insertReplaceOnOrUsingCurrentTimeOpt)
+      } else {
+        command.asInstanceOf[DeleteCommand]
+      }
     val (deleteActions, deleteMetrics) =
       deleteCmd.performDelete(sparkWithSubqueryDelete, txn.deltaLog, txn)
     recordDeltaEvent(

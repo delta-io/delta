@@ -16,10 +16,11 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CommitInfo}
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.spark.sql.delta.util.FileNames
+import org.apache.hadoop.fs.FileStatus
 
 /**
  * A handle to a single commit in the Delta log, standing in for the raw commit log file that
@@ -28,9 +29,16 @@ import org.apache.hadoop.fs.{FileStatus, Path}
  */
 class SingleCommit private (
     private val deltaLog: DeltaLog,
-    val version: Long,
+    override val version: Long,
     private val fileStatus: FileStatus
-) {
+) extends DeltaSingleCommit {
+  // Read the persisted ICT for this version, so commits before ICT enablement still use mtime.
+  override lazy val timestamp: Long = getActionsIterator().processAndClose { actions =>
+    actions.collectFirst { case commitInfo: CommitInfo => commitInfo }
+      .flatMap(_.inCommitTimestamp)
+      .getOrElse(fileModificationTimestamp)
+  }
+
   /**
    * Open a fresh iterator over all of this commit's actions.
    *
@@ -39,35 +47,53 @@ class SingleCommit private (
    *        Defaults to 0, i.e. always stream via `readAsIterator` -- callers that want the
    *        in-memory/rewind fast path opt in by passing a threshold.
    */
-  def getActionsIterator(
+  override def getActionsIterator(
       maxInMemoryFileSizeBytes: Long = 0): ClosableIterator[Action] with SupportsRewinding[Action] =
     SingleCommit.createRewindableActionIterator(deltaLog, fileStatus, maxInMemoryFileSizeBytes)
 
   /**
-   * The modification time of this commit's log file. Delta internal only.
+   * Like [[getActionsIterator]], but asserts this commit is a log commit.
+   *
+   * @param maxInMemoryFileSizeBytes see [[getActionsIterator]].
+   */
+  private[delta] def getLogCommitActionsIteratorUnsafe(
+      maxInMemoryFileSizeBytes: Long = 0)
+      : ClosableIterator[Action] with SupportsRewinding[Action] = {
+    val underlying =
+      SingleCommit.createRewindableActionIterator(deltaLog, fileStatus, maxInMemoryFileSizeBytes)
+    new ClosableIterator[Action] with SupportsRewinding[Action] {
+      override def hasNext: Boolean = underlying.hasNext
+      override def next(): Action = underlying.next() match {
+        case _: Checkpoint =>
+          throw new IllegalStateException(
+            s"commit $version is a manifest commit and cannot be read as a log commit")
+        case action => action
+      }
+      override def close(): Unit = underlying.close()
+      override def rewind(): Unit = underlying.rewind()
+    }
+  }
+
+  /**
+   * The modification time of this commit's log file.
    */
   private[delta] def fileModificationTimestamp: Long = fileStatus.getModificationTime
 
   /**
-   * The size of this commit's log file, in bytes. Delta internal only.
+   * The size of this commit's log file, in bytes.
    */
-  private[delta] def sizeInBytes: Long = fileStatus.getLen
-
-  /**
-   * The commit log file's path. Should used by delta internal only.
-   */
-  private[delta] def path: Path = fileStatus.getPath
+  private[delta] def commitFileSizeInBytes: Long = fileStatus.getLen
 }
 
 object SingleCommit {
   /**
-   * Wrap a commit's log file into a [[SingleCommit]] handle. The raw [[FileStatus]] stays hidden
-   * inside the handle so the log's physical layout is not exposed to callers.
+   * Wrap a commit's log file into a [[DeltaSingleCommit]] handle. The raw [[FileStatus]] stays
+   * hidden inside the handle so the log's physical layout is not exposed to callers.
    */
   private[delta] def apply(
       deltaLog: DeltaLog,
       version: Long,
-      fileStatus: FileStatus): SingleCommit =
+      fileStatus: FileStatus): DeltaSingleCommit =
     new SingleCommit(deltaLog, version, fileStatus)
 
   /**
@@ -106,5 +132,30 @@ object SingleCommit {
         delegatedIterator = createClosableIterator()
       }
     }
+  }
+}
+
+/**
+ * A commit reader paired with the inclusive version range its actions cover.
+ *
+ * Compacted files omit CommitInfo, so `commit.timestamp` is the compacted file's modification
+ * time, not the timestamp of any individual source commit. The reader is used only for actions;
+ * `commit.version` identifies the end of the range.
+ */
+private[delta] class RangedSingleCommit private (
+  val commit: DeltaSingleCommit,
+  val startVersion: Long,
+  val endVersion: Long)
+
+private[delta] object RangedSingleCommit {
+  def apply(deltaLog: DeltaLog, file: FileStatus): RangedSingleCommit = {
+    val (startVersion, endVersion) = file match {
+      case FileNames.CompactedDeltaFile(_, start, end) => (start, end)
+      case _ =>
+        val version = FileNames.deltaVersion(file)
+        (version, version)
+    }
+    val commit = SingleCommit(deltaLog, endVersion, file)
+    new RangedSingleCommit(commit, startVersion, endVersion)
   }
 }

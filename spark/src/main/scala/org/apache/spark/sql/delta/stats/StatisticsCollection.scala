@@ -630,6 +630,7 @@ object StatisticsCollection extends DeltaCommand {
     val deltaStatsColumnSpec = configuredDeltaStatsColumnSpec(metadata)
     deltaStatsColumnSpec.deltaStatsColumnNamesOpt.map { deltaColumnsNames =>
       val droppedColumnSet = columnsToDrop.toSet
+      val escapeNames = SQLConf.get.getConf(DeltaSQLConf.DELTA_DROP_STATS_COLUMNS_ESCAPE_NAMES)
       val deltaStatsColumnStr = deltaColumnsNames
         .map(_.nameParts)
         .filterNot { attributeNameParts =>
@@ -640,7 +641,13 @@ object StatisticsCollection extends DeltaCommand {
             commonPrefix == droppedColumnParts.size
           }.nonEmpty
         }
-        .map(columnParts => UnresolvedAttribute(columnParts).name)
+        .map { columnParts =>
+          if (escapeNames) {
+            UnresolvedAttribute(columnParts).sql
+          } else {
+            UnresolvedAttribute(columnParts).name
+          }
+        }
         .mkString(",")
       Map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key -> deltaStatsColumnStr)
     }.getOrElse(Map.empty[String, String])
@@ -815,6 +822,26 @@ object StatisticsCollection extends DeltaCommand {
   }
 
   /**
+   * Generates a column name for the internal file path that does not collide
+   * with any existing field name in the schema. Collisions are checked with the session's
+   * resolver, the same rule `withColumn` uses to decide whether it replaces an existing column.
+   */
+  private def getSafeFilePathColName(schema: StructType): String = {
+    val resolver = SQLConf.get.resolver
+    def collides(name: String): Boolean = schema.fieldNames.exists(resolver(_, name))
+    val base = "_delta_internal_file_path"
+    if (collides(base)) {
+      var counter = 0
+      while (collides(s"${base}_$counter")) {
+        counter += 1
+      }
+      s"${base}_$counter"
+    } else {
+      base
+    }
+  }
+
+  /**
    * Compute the AddFile entries with delta statistics entries by aggregating the data skipping
    * columns of each parquet file.
    */
@@ -831,10 +858,11 @@ object StatisticsCollection extends DeltaCommand {
     if (persistentDVsReadable) {
       throw DeltaErrors.statsRecomputeNotSupportedOnDvTables()
     }
-    val fileDataFrame = deltaLog
+    val rawFileDataFrame = deltaLog
       .createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
-      .withColumn("path", col("_metadata.file_path"))
-    val newStats = fileDataFrame.groupBy(col("path")).agg(to_json(txn.statsCollector))
+    val filePathCol = getSafeFilePathColName(rawFileDataFrame.schema)
+    val fileDataFrame = rawFileDataFrame.withColumn(filePathCol, col("_metadata.file_path"))
+    val newStats = fileDataFrame.groupBy(col(filePathCol)).agg(to_json(txn.statsCollector))
     newStats.collect().map { r =>
       val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
       add.copy(dataChange = false, stats = r.getString(1))

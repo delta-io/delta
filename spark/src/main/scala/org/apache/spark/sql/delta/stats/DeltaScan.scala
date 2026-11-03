@@ -93,6 +93,7 @@ case class DeltaScan(
     val rewrittenPartitionLikeDataFilters: Set[Expression],
     val unusedFilters: ExpressionSet,
     val scanDurationMs: Long,
+    val scanDurationNs: Option[Long] = None,
     val dataSkippingType: DeltaDataSkippingType) {
   assert(version == scannedSnapshot.version)
 

@@ -21,8 +21,10 @@ import java.io.File
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedMaintenanceIncompatible
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -33,6 +35,7 @@ import org.apache.hadoop.fs.{FileStatus, FileSystem, Path, RawLocalFileSystem}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.util.ManualClock
 
 // scalastyle:off: removeFile
@@ -56,7 +59,45 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("delete expired logs") {
+  test("direct metadata cleanup is blocked for catalog-managed tables") {
+    withCatalogManagedTable() { tableName =>
+      val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val logPath = new File(log.logPath.toUri)
+      val filesBeforeCleanup = getLogFiles(logPath).map(_.getCanonicalPath).toSet
+
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          log.cleanUpExpiredLogs(log.update())
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "METADATA_CLEANUP"))
+      assert(getLogFiles(logPath).map(_.getCanonicalPath).toSet === filesBeforeCleanup)
+    }
+  }
+
+  test("checkpoint does not clean up catalog-managed table metadata") {
+    withCatalogManagedTable() { tableName =>
+      spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+        "('delta.enableExpiredLogCleanup' = 'true')")
+      spark.sql(s"INSERT INTO $tableName VALUES (1)")
+      val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val snapshot = log.update()
+      val firstCommit = FileNames.unsafeDeltaFile(log.logPath, 0)
+      val fs = firstCommit.getFileSystem(log.newDeltaHadoopConf())
+      assert(fs.exists(firstCommit))
+      fs.setTimes(firstCommit, 0L, -1L)
+
+      val usageRecords = Log4jUsageLogger.track {
+        log.checkpoint(snapshot)
+      }
+
+      assert(log.readLastCheckpointFile().exists(_.version == snapshot.version))
+      assert(DeltaTestUtils.filterUsageRecords(usageRecords, "delta.log.cleanup").isEmpty)
+      assert(fs.exists(firstCommit))
+    }
+  }
+
+  test("delete expired logs", CatalogManagedMaintenanceIncompatible) {
     withTempDir { tempDir =>
       val startTime = getStartTimeForRetentionTest
       val clock = new ManualClock(startTime)
@@ -107,7 +148,9 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("log files being already deleted shouldn't fail log deletion job") {
+  test(
+      "log files being already deleted shouldn't fail log deletion job",
+      CatalogManagedMaintenanceIncompatible) {
     withTempDir { tempDir =>
       val startTime = getStartTimeForRetentionTest
       val clock = new ManualClock(startTime)
@@ -283,7 +326,9 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("the checkpoint and checksum for version 0 should be cleaned") {
+  test(
+      "the checkpoint and checksum for version 0 should be cleaned",
+      CatalogManagedMaintenanceIncompatible) {
     withTempDir { tempDir =>
       val clock = new ManualClock(getStartTimeForRetentionTest)
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
@@ -373,7 +418,9 @@ class DeltaRetentionSuite extends QueryTest
   }
 
   for (v2CheckpointFormat <- V2Checkpoint.Format.ALL_AS_STRINGS)
-  test(s"sidecar file cleanup [v2CheckpointFormat: $v2CheckpointFormat]") {
+  test(
+      s"sidecar file cleanup [v2CheckpointFormat: $v2CheckpointFormat]",
+      CatalogManagedMaintenanceIncompatible) {
     val checkpointPolicy = CheckpointPolicy.V2.name
     withSQLConf((DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> v2CheckpointFormat)) {
       withTempDir { tempDir =>
@@ -484,7 +531,8 @@ class DeltaRetentionSuite extends QueryTest
   for (v2CheckpointFormat <- V2Checkpoint.Format.ALL_AS_STRINGS)
   test(
     s"compat file created with metadata cleanup when checkpoints are deleted" +
-      s" [v2CheckpointFormat: $v2CheckpointFormat]") {
+      s" [v2CheckpointFormat: $v2CheckpointFormat]",
+    CatalogManagedMaintenanceIncompatible) {
     val checkpointPolicy = CheckpointPolicy.V2.name
     withSQLConf((DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> v2CheckpointFormat)) {
       withTempDir { tempDir =>
@@ -556,7 +604,7 @@ class DeltaRetentionSuite extends QueryTest
       }
   }.flatten).foreach { case (chkConfigName, chkConfig) =>
   test(s"cleanup does not delete the checkpoint if it is required by non-expired versions. " +
-    s"Config: $chkConfigName.") {
+    s"Config: $chkConfigName.", CatalogManagedMaintenanceIncompatible) {
     withSQLConf(chkConfig: _*) {
       // Disable the following check as the test relies on time travel beyond
       // deletedFileRetentionDuration
@@ -693,7 +741,9 @@ class DeltaRetentionSuite extends QueryTest
   }
   }
 
-  test(s"cleanup does not delete the JSON logs if the multi-part checkpoint is incomplete.") {
+  test(
+    s"cleanup does not delete the JSON logs if the multi-part checkpoint is incomplete.",
+    CatalogManagedMaintenanceIncompatible) {
     withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
     withTempDir { tempDir =>
       val startTime = getStartTimeForRetentionTest
@@ -776,7 +826,9 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("Metadata cleanup respects requireCheckpointProtectionBeforeVersion") {
+  test(
+      "Metadata cleanup respects requireCheckpointProtectionBeforeVersion",
+      CatalogManagedMaintenanceIncompatible) {
     withSQLConf(
         DeltaSQLConf.ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED.key -> "false",
         DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
@@ -916,7 +968,9 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("Cleanup is allowed if a checkpoint already exists at the boundary") {
+  test(
+      "Cleanup is allowed if a checkpoint already exists at the boundary",
+      CatalogManagedMaintenanceIncompatible) {
     withSQLConf(DeltaSQLConf.ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED.key -> "false") {
       testRequireCheckpointProtectionBeforeVersion(
         createNumCommitsOutsideRetentionPeriod = 8,
@@ -930,7 +984,9 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("Metadata cleanup protocol validation positive tests.") {
+  test(
+      "Metadata cleanup protocol validation positive tests.",
+      CatalogManagedMaintenanceIncompatible) {
     withSQLConf(
         DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
       // In all tests below, we cannot satisfy the version requirement and thus fallback
@@ -996,7 +1052,9 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("Metadata cleanup protocol validation negative tests.") {
+  test(
+      "Metadata cleanup protocol validation negative tests.",
+      CatalogManagedMaintenanceIncompatible) {
     withSQLConf(
         DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
       // In all tests below, we cannot satisfy the version requirement and thus fallback
@@ -1071,7 +1129,9 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("Metadata cleanup protocol validation with incomplete CRCs.") {
+  test(
+      "Metadata cleanup protocol validation with incomplete CRCs.",
+      CatalogManagedMaintenanceIncompatible) {
     withSQLConf(
         DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
       // We fall back to protocol validations which cannot be completed due to missing
@@ -1134,7 +1194,9 @@ class DeltaRetentionWithCatalogOwnedBatch2Suite
    *
    * Note: This test is too slow for batchSize = 100 and wouldn't necessarily work for batchSize = 1
    */
-  test("unbackfilled expired commits are always retained") {
+  test(
+      "unbackfilled expired commits are always retained",
+      CatalogManagedMaintenanceIncompatible) {
     withTempDir { tempDir =>
       val startTime = getStartTimeForRetentionTest
       val clock = new ManualClock(startTime)
@@ -1184,4 +1246,3 @@ class DeltaRetentionWithCatalogOwnedBatch2Suite
     }
   }
 }
-

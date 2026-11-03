@@ -31,13 +31,14 @@ import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.ChangelogSyntaxSupportedShim
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit, unix_timestamp}
+import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit, rand, udf, unix_timestamp}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.test.SharedSparkSession
@@ -50,7 +51,8 @@ abstract class DeltaCDCSuiteBase
   with CheckCDCAnswer
   with DeltaSQLCommandTest
   with CatalogOwnedTestBaseSuite
-  with DeltaSQLTestUtils {
+  with DeltaSQLTestUtils
+  with CDFNondeterministicFilterTests {
 
   import testImplicits._
 
@@ -108,6 +110,15 @@ abstract class DeltaCDCSuiteBase
       end: Boundary,
       schemaMode: Option[DeltaBatchCDFSchemaMode] = Some(BatchCDFSchemaLegacy),
       readerOptions: Map[String, String] = Map.empty): DataFrame
+
+  override def readCDF(
+      spark: SparkSession,
+      tableName: String,
+      startVersion: Long,
+      endVersion: Long): DataFrame = {
+    cdcRead(new TableName(tableName),
+      StartingVersion(startVersion.toString), EndingVersion(endVersion.toString))
+  }
 
   /** Create table utility method */
   def ctas(srcTbl: String, dstTbl: String, disableCDC: Boolean = false): Unit = {
@@ -919,6 +930,93 @@ abstract class DeltaCDCSuiteBase
   }
 }
 
+trait CDFNondeterministicFilterTests extends QueryTest with DeltaSQLTestUtils with CDCTestMixin {
+
+  private val cdfFilterTestNumRows: Int = 1000
+
+  private def withCDFForFilterTest(f: DataFrame => Unit): Unit = {
+    val tableName = "cdf_filter_test"
+    withTable(tableName) {
+      spark.range(cdfFilterTestNumRows / 2).coalesce(1)
+        .write.format("delta").saveAsTable(tableName)
+      spark.range(cdfFilterTestNumRows / 2, cdfFilterTestNumRows).coalesce(1)
+        .write.format("delta").mode("append").saveAsTable(tableName)
+      f(readCDF(spark, tableName, startVersion = 0L, endVersion = 1L))
+    }
+  }
+
+  for ((caseName, keepRow, expectedRowCount) <- Seq[(String, Long => Boolean, Int)](
+      ("all rows", _ => true, cdfFilterTestNumRows),
+      ("no rows", _ => false, 0),
+      ("even ids", id => id % 2 == 0, cdfFilterTestNumRows / 2))) {
+    test(s"CDF evaluates a nondeterministic predicate once - $caseName") {
+      withCDFForFilterTest { cdf =>
+        val calls = spark.sparkContext.longAccumulator("cdfPredicateCalls")
+        val predicate =
+          udf((id: Long) => {
+            calls.add(1L)
+            keepRow(id)
+          }).asNondeterministic()
+
+        // checkAnswer executes additional actions, so collect once before checking the calls.
+        // Leave id out of the output to check it is retained for the residual predicate.
+        val rows = cdf.filter(predicate(col("id"))).select("_change_type").collect().toSeq
+        assert(rows === Seq.fill(expectedRowCount)(Row("insert")))
+        assert(calls.value === cdfFilterTestNumRows.toLong)
+      }
+    }
+  }
+
+  test("CDF preserves legacy predicate evaluation when the fix is disabled") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_CDF_SKIP_NONDETERMINISTIC_FILTER_PUSHDOWN.key -> "false",
+      DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key -> "true") {
+      withCDFForFilterTest { cdf =>
+        val calls = spark.sparkContext.longAccumulator("cdfPredicateCalls")
+        val predicate =
+          udf((_: Long) => {
+            calls.add(1L)
+            true
+          }).asNondeterministic()
+        val rows = cdf.filter(predicate(col("id"))).select("id").collect().toSeq
+
+        assert(rows.sortBy(_.getLong(0)) ===
+          (0L until cdfFilterTestNumRows.toLong).map(id => Row(id)))
+        assert(calls.value === cdfFilterTestNumRows.toLong * 2)
+      }
+    }
+  }
+
+  test("CDF combines deterministic filters with a nondeterministic predicate") {
+    withCDFForFilterTest { cdf =>
+      val calls = spark.sparkContext.longAccumulator("cdfPredicateCalls")
+      val predicate =
+        udf((_: Long) => {
+          calls.add(1L)
+          true
+        }).asNondeterministic()
+      val rows = cdf.filter(
+        col("id") < lit(250L) && col("_commit_version") === lit(0L) && predicate(col("id")))
+        .select("id", "_change_type", "_commit_version").collect().toSeq
+
+      assert(rows.sortBy(_.getLong(0)) === (0L until 250L).map(id => Row(id, "insert", 0L)))
+      assert(calls.value === 250L)
+    }
+  }
+
+  for (useDisjunction <- Seq(false, true)) {
+    test(s"CDF applies a random filter once - disjunction=$useDisjunction") {
+      withCDFForFilterTest { cdf =>
+        val sample = rand(42L) < lit(0.5)
+        val predicate = if (useDisjunction) col("id") < lit(0L) || sample else sample
+        val rows = cdf.filter(predicate).select("id").collect().toSeq
+        assert(rows.size > 400 && rows.size < 600,
+          s"Expected a 50% sample of $cdfFilterTestNumRows rows, got ${rows.size}")
+      }
+    }
+  }
+}
+
 class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
 
   /** Single method to do all kinds of CDC reads */
@@ -1177,3 +1275,134 @@ class DeltaCDCScalaWithCatalogOwnedBatch2Suite extends DeltaCDCScalaSuite {
 class DeltaCDCScalaWithCatalogOwnedBatch100Suite extends DeltaCDCScalaSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
+
+/**
+ * Routes [[DeltaCDCSuiteBase.cdcRead]] through the V2 changelog SQL surface
+ * (`<table> CHANGES FROM ...` -> TableCatalog.loadChangelog -> DeltaV2ChangelogScan /
+ * DeltaV2ChangelogBatch), so the existing DeltaCDCScalaSuite / DeltaCDCSQLSuite test bodies
+ * validate the V2 changelog read path. Sister of [[ChangelogV2CDCUtilMixin]], which does the same
+ * for the computeCDC() entry point used by the generated Merge/Delete/Update CDC suites.
+ *
+ * STRICT mode is scoped to the read only. Path-based reads register the path as a named
+ * (unmanaged) table so resolution goes through the configured V2 spark_catalog (returns a
+ * SparkTable); a bare `delta.`path`` would resolve to a V1 DeltaTableV2 and be rejected by
+ * ChangelogSupport.
+ */
+trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase with ChangelogSyntaxSupportedShim {
+
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .set(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key, "true")
+    // The V2 changelog read path requires row tracking (DELTA_CHANGELOG_REQUIRES_ROW_TRACKING).
+    .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "true")
+
+  // Tests that do not apply to the V2 changelog read path:
+  //  - V1-specific error semantics (they intercept V1 error codes that the V2 path does not raise)
+  //  - rollback flag evaluation counts, which apply only to V1 CDF scans
+  //  - mixed timestamp/version boundaries (the V2 CHANGES grammar only allows VERSION..VERSION or
+  //    TIMESTAMP..TIMESTAMP)
+  //  - timestamp -> version resolution, unsupported on the JVM kernel backend today:
+  //    getActiveCommitAtTimestamp requires a JvmSnapshot and the drop-in SnapshotImpl is not
+  //    unwrapped. TODO: re-enable the timestamp families once the kernel history SPI supports
+  //    the drop-in snapshot.
+  //  - open-ended reads: V1 resolves the missing end bound lazily at execution time, the V2 path
+  //    resolves it eagerly at analysis time, so versions written after the DataFrame is built are
+  //    not observed.
+  //  - protocol assertions: the V2 path requires row tracking (see sparkConf above), which adds the
+  //    rowTracking and domainMetadata table features the V1 test does not expect.
+  protected def excludedV2Exact: Set[String] = Set(
+    "An error should be thrown when CDC is not enabled",
+    "CDF preserves legacy predicate evaluation when the fix is disabled",
+    "aggregating non-numeric cdc data columns",
+    "changes - end timestamp exceeding latest commit timestamp",
+    "changes - only start is a timestamp",
+    "changes - only start is a timestamp - inclusive behavior",
+    "changes - start and end are timestamps",
+    "changes - start timestamp exceeding latest commit timestamp",
+    "end timestamp < start timestamp",
+    "ending version not specified resolves to latest at execution time",
+    "non-monotonic timestamps",
+    "protocol version",
+    "resolve expression for timestamp function",
+    "table schema changed after dataframe with ending not specified",
+    "table schema changed after dataframe with ending specified"
+  )
+
+  // Whole test families excluded by name prefix (every member is V1-specific or timestamp-based).
+  protected def excludedV2Prefixes: Seq[String] = Seq(
+    "range boundary cannot be null",
+    "CDF timestamp format",
+    "version from timestamp",
+    "CDC read respects timezone and DST",
+    "CDC read's commit timestamps are correct"
+  )
+
+  // Filter by name in a test() override and ignore() the matches; everything else runs. The V2
+  // changelog read path uses the `SELECT ... CHANGES` clause, which only the Spark 4.2 parser
+  // supports; supportsChangelogSyntax is a compile-time shim (true on spark-4.2, false on
+  // spark-4.0-4.1) so tests cancel on older versions.
+  override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
+      implicit pos: org.scalactic.source.Position): Unit = {
+    if (excludedV2Exact.contains(testName) || excludedV2Prefixes.exists(testName.startsWith)) {
+      ignore(testName + " (excluded on the V2 changelog read path)", testTags: _*)(testFun)
+    } else {
+      super.test(testName, testTags: _*) {
+        assume(supportsChangelogSyntax, "The SELECT ... CHANGES clause requires Spark 4.2 or newer")
+        testFun
+      }
+    }
+  }
+
+  override def cdcRead(
+      tblId: TblId,
+      start: Boundary,
+      end: Boundary,
+      schemaMode: Option[DeltaBatchCDFSchemaMode] = Some(BatchCDFSchemaLegacy),
+      readerOptions: Map[String, String] = Map.empty): DataFrame = {
+
+    // Set the batch CDF schema mode using SQL conf if we specified it, mirroring the V1 overrides.
+    if (schemaMode.isDefined) {
+      var result: DataFrame = null
+      withSQLConf(DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key ->
+        schemaMode.get.name) {
+        result = cdcRead(tblId, start, end, None, readerOptions)
+      }
+      return result
+    }
+
+    val startClause: String = start match {
+      case sv: StartingVersion => s"FROM VERSION ${sv.value}"
+      case st: StartingTimestamp => s"FROM TIMESTAMP '${st.value}'"
+      case Unbounded =>
+        // changesClause requires a starting boundary; unbounded start is streaming-only.
+        throw new UnsupportedOperationException(
+          "V2 changelog batch read requires a starting boundary")
+    }
+    val endClause: String = end match {
+      case ev: EndingVersion => s"TO VERSION ${ev.value}"
+      case et: EndingTimestamp => s"TO TIMESTAMP '${et.value}'"
+      case Unbounded => ""
+    }
+
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+      tblId match {
+        case _: TableName =>
+          spark.sql(s"SELECT * FROM ${tblId.id} CHANGES $startClause $endClause")
+            .drop("_metadata")
+        case _: TablePath =>
+          val tempName = s"v2cdc_temp_${System.nanoTime()}"
+          spark.sql(s"CREATE TABLE $tempName USING delta LOCATION '${tblId.id}'")
+          try {
+            spark.sql(s"SELECT * FROM $tempName CHANGES $startClause $endClause")
+              .drop("_metadata")
+          } finally {
+            spark.sql(s"DROP TABLE IF EXISTS $tempName")
+          }
+        case _ =>
+          throw new IllegalArgumentException("No table name or path provided")
+      }
+    }
+  }
+}
+
+class DeltaCDCScalaChangelogV2Suite extends DeltaCDCScalaSuite with ChangelogV2CdcReadMixin

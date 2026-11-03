@@ -637,7 +637,9 @@ object CheckTypeInV2AllowList extends CheckTypeInAllowList {
 object CheckPartitionDataTypeInV2AllowList extends IcebergCompatCheck {
   private val allowedTypes = Set[Class[_]] (
     ByteType.getClass, ShortType.getClass, IntegerType.getClass, LongType.getClass,
-    FloatType.getClass, DoubleType.getClass, DecimalType.getClass,
+    // DecimalType is parameterized by precision and scale, so schema fields contain
+    // DecimalType instances rather than the companion object.
+    FloatType.getClass, DoubleType.getClass, classOf[DecimalType],
     StringType.getClass, BinaryType.getClass,
     BooleanType.getClass,
     TimestampType.getClass, TimestampNTZType.getClass, DateType.getClass

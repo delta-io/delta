@@ -219,6 +219,7 @@ class UpdateMetricsHookSuite extends QueryTest
         operationParameters = Map.empty, job = None, notebook = None,
         clusterId = None, readVersion = None, isolationLevel = None,
         isBlindAppend = Some(true),
+        dataChange = None,
         operationMetrics = Some(Map("numOutputRows" -> "50")),
         userMetadata = None, tags = None, engineInfo = None,
         txnId = None, lastManifestCommit = None)

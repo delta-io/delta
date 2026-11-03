@@ -18,20 +18,24 @@ package org.apache.spark.sql.delta
 
 import java.io.FileNotFoundException
 import java.util.UUID
+import java.util.concurrent.{Future, TimeUnit}
 
 import scala.collection.mutable
+import scala.concurrent.duration.Duration
 import scala.math.Ordering.Implicits._
 import scala.util.Try
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.AMTCheckpoint.AMTCheckpointProviderUpdateMetrics
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CheckpointMetadata, CommitInfo, LastManifestCommit, Metadata, SidecarFile, SingleAction}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCheckpointProviderBase, AMTTriggerMode, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager, DataManifestEntry, UninitializedAMTCheckpointProvider}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIterator, FileNames}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperations, DeltaLogGroupingIterator, FileNames}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -40,7 +44,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
-import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.MDC
@@ -60,7 +63,7 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.{LongAccumulator, SerializableConfiguration, Utils}
+import org.apache.spark.util.{LongAccumulator, SerializableConfiguration, ThreadUtils, Utils}
 
 /**
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
@@ -75,18 +78,25 @@ case class CheckpointInstance(
     version: Long,
     format: CheckpointInstance.Format,
     fileName: Option[String] = None,
-    numParts: Option[Int] = None) extends Ordered[CheckpointInstance] {
+    numParts: Option[Int] = None,
+    manifestCommitVersion: Option[Long] = None) extends Ordered[CheckpointInstance] {
 
-  // Assert that numParts are present when checkpoint format is Format.WITH_PARTS.
+  import CheckpointInstance.Format
+
+  // Assert that numParts are present when checkpoint format is Format.WITH_PARTS or Format.AMT.
   // For other formats, numParts must be None.
-  require((format == CheckpointInstance.Format.WITH_PARTS) == numParts.isDefined,
-    s"numParts ($numParts) must be present for checkpoint format" +
-      s" ${CheckpointInstance.Format.WITH_PARTS.name}")
+  require(Set(Format.WITH_PARTS, Format.AMT).contains(format) == numParts.isDefined,
+    s"numParts ($numParts) must be present for checkpoint formats " +
+      s"${Format.WITH_PARTS.name} and ${Format.AMT.name}")
   // Assert that filePath is present only when checkpoint format is Format.V2.
   // For other formats, filePath must be None.
-  require((format == CheckpointInstance.Format.V2) == fileName.isDefined,
-    s"fileName ($fileName) must be present for checkpoint format" +
-      s" ${CheckpointInstance.Format.V2.name}")
+  require((format == Format.V2) == fileName.isDefined,
+    s"fileName ($fileName) must be present for checkpoint format ${Format.V2.name}")
+  // Assert that lastManifestCommit is present only when checkpoint format is Format.AMT.
+  // For other formats, lastManifestCommit must be None.
+  require((format == CheckpointInstance.Format.AMT) == manifestCommitVersion.isDefined,
+    s"manifestCommitVersion ($manifestCommitVersion) must only be present for checkpoint format" +
+      s"${Format.AMT.name}")
 
   /**
    * Returns a [[CheckpointProvider]] which can tell the files corresponding to this
@@ -98,11 +108,24 @@ case class CheckpointInstance(
       deltaLog: DeltaLog,
       filesForCheckpointConstruction: Seq[FileStatus],
       lastCheckpointInfoHint: Option[LastCheckpointInfo] = None)
-      : UninitializedCheckpointProvider = {
+    : UninitializedCheckpointProvider = {
     val logPath = deltaLog.logPath
     val lastCheckpointInfo = lastCheckpointInfoHint.filter(cm => CheckpointInstance(cm) == this)
     val cpFiles = filterFiles(deltaLog, filesForCheckpointConstruction)
     format match {
+      case CheckpointInstance.Format.AMT =>
+        val lastAMTCheckpointInfo = lastCheckpointInfo.flatMap(_.amtCheckpoint).getOrElse {
+          throw new IllegalStateException(
+            s"AMT checkpoint instance at version $version requires a LastCheckpointInfo with " +
+              s"an amtCheckpoint, but none was provided.")
+        }
+        val checkpointAction = lastAMTCheckpointInfo.checkpoint.getOrElse {
+          // When we omit the checkpoint action to prevent _last_checkpoint file from being too
+          // large, we need a fallback mechanism. For now, we expect it to be always present.
+          throw new IllegalStateException("AMT checkpoint action is expected to be always present.")
+        }
+        new UninitializedAMTCheckpointProvider(
+          deltaLog, checkpointAction, lastAMTCheckpointInfo.manifestCommitVersion)
       // Treat single file checkpoints also as V2 Checkpoints because we don't know if it is
       // actually a V2 checkpoint until we read it.
       case CheckpointInstance.Format.V2 | CheckpointInstance.Format.SINGLE =>
@@ -124,6 +147,9 @@ case class CheckpointInstance(
         }
       case CheckpointInstance.Format.WITH_PARTS =>
         PreloadedCheckpointProvider(cpFiles, lastCheckpointInfo)
+      case CheckpointInstance.Format.AMT =>
+        throw DeltaErrors.assertionFailedError(
+          s"checkpoint format ${CheckpointInstance.Format.AMT.name} is not readable yet")
       case CheckpointInstance.Format.SENTINEL =>
         throw DeltaErrors.assertionFailedError(
           s"invalid checkpoint format ${CheckpointInstance.Format.SENTINEL}")
@@ -134,6 +160,9 @@ case class CheckpointInstance(
                   filesForCheckpointConstruction: Seq[FileStatus]) : Seq[FileStatus] = {
     val logPath = deltaLog.logPath
     format match {
+      // An AMT checkpoint has no standalone checkpoint file to select from the listing; the
+      // manifest tree is reached through the inline Checkpoint action instead.
+      case CheckpointInstance.Format.AMT => Seq.empty
       // Treat Single File checkpoints also as V2 Checkpoints because we don't know if it is
       // actually a V2 checkpoint until we read it.
       case format if format.usesSidecars =>
@@ -197,6 +226,7 @@ object CheckpointInstance {
       case SINGLE.name => Some(SINGLE)
       case WITH_PARTS.name => Some(WITH_PARTS)
       case V2.name => Some(V2)
+      case AMT.name => Some(AMT)
       case _ => None
     }
 
@@ -206,6 +236,8 @@ object CheckpointInstance {
     object WITH_PARTS extends Format(1, "WITH_PARTS")
     /** V2 Checkpoint format */
     object V2 extends Format(2, "V2") with FormatUsesSidecars
+    /** AMT checkpoint format. */
+    object AMT extends Format(3, "AMT")
     /** Sentinel, for internal use only */
     object SENTINEL extends Format(Int.MaxValue, "SENTINEL")
   }
@@ -240,7 +272,17 @@ object CheckpointInstance {
       version = metadata.version,
       format = metadata.getFormatEnum(),
       fileName = metadata.v2Checkpoint.map(_.path),
-      numParts = metadata.parts)
+      numParts = metadata.parts,
+      manifestCommitVersion = metadata.amtCheckpoint.map(_.manifestCommitVersion))
+  }
+
+  def apply(amtCheckpointProvider: AMTCheckpointProviderBase): CheckpointInstance = {
+    CheckpointInstance(
+      version = amtCheckpointProvider.version,
+      format = Format.AMT,
+      fileName = None,
+      numParts = Some(Math.toIntExact(amtCheckpointProvider.numLeaves)),
+      manifestCommitVersion = Some(amtCheckpointProvider.manifestCommitVersion))
   }
 
   val MaxValue: CheckpointInstance = sentinelValue(versionOpt = None)
@@ -310,13 +352,17 @@ trait Checkpoints extends DeltaLogging {
    */
   def checkpoint(
       snapshotToCheckpoint: Snapshot,
-      catalogTableOpt: Option[CatalogTable] = None): Unit =
+      catalogTableOpt: Option[CatalogTable] = None,
+      amtTriggerModeOpt: Option[AMTTriggerMode] = None): Unit =
     recordDeltaOperation(this, "delta.checkpoint") {
     withCheckpointExceptionHandling(snapshotToCheckpoint.deltaLog, "delta.checkpoint.sync.error") {
       if (snapshotToCheckpoint.version < 0) {
         throw DeltaErrors.checkpointNonExistTable(dataPath)
       }
-      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint, catalogTableOpt)
+      checkpointAndCleanUpDeltaLog(
+        snapshotToCheckpoint,
+        catalogTableOpt = catalogTableOpt,
+        amtTriggerModeOpt = amtTriggerModeOpt)
     }
   }
 
@@ -337,11 +383,392 @@ trait Checkpoints extends DeltaLogging {
 
   def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot,
-      catalogTableOpt: Option[CatalogTable]): Unit = {
+      catalogTableOpt: Option[CatalogTable],
+      amtTriggerModeOpt: Option[AMTTriggerMode] = None): Unit = {
+    if (AMTUtils.amtEnabled(snapshotToCheckpoint)) {
+      // Note: This also takes care of writing the last checkpoint file via optimistic transaction
+      AMTWriterManager.emitAMTCheckpoint(snapshotToCheckpoint, catalogTableOpt, amtTriggerModeOpt)
+      return
+    }
     val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, catalogTableOpt)
     writeLastCheckpointFile(
       snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
     doLogCleanup(snapshotToCheckpoint, catalogTableOpt)
+  }
+
+  /** Builds the LastCheckpointInfo for AMT and writes it to `_last_checkpoint` file. */
+  def writeLastCheckpointFileForAMT(
+      manifestCommitVersion: Long,
+      writeResult: AMTWriteResult): Unit = {
+    val AMTWriteResult(contentRootVersion, checkpoint, leaves, _, _) = writeResult
+    val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
+      manifestCommitVersion, contentRootVersion, checkpoint, leaves)
+    writeLastCheckpointFile(this, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
+  }
+
+  /**
+   * Resolves the AMT checkpoint instances from the last checkpoint info and old checkpoint
+   * provider.
+   */
+  protected def resolveAMTCheckpointInstances(
+      lastCheckpointInfo: Option[LastCheckpointInfo],
+      oldCheckpointProviderOpt: Option[UninitializedCheckpointProvider])
+    : Seq[CheckpointInstance] = {
+    val instanceFromLastCheckpointInfo = lastCheckpointInfo
+      .filter(_.amtCheckpoint.isDefined)
+      .map(CheckpointInstance.apply)
+    val instanceFromOldCheckpointProvider = oldCheckpointProviderOpt.collect {
+      case amt: AMTCheckpointProviderBase => CheckpointInstance.apply(amt)
+    }
+    // If the hint and the old provider describe the same AMT checkpoint, they'll both be discarded
+    // in `getLatestCompleteCheckpointFromList`. Dedup so a single instance survives. Prioritize the
+    // old checkpoint provider instance for better semantics, as we will reuse the old checkpoint
+    // provider in `getLogSegmentForVersion` if the version matches.
+    instanceFromLastCheckpointInfo
+      .filterNot(info => instanceFromOldCheckpointProvider.exists(_.version == info.version))
+      .toSeq ++ instanceFromOldCheckpointProvider
+  }
+
+  /** Whether reading the last commit's CommitInfo is needed. */
+  protected def shouldReadLastCommitInfoAsync(
+      checksumOpt: Option[VersionChecksum],
+      shouldReconcileAMTCheckpointProvider: Boolean): Boolean = {
+    // If the checksum is available, we don't need to fall back to CommitInfo.
+    if (checksumOpt.isDefined) {
+      return false
+    }
+    shouldReconcileAMTCheckpointProvider &&
+      spark.conf.get(DeltaSQLConf.AMT_SNAPSHOT_DISCOVERY_ASYNC_COMMIT_INFO_READ_ENABLED)
+  }
+
+  /** Starts an async read of the last commit's CommitInfo if needed. */
+  protected def maybeReadLastCommitInfoAsync(
+      logSegment: LogSegment,
+      checksumOpt: Option[VersionChecksum] = None,
+      shouldReconcileAMTCheckpointProvider: Boolean): Option[Future[Option[CommitInfo]]] = {
+    val shouldKickOffAsyncCommitInfoRead = shouldReadLastCommitInfoAsync(
+      checksumOpt,
+      shouldReconcileAMTCheckpointProvider)
+    Option.when(shouldKickOffAsyncCommitInfoRead) {
+      SnapshotManagement.checkpointThreadPool.submit(spark) {
+        val (lastCommitInfoOpt, durationMs) = Utils.timeTakenMs {
+          readLastCommitInfo(
+            deltaCommitFileProvider = DeltaCommitFileProvider(logSegment.logPath, logSegment),
+            version = logSegment.version)
+        }
+        recordDeltaEvent(
+          this,
+          opType = AMTUsageLogs.SNAPSHOT_DISCOVERY_READ_LAST_COMMIT_INFO_ASYNC,
+          data = Map(
+            "durationMs" -> durationMs,
+            "version" -> logSegment.version)
+        )
+        lastCommitInfoOpt
+      }
+    }
+  }
+
+  /**
+   * Reconciles the AMT checkpoint provider (if any) of the log segment against the last manifest
+   * commit reference, updating/trimming the segment as needed and throwing on inconsistency.
+   *
+   * @param initSegment initial log segment; may contain some initial checkpoint provider.
+   * @param lastChecksumOpt optional checksum at the log segment's version.
+   * @param lastCommitInfoFuture future of the CommitInfo from the last commit in the log segment.
+   *
+   * @return updated log segment with reconciled AMT checkpoint provider and trimmed deltas.
+   */
+  protected def reconcileAMTCheckpointProvider(
+      initSegment: LogSegment,
+      lastChecksumOpt: Option[VersionChecksum],
+      lastCommitInfoFutureOpt: Option[Future[Option[CommitInfo]]]): LogSegment = {
+    val lastManifestCommitOpt = (lastChecksumOpt, lastCommitInfoFutureOpt) match {
+      case (Some(checksum), _) =>
+        lastCommitInfoFutureOpt.foreach { lastCommitInfoFuture =>
+          if (DeltaUtils.isTesting) {
+            // In testing, we always complete the async read to avoid flaky file operation counts.
+            ThreadUtils.awaitResult(lastCommitInfoFuture, Duration.Inf)
+          } else {
+            // In prod, the async CommitInfo read is no longer needed and we can cancel it.
+            // We trust the CRC and the CommitInfo have the same lastManifestCommit.
+            lastCommitInfoFuture.cancel(false)
+          }
+        }
+        checksum.lastManifestCommit
+
+      case (None, Some(lastCommitInfoFuture)) =>
+        // No CRC is available, so fall back to the reference from the last commit's CommitInfo.
+        // Block on the read that was started in parallel with the CRC read.
+        ThreadUtils.awaitResult(lastCommitInfoFuture, Duration.Inf).flatMap(_.lastManifestCommit)
+
+      case (None, None) =>
+        // Without either a CRC or a CommitInfo, we cannot differentiate between:
+        //  1. There is no lastManifestCommit at all;
+        //  2. There is a lastManifestCommit, but we chose not to read it (flag disabled).
+        // We return None in both cases, but note that case-2 could lead to an existing AMT
+        // checkpoint provider not discovered, and cause missing file actions.
+        None
+    }
+
+    val eventData: Map[String, Any] = Map(
+      "initialLogSegmentVersion" -> initSegment.version,
+      "initialCheckpointVersion" -> initSegment.checkpointProvider.version,
+      "initialCheckpointProviderType" -> initSegment.checkpointProvider.getClass.getSimpleName,
+      "hasLastManifestCommit" -> lastManifestCommitOpt.isDefined,
+      "lastManifestCommitVersion" -> lastManifestCommitOpt.map(_.version),
+      "lastManifestCommitContentRootVersion" -> lastManifestCommitOpt.map(_.contentRootVersion))
+
+    (initSegment.checkpointProvider, lastManifestCommitOpt) match {
+      case (amtCheckpointProvider: AMTCheckpointProviderBase, lastManifestCommitOpt) if
+          amtCheckpointProvider.manifestCommitVersion > initSegment.version =>
+        // Exemption: the initial AMT checkpoint provider is introduced by a later manifest commit,
+        // undiscoverable at the target version.
+        //
+        // This could happen during `deltaLog.createSnapshotAtInit()` when we haven't initialized
+        // the table's commit-coordinator before we come up with an initial snapshot. In this case,
+        // if a manifest commit at version M describing content root version R is unbackfilled, it
+        // won't show up in the initial listing, so the initial log segment version will be M - 1
+        // (we explicitly backfill all previous files before writing any manifest commit). But if
+        // _last_checkpoint has already been updated with this AMT at version R, the initial log
+        // segment creation will still adopt this hint as the listing floor. We will end up with an
+        // initial AMT describing version R, whose publishing manifest commit is not reflected in
+        // the initial snapshot’s lastManifestCommit.
+        //
+        // AMT guarantees that content root versions are non-decreasing across manifest commits.
+        // Since manifest commit M describes version R, no earlier manifest commit can describe a
+        // content root greater than R. Inline manifest commits describe their own versions, so none
+        // of them could exist in (R, X], where X is the snapshot version and R <= X < M. Therefore,
+        // keeping the initial AMT will not miss any file actions.
+        assert(amtCheckpointProvider.version <= initSegment.version)
+        lastManifestCommitOpt.foreach { lastManifestCommit =>
+          // This AMT checkpoint provider is introduced by a later manifest commit, so it must be
+          // no less than the content root version described by the current lastManifestCommit.
+          assert(amtCheckpointProvider.version >= lastManifestCommit.contentRootVersion)
+        }
+        initSegment
+
+      case (amtCheckpointProvider: AMTCheckpointProviderBase, Some(lastManifestCommit)) =>
+        if (amtCheckpointProvider.version == lastManifestCommit.contentRootVersion) {
+          // Happy-path: the versions match. Safe to use the initial AMT checkpoint provider.
+          initSegment
+        } else if (amtCheckpointProvider.version < lastManifestCommit.contentRootVersion) {
+          // The initial AMT checkpoint provider is stale, which could happen during:
+          //  - `deltaLog.createSnapshotAtInit()` when _last_checkpoint is stale;
+          //  - `deltaLog.update()` when a manifest commit has landed after last cached snapshot.
+          //
+          // We must NOT use the stale AMT checkpoint provider, because:
+          //  - A newer content root version is discoverable at the target version, meaning that at
+          //    least one newer manifest commit has landed.
+          //  - If that newer manifest commit is an inline one, having it in the trailing deltas
+          //    would lead to missing file actions.
+          readManifestCommitAndUpdateAMTCheckpointProvider(initSegment, lastManifestCommit)
+        } else {
+          // amtCheckpointProvider.version > lastManifestCommit.contentRootVersion
+          // This can only happen in the exemption case above.
+          AMTUtils.failWithLogging(
+            opTypeSuffix = AMTUsageLogs.CHECKPOINT_AHEAD_OF_LAST_MANIFEST_COMMIT_CONTENT_ROOT,
+            message = s"AMT checkpoint mismatch for table $logPath: " +
+              s"the AMT checkpoint provider is at version ${amtCheckpointProvider.version}, " +
+              s"but the lastManifestCommit describes a smaller content root version " +
+              s"${lastManifestCommit.contentRootVersion}.",
+            deltaLog = this,
+            data = eventData ++ Map(
+              "checkpointManifestCommitVersion" -> amtCheckpointProvider.manifestCommitVersion)
+          )
+        }
+
+      case (amtCheckpointProvider: AMTCheckpointProviderBase, None) =>
+        AMTUtils.failWithLogging(
+          opTypeSuffix = AMTUsageLogs.MISSING_LAST_MANIFEST_COMMIT,
+          message = s"An AMT checkpoint provider at version ${amtCheckpointProvider.version} was " +
+            s"discovered for table $logPath, but no lastManifestCommit is available from either " +
+            s"the CRC or the latest commit's CommitInfo to verify it.",
+          deltaLog = this,
+          data = eventData ++ Map(
+            "checkpointManifestCommitVersion" -> amtCheckpointProvider.manifestCommitVersion)
+        )
+
+      case (otherCheckpointProvider, Some(lastManifestCommit)) =>
+        // Treat the lastManifestCommit as the source of truth for the AMT checkpoint provider,
+        // even when the initial log segment has a non-AMT or empty checkpoint provider.
+        if (otherCheckpointProvider.version <= lastManifestCommit.contentRootVersion) {
+          // We have all the deltas needed after the accurate content root version, so we update.
+          readManifestCommitAndUpdateAMTCheckpointProvider(initSegment, lastManifestCommit)
+        } else {
+          // The initial log segment somehow has a non-AMT provider, while the lastManifestCommit
+          // claims that there is some AMT content root available describing an earlier version.
+          // This might happen across upgrade/downgrade code paths. Throw until we support them.
+          throw new IllegalStateException(
+            s"The LastManifestCommit of version ${lastManifestCommit.version} carries a " +
+              s"content root version ${lastManifestCommit.contentRootVersion} that is before " +
+              s"the initial non-AMT checkpoint version ${otherCheckpointProvider.version}. " +
+              "Refusing to trust the checkpoint.")
+        }
+
+      // A non-AMT / empty provider with no lastManifestCommit: nothing to reconcile.
+      case _ => initSegment
+    }
+  }
+
+  /** Reads the [[CommitInfo]] from the commit file of the given version. */
+  protected def readLastCommitInfo(
+      deltaCommitFileProvider: DeltaCommitFileProvider,
+      version: Long): Option[CommitInfo] = {
+    val commitFile = deltaCommitFileProvider.deltaFile(version)
+    DeltaHistoryManager.getCommitInfoOpt(store, commitFile, newDeltaHadoopConf())
+  }
+
+  /**
+   * Computes the lastCheckpointInfo and lastCheckpointProvider hints for AMT, if any.
+   *
+   * @return (Some(lastCheckpointInfo), Some(amtCheckpointProvider)) if there is some manifest
+   *         commit before or at the target version; (None, None) otherwise.
+   */
+  protected def computeLastCheckpointHintsForAMT(
+      version: Long,
+      upperBoundSnapshot: Snapshot): (Option[LastCheckpointInfo], Option[CheckpointProvider]) = {
+    val deltaCommitFileProvider = DeltaCommitFileProvider(upperBoundSnapshot)
+    readLastCommitInfo(deltaCommitFileProvider, version)
+      .flatMap(_.lastManifestCommit)
+      .map { lastManifestCommit =>
+        val LastManifestCommit(manifestCommitVersion, contentRootVersion) = lastManifestCommit
+        val checkpoint = readCheckpointActionFromCommit(
+          deltaCommitFileProvider, lastManifestCommit)
+        val amtCheckpointProvider = AMTCheckpointProvider.fromCheckpoint(
+          this, checkpoint, manifestCommitVersion)
+        val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
+          manifestCommitVersion, contentRootVersion, checkpoint, amtCheckpointProvider.leaves)
+        Some(lastCheckpointInfo) -> Some(amtCheckpointProvider)
+      }
+      .getOrElse {
+        None -> None
+      }
+  }
+
+  /**
+   * Reads the Checkpoint action from the manifest commit and builds the AMT checkpoint provider.
+   * Returns the updated log segment with the new AMT checkpoint provider and trimmed deltas.
+   *
+   * One synchronous I/O reads the manifest commit. Creating the uninitialized provider starts the
+   * content-root read asynchronously.
+   */
+  private def readManifestCommitAndUpdateAMTCheckpointProvider(
+      logSegment: LogSegment,
+      lastManifestCommit: LastManifestCommit): LogSegment = {
+    recordDeltaOperation(this, "delta.v4amt.readManifestCommitAndUpdateAMTCheckpointProvider") {
+      val LastManifestCommit(manifestCommitVersion, contentRootVersion) = lastManifestCommit
+      // The initial log segment must have all the deltas after the content root version.
+      require(logSegment.checkpointProvider.version <= contentRootVersion)
+      val startTimeNs = System.nanoTime()
+      val (checkpoint, manifestCommitReadDurationMs) = Utils.timeTakenMs {
+        val commitFileProvider = DeltaCommitFileProvider(logPath, logSegment)
+        readCheckpointActionFromCommit(commitFileProvider, lastManifestCommit)
+      }
+      val newCheckpointProvider =
+        new UninitializedAMTCheckpointProvider(this, checkpoint, manifestCommitVersion)
+      val trimmedSegment = trimLogSegmentToAMTCheckpoint(logSegment, newCheckpointProvider)
+      val updateMetrics = AMTCheckpointProviderUpdateMetrics(
+        totalDurationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
+        manifestCommitReadDurationMs = manifestCommitReadDurationMs,
+        initialCheckpointProviderVersion = logSegment.checkpointProvider.version,
+        initialCheckpointProviderType = logSegment.checkpointProvider.getClass.getSimpleName,
+        newCheckpointProviderVersion = newCheckpointProvider.version,
+        manifestCommitVersion = manifestCommitVersion,
+        contentRootVersion = contentRootVersion,
+        contentRootSizeInBytes = checkpoint.contentRoot.sizeInBytes,
+        // Do not wait for the asynchronous root read just to emit this event. ContentRoot.tags
+        // normally provides numLeaves; -1 means that information is absent from the tags.
+        numLeaves = checkpoint.contentRoot.numLeaves.getOrElse(-1L))
+      recordDeltaEvent(
+        this,
+        opType = AMTUsageLogs.SNAPSHOT_DISCOVERY_UPDATE_CHECKPOINT_PROVIDER,
+        data = updateMetrics.toEventData)
+      trimmedSegment
+    }
+  }
+
+  /**
+   * Trims the log segment to install the new checkpoint provider. Pads the gap with non-compacted
+   * deltas if the new checkpoint provider sits in the middle of a compacted delta.
+   */
+  private[delta] def trimLogSegmentToAMTCheckpoint(
+      logSegment: LogSegment,
+      newCheckpointProvider: AMTCheckpointProviderBase): LogSegment = {
+    require(newCheckpointProvider.version >= logSegment.checkpointProvider.version)
+    if (newCheckpointProvider.version == logSegment.checkpointProvider.version) {
+      // An inline AMT and an immediate rewrite can describe the same version with different trees.
+      // Use the new checkpoint provider with the latest tree. Other fields don't need trimming.
+      return logSegment.copy(checkpointProvider = newCheckpointProvider)
+    }
+
+    val eventData: Map[String, Any] = Map(
+      "initialLogSegmentVersion" -> logSegment.version,
+      "initialCheckpointVersion" -> logSegment.checkpointProvider.version,
+      "newCheckpointVersion" -> newCheckpointProvider.version,
+      "newCheckpointManifestCommitVersion" -> newCheckpointProvider.manifestCommitVersion)
+    val nonCompactedDeltas = logSegment.nonCompactedDeltasOpt.getOrElse {
+      AMTUtils.failWithLogging(
+        opTypeSuffix = AMTUsageLogs.TRIMMING_MISSING_NON_COMPACTED_DELTAS,
+        message = s"nonCompactedDeltas are absent in an AMT log segment: $logSegment",
+        deltaLog = this,
+        data = eventData)
+    }
+    val deltasAndCompactedDeltas = (logSegment.deltas ++ nonCompactedDeltas)
+      .distinct.sortBy(f => f.getPath.getName)
+    val deltasAfterCheckpoint = nonCompactedDeltas
+      .filter(deltaVersion(_) > newCheckpointProvider.version).toArray
+    val trimmedDeltasAndCompactedDeltas = useCompactedDeltasForLogSegment(
+      deltasAndCompactedDeltas = deltasAndCompactedDeltas,
+      deltasAfterCheckpoint = deltasAfterCheckpoint,
+      latestCommitVersion = logSegment.version,
+      checkpointVersionToUse = newCheckpointProvider.version)
+    val deltaAtCheckpointVersionOpt = nonCompactedDeltas
+      .find(deltaVersion(_) == newCheckpointProvider.version)
+    if (deltaAtCheckpointVersionOpt.isEmpty) {
+      throw new IllegalStateException(
+        s"The trimmed AMT log segment has no delta at the new checkpoint version " +
+          s"${newCheckpointProvider.version}. Old log segment: ${logSegment.toString}")
+    }
+    logSegment.copy(
+      deltas = trimmedDeltasAndCompactedDeltas,
+      nonCompactedDeltasOpt = Some(deltasAfterCheckpoint),
+      deltaAtCheckpointVersionOpt = deltaAtCheckpointVersionOpt,
+      checkpointProvider = newCheckpointProvider)
+  }
+
+  /** Reads the [[actions.Checkpoint]] action from the manifest commit. */
+  private def readCheckpointActionFromCommit(
+      deltaCommitFileProvider: DeltaCommitFileProvider,
+      lastManifestCommit: LastManifestCommit): Checkpoint = {
+    val LastManifestCommit(manifestCommitVersion, contentRootVersion) = lastManifestCommit
+    val commitFile = deltaCommitFileProvider.deltaFile(manifestCommitVersion)
+    val actions = store.readAsIterator(commitFile, newDeltaHadoopConf())
+    val checkpoint = try {
+      actions
+        .map(Action.fromJson)
+        .collectFirst { case cp: Checkpoint => cp }
+        .getOrElse {
+          AMTUtils.failWithLogging(
+            opTypeSuffix = AMTUsageLogs.MISSING_CHECKPOINT_ACTION,
+            message = "The lastManifestCommit names manifest commit version " +
+              s"$manifestCommitVersion as the source of content root version " +
+              s"$contentRootVersion, but that commit carries no Checkpoint action.",
+            deltaLog = this,
+            data = Map(
+              "maxVersionInclusive" -> deltaCommitFileProvider.maxVersionInclusive,
+              "commitFilePath" -> commitFile.toString,
+              "manifestCommitVersion" -> manifestCommitVersion,
+              "contentRootVersion" -> contentRootVersion)
+          )
+        }
+    } finally {
+      actions.close()
+    }
+    // It reads an inline (non-standalone) Checkpoint from a manifest commit,
+    // so both Checkpoint.version and ContentRoot.version must match the CRC pointer.
+    assert(checkpoint.version == contentRootVersion)
+    assert(checkpoint.contentRoot.version == contentRootVersion)
+    checkpoint
   }
 
   protected[delta] def writeLastCheckpointFile(
@@ -360,10 +787,24 @@ trait Checkpoints extends DeltaLogging {
     }
   }
 
-  protected def writeCheckpointFiles(
+  protected[delta] def writeCheckpointFiles(
       snapshotToCheckpoint: Snapshot,
       catalogTableOpt: Option[CatalogTable] = None): LastCheckpointInfo = {
+    assertNonAMTCheckpointAllowed(snapshotToCheckpoint)
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint, catalogTableOpt)
+  }
+
+  /**
+   * Throws if `snapshot` belongs to an AMT table. An AMT table keeps its checkpoint in the
+   * manifest tree and must never get a classic or V2 checkpoint: one newer than the AMT content
+   * root makes snapshot discovery reject the table.
+   */
+  protected def assertNonAMTCheckpointAllowed(snapshot: Snapshot): Unit = {
+    if (AMTUtils.amtEnabled(snapshot)) {
+      throw new IllegalStateException(
+        s"Cannot write a non-AMT checkpoint at version ${snapshot.version} for AMT table " +
+          s"$logPath.")
+    }
   }
 
   /** Returns information about the most recent checkpoint. */
@@ -584,6 +1025,8 @@ trait Checkpoints extends DeltaLogging {
            matchingCheckpointInstances.length == ci.numParts.get
          case CheckpointInstance.Format.V2 =>
            matchingCheckpointInstances.length == 1
+         case CheckpointInstance.Format.AMT =>
+           matchingCheckpointInstances.length == 1
          case CheckpointInstance.Format.SENTINEL =>
            false
        }
@@ -598,6 +1041,10 @@ object Checkpoints
 
   /** The name of the last checkpoint file */
   val LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint"
+
+  /** RemoveFile fields intentionally omitted from classic and V2 checkpoints. */
+  private[delta] val REMOVE_FILE_EXCLUDED_FROM_CHECKPOINT_FIELDS =
+    Seq("tags", "stats", "snapshotId", "modifiedSnapshotId")
 
   /**
    * Determines the V2 checkpoint format to use for the given snapshot, if applicable.
@@ -658,6 +1105,28 @@ object Checkpoints
     val checkpointSchemaSizeThreshold = spark.sessionState.conf.getConf(
       DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH)
     Some(schema).filter(s => JsonUtils.toJson(s).length <= checkpointSchemaSizeThreshold)
+  }
+
+  private[delta] def buildLastCheckpointInfoForAMT(
+      manifestCommitVersion: Long,
+      contentRootVersion: Long,
+      checkpoint: Checkpoint,
+      leaves: Seq[DataManifestEntry]): LastCheckpointInfo = {
+    val lastAMTCheckpoint = LastAMTCheckpoint(
+      manifestCommitVersion = manifestCommitVersion,
+      checkpoint = Some(checkpoint),
+      leaves = Some(leaves))
+    LastCheckpointInfo(
+      version = contentRootVersion,
+      // `size` (total action count) and `numOfAddFiles` are unavailable for AMT: the file actions
+      // live in the manifest tree, not in memory here.
+      size = -1,
+      parts = Some(leaves.size),
+      sizeInBytes = Some(checkpoint.contentRoot.sizeInBytes + leaves.map(_.file_size_in_bytes).sum),
+      numOfAddFiles = None,
+      checkpointSchema = None,
+      checkpointType = Some(LastCheckpointInfo.CheckpointType.AMT),
+      amtCheckpoint = Some(lastAMTCheckpoint))
   }
 
   /**
@@ -749,7 +1218,9 @@ object Checkpoints
         // separately after sidecar files are written.
         repartitioned
           .select("add", "remove")
-          .withColumn("remove", col("remove").dropFields("tags", "stats"))
+          .withColumn(
+            "remove",
+            col("remove").dropFields(REMOVE_FILE_EXCLUDED_FROM_CHECKPOINT_FIELDS: _*))
           .where("add is not null or remove is not null")
       } else {
         // When V2 Checkpoint is disabled, the baseCheckpoint refers to the main classic checkpoint
@@ -757,7 +1228,9 @@ object Checkpoints
         // "checkpoint".
         repartitioned
           .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar", "checkpoint")
-          .withColumn("remove", col("remove").dropFields("tags", "stats"))
+          .withColumn(
+            "remove",
+            col("remove").dropFields(REMOVE_FILE_EXCLUDED_FROM_CHECKPOINT_FIELDS: _*))
       }
     }
 
@@ -1051,11 +1524,9 @@ object Checkpoints
    *                  (the default, classic-checkpoint behavior) it is `df.schema.asNullable` (fully
    *                  nullable). The AMT manifest writer passes its id-carrying schema. The resolved
    *                  schema is the value returned to the caller.
-   * @param useDeltaParquetWriteSupport When true, hooks in [[DeltaParquetWriteSupport]] as the
-   *                  Parquet write support class so that list-element / map key-value field ids
-   *                  carried on `outputSchema` via `parquet.field.nested.ids` are emitted to the
-   *                  file's Parquet schema (the stock `ParquetWriteSupport` does not). Needed for
-   *                  the AMT Iceberg-V4 manifest schema. Default false uses the standard support.
+   * @param format    The Parquet file format whose `prepareWrite` configures the write. Defaults to
+   *                  the standard [[ParquetFileFormat]]. The AMT manifest writer passes
+   *                  `AMTParquetFileFormat`, which applies the Iceberg-V4 manifest write settings.
    * @return The schema actually written.
    */
   def writeAtomicCheckpointParquetFile(
@@ -1065,18 +1536,12 @@ object Checkpoints
       hadoopConf: Configuration,
       useRename: Boolean,
       outputSchema: Option[StructType] = None,
-      useDeltaParquetWriteSupport: Boolean = false): StructType =
+      format: ParquetFileFormat = new ParquetFileFormat()): StructType =
       recordFrameProfile(
         "Checkpoints", "writeAtomicCheckpointParquetFile") {
     val schema = outputSchema.getOrElse(df.schema.asNullable)
-    val format = new ParquetFileFormat()
     val job = Job.getInstance(hadoopConf)
     val factory = format.prepareWrite(spark, job, Map.empty, schema)
-    if (useDeltaParquetWriteSupport) {
-      // Emit nested (list-element / map key-value) field ids, which the stock ParquetWriteSupport
-      // does not. Set after prepareWrite so it overrides the write-support class prepareWrite set.
-      ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
-    }
     val serConf = new SerializableConfiguration(job.getConfiguration)
     val finalSparkPath = SparkPath.fromPath(finalPath)
 
@@ -1287,6 +1752,8 @@ object Checkpoints
       additionalCols ++= partitionValues
       additionalCols ++= Checkpoints.extractStats(snapshot.statsSchema, "add.stats")
     }
+    // amtPassthrough, backReference, and snapshot IDs are dropped on purpose here: V1/V2
+    // checkpoints are incompatible with AMT, so these extras do not belong in the `add` struct.
     val withAdd = state.withColumn("add",
       when(col("add").isNotNull, struct(Seq(
         col("add.path"),
@@ -1410,6 +1877,36 @@ object V2Checkpoint {
 
     /** The string representations of all the valid formats. */
     val ALL_AS_STRINGS: Set[String] = ALL.map(_.name)
+  }
+}
+
+/** Metrics and outcomes for AMT checkpoint reconciliation. */
+object AMTCheckpoint {
+  /**
+   * Metrics for reading the manifest commit and updating the checkpoint provider of the log
+   * segment.
+   */
+  case class AMTCheckpointProviderUpdateMetrics(
+    totalDurationMs: Long,
+    manifestCommitReadDurationMs: Long,
+    initialCheckpointProviderVersion: Long,
+    initialCheckpointProviderType: String,
+    newCheckpointProviderVersion: Long,
+    manifestCommitVersion: Long,
+    contentRootVersion: Long,
+    contentRootSizeInBytes: Long,
+    numLeaves: Long) {
+
+    def toEventData: Map[String, Any] = Map(
+      "totalDurationMs" -> totalDurationMs,
+      "manifestCommitReadDurationMs" -> manifestCommitReadDurationMs,
+      "initialCheckpointProviderVersion" -> initialCheckpointProviderVersion,
+      "initialCheckpointProviderType" -> initialCheckpointProviderType,
+      "newCheckpointProviderVersion" -> newCheckpointProviderVersion,
+      "manifestCommitVersion" -> manifestCommitVersion,
+      "contentRootVersion" -> contentRootVersion,
+      "contentRootSizeInBytes" -> contentRootSizeInBytes,
+      "numLeaves" -> numLeaves)
   }
 }
 

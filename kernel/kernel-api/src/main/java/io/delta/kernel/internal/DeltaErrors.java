@@ -58,7 +58,7 @@ public final class DeltaErrors {
                 + "manual deletion or the log/checkpoint retention policy. The earliest available "
                 + "version is %s.",
             tablePath, versionToLoad, earliestVersion);
-    return new KernelException(message);
+    return new VersionTruncatedException(message);
   }
 
   public static KernelException versionToLoadAfterLatestCommit(
@@ -68,7 +68,7 @@ public final class DeltaErrors {
             "%s: Cannot load table version %s as it does not exist. "
                 + "The latest available version is %s.",
             tablePath, versionToLoad, latestVersion);
-    return new KernelException(message);
+    return new VersionToLoadAfterLatestCommitException(message);
   }
 
   public static KernelException timestampBeforeFirstAvailableCommit(
@@ -155,6 +155,10 @@ public final class DeltaErrors {
             "%s: Resolved end version to %s which is after max catalog version %s",
             tablePath, resolvedEndVersion, maxCatalogVersion);
     return new KernelException(message);
+  }
+
+  public static MaxCatalogVersionException maxCatalogVersionError(String message) {
+    return new MaxCatalogVersionException(message);
   }
 
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaConfigs, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaConfigs, DeltaLogFileIndex, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.SupportsRowIndexFilters

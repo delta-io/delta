@@ -84,7 +84,9 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       deletionVector: DeletionVectorDescriptor): (DeletionVectorDescriptor, String) = {
     if (deletionVector != null) {
       if (deletionVector.storageType == DeletionVectorDescriptor.INLINE_DV_MARKER) {
-        (deletionVector, Hashing.sha256().hashString(deletionVector.uniqueId, UTF_8).toString)
+        val responseId =
+          Hashing.sha256().hashString(deletionVector.legacyUniqueId, UTF_8).toString
+        (deletionVector, responseId)
       } else {
         val dvPath = deletionVector.absolutePath(new Path("not-used"))
         (
@@ -93,7 +95,7 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
               SparkPath.fromPathString(dvPath.getName).urlEncoded),
             storageType = DeletionVectorDescriptor.PATH_DV_MARKER
           ),
-          Hashing.sha256().hashString(deletionVector.uniqueId, UTF_8).toString
+          Hashing.sha256().hashString(deletionVector.legacyUniqueId, UTF_8).toString
         )
       }
     } else {

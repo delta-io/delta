@@ -635,7 +635,7 @@ class DeltaFastDropFeatureSuite
     val snapshot = log.update()
     val dvPath = DeletionVectorDescriptor
       .urlEncodedRelativePathIfExists(col("deletionVector"), log.dataPath)
-    val isDVTombstone = DeletionVectorDescriptor.isDeletionVectorPath(col("path"))
+    val isDVTombstone = DeletionVectorDescriptor.isSparkImplDeletionVectorPath(col("path"))
     val isInlineDeletionVector = DeletionVectorDescriptor.isInline(col("deletionVector"))
 
     val uniqueDvsFromParquetRemoveFiles = snapshot
