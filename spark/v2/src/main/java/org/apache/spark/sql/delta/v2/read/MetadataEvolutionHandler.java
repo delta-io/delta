@@ -610,7 +610,7 @@ public class MetadataEvolutionHandler {
         // TODO: Read metadata-merging commits through V1 APIs to remove this iterator adapter.
         ScalaUtils.toClosableIterator(
             StreamingHelper.getCommitActionsFromRangeUnsafe(
-                engine, commitRange, tablePath, DeltaV2MicroBatchStream.CDC_ACTION_SET))) {
+                engine, commitRange, tablePath, DeltaV2MicroBatchStreamUtils.CDC_ACTION_SET))) {
       while (commitsIter.hasNext()) {
         try (CommitActions commit = commitsIter.next()) {
           long version = commit.getVersion();
