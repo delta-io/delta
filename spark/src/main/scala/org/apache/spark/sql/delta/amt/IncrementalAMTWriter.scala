@@ -147,6 +147,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     val (carriedLeafPointers, leafPositions) =
       carryForwardLeaves(
         oldAMT.allLeafs,
+        oldAMTVersion,
         processedActions.mdvSupersededBackrefs,
         processedActions.cdfDeletedBackrefs,
         processedActions.cdfReplacedBackrefs,
@@ -305,6 +306,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
    */
   private def carryForwardLeaves(
       oldLeaves: Seq[DataManifestEntry],
+      oldAMTVersion: Long,
       mdvSupersededBackrefs: Seq[BackReference],
       cdfDeletedBackrefs: Seq[BackReference],
       cdfReplacedBackrefs: Seq[BackReference],
@@ -319,18 +321,31 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     val newMDVPositionsByLeaf = positionsByLeaf(mdvSupersededBackrefs)
     val deletedPositionsByLeaf = positionsByLeaf(cdfDeletedBackrefs)
     val replacedPositionsByLeaf = positionsByLeaf(cdfReplacedBackrefs)
-    val pointers = oldLeaves.flatMap { pointer =>
-      if (pointer.tracking.status == Tracking.Status.Deleted) None
-      else {
-        val newMdvPositions =
-          newMDVPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
-        val deletedPositions =
-          deletedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
-        val replacedPositions =
-          replacedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
-        Some(carryForwardOneLeaf(
-          pointer, newMdvPositions, deletedPositions, replacedPositions, snapshotId))
-      }
+    val carriedLeaves = oldLeaves.filter(_.tracking.status != Tracking.Status.Deleted)
+    // This writer masks positions only in the live leaves of the base tree. A back reference to
+    // any other leaf manifest masks nothing, so its file stays live in this tree and every later
+    // tree.
+    val leavesNotInBaseTree = newMDVPositionsByLeaf.keySet -- carriedLeaves.map(_.location)
+    if (leavesNotInBaseTree.nonEmpty) {
+      AMTUtils.failWithLogging(
+        opTypeSuffix = AMTUsageLogs.ALERT_BACK_REFERENCE_NOT_IN_BASE_TREE,
+        message = s"Back references name ${leavesNotInBaseTree.size} leaf manifests that are " +
+          s"not live leaves of the base tree with contentRootVersion $oldAMTVersion of table " +
+          s"$tableRoot: ${leavesNotInBaseTree.toSeq.sorted.take(10).mkString(", ")}",
+        deltaLog = deltaLog,
+        data = Map(
+          "oldAMTVersion" -> oldAMTVersion,
+          "numLeavesNotInBaseTree" -> leavesNotInBaseTree.size))
+    }
+    val pointers = carriedLeaves.map { pointer =>
+      val newMdvPositions =
+        newMDVPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
+      val deletedPositions =
+        deletedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
+      val replacedPositions =
+        replacedPositionsByLeaf.getOrElse(pointer.location, Set.empty[Int]).toSeq
+      carryForwardOneLeaf(
+        pointer, newMdvPositions, deletedPositions, replacedPositions, snapshotId)
     }
     (pointers,
       MDVAndCDFPositions(newMDVPositionsByLeaf, deletedPositionsByLeaf, replacedPositionsByLeaf))
