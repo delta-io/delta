@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, DeltaSingleCommit, SingleCommit}
+import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, RangedSingleCommit}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
@@ -504,31 +504,6 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       s"intermediateLogCommits must cover exactly [${oldAMTVersion + 1}, $attemptVersion); " +
         s"missing ${(expected -- covered).toList.sorted}, " +
         s"unexpected ${(covered -- expected).toList.sorted}.")
-  }
-}
-
-/**
- * A commit reader paired with the inclusive version range its actions cover.
- *
- * Compacted files omit CommitInfo, so `commit.timestamp` is the compacted file's modification
- * time, not the timestamp of any individual source commit. The reader is used only for actions;
- * `commit.version` identifies the end of the range.
- */
-private class RangedSingleCommit private (
-  val commit: DeltaSingleCommit,
-  val startVersion: Long,
-  val endVersion: Long)
-
-private object RangedSingleCommit {
-  def apply(deltaLog: DeltaLog, file: FileStatus): RangedSingleCommit = {
-    val (startVersion, endVersion) = file match {
-      case FileNames.CompactedDeltaFile(_, start, end) => (start, end)
-      case _ =>
-        val version = FileNames.deltaVersion(file)
-        (version, version)
-    }
-    val commit = SingleCommit(deltaLog, endVersion, file)
-    new RangedSingleCommit(commit, startVersion, endVersion)
   }
 }
 

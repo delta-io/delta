@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager, LazyCompleteAMTCheckpointProvider}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -1181,7 +1181,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     val existingTableHasAdaptiveMetadata =
       AMTUtils.amtEnabled(snapshot)
-    if (!isCreatingNewTable && !existingTableHasAdaptiveMetadata) {
+    // REPLACE counts as creating a new table, but it keeps the existing table and its history, so
+    // adding AMT through it is an upgrade too.
+    if (readVersion >= 0 && !existingTableHasAdaptiveMetadata) {
       throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
     }
 
@@ -1598,40 +1600,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /**
    * Rejects incompatible feature combinations in the protocol and metadata being committed.
-   *
-   * For an adaptive metadata table, fails if this commit adds a feature that is incompatible with
-   * the [[AdaptiveMetadataTableFeature]], either to the protocol or by setting a table property
-   * that enables it (e.g. `delta.checkpointPolicy` = `v2`). This runs on the final protocol and
-   * metadata, so it also covers features added after [[updateMetadata]], such as defaults and
-   * protocol actions. On an existing table, features it already had are left alone, so a table
-   * that has one can still be updated and can drop it.
-   *
-   * Every commit runs this check (`prepareCommit` and `commitLarge` both call it), so it catches
-   * incompatible features (e.g. v2Checkpoint and AMT) however they are added.
    */
   protected def performTableFeatureIncompatibilityCheck(): Unit = {
-    if (AMTUtils.amtEnabled(metadata, protocol)) {
-      AdaptiveMetadataTableFeature.incompatibleFeatures.foreach { feature =>
-        def enabledByMetadata(p: Protocol, m: Metadata): Boolean = feature match {
-          case f: FeatureAutomaticallyEnabledByMetadata =>
-            f.metadataRequiresFeatureToBeEnabled(p, m, spark)
-          case _ => false
-        }
-        // A feature is added when the new state has it and the table did not have it before.
-        // When creating a table, everything counts as added: the initial snapshot of a new table
-        // already has the session defaults merged into its metadata and protocol.
-        val addedToProtocol = protocol.isFeatureSupported(feature) &&
-          (isCreatingNewTable || !snapshot.protocol.isFeatureSupported(feature))
-        val enabledByNewMetadata = enabledByMetadata(protocol, metadata) &&
-          (isCreatingNewTable || !enabledByMetadata(snapshot.protocol, snapshot.metadata))
-        if (addedToProtocol || enabledByNewMetadata) {
-          throw DeltaErrors.incompatibleTableFeatures(
-            tableName = catalogTable.map(_.qualifiedName).getOrElse(dataPath.toString),
-            feature1 = AdaptiveMetadataTableFeature.name,
-            feature2 = feature.name)
-        }
-      }
-    }
+    val tableName = catalogTable.map(_.qualifiedName).getOrElse(dataPath.toString)
+    AMTUtils.assertFeatureCompatibility(
+      spark, snapshot, protocol, metadata, isCreatingNewTable, tableName)
   }
 
   /**
@@ -3908,6 +3881,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def amtCheckpointProviderOpt: Option[AMTCheckpointProvider] =
     snapshot.checkpointProvider match {
       case amt: AMTCheckpointProvider => Some(amt)
+      case lazyAmt: LazyCompleteAMTCheckpointProvider =>
+        Some(lazyAmt.underlyingCheckpointProvider)
       case _ => None
     }
 

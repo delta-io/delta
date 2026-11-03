@@ -308,11 +308,7 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", "22003", Map(
         "sourceType" -> toSQLType(sourceType),
         "targetType" -> toSQLType(targetType),
-        "columnName" -> toSQLId(columnName),
-        "storeAssignmentPolicyFlag" -> SQLConf.STORE_ASSIGNMENT_POLICY.key,
-        "updateAndMergeCastingFollowsAnsiEnabledFlag" ->
-          DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
-        "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key))
+        "columnName" -> toSQLId(columnName)))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -3212,6 +3208,39 @@ trait DeltaErrorsSuiteBase
           "start" -> "2",
           "priorVersion" -> "1"))
     }
+  }
+
+  test("streaming restart error requires a new DataFrame") {
+    val analyzedSchema = new StructType().add("p", StringType, true,
+      new MetadataBuilder()
+        .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "physical-p").build())
+    val currentSchema = new StructType().add("q", IntegerType, true,
+      new MetadataBuilder()
+        .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "physical-q").build())
+    val error = intercept[DeltaIllegalStateException] {
+      throw DeltaErrors.streamingPartitionSchemaMismatchOnRestart(
+        "test-table-id", analyzedSchema, currentSchema)
+    }
+    checkError(error,
+      "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.PARTITION_SCHEMA_CHANGED", "KD007",
+      Map("tableId" -> "test-table-id",
+        "analyzedPartitionSchema" -> "root\n |-- p: string (nullable = true)\n",
+        "analyzedPhysicalNames" -> "[`physical-p`]",
+        "currentPartitionSchema" -> "root\n |-- q: integer (nullable = true)\n",
+        "currentPhysicalNames" -> "[`physical-q`]"))
+  }
+
+  test("schema mismatch restart error requires a new DataFrame") {
+    val error = intercept[DeltaIllegalStateException] {
+      throw DeltaErrors.streamingSchemaMismatchOnRestart(
+        new StructType().add("id", "string"),
+        new StructType().add("id", "string").add("value", "int"))
+    }
+    checkError(error,
+      "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED", "KD007",
+      Map("querySchema" -> "root\n |-- id: string (nullable = true)\n",
+        "tableSchema" ->
+          "root\n |-- id: string (nullable = true)\n |-- value: integer (nullable = true)\n"))
   }
 
   test("raising error class without subclass when subclasses exist") {

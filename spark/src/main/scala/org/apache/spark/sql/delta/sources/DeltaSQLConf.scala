@@ -2125,6 +2125,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val STREAMING_PARTITION_SCHEMA_VALIDATION_ON_RESTART =
+    buildConf("streaming.partitionSchemaValidationOnRestart.enabled")
+      .internal()
+      .doc("Whether to validate that the analysis-time partition schema matches the read " +
+        "partition schema when a V2 streaming query starts. This check is independent of " +
+        s"${STREAMING_SCHEMA_VALIDATION_ON_RESTART.key}.")
+      .booleanConf
+      .createWithDefault(true)
+
   val STREAMING_TRAILING_COMMIT_VALIDATION =
     buildConf("streaming.trailingCommitValidation.enabled")
       .internal()

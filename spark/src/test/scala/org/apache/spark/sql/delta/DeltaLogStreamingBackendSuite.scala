@@ -62,7 +62,7 @@ class DeltaLogStreamingBackendSuite
         canReturnLastCommit = true,
         mustBeRecreatable = true,
         canReturnEarliestCommit = false))
-      assertCatalogTableReads(1)(backend.getChangesIterator(0, failOnDataLoss = true).toList)
+      assertCatalogTableReads(1)(backend.getSingleCommitIterator(0, failOnDataLoss = true).toList)
       // These reads have never used the catalog table.
       assertCatalogTableReads(0)(backend.unsafeVolatileSnapshot)
       assertCatalogTableReads(0)(backend.checkVersionExists(
@@ -70,7 +70,7 @@ class DeltaLogStreamingBackendSuite
     }
   }
 
-  test("getChangesIterator returns the commits from the start version") {
+  test("getSingleCommitIterator returns the commits from the start version") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       // Versions 0, 1 and 2.
@@ -80,7 +80,7 @@ class DeltaLogStreamingBackendSuite
       val backend = new DeltaLogStreamingBackend(DeltaLog.forTable(spark, path), () => None)
 
       def versions(startVersion: Long): Seq[Long] =
-        backend.getChangesIterator(startVersion, failOnDataLoss = true).map(_.version).toList
+        backend.getSingleCommitIterator(startVersion, failOnDataLoss = true).map(_.version).toList
 
       assert(versions(0) === Seq(0, 1, 2))
       assert(versions(1) === Seq(1, 2))
@@ -89,7 +89,7 @@ class DeltaLogStreamingBackendSuite
     }
   }
 
-  test("getChangesIterator with a missing commit file") {
+  test("getSingleCommitIterator with a missing commit file") {
     withSQLConf(DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS.key -> "false") {
       withTempDir { dir =>
         val path = dir.getCanonicalPath
@@ -102,7 +102,7 @@ class DeltaLogStreamingBackendSuite
         val backend = new DeltaLogStreamingBackend(deltaLog, () => None)
 
         def versions(failOnDataLoss: Boolean): Seq[Long] =
-          backend.getChangesIterator(startVersion = 0, failOnDataLoss).map(_.version).toList
+          backend.getSingleCommitIterator(startVersion = 0, failOnDataLoss).map(_.version).toList
 
         val e = intercept[DeltaIllegalStateException] {
           versions(failOnDataLoss = true)
