@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.stats
 
 import java.io.File
+import java.sql.Timestamp
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
@@ -1695,6 +1696,47 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
         val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
         checkSkipping(r, hits, misses, dataSeq.toString(), false)
       }
+    }
+  }
+
+  test("data skipping with timestamp stats truncated by seconds (issue 5249)") {
+    // This test simulates a table whose timestamp stats in JSON are off by tens of seconds
+    // compared to the actual data values, similar to Delta 3.3.2 behavior described in
+    // https://github.com/delta-io/delta/issues/5249. The DataSkippingReader must treat
+    // such stats as approximate bounds and must NOT skip the file for an equality predicate.
+    withTempDir { dir =>
+      import testImplicits._
+
+      val ts = Timestamp.valueOf("2019-09-09 01:02:03.456789")
+      val df = Seq(ts).toDF("ts")
+      df.write.format("delta").save(dir.getCanonicalPath)
+
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+
+      // Overwrite stats for the single AddFile to mimic an older writer that recorded
+      // timestamp stats that are off by ~30 seconds from the true value. We set both
+      // min and max to a timestamp 30 seconds *after* the actual value, which would
+      // previously cause data skipping to think that `ts = actual` cannot match.
+      val txn = log.startTransaction()
+      val addFile = txn.filterFiles(Nil).head
+
+      val fakeStatsJson =
+        """{
+          |  "numRecords": 1,
+          |  "minValues": {"ts": "2019-09-09 01:02:33.456789"},
+          |  "maxValues": {"ts": "2019-09-09 01:02:33.456789"},
+          |  "nullCount": {"ts": 0}
+          |}""".stripMargin
+
+      txn.commit(Seq(addFile.copy(stats = fakeStatsJson)), DeltaOperations.ComputeStats(Nil))
+      log.update()
+
+      val predicate = """ts = TIMESTAMP '2019-09-09 01:02:03.456789'"""
+      Given(predicate)
+      val numFiles = filesRead(log, predicate)
+      assert(numFiles == 1,
+        s"Expected timestamp file not to be skipped for equality predicate due to widened " +
+          s"timestamp stats bounds; filesRead was $numFiles")
     }
   }
 
