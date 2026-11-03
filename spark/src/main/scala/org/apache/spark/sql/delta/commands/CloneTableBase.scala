@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -428,6 +429,19 @@ abstract class CloneTableBase(
       metadata = metadata.copy(configuration = metadata.configuration +
         (TableFeatureProtocolUtils.propertyKey(AdaptiveMetadataTableFeature) ->
           TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
+    }
+    // AMT requires column mapping `id` mode, and a new table gets it enabled automatically. CLONE
+    // copies the source's data files as they are, and files written without column mapping have
+    // no Parquet field IDs, so the target cannot be in `id` mode. Iceberg files carry field IDs.
+    // Match every way the transaction turns AMT on: the configuration (the feature property or
+    // Iceberg Native) or the target protocol.
+    if (!tableExists(targetSnapshot) &&
+        !sourceTable.isInstanceOf[CloneIcebergSource] &&
+        sourceTable.metadata.columnMappingMode != IdMapping &&
+        (AMTUtils.amtRequested(metadata.configuration) ||
+          AMTUtils.amtEnabled(metadata, targetSnapshot.protocol))) {
+      throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
+        AdaptiveMetadataTableFeature.name, sourceTable.metadata.columnMappingMode.name)
     }
 
     verifyMetadataInvariants(targetSnapshot, metadata)
