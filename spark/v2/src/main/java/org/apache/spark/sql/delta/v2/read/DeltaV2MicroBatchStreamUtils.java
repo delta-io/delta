@@ -206,10 +206,9 @@ final class DeltaV2MicroBatchStreamUtils {
 
   /**
    * Wraps an iterator so that closing it also closes the given {@link DeltaV2SingleCommit},
-   * releasing its internal resources. This is necessary because {@link DeltaV2SingleCommit}
-   * is an {@link AutoCloseable} but not a {@link ClosableIterator}, so closing the iterator
-   * chain alone does not close the {@link DeltaV2SingleCommit} that produced it.
-   * Package-private for testing.
+   * releasing its internal resources. This is necessary because {@link DeltaV2SingleCommit} is an
+   * {@link AutoCloseable} but not a {@link ClosableIterator}, so closing the iterator chain alone
+   * does not close the {@link DeltaV2SingleCommit} that produced it. Package-private for testing.
    */
   static ClosableIterator<IndexedFile> wrapIteratorWithCommitClose(
       ClosableIterator<IndexedFile> inner, DeltaSingleCommit commit) {

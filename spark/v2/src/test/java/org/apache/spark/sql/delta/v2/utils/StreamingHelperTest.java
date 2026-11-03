@@ -520,8 +520,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testProtocolCollector_closesCommitWhenOpeningActionsFails()
-      throws Exception {
+  public void testProtocolCollector_closesCommitWhenOpeningActionsFails() throws Exception {
     IOException readFailure = new IOException("action iterator open failed");
     CommitActions kernelCommit = mock(CommitActions.class);
     when(kernelCommit.getVersion()).thenReturn(7L);
