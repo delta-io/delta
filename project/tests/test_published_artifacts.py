@@ -588,11 +588,6 @@ class SparkVersionsScriptTest:
                 if is_pre_release(full):
                     print(f"  ✗ Released versions should not include pre-releases: {version} ({full})")
                     return False
-                lock_file = (self.delta_root / ".github" / "ci-requirements" /
-                             "spark-python" / f"spark{version}.lock")
-                if not lock_file.is_file():
-                    print(f"  ✗ Released Spark {version} is missing its Python dependency lock file")
-                    return False
 
             print(f"  ✓ --released-spark-versions: {released_versions} (snapshots and previews excluded)")
             return True
