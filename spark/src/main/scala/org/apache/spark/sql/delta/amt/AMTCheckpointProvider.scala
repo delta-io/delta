@@ -40,8 +40,8 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.expressions.Window
-import org.apache.spark.sql.functions.{coalesce, col, lit, struct, sum, when}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.functions.{coalesce, col, lit, raise_error, struct, sum, when}
+import org.apache.spark.sql.types.{LongType, StructType}
 
 /** Common checkpoint information available before and after the AMT root has been loaded. */
 trait AMTCheckpointProviderBase
@@ -269,6 +269,27 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       deltaLog: DeltaLog,
       leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
       : Dataset[AMTDataEntryExtended] = {
+    val (withoutAddedEntries, withAddedEntries) =
+      if (skipRowIdPrefixForLeavesWithoutAddedFiles) {
+        leavesWithRowIndexFilters.partition { case (leaf, _) =>
+          leaf.manifest_info.added_files_count == 0
+        }
+      } else {
+        (Seq.empty, leavesWithRowIndexFilters)
+      }
+    val groups = Seq(
+      withAddedEntries -> precedingNullRowIdRecords,
+      withoutAddedEntries -> noAddedEntryRowIdPrefix)
+    groups.collect { case (leaves, rowIdPrefix) if leaves.nonEmpty =>
+      loadLeafDataEntries(deltaLog, leaves, rowIdPrefix)
+    }.reduce(_ union _)
+  }
+
+  /** Reads one leaf group and attaches the supplied first-row-ID inheritance prefix. */
+  private def loadLeafDataEntries(
+      deltaLog: DeltaLog,
+      leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])],
+      rowIdPrefix: Column): Dataset[AMTDataEntryExtended] = {
     val files =
       leavesWithRowIndexFilters.map { case (leaf, _) => leaf.toFileStatus(tableRoot) }.toArray
     val perFileRowIndexFilters: Map[String, RowIndexFilterProvider] =
@@ -280,10 +301,13 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
         deltaLog, index, checkpointAction.metaData, checkpointAction.protocol,
         includeRowIndexFilterMarker = true)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
-      .withColumn(PRECEDING_RECORDS_COLUMN, precedingNullRowIdRecords)
+      .withColumn(PRECEDING_RECORDS_COLUMN, rowIdPrefix)
       .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
     asExtendedEntries(filterOutRowIndexFilterEntries(withPrefix))
   }
+
+  /** Whether leaves whose summary has no ADDED entries may bypass the inheritance window. */
+  protected def skipRowIdPrefixForLeavesWithoutAddedFiles: Boolean = true
 
   /**
    * Reads visible DATA entries when no row-ID inheritance is needed.
@@ -364,6 +388,17 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     // The frame is empty for the first row of a manifest, where the sum is null and the offset 0.
     coalesce(sum(contribution).over(precedingRowsOfManifest), lit(0L))
   }
+
+  /**
+   * A leaf without ADDED entries cannot contain an entry that inherits a row ID. The guard keeps
+   * a corrupt root summary from silently changing reconstruction semantics.
+   */
+  private def noAddedEntryRowIdPrefix: Column = when(
+    col("entry.tracking.status") === lit(Tracking.Status.Added),
+    raise_error(lit(
+      "AMT leaf contains an ADDED entry but manifest_info.added_files_count is 0."))
+      .cast(LongType))
+    .otherwise(lit(0L))
 
   /**
    * Reconstructs the AddFile and RemoveFile actions of the single commit this manifest tree
