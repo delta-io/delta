@@ -32,7 +32,9 @@ import org.apache.spark.sql.functions.col
  * inheritance. These tests therefore hand-build manifest trees with deliberately null leaf
  * tracking.
  */
-class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
+class AMTInheritanceReadSuite
+  extends AMTCheckpointTestBase
+  with AdaptiveSparkPlanHelper {
 
   import testImplicits._
 
@@ -261,7 +263,7 @@ class AMTInheritanceReadSuite extends AMTCheckpointTestBase {
         existing_rows_count = 30L))
 
       val actions = tree.reconstructedActions(Seq(pointer.wrap))
-      val plan = AdaptiveSparkPlanHelper.stripAQEPlan(actions.queryExecution.executedPlan)
+      val plan = stripAQEPlan(actions.queryExecution.executedPlan)
       assert(plan.collect { case window: WindowExec => window }.isEmpty, s"$plan")
       val files = tree.collectFiles(actions)
       assert(files("data/a.parquet").baseRowId.contains(100L))
