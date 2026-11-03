@@ -76,6 +76,14 @@ object ConcurrentIdentityColumnSchema {
   def hasConcurrentSequenceMetadata(schema: StructType): Boolean =
     schema.exists(hasConcurrentSequenceMetadata)
 
+  /**
+   * True only if `schema` still carries a per-column sequence pointer and `protocol` no longer
+   * supports [[ConcurrentIdentityColumnsTableFeature]].
+   */
+  def isOrphaned(protocol: Protocol, schema: StructType): Boolean =
+    !protocol.isFeatureSupported(ConcurrentIdentityColumnsTableFeature) &&
+      hasConcurrentSequenceMetadata(schema)
+
   /** The driver-generated sequence id for this column, if present. */
   def getSequenceId(field: StructField): Option[String] =
     if (hasConcurrentSequenceMetadata(field)) Some(field.metadata.getString(SEQUENCE_ID)) else None
