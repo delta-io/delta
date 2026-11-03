@@ -4626,18 +4626,18 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     ClosedByInterruptException cbie = new ClosedByInterruptException();
     assertEquals(
         Optional.of(cbie),
-        DeltaV2MicroBatchStream.findClosedByInterruptCause(
+        DeltaV2MicroBatchStreamUtils.findClosedByInterruptCause(
             new io.delta.kernel.exceptions.KernelEngineException("readJsonFile", cbie)));
 
     // Plain RuntimeException -> empty
     assertEquals(
         Optional.empty(),
-        DeltaV2MicroBatchStream.findClosedByInterruptCause(new RuntimeException("unrelated")));
+        DeltaV2MicroBatchStreamUtils.findClosedByInterruptCause(new RuntimeException("unrelated")));
 
     // KernelEngineException wrapping a different IOException -> empty
     assertEquals(
         Optional.empty(),
-        DeltaV2MicroBatchStream.findClosedByInterruptCause(
+        DeltaV2MicroBatchStreamUtils.findClosedByInterruptCause(
             new io.delta.kernel.exceptions.KernelEngineException(
                 "readJsonFile", new java.io.FileNotFoundException("missing"))));
   }
@@ -4661,7 +4661,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     assertDoesNotThrow(
         () ->
-            DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+            DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
   }
 
@@ -4678,7 +4678,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     assertDoesNotThrow(
         () ->
-            DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+            DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
   }
 
@@ -4700,7 +4700,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             DeltaIllegalStateException.class,
             () ->
-                DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+                DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
     assertSchemaChangedOnRestart(
         ex,
@@ -4728,7 +4728,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             DeltaIllegalStateException.class,
             () ->
-                DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+                DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
     assertSchemaChangedOnRestart(
         ex,
@@ -4754,7 +4754,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             DeltaIllegalStateException.class,
             () ->
-                DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+                DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
     assertSchemaChangedOnRestart(
         ex,
@@ -4774,7 +4774,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     assertDoesNotThrow(
         () ->
-            DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+            DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
   }
 
@@ -4788,7 +4788,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             DeltaIllegalStateException.class,
             () ->
-                DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+                DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
     assertSchemaChangedOnRestart(
         ex, new StructType().add("a", DataTypes.IntegerType), snapshotSchema);
@@ -4802,7 +4802,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     assertDoesNotThrow(
         () ->
-            DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+            DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
   }
 
