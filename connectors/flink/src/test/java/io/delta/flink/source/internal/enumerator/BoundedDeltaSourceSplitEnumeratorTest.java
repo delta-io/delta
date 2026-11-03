@@ -3,6 +3,9 @@ package io.delta.flink.source.internal.enumerator;
 import java.net.URISyntaxException;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
 
 import io.delta.flink.source.internal.DeltaSourceOptions;
 import io.delta.flink.source.internal.file.AddFileEnumerator.SplitFilter;
@@ -10,6 +13,7 @@ import io.delta.flink.source.internal.file.AddFileEnumeratorContext;
 import io.delta.flink.source.internal.state.DeltaEnumeratorStateCheckpoint;
 import io.delta.flink.source.internal.state.DeltaEnumeratorStateCheckpointBuilder;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
+import org.apache.flink.api.connector.source.ReaderInfo;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -18,6 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -158,9 +163,34 @@ public class BoundedDeltaSourceSplitEnumeratorTest extends DeltaSourceSplitEnume
         verify(enumContext).signalNoMoreSplits(subtaskId);
     }
 
+    @Test
+    public void shouldSignalNoMoreSplitsForAwaitingReaderInsteadOfRequestingReader() {
+        int noMoreSubtask = 45;
+        int activeSubtask = 44;
+        String noMoreHost = "noMoreHost";
+        String activeHost = "activeHost";
+        DeltaSourceSplit split = mock(DeltaSourceSplit.class);
+        Map<Integer, ReaderInfo> registeredReaders = new LinkedHashMap<>();
+        registeredReaders.put(noMoreSubtask, readerInfo);
+        registeredReaders.put(activeSubtask, readerInfo);
+
+        enumerator = setUpEnumeratorWithHeadSnapshot();
+        when(enumContext.registeredReaders()).thenReturn(registeredReaders);
+        enumerator.readersAwaitingSplit.put(noMoreSubtask, noMoreHost);
+        when(splitAssigner.getNext(noMoreHost)).thenReturn(Optional.empty());
+        when(splitAssigner.getNext(activeHost)).thenReturn(Optional.of(split));
+
+        enumerator.handleSplitRequest(activeSubtask, activeHost);
+
+        verify(enumerator).handleNoMoreSplits(noMoreSubtask);
+        verify(enumContext).signalNoMoreSplits(noMoreSubtask);
+        verify(enumContext).assignSplit(split, activeSubtask);
+        verify(enumerator, never()).handleNoMoreSplits(activeSubtask);
+        verify(enumContext, never()).signalNoMoreSplits(activeSubtask);
+    }
+
     @Override
     protected SplitEnumeratorProvider getProvider() {
         return this.provider;
     }
 }
-
