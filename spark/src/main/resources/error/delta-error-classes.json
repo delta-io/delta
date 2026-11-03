@@ -3092,6 +3092,18 @@
     ],
     "sqlState" : "KD002"
   },
+  "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_RESTART" : {
+    "message" : [
+      "An input file requires deletion-vector filtering, but this stream's reader cannot apply it. Restart the streaming query with the same checkpoint location."
+    ],
+    "sqlState" : "55000"
+  },
+  "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_SCHEMA_TRACKING" : {
+    "message" : [
+      "This stream cannot read historical deletion vectors. Provide a 'schemaTrackingLocation' and restart with the same checkpoint."
+    ],
+    "sqlState" : "55000"
+  },
   "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE" : {
     "message" : [
       "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",

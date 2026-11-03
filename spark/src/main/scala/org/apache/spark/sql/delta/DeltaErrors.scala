@@ -3746,6 +3746,27 @@ trait DeltaErrorsBase
       cause = cause)
   }
 
+  /**
+   * Returns a schema-tracking error for file versions older than the latest snapshot at source
+   * initialization. Otherwise, returns a restart error.
+   *
+   * @param version the commit version of the file that requires deletion-vector filtering.
+   * @param snapshotAtSourceInitVersion the latest snapshot version at source initialization,
+   *                                   not the tracked read snapshot version.
+   */
+  def streamingDeletionVectorsNotReadableException(
+      version: Long,
+      snapshotAtSourceInitVersion: Long): DeltaRuntimeException = {
+    val errorClass = if (version < snapshotAtSourceInitVersion) {
+      "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_SCHEMA_TRACKING"
+    } else {
+      "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_RESTART"
+    }
+    new DeltaRuntimeException(
+      errorClass = errorClass,
+      messageParameters = Array.empty)
+  }
+
   def streamingMetadataEvolutionException(
       newSchema: StructType,
       newConfigs: Map[String, String],
