@@ -1203,7 +1203,7 @@ private[delta] class ConflictChecker(
       // (isBlindAppend = false), its outputs otherwise fall into `changedDataAddedFiles` and
       // make a concurrent non-blind writer raise a spurious ConcurrentAppendException against
       // OPTIMIZE. When enabled, drop them so only genuinely new data is checked. All
-      // FileActions in a commit share one `dataChange` value (see `trackConsistentDataChange`).
+      // FileActions in a commit share one `dataChange` value (see `trackDataChange`).
       val addedFilesWithoutNoDataChange =
         if (spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_FILES)) {
           addedFilesToCheckForConflicts.filter(_.dataChange)
