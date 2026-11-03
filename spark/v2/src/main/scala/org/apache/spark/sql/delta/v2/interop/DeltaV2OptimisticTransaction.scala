@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
+import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, RowId, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.WinningCommitSummary
@@ -32,14 +33,16 @@ import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
-import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
+import org.apache.spark.sql.delta.v2.kernel.KernelContext
+import org.apache.spark.sql.delta.v2.snapshot.SnapshotManagerFactory
 import io.delta.storage.commit.Commit
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-import io.delta.kernel.{CommitActions => KernelCommitActions, DataWriteContext => KernelDataWriteContext, Operation => KernelOperation, PartitionKeyType => KernelPartitionKeyType, Snapshot => KernelSnapshot, Transaction => KernelTransaction}
+import io.delta.kernel.{CommitActions => KernelCommitActions, DataWriteContext => KernelDataWriteContext, Operation => KernelOperation, PartitionKeyType => KernelPartitionKeyType, Snapshot => KernelSnapshot, Table => KernelTable, Transaction => KernelTransaction}
 import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.expressions.{Literal => KernelLiteral}
+import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshotImpl}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 import io.delta.kernel.internal.commitrange.{CommitRangeImpl => KernelCommitRangeImpl}
 import io.delta.kernel.internal.util.{ColumnMapping => KernelColumnMapping, PartitionUtils => KernelPartitionUtils, Utils => KernelUtils}
@@ -61,16 +64,23 @@ import org.apache.spark.util.{Clock, SystemClock}
  */
 private[v2] class DeltaV2OptimisticTransaction(
     catalogTable: Option[CatalogTable],
+    // `deltaV2Snapshot` and `kernelContext` are intentionally private, which is internal
+    // implementation details we do not expose in the public API.
     private val deltaV2Snapshot: DeltaV2Snapshot,
-    private val tableManager: DeltaV2TableManager)
+    private val kernelContext: KernelContext)
   extends OptimisticTransaction(
     null.asInstanceOf[DeltaLog],
     catalogTable,
     deltaV2Snapshot) {
 
-  private def kernelEngine: KernelEngine = tableManager.kernelContext.getDefaultEngine()
+  private def kernelEngine: KernelEngine = kernelContext.getDefaultEngine()
 
-  private val queryContext = DeltaV2QueryContext(catalogTable)
+  private lazy val deltaV2SnapshotManager: DeltaV2SnapshotManager =
+    SnapshotManagerFactory.create(
+      dataPath.toString,
+      kernelContext,
+      catalogTable.toJava
+    )
 
   /**
    * Opt in to the base null-deltaLog guardrail: this transaction legitimately has no V1 DeltaLog.
@@ -174,25 +184,28 @@ private[v2] class DeltaV2OptimisticTransaction(
     // TODO: Use Kernel's incremental snapshot load API to build the post-commit snapshot from the
     // pre-commit snapshot plus this commit, instead of a full reload that replays the log. It is
     // supported in Rust but not yet exposed on the Java wrapper.
-    val postCommitSnapshot = tableManager.loadLatestSnapshot(queryContext)
+    val kernelPostCommitSnapshot = KernelTable
+      .forPath(kernelEngine, dataPath.toString)
+      .getLatestSnapshot(kernelEngine)
+      .asInstanceOf[KernelSnapshotImpl]
     require(
-      postCommitSnapshot.version >= committedVersion,
-      s"Kernel reload returned version ${postCommitSnapshot.version}, older than the " +
+      kernelPostCommitSnapshot.getVersion >= committedVersion,
+      s"Kernel reload returned version ${kernelPostCommitSnapshot.getVersion}, older than the " +
         s"just-committed version $committedVersion")
-    postCommitSnapshot
+    new DeltaV2Snapshot(kernelPostCommitSnapshot, kernelContext)
   }
 
   /**
    * Reads the table commits in the inclusive version range `[startVersion, endVersion]`, applying
    * `mapper` to each commit. In long term, this functionality should be owned by
-   * [[DeltaV2TableManager]].
+   * [[DeltaV2SnapshotManager]].
    */
   private def readCommitActionsInRange[T](
       startVersion: Long,
       endVersion: Long)(mapper: KernelCommitActions => T): Seq[T] = {
-    val commitRange = tableManager
+    val commitRange = deltaV2SnapshotManager
       .getTableChanges(
-        kernelEngine, startVersion, Optional.of(java.lang.Long.valueOf(endVersion)), queryContext)
+        kernelEngine, startVersion, Optional.of(java.lang.Long.valueOf(endVersion)))
       .asInstanceOf[KernelCommitRangeImpl]
     val actionSet = java.util.EnumSet.allOf(classOf[KernelDeltaAction])
     val commitActionsIter = commitRange.getCommitActions(kernelEngine, actionSet)
@@ -216,7 +229,7 @@ private[v2] class DeltaV2OptimisticTransaction(
    * Gets the conflicting versions through Kernel, from the previous attempt version to the latest.
    */
   override protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
-    val latestVersion = tableManager.loadLatestSnapshot(queryContext).version
+    val latestVersion = deltaV2SnapshotManager.loadLatestSnapshot().version
     if (previousAttemptVersion > latestVersion) {
       return Seq.empty
     }
@@ -279,8 +292,9 @@ private[v2] class DeltaV2OptimisticTransaction(
             s"${other.getClass.getSimpleName}")
     }
 
-    val latestSnapshot = tableManager.loadLatestSnapshot(queryContext)
-    val kernelSnapshotForCommit = DeltaV2Snapshot.getKernelSnapshot(latestSnapshot)
+    val kernelSnapshotForCommit = KernelTable
+      .forPath(kernelEngine, dataPath.toString)
+      .getLatestSnapshot(kernelEngine)
     if (kernelSnapshotForCommit.getVersion != attemptVersion - 1) {
       throw new FileAlreadyExistsException(
         s"Cannot commit version $attemptVersion through Kernel: the log is already at version " +

@@ -38,7 +38,7 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.shims.VariantShreddingShims;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.InternalRowTestUtils;
-import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -593,8 +593,9 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   }
 
   private DeltaV2StreamingWrite newWrite(String path, boolean variantShreddingEnabled) {
-    DeltaV2TableManager tableManager = WriteTestUtils.tableManager(spark, path);
-    Snapshot snapshot = WriteTestUtils.latestSnapshot(tableManager);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, createKernelContext());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
@@ -604,7 +605,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            tableManager,
+            snapshotManager,
             TABLE_SCHEMA,
             new StructType(),
             info,
@@ -657,8 +658,9 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   }
 
   private DeltaV2StreamingWrite newVariantWrite(String path, boolean variantShreddingEnabled) {
-    DeltaV2TableManager tableManager = WriteTestUtils.tableManager(spark, path);
-    Snapshot snapshot = WriteTestUtils.latestSnapshot(tableManager);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, createKernelContext());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(VARIANT_TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
@@ -668,7 +670,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            tableManager,
+            snapshotManager,
             VARIANT_TABLE_SCHEMA,
             new StructType(),
             info,
@@ -699,8 +701,9 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   }
 
   private DeltaV2StreamingWrite newPartitionedWrite(String path) {
-    DeltaV2TableManager tableManager = WriteTestUtils.tableManager(spark, path);
-    Snapshot snapshot = WriteTestUtils.latestSnapshot(tableManager);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, createKernelContext());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(PARTITIONED_FULL_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
@@ -710,7 +713,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            tableManager,
+            snapshotManager,
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
             info,
