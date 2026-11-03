@@ -69,9 +69,9 @@ class CommitRangeFactory {
         getDeltasForVersionRangeWithCatalogPriority(
             engine, startVersion, listingEndVersionOpt, ratifiedCommits);
     validateDeltasMatchVersionRange(deltas, startVersion, requiredEndVersionOpt);
-    // The deltas end at the required end version if there is one. Otherwise this resolves
-    // endVersion=latestVersion, up to maxEndVersion if it is set.
-    long endVersion = extractLatestVersion(deltas);
+    // Use the required end version when provided. Otherwise, resolve the end to the latest
+    // version, up to maxEndVersion if it is set.
+    long endVersion = requiredEndVersionOpt.orElseGet(() -> extractLatestVersion(deltas));
     if (!requiredEndVersionOpt.isPresent()) {
       logger.info("{}: Resolved end-boundary to the latest version {}", tablePath, endVersion);
     }
