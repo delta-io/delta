@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, Re
 import org.apache.spark.sql.delta.commands.{DeletionVectorUtils, DeletionVectorWriter}
 import org.apache.spark.sql.delta.commands.DeletionVectorWriter.DeletionVectorMapperContext
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
+import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -42,7 +43,9 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.{SparkContext, SparkException, SparkThrowable, SparkThrowableHelper}
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Column, DataFrame}
+import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.catalyst.expressions.{And, AttributeReference, Expression, Or}
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.functions.{coalesce, col, lit, sum}
 import org.apache.spark.util.{ThreadUtils, Utils => SparkUtils}
 
@@ -407,6 +410,13 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
    *
    * Both images of all files are scanned with signed weights (+1 base, -1 winner) and summed in a
    * single Spark job.
+   *
+   * The sum is only sound when every row of every image is read, so the scan never skips a file:
+   * the session's `spark.sql.files.ignoreMissingFiles` / `ignoreCorruptFiles` are overridden on
+   * its relation, as [[DeltaLog.indexToRelation]] does for the log. Otherwise a skipped file, or
+   * the skipped rest of one, drops its matches from one side of the sum, which can then come out 0
+   * for a read the winner's deletes do match. A file that cannot be read fails the job instead,
+   * which leaves the files unreconciled.
    */
   private def scanReadsForWinnerDeletes(
       files: Seq[SharedFile],
@@ -414,8 +424,14 @@ trait RowLevelConcurrencyResolution extends DeltaLogging { self: ConflictChecker
     readCheckScanned = true
     val snapshot = currentTransactionInfo.readSnapshot
     def matchingRowWeights(images: Seq[AddFile], weight: Long): DataFrame = {
-      val df = deltaLog.createDataFrame(
-        snapshot, images, actionTypeOpt = Some("rowLevelConcurrencyReadCheck"))
+      val fileIndex = new TahoeBatchFileIndex(
+        spark, "rowLevelConcurrencyReadCheck", images, deltaLog, deltaLog.dataPath, snapshot)
+      val relation =
+        deltaLog.buildHadoopFsRelationWithFileIndex(snapshot, fileIndex, bucketSpec = None)
+      val strictRelation = relation.copy(options = relation.options ++ Map(
+        FileSourceOptions.IGNORE_CORRUPT_FILES -> "false",
+        FileSourceOptions.IGNORE_MISSING_FILES -> "false"))(spark)
+      val df = DataFrameUtils.ofRows(spark, LogicalRelation(strictRelation))
       val condition = conjunctsPerRead
         .map(_.map(e => rebindToDataFrame(e, df)).reduce(_ && _))
         .reduce(_ || _)

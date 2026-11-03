@@ -885,6 +885,42 @@ class RowLevelConcurrencySuite extends QueryTest
     }
   }
 
+  for ((ignoreConf, corrupt) <- Seq(
+      SQLConf.IGNORE_MISSING_FILES.key -> false,
+      SQLConf.IGNORE_CORRUPT_FILES.key -> true)) {
+    test(s"the read-check scan does not skip an unreadable file under $ignoreConf") {
+      withTempDir { dir =>
+        val log = createSingleFileTableWithDVs(dir)
+        sql(s"ALTER TABLE ${tableRef(dir)} SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.ISOLATION_LEVEL.key}' = 'Serializable')")
+        val loserActions = deleteActionsFromCopy(dir, 5)
+        var result: scala.util.Try[Long] = null
+        val reasons = withCommitLock(enabled = false) {
+          notReconciledReasons {
+            withSQLConf(
+                DeltaSQLConf.DELTA_ROW_LEVEL_CONCURRENCY_ENABLED.key -> "true",
+                ignoreConf -> "true") {
+              val loser = log.startTransaction()
+              // The loser read row 20, which the winner deletes, so the read check must not pass.
+              loser.filterFiles(Seq(EqualTo(idAttr, Literal(20L))))
+              sql(s"DELETE FROM ${tableRef(dir)} WHERE id = 20")
+              // The shared data file becomes unreadable, which the session would skip.
+              val dataFile = new File(log.update().allFiles.head().absolutePath(log).toUri)
+              if (corrupt) {
+                java.nio.file.Files.write(dataFile.toPath, Array.fill[Byte](64)(1.toByte))
+              } else {
+                assert(dataFile.delete())
+              }
+              result = scala.util.Try(loser.commit(loserActions, DeltaOperations.ManualUpdate))
+            }
+          }
+        }
+        assertConflict(result)
+        assert(reasons === Seq("readCheckFailed"))
+      }
+    }
+  }
+
   test("a read-check job whose condition fails on a row leaves the files to the conflict") {
     withTempDir { dir =>
       val log = createSingleFileTableWithDVs(dir)
