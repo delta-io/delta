@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
-import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SingleCommit}
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
@@ -178,11 +178,15 @@ class DeltaV2TableManagerImplSuite
             val changes = manager.getSingleCommitIterator(startVersion, endVersion, catalogTableOpt)
             try {
               val versions = changes.map { commit =>
-                val actions = DeltaSource.createRewindableActionIterator(spark, commit)
-                actions.processAndClose { iterator =>
-                  assert(iterator.count(_.isInstanceOf[AddFile]) === 2)
+                try {
+                  val actions = DeltaSource.createRewindableActionIterator(spark, commit)
+                  actions.processAndClose { iterator =>
+                    assert(iterator.count(_.isInstanceOf[AddFile]) === 2)
+                  }
+                  commit.version
+                } finally {
+                  commit.asInstanceOf[DeltaV2SingleCommit].close()
                 }
-                commit.version
               }.toList
               assert(versions === expectedVersions)
             } finally {
@@ -233,7 +237,13 @@ class DeltaV2TableManagerImplSuite
 
             forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
               val v2Commits = manager.getSingleCommitIterator(0L, None, catalogTableOpt)
-                .processAndClose(_.map(commit => commit.version -> commit.timestamp).toList)
+                .processAndClose(_.map { commit =>
+                  try {
+                    commit.version -> commit.timestamp
+                  } finally {
+                    commit.asInstanceOf[DeltaV2SingleCommit].close()
+                  }
+                }.toList)
               assert(v2Commits === expected)
             }
           }
