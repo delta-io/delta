@@ -308,11 +308,7 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", "22003", Map(
         "sourceType" -> toSQLType(sourceType),
         "targetType" -> toSQLType(targetType),
-        "columnName" -> toSQLId(columnName),
-        "storeAssignmentPolicyFlag" -> SQLConf.STORE_ASSIGNMENT_POLICY.key,
-        "updateAndMergeCastingFollowsAnsiEnabledFlag" ->
-          DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
-        "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key))
+        "columnName" -> toSQLId(columnName)))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -3161,6 +3157,90 @@ trait DeltaErrorsSuiteBase
         DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(newSession)
       assert(exceptionWithoutContext.getMessage.contains("https") === false)
     }
+  }
+
+  for (version <- Seq(10L, 11L)) {
+    test(s"streaming deletion vectors require restart error - version $version") {
+      checkError(
+        DeltaErrors.streamingDeletionVectorsNotReadableException(
+          version, snapshotAtSourceInitVersion = 10L),
+        "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_RESTART",
+        "55000",
+        Map.empty[String, String])
+    }
+  }
+
+  test("historical streaming deletion vectors require schema tracking error") {
+    checkError(
+      DeltaErrors.streamingDeletionVectorsNotReadableException(
+        version = 9L, snapshotAtSourceInitVersion = 10L),
+      "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_SCHEMA_TRACKING",
+      "55000",
+      Map.empty[String, String])
+  }
+
+  test("starting-commit schema error reports operation") {
+    val error = intercept[DeltaUnsupportedOperationException] {
+      throw DeltaErrors.blockBatchCdfReadWithIncompatibleStartingCommitSchema(
+        start = 2, incompatVersion = 1, operation = Some("CLONE"))
+    }
+    checkError(
+      error,
+      "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.KNOWN_OPERATION",
+      sqlState = "0AKDC",
+      parameters = Map(
+        "operation" -> "CLONE",
+        "start" -> "2",
+        "priorVersion" -> "1"))
+  }
+
+  for (operation <- Seq(None, Some(""), Some(null))) {
+    test(s"starting-commit schema error reports unknown operation - $operation") {
+      val error = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.blockBatchCdfReadWithIncompatibleStartingCommitSchema(
+          start = 2, incompatVersion = 1, operation = operation)
+      }
+      checkError(
+        error,
+        "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.UNKNOWN_OPERATION",
+        sqlState = "0AKDC",
+        parameters = Map(
+          "start" -> "2",
+          "priorVersion" -> "1"))
+    }
+  }
+
+  test("streaming restart error requires a new DataFrame") {
+    val analyzedSchema = new StructType().add("p", StringType, true,
+      new MetadataBuilder()
+        .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "physical-p").build())
+    val currentSchema = new StructType().add("q", IntegerType, true,
+      new MetadataBuilder()
+        .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "physical-q").build())
+    val error = intercept[DeltaIllegalStateException] {
+      throw DeltaErrors.streamingPartitionSchemaMismatchOnRestart(
+        "test-table-id", analyzedSchema, currentSchema)
+    }
+    checkError(error,
+      "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.PARTITION_SCHEMA_CHANGED", "KD007",
+      Map("tableId" -> "test-table-id",
+        "analyzedPartitionSchema" -> "root\n |-- p: string (nullable = true)\n",
+        "analyzedPhysicalNames" -> "[`physical-p`]",
+        "currentPartitionSchema" -> "root\n |-- q: integer (nullable = true)\n",
+        "currentPhysicalNames" -> "[`physical-q`]"))
+  }
+
+  test("schema mismatch restart error requires a new DataFrame") {
+    val error = intercept[DeltaIllegalStateException] {
+      throw DeltaErrors.streamingSchemaMismatchOnRestart(
+        new StructType().add("id", "string"),
+        new StructType().add("id", "string").add("value", "int"))
+    }
+    checkError(error,
+      "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED", "KD007",
+      Map("querySchema" -> "root\n |-- id: string (nullable = true)\n",
+        "tableSchema" ->
+          "root\n |-- id: string (nullable = true)\n |-- value: integer (nullable = true)\n"))
   }
 
   test("raising error class without subclass when subclasses exist") {

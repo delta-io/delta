@@ -21,6 +21,7 @@ import java.util
 import scala.collection.{immutable, mutable}
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -122,6 +123,101 @@ class DummyCatalog extends TableCatalog {
       storage = CatalogStorageFormat(Some(tablePath.toUri), None, None, None, false, Map.empty),
       schema = spark.range(0).schema
     )
+  }
+}
+
+// A dummy catalog, registered under a name other than "spark_catalog", whose loadTable always
+// returns a V1Table wrapping the underlying Delta CatalogTable (instead of a DeltaTableV2, as
+// DummyCatalog does). Spark's ResolveSessionCatalog rule special-cases the literal session
+// catalog name and would otherwise intercept SHOW PARTITIONS before DeltaAnalysis's
+// ShowPartitions(V1Table) rule ever sees it, so this catalog is used to exercise that rule
+// directly under a catalog that isn't the session catalog.
+class DummyV1TableCatalog extends TableCatalog {
+  private val spark: SparkSession = SparkSession.active
+  protected lazy val tempDir: Path = new Path(Utils.createTempDir().getAbsolutePath)
+  // scalastyle:off deltahadoopconfiguration
+  protected lazy val fs: FileSystem =
+    tempDir.getFileSystem(spark.sessionState.newHadoopConf())
+  // scalastyle:on deltahadoopconfiguration
+
+  override def name: String = "dummy_v1"
+
+  def getTablePath(tableName: String): Path = {
+    new Path(tempDir.toString + "/" + tableName)
+  }
+  override def defaultNamespace(): Array[String] = Array("default")
+
+  override def listTables(namespace: Array[String]): Array[Identifier] = {
+    val status = fs.listStatus(tempDir)
+    status.filter(_.isDirectory).map { dir =>
+      Identifier.of(namespace, dir.getPath.getName)
+    }
+  }
+
+  override def tableExists(ident: Identifier): Boolean = {
+    val tablePath = getTablePath(ident.name())
+    fs.exists(tablePath)
+  }
+
+  override def loadTable(ident: Identifier): Table = {
+    if (!tableExists(ident)) {
+      throw new NoSuchTableException(ident)
+    }
+    V1Table(createCatalogTable(ident))
+  }
+
+  override def createTable(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: java.util.Map[String, String]): Table = {
+    val tablePath = getTablePath(ident.name())
+    // Create an empty Delta table on the tablePath
+    val part = partitions.map(_.arguments().head.toString)
+    spark.createDataFrame(List.empty[Row].asJava, schema)
+      .write.format("delta").partitionBy(part: _*).save(tablePath.toString)
+    loadTable(ident)
+  }
+
+  override def alterTable(ident: Identifier, changes: TableChange*): Table = {
+    // hack hack: no-op just for testing
+    loadTable(ident)
+  }
+
+  override def dropTable(ident: Identifier): Boolean = {
+    val tablePath = getTablePath(ident.name())
+    try {
+      fs.delete(tablePath, true)
+      true
+    } catch {
+      case _: Exception => false
+    }
+  }
+
+  override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit = {
+    throw new UnsupportedOperationException("Rename table operation is not supported.")
+  }
+
+  override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
+    // Initialize tempDir here
+    if (!fs.exists(tempDir)) {
+      fs.mkdirs(tempDir)
+    }
+  }
+
+  private def createCatalogTable(ident: Identifier): CatalogTable = {
+    val tablePath = getTablePath(ident.name())
+    // V1Table surfaces this CatalogTable's schema/partitioning directly (unlike DeltaTableV2,
+    // which reads them from the Delta log instead), so they must reflect the real table here or
+    // CREATE TABLE's user-specified-vs-actual-schema check fails.
+    val snapshot = DeltaLog.forTable(spark, tablePath).update()
+    CatalogTable(
+      identifier = TableIdentifier(ident.name(), defaultNamespace.headOption, Some(name)),
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat(Some(tablePath.toUri), None, None, None, false, Map.empty),
+      schema = snapshot.schema,
+      provider = Some("delta"),
+      partitionColumnNames = snapshot.metadata.partitionColumns)
   }
 }
 

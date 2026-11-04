@@ -240,6 +240,29 @@ class StatsCollectionSuite
     }
   }
 
+  statsTest("recompute stats on table with column named 'path'") {
+    withTempDir { tempDir =>
+      withDeletionVectorsEnabled(false) {
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+          val df = Seq((1, "/cash-advance"), (2, "/thrive")).toDF("id", "path").coalesce(1)
+          df.write.format("delta").save(tempDir.toString())
+          val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          assert(statsDF(deltaLog).where('numRecords.isNotNull).count() == 0)
+
+          {
+            StatisticsCollection.recompute(spark, deltaLog)
+          }
+
+          // The stats describe the user `path` column, not the paths of the data files.
+          checkAnswer(statsDF(deltaLog), Row(2, Row(1, "/cash-advance"), Row(2, "/thrive")))
+          checkAnswer(
+            spark.read.format("delta").load(tempDir.getCanonicalPath).where("path = '/thrive'"),
+            Row(2, "/thrive"))
+        }
+      }
+    }
+  }
+
   statsTest("recompute stats with partition predicates") {
     withTempDir { tempDir =>
       withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {

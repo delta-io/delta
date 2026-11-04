@@ -22,18 +22,39 @@ import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.VersionUtils;
 import io.unitycatalog.client.api.CatalogsApi;
+import io.unitycatalog.client.api.CredentialsApi;
+import io.unitycatalog.client.api.ExternalLocationsApi;
+import io.unitycatalog.client.api.GrantsApi;
 import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.model.AwsIamRoleRequest;
 import io.unitycatalog.client.model.CreateCatalog;
+import io.unitycatalog.client.model.CreateCredentialRequest;
+import io.unitycatalog.client.model.CreateExternalLocation;
 import io.unitycatalog.client.model.CreateSchema;
+import io.unitycatalog.client.model.CredentialPurpose;
+import io.unitycatalog.client.model.PermissionsChange;
+import io.unitycatalog.client.model.Privilege;
+import io.unitycatalog.client.model.SecurableType;
+import io.unitycatalog.client.model.UpdatePermissions;
 import io.unitycatalog.server.UnityCatalogServer;
+import io.unitycatalog.server.model.TemporaryCredentials;
+import io.unitycatalog.server.service.credential.CloudCredentialVendor;
+import io.unitycatalog.server.service.credential.CredentialContext;
 import io.unitycatalog.server.utils.ServerProperties;
 import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -391,6 +412,24 @@ public abstract class UnityCatalogSupport {
     // so a concurrently-starting suite on the same runner can grab it before this server binds.
     // Retry with a fresh port on "address already in use" rather than failing the suite.
     ServerProperties initServerProperties = new ServerProperties(serverProperties());
+    // Keep UC authorization enabled, but use the configured fake credentials instead of
+    // assuming the test external location's role.
+    // TODO(https://github.com/delta-io/delta/issues/7896): Fake only STS to test storage
+    // credentials.
+    CloudCredentialVendor fakeCredentialVendor =
+        new CloudCredentialVendor(initServerProperties) {
+          @Override
+          public TemporaryCredentials vendCredential(CredentialContext context) {
+            return super.vendCredential(
+                CredentialContext.builder()
+                    .storageScheme(context.getStorageScheme())
+                    .storageBase(context.getStorageBase())
+                    .privileges(context.getPrivileges())
+                    .locations(context.getLocations())
+                    .credentialDAO(Optional.empty())
+                    .build());
+          }
+        };
     final int maxBindAttempts = 5;
     for (int attempt = 1; ; attempt++) {
       ucServerPort = findAvailablePort();
@@ -398,6 +437,7 @@ public abstract class UnityCatalogSupport {
           UnityCatalogServer.builder()
               .port(ucServerPort)
               .serverProperties(initServerProperties)
+              .credentialOperations(fakeCredentialVendor)
               .build();
       try {
         server.start();
@@ -415,11 +455,6 @@ public abstract class UnityCatalogSupport {
       }
     }
 
-    // Now that UC is up, let the OAuth broker reach the token-exchange endpoint.
-    if (mockOAuthBroker != null) {
-      mockOAuthBroker.setUcBaseUri(String.format("http://localhost:%s/", ucServerPort));
-    }
-
     // Poll for server readiness by checking if we can create an API client and query catalogs
     int maxRetries = 30;
     int retryDelayMs = 500;
@@ -427,9 +462,19 @@ public abstract class UnityCatalogSupport {
     int retries = 0;
 
     ucInfo = localUnityCatalogInfo();
+    // Use the service token for readiness because the OAuth test user does not exist yet.
+    String setupToken =
+        mockOAuthBroker != null
+            ? Files.readString(Path.of("etc", "conf", "token.txt")).trim()
+            : UC_STATIC_TOKEN;
+    ApiClient setupClient =
+        ApiClientBuilder.create()
+            .uri(ucInfo.serverUri())
+            .tokenProvider(TokenProvider.create(Map.of("type", "static", "token", setupToken)))
+            .build();
     while (!serverReady && retries < maxRetries) {
       try {
-        CatalogsApi catalogsApi = new CatalogsApi(ucInfo.createApiClient());
+        CatalogsApi catalogsApi = new CatalogsApi(setupClient);
         catalogsApi.listCatalogs(null, null); // This will throw if server is not ready
         serverReady = true;
       } catch (Exception e) {
@@ -441,6 +486,12 @@ public abstract class UnityCatalogSupport {
     if (!serverReady) {
       throw new RuntimeException(
           "Unity Catalog server did not become ready after " + (maxRetries * retryDelayMs) + "ms");
+    }
+
+    // Now that UC is up, let the OAuth broker reach the token-exchange endpoint.
+    if (mockOAuthBroker != null) {
+      mockOAuthBroker.setUcBaseUri(ucInfo.serverUri());
+      provisionOAuthTestUser(setupClient, setupToken);
     }
 
     // Create the catalog and default schema in the UC server
@@ -460,6 +511,70 @@ public abstract class UnityCatalogSupport {
 
     LOG.info("Unity Catalog server started and ready at " + ucInfo.serverUri());
     LOG.info("Created catalog '" + ucInfo.catalogName() + "' with schema 'default'");
+  }
+
+  /** Creates a regular OAuth user with access to create catalogs and use the test storage path. */
+  private void provisionOAuthTestUser(ApiClient serviceClient, String serviceToken)
+      throws Exception {
+    // Use the service token only for setup. Tests use the broker's OAuth tokens.
+    String serverUri = String.format("http://localhost:%s", ucServerPort);
+    String userJson =
+        String.format(
+            "{\"displayName\":\"Delta OAuth test user\","
+                + "\"emails\":[{\"value\":\"%s\",\"primary\":true}]}",
+            MockOAuthBroker.SUBJECT);
+    HttpResponse<String> response =
+        HttpClient.newHttpClient()
+            .send(
+                HttpRequest.newBuilder(URI.create(serverUri + "/api/1.0/unity-control/scim2/Users"))
+                    .header("Authorization", "Bearer " + serviceToken)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(userJson))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+    if (response.statusCode() != 201) {
+      throw new IllegalStateException(
+          "Failed to create OAuth test user: HTTP "
+              + response.statusCode()
+              + " "
+              + response.body());
+    }
+
+    GrantsApi grantsApi = new GrantsApi(serviceClient);
+    grantsApi.update(
+        SecurableType.METASTORE,
+        "metastore",
+        new UpdatePermissions()
+            .addChangesItem(
+                new PermissionsChange()
+                    .principal(MockOAuthBroker.SUBJECT)
+                    .add(List.of(Privilege.CREATE_CATALOG))));
+
+    new CredentialsApi(serviceClient)
+        .createCredential(
+            new CreateCredentialRequest()
+                .name("test_credential")
+                .purpose(CredentialPurpose.STORAGE)
+                .awsIamRole(
+                    new AwsIamRoleRequest().roleArn("arn:aws:iam::123456789012:role/test-role")));
+    new ExternalLocationsApi(serviceClient)
+        .createExternalLocation(
+            new CreateExternalLocation()
+                .name("test_external_location")
+                .url(localUnityCatalogInfo().baseTableLocation())
+                .credentialName("test_credential"));
+    grantsApi.update(
+        SecurableType.EXTERNAL_LOCATION,
+        "test_external_location",
+        new UpdatePermissions()
+            .addChangesItem(
+                new PermissionsChange()
+                    .principal(MockOAuthBroker.SUBJECT)
+                    .add(
+                        List.of(
+                            Privilege.CREATE_EXTERNAL_TABLE,
+                            Privilege.READ_FILES,
+                            Privilege.WRITE_FILES))));
   }
 
   /** Stops the Unity Catalog server after all tests. */

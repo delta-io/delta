@@ -250,10 +250,12 @@ class OptimisticTransactionSuite
     ),
     concurrentWrites = Seq(
       Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))),
+        featuresToExclude =
+          Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features)),
     actions = Seq(
       Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))))
+        featuresToExclude =
+          Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features)))
 
   check(
     "taint whole table",
@@ -1116,7 +1118,8 @@ class OptimisticTransactionSuite
         .add("part", "string")
       deltaLog.withNewTransaction { txn =>
         val protocol = Action.supportedProtocolVersion(
-          featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))
+          featuresToExclude =
+            Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features)
         val metadata = Metadata(
           schemaString = schema.json,
           partitionColumns = partitionColumns)
@@ -1316,7 +1319,7 @@ class OptimisticTransactionSuite
               op = DeltaOperations.Restore(Some(0), None),
               context = Map.empty,
               metrics = Map.empty,
-              dataChange = Some(true))
+              dataChange = true)
           }
           if (conflict) {
             assert(e.isInstanceOf[ConcurrentWriteException])
@@ -1952,7 +1955,7 @@ class OptimisticTransactionSuite
               op = DeltaOperations.ManualUpdate,
               context = Map.empty,
               metrics = Map.empty,
-              dataChange = Some(true))
+              dataChange = true)
           } else {
             log.startTransaction().commit(mixedActions, ManualUpdate)
           }

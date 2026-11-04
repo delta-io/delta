@@ -224,7 +224,7 @@ object SingleAMTWriteMetrics {
     val liveLeaves =
       leaves.filter(leaf => Tracking.Status.liveEntryStatuses.contains(leaf.tracking.status))
     def maskedEntries(leaf: DataManifestEntry): Long =
-      leaf.manifest_info.dv_cardinality.getOrElse(0L)
+      leaf.manifest_info.dvCardinality
     SingleAMTWriteMetrics(
       trigger = trigger,
       incremental = incremental,
@@ -289,6 +289,9 @@ class LazyAMTCheckpointProvider(
   lazy val providerOpt: Option[AMTCheckpointProvider] = checkpointOpt.map { checkpoint =>
     readSnapshot.checkpointProvider match {
       case amt: AMTCheckpointProvider if amt.checkpointAction.version == checkpoint.version => amt
+      case lazyAmt: LazyCompleteAMTCheckpointProvider
+          if lazyAmt.checkpointAction.version == checkpoint.version =>
+        lazyAmt.underlyingCheckpointProvider
       case _ =>
         AMTCheckpointProvider.fromCheckpoint(
           readSnapshot.deltaLog, checkpoint, manifestCommitVersion)
@@ -315,11 +318,14 @@ class LazyAMTCheckpointProvider(
  */
 class AMTWriterManager(
     private val txnId: String,
+    private val snapshotId: Long,
     readSnapshot: Snapshot,
     initialOperation: DeltaOperations.Operation) extends DeltaLogging {
 
   import AMTConflictResolutionRoundMetrics._
   import BackRefRebaseMetrics._
+
+  require(snapshotId >= 0L, s"AMT snapshot ID must be non-negative: $snapshotId.")
 
   private def spark: SparkSession = SparkSession.active
   private def deltaLog: DeltaLog = readSnapshot.deltaLog
@@ -331,7 +337,7 @@ class AMTWriterManager(
   private def readSnapshotAMTCheckpointOpt: Option[Checkpoint] = {
     if (!AMTUtils.amtEnabled(readSnapshot)) return None
     readSnapshot.checkpointProvider match {
-      case amt: AMTCheckpointProvider => Some(amt.checkpointAction)
+      case amt: AMTCheckpointProviderBase => Some(amt.checkpointAction)
       case _ => None
     }
   }
@@ -713,6 +719,7 @@ class AMTWriterManager(
         intermediateLogCommits = intermediateLogCommits,
         attemptVersion = commitVersion,
         actionsToCommit = currentTransactionInfo.actions,
+        snapshotId = snapshotId,
         trigger = trigger)
     } else {
       assert(currentTransactionInfo.actions.isEmpty,
@@ -724,6 +731,7 @@ class AMTWriterManager(
         commitVersion = commitVersion,
         postCommitProtocol = currentTransactionInfo.protocol,
         postCommitMetadata = currentTransactionInfo.metadata,
+        snapshotId = snapshotId,
         trigger = trigger)
     }
     // Enrich the writer's metrics with log-segment context.
@@ -744,11 +752,15 @@ class AMTWriterManager(
       preCommitLogSegment: LogSegment,
       oldAMTVersion: Long): Seq[FileStatus] = {
     val nonCompactedDeltas = preCommitLogSegment.nonCompactedDeltasOpt.getOrElse {
-      AMTUtils.logAndThrowMissingNonCompactedDeltasInLogSegment(
+      AMTUtils.failWithLogging(
+        opTypeSuffix = AMTUsageLogs.INCREMENTAL_LOG_SELECTION_MISSING_NON_COMPACTED_DELTAS,
+        message = s"nonCompactedDeltas are absent in an AMT log segment: $preCommitLogSegment",
         deltaLog = deltaLog,
-        logSegment = preCommitLogSegment,
-        eventData = Map("oldAMTVersion" -> oldAMTVersion))
-      throw new IllegalStateException("should not reach here")
+        data = Map(
+          "oldAMTVersion" -> oldAMTVersion,
+          "preCommitLogSegmentVersion" -> preCommitLogSegment.version,
+          "preCommitCheckpointVersion" -> preCommitLogSegment.checkpointProvider.version)
+      )
     }
     val deltasAndCompactedDeltas =
       (preCommitLogSegment.deltas ++ nonCompactedDeltas).distinct.sortBy(_.getPath.getName)

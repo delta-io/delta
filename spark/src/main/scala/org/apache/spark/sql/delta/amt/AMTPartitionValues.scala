@@ -89,7 +89,20 @@ private[amt] object AMTPartitionValues {
 
   /** Persisted partition struct -> physical-name string map. */
   def forRead(df: DataFrame, partitionSchema: StructType): DataFrame = {
-    val values = if (partitionSchema.isEmpty) {
+    val values = toStringMap(partitionSchema)
+    if (df.columns.contains("partition")) {
+      replacePartition(df, values)
+    } else {
+      df.withColumn("partition", values)
+    }
+  }
+
+  /**
+   * The persisted `partition` column as a physical-name string map, null for an entry without
+   * partition values or an unpartitioned table.
+   */
+  def toStringMap(partitionSchema: StructType): Column = {
+    if (partitionSchema.isEmpty) {
       lit(null).cast(MapType(StringType, StringType, valueContainsNull = true))
     } else {
       val typedPartition = col("partition")
@@ -114,11 +127,6 @@ private[amt] object AMTPartitionValues {
           useUtcNormalizedTimestamp = true))
       }: _*)
       when(typedPartition.isNull, lit(null)).otherwise(map_from_arrays(keys, stringValues))
-    }
-    if (df.columns.contains("partition")) {
-      replacePartition(df, values)
-    } else {
-      df.withColumn("partition", values)
     }
   }
 
