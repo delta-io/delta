@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.storage.{LogStore, S3LogStore, S3SingleDriverLogStore}
+import io.delta.storage.{LogStore, S3LogStore, S3SingleDriverLogStore, S3UnknownWriteOutcomeException}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.s3a.S3AFileSystem
 import org.apache.hadoop.util.VersionInfo
@@ -72,7 +72,7 @@ class S3NativeLegacyCharacterizationSuite extends AnyFunSuite with S3NativeTestS
       assert(content(fixture) == "legacy\n")
       val puts = publicationRequests(fixture)
       assert(puts.nonEmpty)
-      assert(puts.forall(!_.conditional), "Legacy write unexpectedly used native PIA")
+      assert(puts.forall(!_.conditional), "Legacy write unexpectedly used native put-if-absent")
     }
   }
 
@@ -219,8 +219,7 @@ class S3NativeIntegrationSuite extends AnyFunSuite with S3NativeTestSupport {
       val store = nativeStore(fixture.configuration)
       fixture.loseNextResponse(Put, key)
       fixture.failHeadAfterAcceptance(key)
-      val error = intercept[IOException] { write(store, fixture, "accepted-but-unknown") }
-      assert(!error.isInstanceOf[FileAlreadyExistsException])
+      intercept[S3UnknownWriteOutcomeException] { write(store, fixture, "accepted-but-unknown") }
       assert(content(fixture) == "accepted-but-unknown\n")
       assert(fixture.acceptedPublications(key) == 1)
       assert(fixture.requests.exists(r => r.key == key && r.operation == Head && r.status == 503))
@@ -264,8 +263,7 @@ class S3NativeIntegrationSuite extends AnyFunSuite with S3NativeTestSupport {
     withSettings(Map("fs.s3a.attempts.maximum" -> "0")) { fixture =>
       val store = nativeStore(fixture.configuration)
       fixture.failNext(Complete, key, 200, "PreconditionFailed", times = 20)
-      val error = intercept[IOException] { write(store, fixture, largeLine) }
-      assert(!error.isInstanceOf[FileAlreadyExistsException])
+      intercept[S3UnknownWriteOutcomeException] { write(store, fixture, largeLine) }
       assert(fixture.bytes(key).isEmpty)
       assert(fixture.acceptedPublications(key) == 0)
       val completions = publicationRequests(fixture)
@@ -285,8 +283,7 @@ class S3NativeIntegrationSuite extends AnyFunSuite with S3NativeTestSupport {
         // Persistent injection prevents a hidden SDK retry from silently turning this into success.
         fixture.failNext(operation, key, status, code, times = 20)
         fixture.seed(key + "/", Array.emptyByteArray)
-        val error = intercept[IOException] { write(store, fixture, line) }
-        assert(!error.isInstanceOf[FileAlreadyExistsException])
+        intercept[S3UnknownWriteOutcomeException] { write(store, fixture, line) }
         assert(fixture.bytes(key).isEmpty)
         assert(fixture.acceptedPublications(key) == 0)
         assert(publicationRequests(fixture).exists(_.status == status))

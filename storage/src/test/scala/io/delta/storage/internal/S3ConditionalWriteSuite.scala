@@ -23,6 +23,7 @@ import java.nio.file.FileAlreadyExistsException
 
 import scala.jdk.CollectionConverters._
 
+import io.delta.storage.S3UnknownWriteOutcomeException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{Abortable, FileStatus, FileSystem, FSDataOutputStream, FSDataOutputStreamBuilder, Path, StreamCapabilities}
 import org.apache.hadoop.fs.s3a.{AWSServiceIOException, RemoteFileChangedException, S3AFileSystem}
@@ -100,8 +101,7 @@ class S3ConditionalWriteSuite extends AnyFunSuite {
     val original = new IOException("lost connection")
     fs.stream.closeFailure = original
     fs.readOwner = () => "another-writer".getBytes(UTF_8)
-    val error = intercept[IOException](write(fs))
-    assert(!error.isInstanceOf[FileAlreadyExistsException])
+    val error = intercept[S3UnknownWriteOutcomeException](write(fs))
     assert(error.getCause eq original)
     assert(error.getMessage.toLowerCase.contains("unknown"))
   }
@@ -112,8 +112,7 @@ class S3ConditionalWriteSuite extends AnyFunSuite {
       val original = serviceFailure(status)
       fs.stream.closeFailure = original
       fs.statusFailure = new FileNotFoundException("absent")
-      val error = intercept[IOException](write(fs))
-      assert(!error.isInstanceOf[FileAlreadyExistsException])
+      val error = intercept[S3UnknownWriteOutcomeException](write(fs))
       assert(error.getCause eq original)
       assert(fs.builds == 1)
       assert(error.getSuppressed.contains(fs.statusFailure))
@@ -124,8 +123,7 @@ class S3ConditionalWriteSuite extends AnyFunSuite {
     val fs = new ScriptedS3A
     fs.stream.closeFailure = serviceFailure(409)
     fs.directory = true
-    val error = intercept[IOException](write(fs))
-    assert(!error.isInstanceOf[FileAlreadyExistsException])
+    intercept[S3UnknownWriteOutcomeException](write(fs))
     assert(fs.probes == 0)
   }
 
@@ -135,7 +133,7 @@ class S3ConditionalWriteSuite extends AnyFunSuite {
     val headFailure = new IOException("HEAD denied")
     fs.stream.closeFailure = original
     fs.readOwner = () => throw headFailure
-    val error = intercept[IOException](write(fs))
+    val error = intercept[S3UnknownWriteOutcomeException](write(fs))
     assert(error.getCause eq original)
     assert(error.getSuppressed.contains(headFailure))
   }

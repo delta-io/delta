@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.IOException
-import java.nio.file.FileAlreadyExistsException
 import java.util.concurrent.{Callable, ConcurrentLinkedQueue, CountDownLatch, TimeUnit}
 
 import scala.jdk.CollectionConverters._
@@ -29,6 +27,7 @@ import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.{DelegatingLogStore, LogStore, LogStoreAdaptor}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import io.delta.storage.S3UnknownWriteOutcomeException
 import io.delta.storage.integration.S3NativeTestFixture
 import io.delta.storage.integration.S3NativeTestFixture._
 import org.apache.hadoop.fs.s3a.S3AFileSystem
@@ -238,12 +237,10 @@ class NativeS3CommitSuite
           fixture.loseNextResponse(Put, commitKey(1))
           fixture.failHeadAfterAcceptance(commitKey(1))
 
-          val error = intercept[IOException] {
+          intercept[S3UnknownWriteOutcomeException] {
             txn.commit(Seq(createTestAddFile(encodedPath = "unknown-file")), ManualUpdate)
           }
 
-          assert(!error.isInstanceOf[FileAlreadyExistsException],
-            "unknown ownership must not masquerade as a conflict that OCC can retry")
           assert(fixture.acceptedPublications(commitKey(1)) == 1)
           assert(fixture.bytes(commitKey(1)).nonEmpty,
             "the failed acknowledgement hid a real write")

@@ -62,8 +62,7 @@ class SharedS3LogStoreLockSuite extends QueryTest with SharedSparkSession with E
   }
 
   private def waitForAttempt(result: Future[_], thread: AtomicReference[Thread]): Unit = {
-    // This only synchronizes the race. The assertions below check publication and write results.
-    // Old code lets the waiter finish; fixed code blocks it in the shared path lock.
+    // Wait until the writer finishes or starts waiting to acquire the path lock.
     eventually(timeout(Span(30, Seconds))) {
       val waitingForPathLock = Option(thread.get()).exists { worker =>
         worker.getState == Thread.State.WAITING && worker.getStackTrace.exists { frame =>
