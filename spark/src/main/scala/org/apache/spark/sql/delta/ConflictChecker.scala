@@ -1008,7 +1008,6 @@ private[delta] class ConflictChecker(
       currentMetadata: Metadata,
       winningMetadata: Metadata): Boolean = {
 
-    // Comments, nested ones included, don't affect how data is written or read.
     val currentSchema = dropComments(currentMetadata.schema)
     val winningSchema = dropComments(winningMetadata.schema)
 
