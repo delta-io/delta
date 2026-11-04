@@ -656,6 +656,8 @@ class AMTWriterManager(
         nextAttemptVersion, currentTransactionInfo, preCommitLogSegment,
         incremental = true, trigger = triggerName)
       metrics.singleAMTWriteMetrics = Some(result.amtWriteMetrics)
+      // Lets a test commit another winner after this round rebuilt the tree.
+      DeltaTestBarrier.waitIfEnabled(REBUILT_OPTIMIZE_CHECKPOINT_TREE_TEST_BARRIER)
       Some(result)
     } else {
       // A winner changed content the full base tree describes, so it cannot be reused as-is.
@@ -978,6 +980,13 @@ object AMTWriterManager extends DeltaLogging {
    */
   private[delta] val FULL_AMT_REGENERATE_RETRY_TEST_BARRIER =
     "AMTWriterManager.fullAMTRegenerateRetry"
+
+  /**
+   * Test barrier label. When a suite arms this barrier, a losing OPTIMIZE checkpoint pauses right
+   * after a conflict round rebuilt its incremental tree, letting the suite commit another winner.
+   */
+  private[delta] val REBUILT_OPTIMIZE_CHECKPOINT_TREE_TEST_BARRIER =
+    "AMTWriterManager.rebuiltOptimizeCheckpointTree"
 
 
   /**
