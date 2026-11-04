@@ -657,7 +657,7 @@ class AMTWriterManager(
         incremental = true, trigger = triggerName)
       metrics.singleAMTWriteMetrics = Some(result.amtWriteMetrics)
       // Lets a test commit another winner after this round rebuilt the tree.
-      DeltaTestBarrier.waitIfEnabled(REBUILT_OPTIMIZE_CHECKPOINT_TREE_TEST_BARRIER)
+      DeltaTestBarrier.waitIfEnabled(AMTWriterManager.REBUILT_OPTIMIZE_CHECKPOINT_TREE_TEST_BARRIER)
       Some(result)
     } else {
       // A winner changed content the full base tree describes, so it cannot be reused as-is.
