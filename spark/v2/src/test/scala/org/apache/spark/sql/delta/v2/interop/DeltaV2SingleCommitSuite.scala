@@ -197,7 +197,7 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
     assert(error eq readFailure)
     assert(error.getSuppressed.length === 2)
     assert(error.getSuppressed.head eq actionCloseFailure)
-    assert(error.getSuppressed(1).getCause eq commitCloseFailure)
+    assert(error.getSuppressed()(1).getCause eq commitCloseFailure)
     val order = inOrder(kernelActions, kernelCommit)
     order.verify(kernelActions).close()
     order.verify(kernelCommit).close()
