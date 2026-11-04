@@ -41,8 +41,9 @@ class DelegatingLogStore(hadoopConf: Configuration)
 
   private val sparkConf = SparkEnv.get.conf
 
-  // Cache instances, not the capability decision: the same scheme can resolve to filesystems
-  // with different capabilities. Access is synchronized because DeltaLog instances are shared.
+  // Map each (URI scheme, LogStore class name) to a shared LogStore instance.
+  // The same scheme can select different implementations based on filesystem capabilities.
+  // Access is synchronized because DeltaLog instances can be shared across threads.
   private val logStoreMap = mutable.Map.empty[(String, String), LogStore]
 
   private lazy val defaultLogStore = createLogStore(DelegatingLogStore.defaultHDFSLogStoreClassName)
@@ -59,10 +60,16 @@ class DelegatingLogStore(hadoopConf: Configuration)
     // scalastyle:on deltahadoopconfiguration
   }
 
+  /**
+   * Checks whether the filesystem advertises conditional writes and custom S3 object metadata.
+   * Conditional writes use `If-None-Match: *` to create an object only if its key is absent.
+   * The check does not verify that the endpoint enforces the condition.
+   * Classloader compatibility is checked before native writes so reads remain available.
+   */
   private def supportsNativeS3(path: Path, conf: Configuration): Boolean = {
     val fs = path.getFileSystem(conf)
     Utils.tryWithSafeFinally {
-      io.delta.storage.S3LogStore.isSupported(fs, path)
+      io.delta.storage.S3LogStore.hasNativeWriteCapabilities(fs, path)
     } {
       // A cache-disabled lookup creates a client owned by this probe. The selected LogStore
       // resolves its own filesystem, so do not leak this client or close Hadoop's shared client.
@@ -78,9 +85,13 @@ class DelegatingLogStore(hadoopConf: Configuration)
     Option(path.toUri.getScheme) match {
       case Some(origScheme) =>
         val scheme = origScheme.toLowerCase(Locale.ROOT)
+        // Resolve LogStore class in this order:
+        // 1. Scheme conf if set.
+        // 2. Native S3 if supported.
+        // 3. Default for scheme if available.
+        // 4. Default.
         val configuredClass = LogStore.getLogStoreConfValue(
           LogStore.logStoreSchemeConfKey(scheme), sparkConf)
-        // An explicit override wins without resolving or probing the filesystem.
         val className = configuredClass.getOrElse {
           if (DelegatingLogStore.s3Schemes.contains(scheme) && supportsNativeS3(path, conf)) {
             DelegatingLogStore.nativeS3LogStoreClassName
@@ -92,6 +103,7 @@ class DelegatingLogStore(hadoopConf: Configuration)
         this.synchronized {
           logStoreMap.getOrElseUpdate((scheme, className), {
             val logStore = createLogStore(className)
+            // Warn when automatic S3 selection falls back to the single-driver store.
             if (configuredClass.isEmpty && DelegatingLogStore.s3Schemes.contains(scheme) &&
                 className == DelegatingLogStore.defaultS3LogStoreClassName) {
               logWarning(log"Native S3 conditional writes are unavailable for scheme " +

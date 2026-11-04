@@ -138,7 +138,10 @@ abstract class BaseS3LogStore extends HadoopFileSystemLogStore {
         void run() throws IOException;
     }
 
-    /** Hold the path lock through publication and any recovery of a lost acknowledgement. */
+    /**
+     * Acquires the lock for a resolved path, runs the supplied action, and releases the lock on exit.
+     * The supplied action performs the write and any recovery.
+     */
     static void withPathLock(Path resolvedPath, WriteAction action) throws IOException {
         try {
             pathLock.acquire(resolvedPath);
@@ -157,6 +160,10 @@ abstract class BaseS3LogStore extends HadoopFileSystemLogStore {
         }
     }
 
+    /**
+     * Performs the write without native put-if-absent when it is unavailable or unnecessary.
+     * Relies on the per-JVM shared path lock to serialize writes to the same path.
+     */
     final void writeWithPathLock(
             Path path,
             Iterator<String> actions,

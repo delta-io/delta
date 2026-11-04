@@ -26,6 +26,7 @@ import java.util.Iterator;
 import java.util.UUID;
 
 import io.delta.storage.S3LogStore;
+import io.delta.storage.S3UnknownWriteOutcomeException;
 import org.apache.hadoop.fs.Abortable;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -158,7 +159,7 @@ public final class S3ConditionalWrite {
             Thread.currentThread().interrupt();
             result = new InterruptedIOException(message);
         } else {
-            result = new IOException(message);
+            result = new S3UnknownWriteOutcomeException(message);
         }
         result.initCause(failure);
         if (probeFailure != null && probeFailure != failure) {

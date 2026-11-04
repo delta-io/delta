@@ -1262,8 +1262,9 @@ lazy val storage = (project in file("storage"))
     exportJars := true,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
-      // Legacy LogStores retain their Hadoop compatibility. The opt-in native S3LogStore
-      // requires S3A 3.4.2+ and the capabilities documented in storage/S3_NATIVE_PIA.md.
+      // Legacy LogStores retain their Hadoop compatibility. The automatically selected
+      // native S3LogStore requires S3A 3.4.2+ and the capabilities in
+      // storage/S3_NATIVE_PUT_IF_ABSENT.md.
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
 
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API

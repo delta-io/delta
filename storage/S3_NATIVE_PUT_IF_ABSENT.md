@@ -19,6 +19,8 @@ spark.delta.logStore.s3a.impl=io.delta.storage.S3LogStore
 
 The native LogStore requires Hadoop S3A 3.4.2 or later with conditional creation enabled, user metadata, metadata reads, immediate publication on close, and abortable streams.
 Select matching Hadoop/S3A runtime dependencies; they are supplied by the application, not bundled with Delta storage.
+Non-overwrite writes require S3A and delta-storage to use compatible classloaders.
+A classloader mismatch fails before upload while reads and overwrites remain available.
 During automatic selection, filesystems without the required capabilities retain the legacy `S3SingleDriverLogStore` with a warning that it cannot coordinate concurrent drivers.
 This is a compatibility fallback, not the recommended configuration.
 Use a supported S3A runtime and keep `fs.s3a.create.conditional.enabled` enabled, including any bucket-specific override.
@@ -53,7 +55,11 @@ If close throws, a metadata lookup may establish the outcome:
 | --- | --- |
 | Exact destination file contains this invocation's UUID | Success |
 | Known conditional conflict and exact destination file contains another or no UUID | Java `FileAlreadyExistsException`, enabling ordinary Delta OCC |
-| Missing destination, directory marker, failed metadata lookup, or inconclusive error | `IOException` reporting an unknown publication outcome |
+| Missing destination, directory marker, failed metadata lookup, or inconclusive error | `S3UnknownWriteOutcomeException` |
+
+`S3UnknownWriteOutcomeException` extends `IOException`, so callers can identify an unresolved write without parsing the message.
+It retains the publication failure as its cause and any recovery-probe failure as a suppressed exception.
+Cancellation continues to throw `InterruptedIOException` with the interrupt flag preserved.
 
 The implementation checks file status before reading metadata because S3A's xattr implementation can fall back from `key` to `key/`.
 A directory marker must not become a false winning commit.
@@ -85,33 +91,25 @@ A terminated process can leave an incomplete multipart upload or a fully committ
 Restart-safe application retries require a durable application identity, such as `txnAppId` and `txnVersion` where supported.
 Bucket lifecycle cleanup for incomplete multipart uploads remains an operational responsibility.
 
-## Architecture and evidence
+## Architecture
 
-The existing `S3SingleDriverLogStore` uses a JVM lock, an existence check, and classic `FileSystem.create`.
-In the inspected upstream Hadoop 3.4.2, 3.4.3, and trunk implementations, configuration alone does not turn that call into conditional publication; create-performance is not a substitute for the mandatory builder option.
+S3A sends the conditional PUT and multipart completion requests.
+The LogStore reconciles individual writes, and Delta OCC checks transaction conflicts.
+Ownership recovery applies to every non-overwrite LogStore write, including callers outside Spark transactions.
 
-S3A handles atomic publication, the LogStore reconciles individual writes, and Delta OCC checks transaction conflicts.
-A direct SDK implementation would duplicate connector configuration and lifecycle behavior.
-OCC-only recovery would not cover other LogStore writes and would couple storage safety to optional Spark transaction behavior.
+## Validation
 
-Research baseline: Delta master `3d1969ee8b5d5d5e67313902a1d32c1aaf5508b6` and draft PR 7767 at `df8c1b5d7ce14c1c3d4292f169e09c406750012b`.
-The draft was a reference, not the implementation baseline.
-DBR implementations informed the comparison of ownership and checksum recovery; no DBR code is copied here.
+Local tests cover conditional PUT and multipart writes, ownership recovery, cancellation, LogStore selection, classloader compatibility, and shared path locking.
+They use real S3A and SDK clients against a local HTTP endpoint, separate JVM writers, and Spark transactions.
+The HTTP fixture does not validate IAM, signing, encryption, or S3 service limits.
 
-- [Hadoop conditional-write tracker](https://issues.apache.org/jira/browse/HADOOP-19256)
-- [AWS conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)
-- [CompleteMultipartUpload behavior](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html)
-- [AWS SDK lost-acknowledgement issue](https://github.com/aws/aws-sdk-java-v2/issues/6580)
-- [Delta draft PR 7767](https://github.com/delta-io/delta/pull/7767)
+Live AWS tests exercised explicit native-store selection on general-purpose S3 with SSE-S3, using OSS Spark 4.2.0, Hadoop S3A 3.4.2, and AWS SDK 2.29.52.
+They covered independent Spark drivers, multipart publication, lost acknowledgements, and process termination.
+Automatic selection, shared-lock changes, classloader checks, and the unknown-outcome exception type have local regression coverage only.
+Unresolved service-generated 409 responses and HTTP 200 responses containing multipart errors have fault-injection coverage but were not observed in the AWS tests.
+SSE-KMS, bucket versioning, S3 Express, other S3-compatible services, and other runtime distributions remain unqualified.
 
-## Validation and production follow-up
-
-The tests use real S3A and SDK clients against a deterministic local HTTP endpoint, plus connector-boundary fault tests and Spark transaction tests.
-The fixture validates conditional publication, metadata round trips, request retries, multipart completion, independent JVM races, and process termination.
-It does not emulate IAM, signing validation, encryption, checksums, versioning, service limits, or the full S3 protocol.
-Local test success must not be reported as live AWS validation.
-Concurrency coverage combines independent JVM LogStore writers with Spark transactions sharing a session.
-A workload with two independent Spark drivers against AWS remains untested.
+Legacy compatibility smoke checks use some newer support libraries and do not qualify complete historical Hadoop distributions.
 
 Run the relevant suites from the repository root:
 
@@ -121,33 +119,11 @@ build/sbt 'spark/testOnly org.apache.spark.sql.delta.SharedS3LogStoreLockSuite o
 build/sbt 'storageS3DynamoDB/test' 'spark/Test/scalastyle'
 ```
 
-The implementation was developed against failing connector-boundary and real-S3A feature tests.
-Legacy characterization confirms that classic create sends unconditional requests.
-The HTTP tests inspect actual `If-None-Match` headers and retry outcomes, including PUT retry 412, consumed-upload retry 404, and HTTP 200 containing a multipart completion error.
-Fresh correctness review identified an interrupt-restoration defect; regression tests reproduced it before the fix.
-Legacy compatibility smoke checks exercised external Java callers and subclasses on Hadoop 2.7.3 and 3.3.4, including callers compiled against the original class hierarchy.
-These local checks used selected older Hadoop jars with some newer support dependencies and do not qualify complete historical runtime distributions.
+Whole-upload replay, persistent restart identity, and generalized OCC recovery for unknown outcomes are outside this implementation.
 
-The original explicit-selection implementation was verified locally on 2026-10-07 with OpenJDK 17, Hadoop S3A 3.4.2, AWS SDK 2.29.52, and the repository's default Spark 4.2.0 test lane:
+## References
 
-| Check | Result |
-| --- | --- |
-| Full storage module | 153 tests passed |
-| Spark LogStore, provider, native commit, and idempotent retry suites | 114 tests passed |
-| Full DynamoDB storage module | 36 tests passed |
-| Spark test Scala style | No errors or warnings |
-| Legacy compatibility smoke checks (2026-10-02) | 12 JVM runs, 48 local scenarios passed |
-
-The test fixture initially rejected small listing pages used by S3A directory probes, preventing Spark checksum publication.
-The same Spark lost-acknowledgement test failed against that fixture and passed after its pagination was corrected, retaining the checksum assertions.
-No live AWS bucket was used.
-Independent correctness review found no blocking issues in the implementation.
-
-Automatic selection was verified locally on 2026-10-27: 155 storage tests, 154 Spark selection/commit/LogStore tests, and 36 existing external-store regression tests passed.
-The Spark test Scala style check reported zero errors and warnings.
-The new selection suite includes 40 cases covering override precedence, operation and active-session configurations, capability decisions across buckets, and probe-client cleanup.
-Isolated checks also verified legacy selection without `hadoop-aws` and with Hadoop 2.7.3, while broken dependencies propagate instead of silently selecting legacy writes.
-The automatic-selection change has not been rerun against live AWS.
-
-Release qualification includes real AWS PUT and multipart failure behavior, supported Hadoop distributions and endpoints, homogeneous writer rollout, unknown-outcome diagnostics, and cleanup.
-Whole-upload replay, persistent restart identity, and generalized OCC recovery for unknown outcomes are follow-up work.
+- [Hadoop conditional-write tracker](https://issues.apache.org/jira/browse/HADOOP-19256)
+- [AWS conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)
+- [CompleteMultipartUpload behavior](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html)
+- [AWS SDK lost-acknowledgement issue](https://github.com/aws/aws-sdk-java-v2/issues/6580)

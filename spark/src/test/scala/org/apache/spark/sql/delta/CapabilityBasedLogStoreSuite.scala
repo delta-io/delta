@@ -25,6 +25,7 @@ import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta.storage.{DelegatingLogStore, LogStore, LogStoreAdaptor}
+import io.delta.storage.{ChildLoadedS3AFileSystem, ChildS3ALoader, S3LogStore}
 import io.delta.storage.integration.S3NativeTestFixture
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{Abortable, FileStatus, FSDataInputStream, FSDataOutputStream, FSDataOutputStreamBuilder, FSInputStream, Path, StreamCapabilities}
@@ -106,6 +107,54 @@ class CapabilityBasedLogStoreSuite extends QueryTest with SharedSparkSession {
       assert(fixture.pendingUploads == 0)
     } finally {
       fixture.close()
+    }
+  }
+
+  test("child-loaded S3A supports reads and overwrites but rejects conditional writes") {
+    val fixture = new S3NativeTestFixture
+    val child = new ChildS3ALoader(classOf[S3LogStore].getClassLoader)
+    try {
+      val conf = fixture.configuration
+      conf.setClassLoader(child)
+      conf.set("fs.s3a.impl", classOf[ChildLoadedS3AFileSystem].getName)
+      conf.setBoolean("fs.s3a.impl.disable.cache", false)
+      val key = "classloader/_delta_log/00000000000000000000.json"
+      val path = fixture.path(key)
+      val fs = path.getFileSystem(conf)
+      try {
+        assert(fs.getClass.getClassLoader eq child)
+        assert(!classOf[S3AFileSystem].isInstance(fs))
+        fixture.seed(key, "existing action\n".getBytes(UTF_8))
+        val store = new DelegatingLogStore(conf)
+
+        assert(store.read(path, conf) == Seq("existing action"))
+        val reader = store.readAsIterator(path, conf)
+        try assert(reader.toSeq == Seq("existing action")) finally reader.close()
+        assert(store.listFrom(path, conf).map(_.getPath).toSeq == Seq(path))
+        assert(className(store.getDelegate(path, conf)) == nativeClass)
+
+        val nextKey = "classloader/_delta_log/00000000000000000001.json"
+        val actions = new Iterator[String] {
+          override def hasNext: Boolean = fail("Classloader failure must not consume actions")
+          override def next(): String = fail("Classloader failure must not consume actions")
+        }
+        val error = intercept[IOException] {
+          store.write(fixture.path(nextKey), actions, overwrite = false, conf)
+        }
+        assert(error.getMessage.contains("classloader"))
+        assert(fixture.bytes(nextKey).isEmpty)
+        assert(new String(fixture.bytes(key).get, UTF_8) == "existing action\n")
+        assert(!fixture.requests.exists(r => r.operation == S3NativeTestFixture.Put ||
+          r.operation == S3NativeTestFixture.Initiate))
+
+        store.write(path, Iterator("replacement action"), overwrite = true, conf)
+        assert(store.read(path, conf) == Seq("replacement action"))
+        assert(fixture.handlerErrors.isEmpty, fixture.handlerErrors.mkString("\n"))
+      } finally {
+        fs.close()
+      }
+    } finally {
+      try fixture.close() finally child.close()
     }
   }
 
