@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.io.FileUtils
@@ -104,16 +105,9 @@ trait ColumnMappingStreamingTestUtils extends StreamTest with DeltaColumnMapping
 }
 
 trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStreamingTestUtils {
-  self: DeltaSourceConnectorTrait =>
+  self: DeltaSourceConnectorTrait with DeltaSQLCommandTest =>
 
   import testImplicits._
-
-  /**
-   * Executes a DML SQL statement (DELETE, INSERT, etc.).
-   * Overridable so that V2 suites can route DML through the V1 connector,
-   * since SparkTable (V2) is read-only and does not support writes.
-   */
-  protected def executeDml(sqlText: String): Unit = sql(sqlText)
 
   // Start a streaming read on the configured connector (V1 vs V2). MAX_FILES_PER_TRIGGER=1
   // ensures we catch failures ASAP; CDC_READ_OPTION is layered in for CDC variants.
@@ -752,10 +746,6 @@ class DeltaSourceIdColumnMappingSuite extends DeltaSourceSuite
   with DeltaSourceColumnMappingSuiteBase {
 
   override protected def isCdcTest: Boolean = false
-
-  // Disambiguates the `executeDml` inherited from both DeltaSourceSuite and
-  // ColumnMappingStreamingBlockedWorkflowSuiteBase (Scala requires an explicit override).
-  override protected def executeDml(sqlText: String): Unit = sql(sqlText)
 }
 
 class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
@@ -764,10 +754,6 @@ class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
   with DeltaSourceColumnMappingSuiteBase {
 
   override protected def isCdcTest: Boolean = false
-
-  // Disambiguates the `executeDml` inherited from both DeltaSourceSuite and
-  // ColumnMappingStreamingBlockedWorkflowSuiteBase (Scala requires an explicit override).
-  override protected def executeDml(sqlText: String): Unit = sql(sqlText)
 }
 
 // Batch sizes 1, 2, and 100 exercise different backfill behaviors in the commit coordinator.

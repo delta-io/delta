@@ -56,8 +56,8 @@ import lombok.Setter;
  *       the connector's plain client-credentials grant.
  *   <li><b>OIDC identity provider</b> (faces UC): {@code GET /.well-known/openid-configuration} and
  *       {@code GET /jwks} let UC discover + trust this issuer (put it in {@code
- *       server.allowed-issuers}), and {@code /token} mints an {@code admin} id_token signed by this
- *       server's key.
+ *       server.allowed-issuers}), and {@code /token} mints an id_token for {@link #SUBJECT} signed
+ *       by this server's key.
  *   <li><b>Token-exchange client</b> (faces UC's STS): {@code /token} exchanges that id_token at
  *       UC's token-exchange endpoint for a UC-internal token, which it returns as {@code
  *       access_token}.
@@ -71,8 +71,8 @@ public class MockOAuthBroker {
   /** Audience minted into the id_token; must match UC's {@code server.audiences}. */
   public static final String AUDIENCE = "uc-oauth-test-audience";
 
-  /** Subject of the id_token. {@code admin} is auto-created + enabled when UC auth is on. */
-  private static final String SUBJECT = "admin";
+  /** UC blocks external token exchange for admin, so the test harness creates this user. */
+  public static final String SUBJECT = "delta-oauth-test-user@example.com";
 
   /** Validity of the minted id_token (5 minutes); generous so the exchange completes within it. */
   private static final long ID_TOKEN_LIFETIME_MILLIS = 300_000L;

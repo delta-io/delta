@@ -26,13 +26,17 @@ class AMTInheritanceSuite extends SparkFunSuite {
   /** The statuses an entry can carry that are not `ADDED`. */
   private val nonAddedStatuses: Seq[Int] = (Tracking.Status.all - Tracking.Status.Added).toSeq
 
-  /** A root `DATA_MANIFEST` parent that declares a file sequence number. */
-  private val fullParent = InheritableTracking(file_sequence_number = Some(42L))
+  /** A root `DATA_MANIFEST` parent that declares every inheritable tracking field. */
+  private val fullParent = InheritableTracking(
+    snapshot_id = 41L,
+    sequence_number = 42L,
+    file_sequence_number = 42L,
+    first_row_id = 1000L)
 
   private def childTracking(
       status: Int = Tracking.Status.Added,
       snapshotId: Option[Long] = None,
-      dvSnapshotId: Option[Long] = None,
+      modifiedSnapshotId: Option[Long] = None,
       sequenceNumber: Option[Long] = None,
       fileSequenceNumber: Option[Long] = None,
       firstRowId: Option[Long] = None,
@@ -40,7 +44,7 @@ class AMTInheritanceSuite extends SparkFunSuite {
       replacedPositions: Option[Array[Byte]] = None): Tracking = Tracking(
     status = status,
     snapshot_id = snapshotId,
-    dv_snapshot_id = dvSnapshotId,
+    modified_snapshot_id = modifiedSnapshotId,
     sequence_number = sequenceNumber,
     file_sequence_number = fileSequenceNumber,
     first_row_id = firstRowId,
@@ -49,8 +53,11 @@ class AMTInheritanceSuite extends SparkFunSuite {
 
   private def resolve(
       child: Tracking,
-      parent: InheritableTracking = fullParent): Tracking =
-    Tracking.resolve(child, parent, childEntryLocationForLogging = "data/part-0.parquet")
+      parent: InheritableTracking = fullParent,
+      prefixSumRecordCountForNullFirstRowId: Long = 0L): Tracking =
+    Tracking.resolve(
+      child, parent, prefixSumRecordCountForNullFirstRowId,
+      childEntryLocationForLogging = "data/part-0.parquet")
 
   /** A root `DATA_MANIFEST` entry carrying the given tracking. */
   private def parentPointer(tracking: Tracking): DataManifestEntry = DataManifestEntry(
@@ -60,6 +67,7 @@ class AMTInheritanceSuite extends SparkFunSuite {
     record_count = 1L,
     file_size_in_bytes = 1L,
     manifest_info = ManifestInfo(
+      format_version = AMTSingleAction.FormatVersionV4,
       added_files_count = 1,
       existing_files_count = 0,
       deleted_files_count = 0,
@@ -71,25 +79,133 @@ class AMTInheritanceSuite extends SparkFunSuite {
       replaced_rows_count = 0L,
       modified_rows_count = 0L,
       min_sequence_number = 0L,
-      dv = None,
-      dv_cardinality = None))
+      dv = None))
 
-  test("an ADDED entry with a null file_sequence_number inherits it from its parent") {
+  test("an ADDED entry with null tracking inherits every inheritable field") {
     val resolved = resolve(childTracking())
+    assert(resolved.snapshot_id.contains(41L))
     assert(resolved.file_sequence_number.contains(42L))
-    assert(resolved.sequence_number.isEmpty)
+    assert(resolved.sequence_number.contains(42L))
+    assert(resolved.first_row_id.contains(1000L))
   }
 
-  test("a materialized child file_sequence_number is kept in preference to the parent's") {
-    val resolved = resolve(childTracking(fileSequenceNumber = Some(3L)))
+  test("materialized child values are kept in preference to the parent's") {
+    val resolved = resolve(childTracking(
+      snapshotId = Some(1L),
+      sequenceNumber = Some(2L),
+      fileSequenceNumber = Some(3L),
+      firstRowId = Some(4L)),
+      prefixSumRecordCountForNullFirstRowId = 500L)
+    assert(resolved.snapshot_id.contains(1L))
+    assert(resolved.sequence_number.contains(2L))
     assert(resolved.file_sequence_number.contains(3L))
+    // The prefix sum applies only to an inherited row id, not to a materialized one.
+    assert(resolved.first_row_id.contains(4L))
+  }
+
+  test("snapshot_id is inherited only by ADDED entries") {
+    assert(resolve(childTracking(status = Tracking.Status.Added)).snapshot_id.contains(41L))
+    nonAddedStatuses.foreach { status =>
+      val resolved = resolve(childTracking(
+        status = status,
+        snapshotId = Some(6L),
+        sequenceNumber = Some(7L),
+        fileSequenceNumber = Some(8L),
+        firstRowId = Some(9L)))
+      assert(resolved.snapshot_id.contains(6L))
+    }
+  }
+
+  test("a null snapshot_id on a non-ADDED entry is rejected") {
+    nonAddedStatuses.foreach { status =>
+      val error = intercept[IllegalStateException] {
+        resolve(childTracking(
+          status = status,
+          sequenceNumber = Some(7L),
+          fileSequenceNumber = Some(8L),
+          firstRowId = Some(9L)))
+      }
+      assert(error.getMessage.contains("tracking.snapshot_id is null"))
+      assert(error.getMessage.contains(Tracking.Status.nameOf(status)))
+      assert(error.getMessage.contains("data/part-0.parquet"))
+    }
+  }
+
+  test("modified_snapshot_id is not inherited") {
+    assert(resolve(childTracking()).modified_snapshot_id.isEmpty)
+    assert(resolve(childTracking(modifiedSnapshotId = Some(5L))).modified_snapshot_id.contains(5L))
+  }
+
+  test("first_row_id is inherited only by ADDED entries") {
+    val added = resolve(childTracking(status = Tracking.Status.Added))
+    assert(added.first_row_id.contains(1000L))
+    nonAddedStatuses.foreach { status =>
+      val resolved = resolve(childTracking(
+        status = status,
+        snapshotId = Some(6L),
+        sequenceNumber = Some(7L),
+        fileSequenceNumber = Some(9L),
+        firstRowId = Some(8L)))
+      assert(resolved.first_row_id.contains(8L))
+    }
+  }
+
+  test("an inherited first_row_id is the parent's value plus the prefix sum") {
+    val resolved = resolve(childTracking(), prefixSumRecordCountForNullFirstRowId = 250L)
+    assert(resolved.first_row_id.contains(1250L))
+  }
+
+  test("a parent that assigns a file sequence number but no row id is rejected") {
+    val parent = parentPointer(childTracking(
+      snapshotId = Some(41L),
+      sequenceNumber = Some(42L),
+      fileSequenceNumber = Some(42L)))
+    val error = intercept[IllegalStateException](InheritableTracking(parent))
+    assert(error.getMessage.contains("tracking.first_row_id must not be null"))
+  }
+
+  test("a parent that assigns row ids but no file sequence number is rejected") {
+    val parent = parentPointer(childTracking(
+      snapshotId = Some(41L),
+      sequenceNumber = Some(42L),
+      firstRowId = Some(1000L)))
+    val error = intercept[IllegalStateException](InheritableTracking(parent))
+    assert(error.getMessage.contains("tracking.file_sequence_number must not be null"))
+  }
+
+  test("a parent that assigns file sequence and row ID but no sequence number is rejected") {
+    val parent = parentPointer(childTracking(
+      snapshotId = Some(41L),
+      fileSequenceNumber = Some(42L),
+      firstRowId = Some(1000L)))
+    val error = intercept[IllegalStateException](InheritableTracking(parent))
+    assert(error.getMessage.contains("tracking.sequence_number must not be null"))
+  }
+
+  test("sequence_number is inherited only by ADDED entries") {
+    val added = resolve(childTracking(status = Tracking.Status.Added))
+    assert(added.sequence_number.contains(42L))
+    nonAddedStatuses.foreach { status =>
+      val resolved = resolve(childTracking(
+        status = status,
+        snapshotId = Some(6L),
+        sequenceNumber = Some(7L),
+        fileSequenceNumber = Some(8L),
+        firstRowId = Some(9L)))
+      assert(resolved.sequence_number.contains(7L))
+    }
   }
 
   test("file_sequence_number is inherited only by ADDED entries") {
     val added = resolve(childTracking(status = Tracking.Status.Added))
     assert(added.file_sequence_number.contains(42L))
     nonAddedStatuses.foreach { status =>
-      val resolved = resolve(childTracking(status = status, fileSequenceNumber = Some(8L)))
+      val resolved = resolve(childTracking(
+        status = status,
+        snapshotId = Some(6L),
+        sequenceNumber = Some(7L),
+        fileSequenceNumber = Some(8L),
+        firstRowId = Some(9L)))
       assert(resolved.file_sequence_number.contains(8L))
     }
   }
@@ -106,20 +222,56 @@ class AMTInheritanceSuite extends SparkFunSuite {
     assert(resolved.replaced_positions.contains(replaced))
   }
 
-  test("a parent that declares nothing leaves the child unchanged") {
-    assert(InheritableTracking.none.isEmpty)
-    Tracking.Status.all.foreach { status =>
-      val child = childTracking(status = status)
-      assert(resolve(child, InheritableTracking.none) == child)
+  test("a parent without snapshot_id is rejected") {
+    val error = intercept[IllegalStateException] {
+      InheritableTracking(parentPointer(childTracking(
+        sequenceNumber = Some(42L),
+        fileSequenceNumber = Some(42L),
+        firstRowId = Some(1000L))))
     }
+    assert(error.getMessage.contains("tracking.snapshot_id must not be null"))
   }
 
   test("a null file_sequence_number on a non-ADDED entry is rejected") {
     nonAddedStatuses.foreach { status =>
       val error = intercept[IllegalStateException] {
-        resolve(childTracking(status = status))
+        resolve(childTracking(
+          status = status,
+          snapshotId = Some(6L),
+          sequenceNumber = Some(7L),
+          firstRowId = Some(9L)))
       }
       assert(error.getMessage.contains("tracking.file_sequence_number is null"))
+      assert(error.getMessage.contains(Tracking.Status.nameOf(status)))
+      assert(error.getMessage.contains("data/part-0.parquet"))
+    }
+  }
+
+  test("a null first_row_id on a non-ADDED entry is rejected") {
+    nonAddedStatuses.foreach { status =>
+      val error = intercept[IllegalStateException] {
+        resolve(childTracking(
+          status = status,
+          snapshotId = Some(6L),
+          sequenceNumber = Some(7L),
+          fileSequenceNumber = Some(8L)))
+      }
+      assert(error.getMessage.contains("tracking.first_row_id is null"))
+      assert(error.getMessage.contains(Tracking.Status.nameOf(status)))
+      assert(error.getMessage.contains("data/part-0.parquet"))
+    }
+  }
+
+  test("a null sequence_number on a non-ADDED entry is rejected") {
+    nonAddedStatuses.foreach { status =>
+      val error = intercept[IllegalStateException] {
+        resolve(childTracking(
+          status = status,
+          snapshotId = Some(6L),
+          fileSequenceNumber = Some(8L),
+          firstRowId = Some(9L)))
+      }
+      assert(error.getMessage.contains("tracking.sequence_number is null"))
       assert(error.getMessage.contains(Tracking.Status.nameOf(status)))
       assert(error.getMessage.contains("data/part-0.parquet"))
     }
@@ -129,12 +281,17 @@ class AMTInheritanceSuite extends SparkFunSuite {
     val parent = parentPointer(Tracking(
       status = Tracking.Status.Existing,
       snapshot_id = Some(7L),
-      dv_snapshot_id = Some(8L),
+      modified_snapshot_id = Some(8L),
       sequence_number = Some(42L),
       file_sequence_number = Some(43L),
       first_row_id = Some(1000L),
       deleted_positions = Some(Array[Byte](1)),
       replaced_positions = Some(Array[Byte](2))))
-    assert(InheritableTracking(parent) == InheritableTracking(file_sequence_number = Some(43L)))
+    assert(InheritableTracking(parent) ==
+      InheritableTracking(
+        snapshot_id = 7L,
+        sequence_number = 42L,
+        file_sequence_number = 43L,
+        first_row_id = 1000L))
   }
 }

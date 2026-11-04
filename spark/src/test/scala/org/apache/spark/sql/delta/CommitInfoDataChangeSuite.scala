@@ -81,6 +81,42 @@ class CommitInfoDataChangeSuite
     assert(CommitInfo.dataChangeFromActions(Seq(cdc, addFile("a", dataChange = true))))
   }
 
+  test("file action operation classification") {
+    import FileActionOperationClass._
+
+    val cases = Seq(
+      (0, 0, false, NO_FILE_ACTIONS),
+      (1, 0, false, COMPUTE_STATS),
+      (1, 1, false, REORGANIZATION),
+      (0, 1, false, INVALID_REMOVE_ONLY),
+      (1, 0, true, INSERT),
+      (1, 1, true, LOGICAL_DATA_REPLACEMENT),
+      (0, 1, true, DELETE),
+      (0, 0, true, INVALID),
+      (-1, 0, false, INVALID),
+      (0, -1, false, INVALID))
+
+    cases.foreach { case (numAdd, numRemove, dataChange, expected) =>
+      assert(classify(numAdd, numRemove, dataChange) === expected)
+    }
+  }
+
+  test("dataChange write flag applies only to non-AMT tables") {
+    val metadata = Metadata()
+    val nonAMTProtocol = Protocol(1, 2)
+    val amtProtocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED.key -> "false") {
+      Seq(true, false).foreach { dataChange =>
+        assert(CommitInfo.dataChangeForCommitInfo(
+          dataChange, metadata, nonAMTProtocol, spark).isEmpty)
+        assert(CommitInfo.dataChangeForCommitInfo(
+          dataChange, metadata, amtProtocol, spark).contains(dataChange))
+      }
+    }
+  }
+
   test("commitChangedData reports the commit-level value only when it can be trusted") {
     withSQLConf(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED.key -> "true") {
       assert(CommitInfo.commitChangedData(None).isEmpty)
@@ -113,6 +149,17 @@ class CommitInfoDataChangeSuite
 
       spark.range(5, 10).write.format(writeFormat).mode("append").save(path)
       assert(latestCommitInfoDataChange(path).contains(true))
+    }
+  }
+
+  test("normal commit omits dataChange for a non-AMT table when writing is disabled") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED.key -> "false") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        spark.range(5).write.format(writeFormat).save(path)
+        assert(latestCommitInfoDataChange(path).isEmpty)
+      }
     }
   }
 
@@ -212,6 +259,18 @@ class CommitInfoDataChangeSuite
       spark.range(5).write.format("parquet").save(path)
       sql(s"CONVERT TO DELTA parquet.`$path`")
       assert(latestCommitInfoDataChange(path).contains(true))
+    }
+  }
+
+  test("commitLarge omits dataChange for a non-AMT table when writing is disabled") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED.key -> "false") {
+      withTempPath { dir =>
+        val path = dir.getCanonicalPath
+        spark.range(5).write.format("parquet").save(path)
+        sql(s"CONVERT TO DELTA parquet.`$path`")
+        assert(latestCommitInfoDataChange(path).isEmpty)
+      }
     }
   }
 

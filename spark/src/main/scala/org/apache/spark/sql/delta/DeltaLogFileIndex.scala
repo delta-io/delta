@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.RowIndexFilterProvider
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs._
@@ -23,7 +24,12 @@ import org.apache.hadoop.fs._
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, PartitionDirectory}
+import org.apache.spark.sql.execution.datasources.{
+  FileFormat,
+  FileIndex,
+  FileStatusWithMetadata,
+  PartitionDirectory
+}
 import org.apache.spark.sql.execution.datasources.json.JsonFileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.types.{LongType, StructField, StructType}
@@ -38,22 +44,38 @@ import org.apache.spark.sql.types.{LongType, StructField, StructType}
  */
 class DeltaLogFileIndex private[delta] (
     val format: FileFormat,
-    val files: Array[FileStatus]
-    )
+    val files: Array[FileStatus],
+    val perFileRowIndexFilters: Map[String, RowIndexFilterProvider] = Map.empty)
   extends FileIndex
   with Logging {
 
   import DeltaLogFileIndex._
-
   override lazy val rootPaths: Seq[Path] = files.map(_.getPath).toSeq
 
   def listAllFiles(): Seq[PartitionDirectory] = {
     files
       .groupBy(f => FileNames.getFileVersionOpt(f.getPath).getOrElse(-1L))
       .map { case (version, versionFiles) =>
-        PartitionDirectory(InternalRow(version), versionFiles)
+        fileStatusToPartitionDirectory(version, versionFiles.toSeq)
       }
       .toSeq
+  }
+
+  private def fileStatusToPartitionDirectory(
+      version: Long,
+      versionFiles: Seq[FileStatus]): PartitionDirectory = {
+    if (perFileRowIndexFilters.nonEmpty) {
+      val statuses = versionFiles.map { file =>
+        val path = file.getPath.toString
+        val metadata = perFileRowIndexFilters.get(path)
+          .map(ROW_INDEX_FILTER_PROVIDER_METADATA_KEY -> _)
+          .toMap
+        FileStatusWithMetadata(file, metadata)
+      }.toIndexedSeq
+      PartitionDirectory(InternalRow(version), statuses)
+    } else {
+      PartitionDirectory(InternalRow(version), versionFiles.toArray)
+    }
   }
 
   override def listFiles(
@@ -89,6 +111,9 @@ class DeltaLogFileIndex private[delta] (
 }
 
 object DeltaLogFileIndex {
+  /** Per-file metadata key used to carry a portable row-index-filter provider to executors. */
+  private[delta] val ROW_INDEX_FILTER_PROVIDER_METADATA_KEY = "row_index_filter_provider"
+
   val COMMIT_VERSION_COLUMN = "version"
 
   lazy val COMMIT_FILE_FORMAT = new JsonFileFormat
@@ -112,4 +137,13 @@ object DeltaLogFileIndex {
     filesOpt.flatMap(DeltaLogFileIndex(format, _))
   }
 
+  /**
+   * Builds an index that carries per-file row-index filters.
+   */
+  def apply(
+      format: FileFormat,
+      files: Array[FileStatus],
+      perFileRowIndexFilters: Map[String, RowIndexFilterProvider]): DeltaLogFileIndex = {
+    new DeltaLogFileIndex(format, files, perFileRowIndexFilters = perFileRowIndexFilters)
+  }
 }

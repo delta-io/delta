@@ -21,13 +21,15 @@ import scala.jdk.OptionConverters._
 
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory
+import org.apache.spark.sql.delta.v2.kernel.KernelContext
 
 import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, FileSizeHistogram, StatisticsCollection}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
+import org.apache.spark.sql.delta.RowId
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
@@ -48,7 +50,8 @@ class DeltaV2Snapshot(
     // `Snapshot` interface: the decoded data path is only exposed on SnapshotImpl in the
     // OSS-published Kernel. The public io.delta.kernel.Snapshot has no `getDataPath`, and its
     // `getPath` is URL-encoded, which breaks Hadoop `Path` for table roots containing spaces.
-    private val kernelSnapshot: KernelSnapshot)
+    private val kernelSnapshot: KernelSnapshot,
+    private[v2] val kernelContext: KernelContext)
     extends Snapshot(
       // toString keeps this compiling across Kernel versions: getDataPath returns String in the
       // currently pinned Kernel and io.delta.kernel.internal.fs.Path in newer Kernels.
@@ -60,20 +63,20 @@ class DeltaV2Snapshot(
       logSegment = null,
       deltaLog = null,
       checksumOpt = None) {
+  require(kernelContext != null, "kernelContext must not be null")
+
 
   private[this] var resolvedCatalogTableOpt: Option[CatalogTable] = None
 
   def this(
       kernelSnapshot: KernelSnapshot,
+      kernelContext: KernelContext,
       catalogTableOpt: Option[CatalogTable]) = {
-    this(kernelSnapshot)
+    this(kernelSnapshot, kernelContext)
     resolvedCatalogTableOpt = catalogTableOpt
   }
 
-  // scalastyle:off deltahadoopconfiguration
-  private def kernelEngine: Engine =
-    KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-  // scalastyle:on deltahadoopconfiguration
+  private def kernelEngine: Engine = kernelContext.getDefaultEngine()
 
   // --- logSegment/deltaLog = null guardrail: construction-path overrides ----------------------
   // These are the members dereferenced while the super `Snapshot` constructor runs (init() and the
@@ -132,6 +135,12 @@ class DeltaV2Snapshot(
   override lazy val protocol: Protocol =
     KernelActionUtils.protocolFromKernel(kernelSnapshot.getProtocol)
 
+  override def getRowTrackingHighWaterMark(): Option[Long] = {
+    kernelSnapshot.getDomainMetadata("delta.rowTracking").toScala.map { configuration =>
+      JsonUtils.fromJson[RowId.RowTrackingMetadataDomain](configuration).rowIdHighWaterMark
+    }
+  }
+
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
   override def numOfFiles: Long = numOfFilesIfKnown.getOrElse(allFiles.count())
@@ -143,8 +152,9 @@ class DeltaV2Snapshot(
   /**
    * Table size in bytes from CRC when present; None otherwise.
    */
-  override protected[delta] def sizeInBytesIfKnown: Option[Long] =
+  override protected[delta] def sizeInBytesIfKnown: Option[Long] = {
     kernelSnapshot.getCurrentCrcInfo.toScala.map(_.getTableSizeBytes)
+  }
 
   // No V1 commit-file index; not used by the Kernel scan path.
   override protected[delta] lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = unimplemented
@@ -220,6 +230,10 @@ class DeltaV2Snapshot(
     kernelSnapshot.getActiveDomainMetadataMap.asScala.map { case (domain, kernelDomainMetadata) =>
       DomainMetadata(domain, kernelDomainMetadata.getConfiguration, kernelDomainMetadata.isRemoved)
     }.toSeq
+
+  // Kernel serves domain metadata without V1 state reconstruction, so it is always known.
+  override protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] =
+    Some(domainMetadata)
 
   // --- ValidateChecksum: Kernel has no V1 checksum to validate; no-op ------------------------
   override def validateChecksum(contextInfo: Map[String, String]): Boolean = true

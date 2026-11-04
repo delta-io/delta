@@ -36,9 +36,9 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit, unix_timestamp}
+import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit, rand, udf, unix_timestamp}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.test.SharedSparkSession
@@ -51,7 +51,8 @@ abstract class DeltaCDCSuiteBase
   with CheckCDCAnswer
   with DeltaSQLCommandTest
   with CatalogOwnedTestBaseSuite
-  with DeltaSQLTestUtils {
+  with DeltaSQLTestUtils
+  with CDFNondeterministicFilterTests {
 
   import testImplicits._
 
@@ -109,6 +110,15 @@ abstract class DeltaCDCSuiteBase
       end: Boundary,
       schemaMode: Option[DeltaBatchCDFSchemaMode] = Some(BatchCDFSchemaLegacy),
       readerOptions: Map[String, String] = Map.empty): DataFrame
+
+  override def readCDF(
+      spark: SparkSession,
+      tableName: String,
+      startVersion: Long,
+      endVersion: Long): DataFrame = {
+    cdcRead(new TableName(tableName),
+      StartingVersion(startVersion.toString), EndingVersion(endVersion.toString))
+  }
 
   /** Create table utility method */
   def ctas(srcTbl: String, dstTbl: String, disableCDC: Boolean = false): Unit = {
@@ -920,6 +930,93 @@ abstract class DeltaCDCSuiteBase
   }
 }
 
+trait CDFNondeterministicFilterTests extends QueryTest with DeltaSQLTestUtils with CDCTestMixin {
+
+  private val cdfFilterTestNumRows: Int = 1000
+
+  private def withCDFForFilterTest(f: DataFrame => Unit): Unit = {
+    val tableName = "cdf_filter_test"
+    withTable(tableName) {
+      spark.range(cdfFilterTestNumRows / 2).coalesce(1)
+        .write.format("delta").saveAsTable(tableName)
+      spark.range(cdfFilterTestNumRows / 2, cdfFilterTestNumRows).coalesce(1)
+        .write.format("delta").mode("append").saveAsTable(tableName)
+      f(readCDF(spark, tableName, startVersion = 0L, endVersion = 1L))
+    }
+  }
+
+  for ((caseName, keepRow, expectedRowCount) <- Seq[(String, Long => Boolean, Int)](
+      ("all rows", _ => true, cdfFilterTestNumRows),
+      ("no rows", _ => false, 0),
+      ("even ids", id => id % 2 == 0, cdfFilterTestNumRows / 2))) {
+    test(s"CDF evaluates a nondeterministic predicate once - $caseName") {
+      withCDFForFilterTest { cdf =>
+        val calls = spark.sparkContext.longAccumulator("cdfPredicateCalls")
+        val predicate =
+          udf((id: Long) => {
+            calls.add(1L)
+            keepRow(id)
+          }).asNondeterministic()
+
+        // checkAnswer executes additional actions, so collect once before checking the calls.
+        // Leave id out of the output to check it is retained for the residual predicate.
+        val rows = cdf.filter(predicate(col("id"))).select("_change_type").collect().toSeq
+        assert(rows === Seq.fill(expectedRowCount)(Row("insert")))
+        assert(calls.value === cdfFilterTestNumRows.toLong)
+      }
+    }
+  }
+
+  test("CDF preserves legacy predicate evaluation when the fix is disabled") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_CDF_SKIP_NONDETERMINISTIC_FILTER_PUSHDOWN.key -> "false",
+      DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key -> "true") {
+      withCDFForFilterTest { cdf =>
+        val calls = spark.sparkContext.longAccumulator("cdfPredicateCalls")
+        val predicate =
+          udf((_: Long) => {
+            calls.add(1L)
+            true
+          }).asNondeterministic()
+        val rows = cdf.filter(predicate(col("id"))).select("id").collect().toSeq
+
+        assert(rows.sortBy(_.getLong(0)) ===
+          (0L until cdfFilterTestNumRows.toLong).map(id => Row(id)))
+        assert(calls.value === cdfFilterTestNumRows.toLong * 2)
+      }
+    }
+  }
+
+  test("CDF combines deterministic filters with a nondeterministic predicate") {
+    withCDFForFilterTest { cdf =>
+      val calls = spark.sparkContext.longAccumulator("cdfPredicateCalls")
+      val predicate =
+        udf((_: Long) => {
+          calls.add(1L)
+          true
+        }).asNondeterministic()
+      val rows = cdf.filter(
+        col("id") < lit(250L) && col("_commit_version") === lit(0L) && predicate(col("id")))
+        .select("id", "_change_type", "_commit_version").collect().toSeq
+
+      assert(rows.sortBy(_.getLong(0)) === (0L until 250L).map(id => Row(id, "insert", 0L)))
+      assert(calls.value === 250L)
+    }
+  }
+
+  for (useDisjunction <- Seq(false, true)) {
+    test(s"CDF applies a random filter once - disjunction=$useDisjunction") {
+      withCDFForFilterTest { cdf =>
+        val sample = rand(42L) < lit(0.5)
+        val predicate = if (useDisjunction) col("id") < lit(0L) || sample else sample
+        val rows = cdf.filter(predicate).select("id").collect().toSeq
+        assert(rows.size > 400 && rows.size < 600,
+          s"Expected a 50% sample of $cdfFilterTestNumRows rows, got ${rows.size}")
+      }
+    }
+  }
+}
+
 class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
 
   /** Single method to do all kinds of CDC reads */
@@ -1201,6 +1298,7 @@ trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase with ChangelogSyntaxSupp
 
   // Tests that do not apply to the V2 changelog read path:
   //  - V1-specific error semantics (they intercept V1 error codes that the V2 path does not raise)
+  //  - rollback flag evaluation counts, which apply only to V1 CDF scans
   //  - mixed timestamp/version boundaries (the V2 CHANGES grammar only allows VERSION..VERSION or
   //    TIMESTAMP..TIMESTAMP)
   //  - timestamp -> version resolution, unsupported on the JVM kernel backend today:
@@ -1214,6 +1312,7 @@ trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase with ChangelogSyntaxSupp
   //    rowTracking and domainMetadata table features the V1 test does not expect.
   protected def excludedV2Exact: Set[String] = Set(
     "An error should be thrown when CDC is not enabled",
+    "CDF preserves legacy predicate evaluation when the fix is disabled",
     "aggregating non-numeric cdc data columns",
     "changes - end timestamp exceeding latest commit timestamp",
     "changes - only start is a timestamp",

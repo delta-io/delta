@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.commands
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import scala.util.control.NonFatal
 import scala.util.Try
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
@@ -620,6 +621,47 @@ case class CreateDeltaTableCommand(
   }
 
   /**
+   * Schema diffs for CREATE TABLE over an existing location. Always compare field order.
+   * Fail CREATE on an order mismatch only when the flag is on; otherwise log a usage event.
+   * A bug in the check must not fail CREATE. The usage event records the table id,
+   * mismatch counts, and 0-based field indices, not column names.
+   */
+  private def reportCreateTableSchemaDifferences(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      path: Path,
+      existingSchema: StructType,
+      specifiedSchema: StructType): Seq[String] = {
+    val enforceColumnOrder = sparkSession.conf.get(
+      DeltaSQLConf.CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED)
+    try {
+      val report = SchemaUtils.reportDifferencesByCategory(
+        existingSchema, specifiedSchema)
+      if (enforceColumnOrder) {
+        report.all
+      } else {
+        if (report.nonOrder.isEmpty && report.fieldOrderMismatches.nonEmpty) {
+          recordDeltaEvent(
+            txn,
+            "delta.createTable.columnOrderMismatch",
+            data = Map(
+              "deltaTableId" -> txn.snapshot.metadata.id,
+              "mismatchedStructCount" -> report.fieldOrderMismatches.size,
+              "firstDivergingFieldIndices" ->
+                report.fieldOrderMismatches.map(_.firstDivergingIndex).mkString(",")))
+        }
+        report.nonOrder
+      }
+    } catch {
+      case NonFatal(e) =>
+        logWarning(log"Failed to verify CREATE TABLE column order at " +
+          log"${MDC(DeltaLogKeys.PATH, path)} " +
+          log"tableId=${MDC(DeltaLogKeys.METADATA_ID, txn.snapshot.metadata.id)}", e)
+        SchemaUtils.reportDifferences(existingSchema, specifiedSchema)
+    }
+  }
+
+  /**
    * Verify against our transaction metadata that the user specified the right metadata for the
    * table.
    */
@@ -639,9 +681,10 @@ case class CreateDeltaTableCommand(
         // We check exact alignment on create table if everything is provided
         // However, if in column mapping mode, we can safely ignore the related metadata fields in
         // existing metadata because new table desc will not have related metadata assigned yet
-        val differences = SchemaUtils.reportDifferences(
-          DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, existingMetadata.schema),
-          tableDesc.schema)
+        val existingSchema =
+          DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, existingMetadata.schema)
+        val differences = reportCreateTableSchemaDifferences(
+          sparkSession, txn, path, existingSchema, tableDesc.schema)
         if (differences.nonEmpty) {
           throw DeltaErrors.createTableWithDifferentSchemaException(
             path, tableDesc.schema, existingMetadata.schema, differences)

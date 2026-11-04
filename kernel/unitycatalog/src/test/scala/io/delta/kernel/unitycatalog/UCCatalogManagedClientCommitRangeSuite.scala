@@ -18,7 +18,7 @@ package io.delta.kernel.unitycatalog
 import java.util.Optional
 
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -162,33 +162,31 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       "Cannot provide a start timestamp greater than the end timestamp"))
   }
 
-  test("loadCommitRange throws if startVersion is greater than max ratified version") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    val ex = intercept[IllegalArgumentException] {
-      testLoadCommitRange(
-        expectedStartVersion = 0,
-        expectedEndVersion = 2,
-        startVersionOpt = Optional.of(9L))
+  Seq(3L, 9L).foreach { versionToLoad =>
+    test(s"loadCommitRange throws a typed exception for start version $versionToLoad above max") {
+      val ex = intercept[VersionToLoadAfterLatestCommitException] {
+        testLoadCommitRange(
+          expectedStartVersion = 0,
+          expectedEndVersion = 2,
+          startVersionOpt = Optional.of(versionToLoad))
+      }
+      assert(ex.getMessage ==
+        s"[testUcTableId] Cannot load commit range with start version $versionToLoad " +
+        "as the latest version ratified by UC is 2")
     }
-    assert(ex.getMessage.contains(
-      "Cannot load commit range with start version 9 as the latest version ratified by UC is 2"))
-  }
 
-  test("loadCommitRange throws if endVersion is greater than max ratified version") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    val ex = intercept[IllegalArgumentException] {
-      testLoadCommitRange(
-        expectedStartVersion = 0,
-        expectedEndVersion = 2,
-        startVersionOpt = Optional.of(0L),
-        endVersionOpt = Optional.of(9L))
+    test(s"loadCommitRange throws a typed exception for end version $versionToLoad above max") {
+      val ex = intercept[VersionToLoadAfterLatestCommitException] {
+        testLoadCommitRange(
+          expectedStartVersion = 0,
+          expectedEndVersion = 2,
+          startVersionOpt = Optional.of(0L),
+          endVersionOpt = Optional.of(versionToLoad))
+      }
+      assert(ex.getMessage ==
+        s"[testUcTableId] Cannot load commit range with end version $versionToLoad " +
+        "as the latest version ratified by UC is 2")
     }
-    assert(ex.getMessage.contains(
-      "Cannot load commit range with end version 9 as the latest version ratified by UC is 2"))
   }
 
   test("loadCommitRange throws when no start boundary is provided") {

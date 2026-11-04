@@ -19,4 +19,11 @@ package org.apache.spark.sql.delta.catalog
 /**
  * Spark 4.0/4.1 does not expose a V2 CREATE TABLE LIKE hook on TableCatalog.
  */
-trait AbstractDeltaCatalogShims
+trait AbstractDeltaCatalogShims {
+
+  /**
+   * No-op: the DSv2 Transaction API is introduced in Spark 4.2, so there are no invariants to
+   * enforce before that.
+   */
+  protected def checkTransactionalCatalogConsistency(): Unit = {}
+}

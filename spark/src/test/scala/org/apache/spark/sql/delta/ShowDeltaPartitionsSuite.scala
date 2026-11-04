@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.math.{BigDecimal => JBigDecimal}
 import java.sql.{Date, Timestamp}
 
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DummyCatalog, DummySessionCatalogInner, DummyV1TableCatalog}
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -432,6 +432,166 @@ class ShowDeltaPartitionsSuite extends QueryTest with SharedSparkSession with De
           Row("us")
         )
       )
+    }
+  }
+
+  test("SHOW PARTITIONS on managed Delta table resolved as V1Table by the catalog") {
+    // Some catalogs (e.g. Unity Catalog-style delegating catalogs) resolve managed tables to a
+    // V1Table rather than directly to a DeltaTableV2. Simulate that here by installing a
+    // spark_catalog implementation that always returns V1Table, and confirm SHOW PARTITIONS
+    // still resolves through ShowDeltaPartitionsCommand instead of falling back to Spark's
+    // built-in (unsupported) ShowPartitions.
+    // Create and populate the table under the default catalog first: creating a Delta table
+    // with an explicit schema through a bare TableCatalog plugin (i.e. without DeltaCatalog in
+    // the delegation chain) is rejected by Spark's V2SessionCatalog. Only the read path
+    // (loadTable) needs to go through the dummy catalog to simulate V1Table resolution.
+    withTable("delta_table") {
+      sql(
+        """
+          |CREATE TABLE delta_table (id INT, date STRING, value DOUBLE)
+          |USING delta
+          |PARTITIONED BY (date)
+        """.stripMargin)
+
+      sql("INSERT INTO delta_table VALUES (1, '2024-01-01', 100.0)")
+      sql("INSERT INTO delta_table VALUES (2, '2024-01-02', 200.0)")
+
+      spark.sessionState.catalogManager.reset()
+      try {
+        withSQLConf(
+            "spark.sql.catalog.spark_catalog" -> classOf[DummySessionCatalogInner].getName) {
+          checkAnswer(
+            sql("SHOW PARTITIONS delta_table"),
+            Seq(
+              Row("2024-01-01"),
+              Row("2024-01-02")
+            )
+          )
+          // Also verify the partition spec is actually threaded through, not just that the
+          // rewrite returns every partition regardless of the filter.
+          checkAnswer(
+            sql("SHOW PARTITIONS delta_table PARTITION (date = '2024-01-01')"),
+            Seq(Row("2024-01-01"))
+          )
+        }
+      } finally {
+        spark.sessionState.catalogManager.reset()
+      }
+    }
+  }
+
+  test("SHOW PARTITIONS leaves a non-Delta table's ShowPartitionsCommand unchanged") {
+    // The ShowPartitionsCommand fallback in DeltaAnalysis must be a no-op for tables that
+    // aren't Delta tables, leaving Spark's normal (string-column) SHOW PARTITIONS behavior
+    // intact instead of misrouting them into ShowDeltaPartitionsCommand.
+    withTable("parquet_table") {
+      sql(
+        """
+          |CREATE TABLE parquet_table (id INT, region STRING, value DOUBLE)
+          |USING parquet
+          |PARTITIONED BY (region)
+        """.stripMargin)
+
+      sql("INSERT INTO parquet_table (id, region, value) VALUES (1, 'us', 100.0)")
+      sql("INSERT INTO parquet_table (id, region, value) VALUES (2, 'eu', 200.0)")
+
+      spark.sessionState.catalogManager.reset()
+      try {
+        withSQLConf(
+            "spark.sql.catalog.spark_catalog" -> classOf[DummySessionCatalogInner].getName) {
+          // Spark's built-in SHOW PARTITIONS returns a single "key=value" string column, unlike
+          // Delta's typed, per-column output. Getting this shape back proves the command was
+          // left untouched rather than being (incorrectly) rewritten to ShowDeltaPartitionsCommand.
+          checkAnswer(
+            sql("SHOW PARTITIONS parquet_table"),
+            Seq(
+              Row("region=eu"),
+              Row("region=us")
+            )
+          )
+        }
+      } finally {
+        spark.sessionState.catalogManager.reset()
+      }
+    }
+  }
+
+  test("SHOW PARTITIONS resolves against the session catalog even when another catalog is " +
+      "current and the legacy v1 identifier setting is enabled") {
+    withTable("delta_table") {
+      sql(
+        """
+          |CREATE TABLE delta_table (id INT, date STRING, value DOUBLE)
+          |USING delta
+          |PARTITIONED BY (date)
+        """.stripMargin)
+      sql("INSERT INTO delta_table VALUES (1, '2024-01-01', 100.0)")
+
+      withSQLConf(
+          "spark.sql.catalog.other_cat" -> classOf[DummyCatalog].getName,
+          "spark.sql.legacy.v1IdentifierNoCatalog" -> "true") {
+        // Create a same-named table in a *different* catalog, with different data, so that if
+        // the ShowPartitionsCommand fallback's table re-resolution mistakenly used the current
+        // catalog instead of always pinning to the session catalog, this test would observe the
+        // wrong (other_cat) partitions rather than erroring out.
+        sql(
+          """
+            |CREATE TABLE other_cat.default.delta_table (id INT, date STRING)
+            |USING delta
+            |PARTITIONED BY (date)
+          """.stripMargin)
+        sql("INSERT INTO other_cat.default.delta_table VALUES (99, '1999-01-01')")
+
+        sql("SET CATALOG other_cat")
+        try {
+          // Explicitly qualify with "spark_catalog" so this always resolves to the session
+          // catalog up front (matching how ResolveSessionCatalog's downgrade to
+          // ShowPartitionsCommand actually triggers), regardless of which catalog is current.
+          // An unqualified reference wouldn't even reach ShowPartitionsCommand here: with
+          // another catalog set as current, Spark resolves it against that catalog directly via
+          // the normal V2 path instead.
+          checkAnswer(
+            sql("SHOW PARTITIONS spark_catalog.default.delta_table"),
+            Seq(Row("2024-01-01"))
+          )
+        } finally {
+          sql("SET CATALOG spark_catalog")
+        }
+      }
+    }
+  }
+
+  test("SHOW PARTITIONS directly rewrites ShowPartitions on V1Table resolved through a " +
+      "non-session catalog") {
+    // Unlike the session catalog, a non-session catalog isn't special-cased by Spark's
+    // ResolveSessionCatalog rule, so SHOW PARTITIONS on a V1Table it returns reaches
+    // DeltaAnalysis's direct ShowPartitions(V1Table) rule rather than the ShowPartitionsCommand
+    // fallback above.
+    withSQLConf("spark.sql.catalog.v1_cat" -> classOf[DummyV1TableCatalog].getName) {
+      val v1Catalog =
+        spark.sessionState.catalogManager.catalog("v1_cat").asInstanceOf[DummyV1TableCatalog]
+      val tablePath = v1Catalog.getTablePath("delta_table")
+      withTable("v1_cat.default.delta_table") {
+        sql(
+          """
+            |CREATE TABLE v1_cat.default.delta_table (id INT, date STRING, value DOUBLE)
+            |USING delta
+            |PARTITIONED BY (date)
+          """.stripMargin)
+
+        // Insert directly into the table's path: writing through this bare TableCatalog plugin
+        // (without DeltaCatalog in the chain) doesn't route through Delta's V2 write path.
+        sql(s"INSERT INTO delta.`$tablePath` VALUES (1, '2024-01-01', 100.0)")
+        sql(s"INSERT INTO delta.`$tablePath` VALUES (2, '2024-01-02', 200.0)")
+
+        checkAnswer(
+          sql("SHOW PARTITIONS v1_cat.default.delta_table"),
+          Seq(
+            Row("2024-01-01"),
+            Row("2024-01-02")
+          )
+        )
+      }
     }
   }
 }
