@@ -218,9 +218,8 @@ object IcebergStatsConverter {
     if (!SkippingEligibleDataType(dt)) return false
 
     dt match {
-      case _: StringType | _: IntegerType | _: FloatType | _: DoubleType |
-        _: DoubleType | _: DecimalType | _: BooleanType | _: DateType | _: TimestampType |
-        // _: LongType TODO: enable after https://github.com/apache/spark/pull/42083 is released
+      case _: StringType | _: IntegerType | _: LongType | _: FloatType | _: DoubleType |
+        _: DecimalType | _: BooleanType | _: DateType | _: TimestampType |
         _: TimestampNTZType | _: ByteType | _: ShortType => true
       case _ => false
     }
