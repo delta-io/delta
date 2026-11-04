@@ -20,9 +20,9 @@ import org.apache.spark.sql.delta.DeltaColumnMappingMode
 import org.apache.spark.sql.types.StructType
 
 /**
- * Abstract trait for metadata actions in Delta. This trait provides a common
- * abstraction that can be implemented by both Spark's V1 Metadata and Kernel's MetadataV2
- * in V2 connector. The V2 connector will implement adapters for reusing V1 utilities.
+ * Common interface for Delta metadata actions consumed by shared V1 utilities.
+ * V1 Metadata implements this trait directly. The V2 snapshot facade exposes V1 Metadata
+ * converted from Kernel metadata, allowing both connectors to reuse the same utilities.
  */
 trait AbstractMetadata {
 
