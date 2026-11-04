@@ -16,15 +16,22 @@
 
 package org.apache.spark.sql.delta.amt
 
+import java.util.concurrent.{CountDownLatch, TimeUnit}
+import java.util.concurrent.atomic.AtomicBoolean
+
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, ConcurrentWriteException, DeltaLog, DeltaMinorCompactionTestUtils, FullAMTWriteFailedWithConflict}
+import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, ConcurrentWriteException, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, FullAMTWriteFailedWithConflict}
+import org.apache.spark.sql.delta.actions.SetTransaction
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.DeltaTestBarrier
+import org.apache.logging.log4j.core.LogEvent
+import org.apache.logging.log4j.core.appender.AbstractAppender
+import org.apache.logging.log4j.core.config.Property
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Row
@@ -1067,6 +1074,77 @@ class AMTConflictResolutionSuite
           s"the delete of id=1 must survive the regenerated checkpoint; after=$liveIdsAfter")
         assert(amtProvider(latest).isDefined,
           "the table must remain AMT-backed after the regenerated checkpoint.")
+      }
+    }
+  }
+
+  test("a rebuilt OPTIMIZE checkpoint tree is not reused when a winner takes its attempt version") {
+    withTable("amt_ckpt_rebuilt_tree_not_reused") {
+      val name = "amt_ckpt_rebuilt_tree_not_reused"
+      val deltaLog = setupAMTTable(name)
+      val winnerAppId = "winner-at-rebuilt-attempt-version"
+      val armed = new AtomicBoolean(false)
+      val rebuilt = new CountDownLatch(1)
+      val resume = new CountDownLatch(1)
+      // Pauses the checkpoint after the conflict round that rebuilt its tree, before it commits.
+      val pauseAfterRebuild = new AbstractAppender(
+          "pauseAfterRebuild", null, null, true, Property.EMPTY_ARRAY) {
+        override def append(event: LogEvent): Unit = {
+          val message = event.getMessage.getFormattedMessage
+          if (message.contains(s"opType=${AMTUsageLogs.CONFLICT_RESOLUTION_ROUND}") &&
+              message.contains(REBUILT_OPTIMIZE_CHECKPOINT_INCREMENTAL_TREE) &&
+              armed.compareAndSet(true, false)) {
+            rebuilt.countDown()
+            resume.await(5, TimeUnit.MINUTES)
+          }
+        }
+      }
+
+      var winnerVersion = -1L
+      val rounds = trackConflictResolutionRounds {
+        withLogAppender(pauseAfterRebuild, Seq(classOf[Log4jUsageLogger].getName)) {
+          val Seq(future) = runFunctionsWithOrderingFromObserver(
+              Seq(optimizeCheckpointTxn(deltaLog))) {
+            case observer :: Nil =>
+              unblockUntilPreCommit(observer)
+              waitForPrecommit(observer)
+              // The DELETE removes a file older than the checkpoint's tree, so the checkpoint
+              // rebuilds its tree.
+              deleteTxn(name, id = 1)()
+              armed.set(true)
+              unblockCommit(observer)
+              try {
+                assert(rebuilt.await(5, TimeUnit.MINUTES),
+                  "the losing OPTIMIZE checkpoint did not rebuild its tree.")
+                // A commit with only a SetTransaction takes the rebuilt tree's attempt version.
+                deltaLog.startTransaction().commit(
+                  Seq(SetTransaction(winnerAppId, 7L, None)), DeltaOperations.ManualUpdate)
+                winnerVersion = deltaLog.update().version
+              } finally {
+                resume.countDown()
+              }
+              waitForCommit(observer)
+          }
+          ThreadUtils.awaitResult(future, Duration.Inf)
+        }
+      }
+      // The winner has no file actions, so it passes the defaultRowCommitVersion check.
+      assert(rounds.map(_.treeOutcome) ==
+        Seq.fill(2)(REBUILT_OPTIMIZE_CHECKPOINT_INCREMENTAL_TREE),
+        s"the second round must rebuild the tree past the winner: $rounds")
+
+      val checkpointVersion = deltaLog.update().version
+      assert(checkpointVersion == winnerVersion + 1)
+      val checkpoint = checkpointAt(deltaLog, checkpointVersion).getOrElse(
+        fail("the OPTIMIZE checkpoint must commit an AMT checkpoint after the winner."))
+      assert(checkpoint.contentRoot.version >= winnerVersion,
+        s"the tree at v$checkpointVersion has contentRootVersion " +
+          s"${checkpoint.contentRoot.version}, so readers skip the winner at v$winnerVersion.")
+      withSQLConf(DeltaSQLConf.DELTA_READ_SET_TRANSACTIONS_FROM_CRC.key -> "false") {
+        DeltaLog.clearCache()
+        val setTransactions = deltaLogForName(name).update().setTransactions
+        assert(setTransactions.exists(t => t.appId == winnerAppId && t.version == 7L),
+          s"the winner's SetTransaction at v$winnerVersion is lost: $setTransactions")
       }
     }
   }
