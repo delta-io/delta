@@ -26,8 +26,8 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * A builder for creating {@link CommitRange} instances that define a contiguous range of commits in
- * a Delta Lake table.
+ * A builder for creating {@link CommitRange} instances that define a range of commits in a Delta
+ * Lake table.
  *
  * <p>The start boundary is required and provided via {@link TableManager#loadCommitRange(String,
  * CommitBoundary)}. If no end specification is provided, the range defaults to the latest available
@@ -112,6 +112,29 @@ public interface CommitRangeBuilder {
    * @throws IllegalArgumentException if version is negative
    */
   CommitRangeBuilder withMaxCatalogVersion(long version);
+
+  /**
+   * Enables or disables validation that the requested commit range is complete and contiguous.
+   *
+   * <p>Validation is enabled by default. When disabled, the range may contain missing versions and
+   * only {@link CommitRange#getCommitFiles()} is supported.
+   *
+   * @param enabled whether to validate the commit range
+   * @return this builder instance
+   */
+  CommitRangeBuilder withCommitRangeValidation(boolean enabled);
+
+  /**
+   * Configures whether raw commit-file iteration fails when a version is missing.
+   *
+   * <p>This option defaults to {@code true} and only affects ranges built with {@link
+   * #withCommitRangeValidation(boolean)} disabled. When {@code false}, raw commit-file iteration
+   * skips missing versions.
+   *
+   * @param enabled whether missing versions should fail raw commit-file iteration
+   * @return this builder instance
+   */
+  CommitRangeBuilder withFailOnDataLoss(boolean enabled);
 
   /**
    * Builds and returns a {@link CommitRange} instance with the configured specifications.
