@@ -171,15 +171,14 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       def statsIds(columnId: Int, name: String, withBounds: Boolean): Seq[(String, Int)] = {
         val base = 10000 + 200 * columnId
         val field = s"${name}_$columnId" // sub-struct field name: logical name + field id
-        // Iceberg V4 offsets: lower_bound=1, upper_bound=2, tight_bounds=3, null_value_count=5.
+        // Iceberg V4 offsets: lower_bound=1, upper_bound=2, null_value_count=4.
         Seq(
           s"content_stats.$field" -> base,
-          s"content_stats.$field.null_value_count" -> (base + 5)) ++
+          s"content_stats.$field.null_value_count" -> (base + 4)) ++
           (if (!withBounds) Nil
            else Seq(
              s"content_stats.$field.lower_bound" -> (base + 1),
-             s"content_stats.$field.upper_bound" -> (base + 2),
-             s"content_stats.$field.tight_bounds" -> (base + 3)))
+             s"content_stats.$field.upper_bound" -> (base + 2)))
       }
       // Partition fields take Iceberg ids from 1000 in partition-spec order, whatever their type.
       val expected = AMTSingleAction.allFieldIdByName ++ Map("partition" -> 102) ++

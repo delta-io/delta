@@ -26,9 +26,9 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Represents a range of contiguous commits in a Delta Lake table with a defined start and end
- * version. Supports operation on the range of commits, such as reading the delta actions committed
- * in each commit in the version range.
+ * Represents a range of commits in a Delta Lake table with a defined start and end version.
+ * Supports operation on the range of commits, such as reading the delta actions committed in each
+ * commit in the version range.
  *
  * <p>Commit ranges are created using a {@link CommitRangeBuilder}, which supports specifying the
  * start and end boundaries of the range. The boundaries can be defined using either versions or
@@ -38,6 +38,19 @@ import java.util.Set;
  */
 @Evolving
 public interface CommitRange {
+
+  /**
+   * Returns an iterator over commit-file metadata in ascending version order.
+   *
+   * <p>The iterator must be closed after use. Missing commit versions may be reported while the
+   * iterator advances.
+   *
+   * @return a closeable iterator over the commit files in this range
+   */
+  default CloseableIterator<CommitFileStatus> getCommitFiles() {
+    throw new UnsupportedOperationException(
+        "CommitRange.getCommitFiles is not supported by this implementation");
+  }
 
   /**
    * Returns the starting version number (inclusive) of this commit range.

@@ -108,13 +108,13 @@ object CDCReader extends CDCReaderImpl
       snapshotWithSchemaMode: SnapshotWithSchemaMode,
       sqlContext: SQLContext,
       catalogTableOpt: Option[CatalogTable],
-      startingVersion: Option[Long],
+      startingSchemaWithVersion: Option[SchemaWithVersion],
       endingVersion: Option[Long]) extends
     DeltaCDFRelationBase(
       snapshotWithSchemaMode,
       sqlContext,
       catalogTableOpt,
-      startingVersion,
+      startingSchemaWithVersion,
       endingVersion) {
 
     override def buildScan(requiredColumns: Seq[Attribute], filters: Seq[Expression]): RDD[Row] = {
@@ -837,13 +837,13 @@ trait CDCReaderImpl extends CDCReaderBase {
     snapshotWithSchema: SnapshotWithSchemaMode,
     sqlContext: SQLContext,
     catalogTableOpt: Option[CatalogTable],
-    startingVersion: Option[Long],
+    startingSchemaWithVersion: Option[SchemaWithVersion],
     endingVersion: Option[Long]): BaseRelation = {
     DeltaCDFRelation(
       snapshotWithSchema,
       sqlContext,
       catalogTableOpt,
-      startingVersion,
+      startingSchemaWithVersion,
       endingVersion
     )
   }

@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.SnapshotManagement.checkpointThreadPool
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, DataManifestEntry, LazyCompleteAMTCheckpointProvider, UninitializedAMTCheckpointProvider}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -190,6 +191,26 @@ object CheckpointProvider extends DeltaLogging {
   }
 
   /**
+   * Wraps `checkpointProviderFuture` in a [[LazyCompleteAMTCheckpointProvider]]. The future is not
+   * waited on until a complete-checkpoint-provider method is actually called.
+   */
+  private def lazyAMTCheckpointProvider(
+      provider: UninitializedAMTCheckpointProvider,
+      checkpointReadFuture: NonFateSharingFuture[Seq[DataManifestEntry]])
+      : CheckpointProvider = {
+    new LazyCompleteAMTCheckpointProvider(provider) {
+      override def createCheckpointProvider(): AMTCheckpointProvider = {
+        val leaves = checkpointReadFuture.get(Duration.Inf)
+        new AMTCheckpointProvider(
+          manifestCommitVersion = provider.manifestCommitVersion,
+          checkpointAction = provider.checkpointAction,
+          leaves = leaves,
+          tableRoot = provider.tableRoot)
+      }
+    }
+  }
+
+  /**
    * Wraps `v2ActionsFuture` in a [[LazyCompleteCheckpointProvider]] which resolves to a
    * [[V2CheckpointProvider]]. The future is not waited on until a complete-checkpoint-provider
    * method is actually called.
@@ -227,6 +248,8 @@ object CheckpointProvider extends DeltaLogging {
       checksumOpt: Option[VersionChecksum],
       uninitializedCheckpointProvider: UninitializedCheckpointProvider)
       : CheckpointProvider = uninitializedCheckpointProvider match {
+    case provider: UninitializedAMTCheckpointProvider =>
+      lazyAMTCheckpointProvider(provider, provider.nonFateSharingCheckpointReadFuture)
     // Note: snapshotDescriptor.protocol should be accessed as late as possible inside the futures
     // as it might need I/O.
     case provider: UninitializedV2CheckpointProvider =>

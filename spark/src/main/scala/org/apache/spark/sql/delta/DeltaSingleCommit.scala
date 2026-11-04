@@ -28,8 +28,12 @@ trait DeltaSingleCommit {
   def version: Long
 
   /**
-   * Uses the in-commit timestamp when enabled, otherwise the commit
-   * log file's modification time.
+   * The persisted in-commit timestamp when present, otherwise the commit log file's raw
+   * modification time, in milliseconds since the Unix epoch.
+   *
+   * This is a per-commit value and does not depend on the table's current ICT configuration.
+   * File modification times are not adjusted to be monotonic across versions, unlike the
+   * timestamps used for history and time travel.
    */
   def timestamp: Long
 
@@ -39,7 +43,8 @@ trait DeltaSingleCommit {
    * The caller owns the returned iterator and must close it after use.
    *
    * @param maxInMemoryFileSizeBytes threshold for caching a commit's actions in memory for rewinds.
-   *   Only the default value (0) is currently supported.
+   *   File-backed implementations stream when the file is not smaller than this threshold.
+   *   Implementations that already hold all actions in memory may ignore the threshold.
    */
   def getActionsIterator(
       maxInMemoryFileSizeBytes: Long = 0): ClosableIterator[Action] with SupportsRewinding[Action]

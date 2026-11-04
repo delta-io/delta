@@ -15,11 +15,16 @@
  */
 package org.apache.spark.sql.delta.v2.interop
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit}
+import java.io.{IOException, UncheckedIOException}
+
+import org.apache.spark.sql.delta.DeltaSingleCommit
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 import io.delta.kernel.{CommitActions => KernelCommitActions}
+import io.delta.kernel.internal.util.{Utils => KernelUtils}
+
+import org.apache.spark.util.Utils
 
 /**
  * Kernel-backed [[DeltaSingleCommit]].
@@ -30,14 +35,26 @@ private[interop] class DeltaV2SingleCommit(
     private val singleKernelCommit: KernelCommitActions
 ) extends DeltaSingleCommit {
 
-  private val (commitVersion, commitTimestamp, actions): (Long, Long, Seq[Action]) = try {
-    val version = singleKernelCommit.getVersion()
-    val timestamp = singleKernelCommit.getTimestamp()
-    val actions = KernelActionUtils.readActions(singleKernelCommit).processAndClose(_.toVector)
-    (version, timestamp, actions)
-  } finally {
-    singleKernelCommit.close()
-  }
+  private val (commitVersion, commitTimestamp, actions): (Long, Long, Seq[Action]) =
+    Utils.tryWithSafeFinally {
+      val version = singleKernelCommit.getVersion()
+      val timestamp = singleKernelCommit.getTimestamp()
+      val actions = try {
+        val actionsIterator = KernelActionUtils.readActions(singleKernelCommit)
+        Utils.tryWithSafeFinally {
+          actionsIterator.toVector
+        } {
+          actionsIterator.close()
+        }
+      } catch {
+        case e: IOException =>
+          throw new UncheckedIOException(
+            s"Failed to process commit at version $version", e)
+      }
+      (version, timestamp, actions)
+    } {
+      KernelUtils.closeCloseables(singleKernelCommit)
+    }
 
   override val version: Long = commitVersion
 
@@ -45,10 +62,7 @@ private[interop] class DeltaV2SingleCommit(
 
   override def getActionsIterator(
       maxInMemoryFileSizeBytes: Long): ClosableIterator[Action] with SupportsRewinding[Action] = {
-    if (maxInMemoryFileSizeBytes != 0) {
-      throw DeltaErrors.assertionFailedError(
-        "getActionsIterator only supports maxInMemoryFileSizeBytes = 0")
-    }
+    // Actions are already materialized, so the file-size threshold does not affect rewinds.
     new ClosableIterator[Action] with SupportsRewinding[Action] {
       private var delegatedIterator = actions.iterator
       override def hasNext: Boolean = delegatedIterator.hasNext

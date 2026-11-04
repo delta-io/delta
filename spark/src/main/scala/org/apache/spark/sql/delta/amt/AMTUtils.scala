@@ -16,11 +16,16 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaIllegalStateException, DeltaLog, LogSegment, Snapshot, SnapshotDescriptor, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
+import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaErrors, DeltaIllegalStateException, DeltaLog, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.SparkSession
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -33,18 +38,92 @@ import org.apache.hadoop.fs.Path
 object AMTUtils extends DeltaLogging {
   /** Whether AMT is **supported** as per the protocol. */
   def amtSupported(protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+    AdaptiveMetadataTableFeatureBase.isSupportedBy(protocol)
 
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
    * `metadata`.
    */
   def amtEnabled(metadata: Metadata, protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+    AdaptiveMetadataTableFeatureBase.isSupportedBy(protocol)
 
   /** Whether AMT writes are enabled for `snapshot`. */
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
     amtEnabled(snapshot.metadata, snapshot.protocol)
+
+  /**
+   * Whether `amtCheckpointOpt` holds a ROOT-ONLY tree (no leaf manifests). A root-only tree keeps
+   * every live file in the root, so state reconstruction stamps no back reference on any of them.
+   */
+  def isRootOnlyCheckpoint(amtCheckpointOpt: Option[Checkpoint]): Boolean =
+    amtCheckpointOpt.exists(_.contentRoot.numLeaves.contains(0L))
+
+  /** Whether a new table's `configuration` asks for AMT. */
+  def amtRequested(configuration: Map[String, String]): Boolean =
+    AdaptiveMetadataTableFeatureBase.features.exists(
+      TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(configuration, _))
+
+  /**
+   * Asserts that a commit taking a table from `snapshot` to `protocol` and `metadata` follows the
+   * rules for the AMT table features (see [[AdaptiveMetadataTableFeatureBase]]):
+   *  - a table has at most one of them;
+   *  - AMT cannot be added to an existing table, including through REPLACE and REPLACE CLONE;
+   *  - adding an AMT feature needs its creation SQL conf (`creationConf`). Tables that already
+   *    have it stay readable and writable with the conf off;
+   *  - an AMT table cannot add a feature AMT is incompatible with, either to the protocol or by
+   *    setting a table property that enables it (e.g. `delta.checkpointPolicy` = `v2`).
+   *
+   * Every commit runs this on its final protocol and metadata (`prepareCommit` and `commitLarge`
+   * both call it through `performTableFeatureIncompatibilityCheck`), so it also catches features
+   * added after `updateMetadata`: session defaults, CLONE, CREATE TABLE LIKE, protocol actions
+   * and the deprecated `enabled` feature property status. A feature counts as added when the new
+   * state has it and the table did not. When creating a table every feature counts as added,
+   * because the initial snapshot of a new table already has the session defaults merged into its
+   * metadata and protocol. Features an existing table already had are left alone, so the table
+   * can still be updated.
+   *
+   * @param isCreatingNewTable whether the commit creates the table, including by REPLACE.
+   */
+  def assertFeatureCompatibility(
+      spark: SparkSession,
+      snapshot: Snapshot,
+      protocol: Protocol,
+      metadata: Metadata,
+      isCreatingNewTable: Boolean,
+      tableName: String): Unit = {
+    def added(feature: TableFeature): Boolean = protocol.isFeatureSupported(feature) &&
+      (isCreatingNewTable || !snapshot.protocol.isFeatureSupported(feature))
+
+    val amtFeatures = AdaptiveMetadataTableFeatureBase.features.filter(protocol.isFeatureSupported)
+    if (amtFeatures.size > 1) {
+      throw DeltaErrors.incompatibleTableFeatures(
+        tableName, feature1 = amtFeatures(0).name, feature2 = amtFeatures(1).name)
+    }
+    amtFeatures.foreach { amtFeature =>
+      // Adding AMT to an existing table is an unsupported upgrade. `updateMetadata` already rejects
+      // it, but CLONE adds the source's protocol after that, so REPLACE CLONE is caught here.
+      if (snapshot.version >= 0 && !amtEnabled(snapshot)) {
+        throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeature.name)
+      }
+      val creationConf = AdaptiveMetadataTableFeatureBase.creationConf(amtFeature)
+      if (added(amtFeature) && !spark.sessionState.conf.getConf(creationConf)) {
+        throw DeltaErrors.adaptiveMetadataNotEnabled(amtFeature.name)
+      }
+      amtFeature.incompatibleFeatures.foreach { feature =>
+        def enabledByMetadata(p: Protocol, m: Metadata): Boolean = feature match {
+          case f: FeatureAutomaticallyEnabledByMetadata =>
+            f.metadataRequiresFeatureToBeEnabled(p, m, spark)
+          case _ => false
+        }
+        val enabledByNewMetadata = enabledByMetadata(protocol, metadata) &&
+          (isCreatingNewTable || !enabledByMetadata(snapshot.protocol, snapshot.metadata))
+        if (added(feature) || enabledByNewMetadata) {
+          throw DeltaErrors.incompatibleTableFeatures(
+            tableName, feature1 = amtFeature.name, feature2 = feature.name)
+        }
+      }
+    }
+  }
 
   /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
   def invariantCheckWithLogging(
@@ -54,16 +133,55 @@ object AMTUtils extends DeltaLogging {
       deltaLog: DeltaLog = null,
       data: Map[String, Any] = Map.empty): Unit = {
     if (!checkInvariant) {
-      val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(10).mkString("\n\t")
-      deltaAssertAndThrow(
-        check = false,
-        name = opTypeSuffix,
-        msg = message,
-        throwable = new DeltaIllegalStateException(
-          errorClass = "INTERNAL_ERROR",
-          messageParameters = Array(message)),
+      failWithLogging(
+        opTypeSuffix = opTypeSuffix,
+        message = message,
         deltaLog = deltaLog,
-        data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+        data = data)
+    }
+  }
+
+  /** Logs and throws an [[IllegalStateException]] with the given message. */
+  def failWithLogging(
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Nothing = {
+    val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(30).mkString("\n\t")
+    deltaAssertAndThrow(
+      check = false,
+      name = opTypeSuffix,
+      msg = message,
+      throwable = new DeltaIllegalStateException(
+        errorClass = "INTERNAL_ERROR",
+        messageParameters = Array(message)),
+      deltaLog = deltaLog,
+      data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+    throw new IllegalStateException("should not reach here")
+  }
+
+  /**
+   * Runs invariant checks, logging unexpected non-fatal exceptions in production and propagating
+   * them in tests.
+   */
+  def runInvariantsSafely(
+      checkName: String,
+      deltaLog: Option[DeltaLog],
+      logPath: Path)(checkInvariant: => Unit): Unit = {
+    try {
+      checkInvariant
+    } catch {
+      case NonFatal(e) if !DeltaUtils.isTesting =>
+        recordDeltaEvent(
+          provider = deltaLog.orNull,
+          opType = AMTUsageLogs.EXCEPTIONS_THROWN_DUE_TO_LOGGING,
+          data = Map(
+            "check" -> checkName,
+            "exceptionClass" -> e.getClass.getName,
+            "exception" -> e.getMessage,
+            "stackTrace" -> e.getStackTrace.take(30).mkString("\n\t")),
+          path = Option(logPath)
+        )
     }
   }
 
@@ -186,18 +304,4 @@ object AMTUtils extends DeltaLogging {
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
     ManifestBitmap.fromSerializedByteArray(bytes)
-
-  /** Logs and throws when non-compacted deltas are absent in the log segment. */
-  def logAndThrowMissingNonCompactedDeltasInLogSegment(
-      deltaLog: DeltaLog,
-      logSegment: LogSegment,
-      eventData: Map[String, Any] = Map.empty): Unit = {
-    invariantCheckWithLogging(
-      checkInvariant = false,
-      opTypeSuffix = AMTUsageLogs.ALERT_MISSING_NON_COMPACTED_DELTAS,
-      message = s"nonCompactedDeltas are absent in an AMT log segment:\n${logSegment.toString}",
-      deltaLog = deltaLog,
-      data = Map("logSegmentVersion" -> logSegment.version) ++ eventData
-    )
-  }
 }

@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaOperations, Optimist
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.V2ForceTest
-import io.delta.spark.internal.v2.kernel.KernelContext
+import org.apache.spark.sql.delta.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
 import io.delta.kernel.{Table => KernelTable}
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshotImpl}

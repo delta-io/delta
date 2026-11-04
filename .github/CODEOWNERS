@@ -8,8 +8,8 @@
 # Build configuration files and directories
 /build/                         @tdas @huan233usc
 /build.sbt                      @tdas @huan233usc
-/project/                       @tdas
-/project/scripts/               @tdas @openinx @yili-db
+/project/                       @tdas @TimothyW553 @huan233usc
+/project/scripts/               @tdas @openinx @yili-db @huan233usc @TimothyW553
 /version.sbt                    @tdas
 
 # Python client, examples, and tooling

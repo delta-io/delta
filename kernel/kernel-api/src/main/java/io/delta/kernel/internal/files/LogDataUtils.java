@@ -57,11 +57,9 @@ public final class LogDataUtils {
    * <p>The method requires but does not validate the following:
    *
    * <ul>
-   *   <li>{@code publishedDeltas} are sorted and contiguous
+   *   <li>{@code publishedDeltas} are sorted with unique versions. They may be non-contiguous when
+   *       commit range validation is disabled.
    *   <li>{@code ratifiedDeltas} are sorted and contiguous
-   *   <li>the commit versions present in {@code publishedDeltas} and {@code ratifiedDeltas}, when
-   *       combined, reflect a contiguous version range. In other words, if the two do not overlap,
-   *       publishedDeltas.last = ratifiedDeltas.first + 1).
    * </ul>
    */
   public static List<ParsedDeltaData> combinePublishedAndRatifiedDeltasWithCatalogPriority(

@@ -30,7 +30,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.{Checkpoint, Metadata}
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUtils}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTUtils}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -1946,38 +1946,7 @@ case class LogSegment(
     nonCompactedDeltasOpt: Option[Seq[FileStatus]],
     deltaAtCheckpointVersionOpt: Option[FileStatus],
     checkpointProvider: UninitializedCheckpointProvider,
-    lastCommitFileModificationTimestamp: Long) {
-
-  if (DeltaUtils.isTesting) {
-    nonCompactedDeltasOpt.foreach { nonCompactedDeltas =>
-      if (nonCompactedDeltas.exists(!isDeltaFile(_))) {
-        throw new IllegalArgumentException(
-          "nonCompactedDeltasOpt must contain only non-compacted delta files, but got " +
-            s"${nonCompactedDeltas.map(_.getPath.getName)}.")
-      }
-      val actualVersions = nonCompactedDeltas.map(deltaVersion).toList
-      val expectedVersions = ((checkpointProvider.version + 1) to version).toList
-      if (actualVersions != expectedVersions) {
-        throw new IllegalArgumentException(
-          s"Expected nonCompactedDeltasOpt to be $expectedVersions, but got $actualVersions.")
-      }
-    }
-    deltaAtCheckpointVersionOpt.foreach { delta =>
-      if (checkpointProvider.version == -1) {
-        throw new IllegalArgumentException(
-          s"deltaAtCheckpointVersionOpt must be None for empty checkpoint, but got $delta.")
-      }
-      if (!isDeltaFile(delta)) {
-        throw new IllegalArgumentException(
-          s"deltaAtCheckpointVersionOpt must be a delta file, but got ${delta}.")
-      }
-      if (deltaVersion(delta) != checkpointProvider.version) {
-        throw new IllegalArgumentException(
-          s"deltaAtCheckpointVersionOpt must correspond to the checkpoint version " +
-            s"${checkpointProvider.version}, but got $delta.")
-      }
-    }
-  }
+    lastCommitFileModificationTimestamp: Long) extends DeltaLogging {
 
   override def hashCode(): Int =
     logPath.hashCode() * 31 + (lastCommitFileModificationTimestamp % 10000).toInt
@@ -2072,35 +2041,52 @@ case class LogSegment(
       LogSegment.truncatedDeltaString(files)(_.toString)
     val nonCompactedDeltasStr =
       nonCompactedDeltasOpt.map(files => s"Some(${renderDeltas(files)})").getOrElse("None")
+    val deltaAtCheckpointStr = deltaAtCheckpointVersionOpt.map(_.getPath.toString).getOrElse("None")
     s"LogSegment($logPath, $version, ${renderDeltas(deltas)}, $nonCompactedDeltasStr, " +
-      s"$checkpointProvider, $lastCommitFileModificationTimestamp)"
+      s"$deltaAtCheckpointStr, $checkpointProvider, $lastCommitFileModificationTimestamp)"
   }
 
-  def toPrettyString: String = {
-    def renderDelta(file: FileStatus): String = {
-      file match {
-        case CompactedDeltaFile(_, startVersion, endVersion) =>
-          s"<${(startVersion to endVersion).mkString(", ")}>"
-        case delta =>
-          deltaVersion(delta).toString
+  private def assertAMTInvariants(): Unit = {
+    deltaAtCheckpointVersionOpt.foreach { delta =>
+      val deltaFileVersion = deltaVersion(delta)
+      deltaAssert(
+        check = deltaFileVersion == checkpointProvider.version,
+        name = AMTUsageLogs.DELTA_AT_CHECKPOINT_VERSION_MISMATCH,
+        msg = s"deltaAtCheckpointVersionOpt must correspond to the checkpoint version " +
+          s"${checkpointProvider.version}, but got ${delta.getPath}.",
+        data = Map(
+          "logPath" -> logPath.toString,
+          "version" -> version,
+          "checkpointVersion" -> checkpointProvider.version,
+          "checkpointProviderType" -> checkpointProvider.getClass.getSimpleName,
+          "numNonCompactedDeltas" -> nonCompactedDeltasOpt.map(_.size),
+          "deltaVersion" -> deltaFileVersion),
+        path = Some(logPath)
+      )
+    }
+    // Full coverage validation parses every delta filename, so keep it off the production path.
+    if (DeltaUtils.isTesting) {
+      nonCompactedDeltasOpt.foreach { nonCompactedDeltas =>
+        if (nonCompactedDeltas.exists(!isDeltaFile(_))) {
+          throw new IllegalArgumentException(
+            "nonCompactedDeltasOpt must contain only non-compacted delta files, but got " +
+              s"${nonCompactedDeltas.map(_.getPath.getName)}.")
+        }
+        val actualVersions = nonCompactedDeltas.map(deltaVersion).toList
+        val expectedVersions = ((checkpointProvider.version + 1) to version).toList
+        if (actualVersions != expectedVersions) {
+          throw new IllegalArgumentException(
+            s"Expected nonCompactedDeltasOpt to be $expectedVersions, but got $actualVersions.")
+        }
       }
     }
-    // E.g., "[1, 2, <3, 4, 5>, 6]".
-    def renderDeltas(files: Seq[FileStatus]): String = {
-      files.map(renderDelta).mkString("[", ", ", "]")
-    }
-    val deltaAtCpStr = deltaAtCheckpointVersionOpt.map(renderDelta).getOrElse("None")
-    s"""
-      |LogSegment(
-      |  logPath = $logPath,
-      |  version = $version,
-      |  deltas = ${renderDeltas(deltas)},
-      |  nonCompactedDeltasOpt = ${nonCompactedDeltasOpt.map(renderDeltas).getOrElse("None")},
-      |  deltaAtCheckpointVersionOpt = $deltaAtCpStr,
-      |  checkpointProvider = ${checkpointProvider.version},
-      |  lastCommitFileModificationTimestamp = $lastCommitFileModificationTimestamp
-      |)
-    """.stripMargin
+  }
+
+  AMTUtils.runInvariantsSafely(
+      checkName = "LogSegment.assertAMTInvariants",
+      deltaLog = None,
+      logPath = logPath) {
+    assertAMTInvariants()
   }
 }
 
