@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicLong
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{AddFile, Format, Metadata, Protocol}
 import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLockingTransactionExecutionObserver => TransactionObserver}
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
@@ -29,11 +30,13 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.datasources.parquet.ParquetReadSupport
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.MetadataBuilder
 import org.apache.spark.util.ThreadUtils
 
 class FeatureEnablementConcurrencySuite
@@ -63,6 +66,13 @@ class FeatureEnablementConcurrencySuite
     override def toSQL(tableName: String): String = {
       s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('$property')"
     }
+  }
+
+  /** A metadata-only transaction that runs `statement` with `<table>` replaced by the table. */
+  case class MetadataStatement(statement: String) extends TestTransaction(Map.empty) {
+    override val name: String = statement
+    override def dataChange: Boolean = false
+    override def toSQL(tableName: String): String = statement.replace("<table>", tableName)
   }
 
   private def createTestTable(
@@ -557,6 +567,265 @@ class FeatureEnablementConcurrencySuite
       val footer = getParquetFooter(deltaLog, addFile)
       validateFooter(footer, expected = false)
     }
+  }
+
+  /**
+   * Creates the test table with a struct column and structs in an array and a map. The nested
+   * fields are INTs, so a test can widen them to BIGINT.
+   */
+  private def createTestTableWithNestedColumns(
+      properties: Seq[String] = Seq.empty): (DeltaLog, CatalogTable) = {
+    val (deltaLog, catalogTable) = createTestTable(properties)
+    sql(s"ALTER TABLE $testTableName ADD COLUMNS (nested STRUCT<field: INT>, " +
+      "arr ARRAY<STRUCT<field: INT>>, m MAP<STRING, STRUCT<field: INT>>)")
+    (deltaLog, catalogTable)
+  }
+
+  /** Asserts that `losingTxn` conflicts when `statement` commits first. */
+  private def assertMetadataChangedConflict(
+      statement: String,
+      losingTxn: TestTransaction,
+      tableProperties: Seq[String] = Seq.empty): Unit = {
+    val (deltaLog, _) = createTestTableWithNestedColumns(tableProperties)
+    val ctx = new TestContext(deltaLog)
+    losingTxn.start(ctx)
+    MetadataStatement(statement).execute(ctx)
+    val e = intercept[SparkException](losingTxn.commit(ctx))
+    assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
+  }
+
+  /** Asserts that `losingTxn` commits when the comment of `target` is set while it runs. */
+  private def assertCommentChangeResolved(
+      target: CommentTarget,
+      losingTxn: TestTransaction,
+      tableProperties: Seq[String] = Seq.empty): Unit = {
+    val (deltaLog, catalogTable) = createTestTableWithNestedColumns(tableProperties)
+    val ctx = new TestContext(deltaLog)
+    losingTxn.interleave(ctx) {
+      MetadataStatement(target.setCommentSql("ids")).execute(ctx)
+    }
+    val metadata = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata
+    assert(target.readComment(metadata) === Some("ids"), s"Lost the ${target.name}")
+  }
+
+  /** Where a comment is set: a column, possibly nested, or the table if `columnPath` is None. */
+  case class CommentTarget(columnPath: Option[String]) {
+    def name: String = columnPath.map(path => s"comment of $path").getOrElse("table comment")
+
+    def setCommentSql(comment: String): String = columnPath match {
+      case Some(path) => s"ALTER TABLE <table> ALTER COLUMN $path COMMENT '$comment'"
+      case None => s"COMMENT ON TABLE <table> IS '$comment'"
+    }
+
+    def readComment(metadata: Metadata): Option[String] = columnPath match {
+      case Some(path) =>
+        val fieldNames = path.split('.').toSeq
+        SchemaUtils
+          .findNestedFieldIgnoreCase(metadata.schema, fieldNames, includeCollections = true)
+          .flatMap(_.getComment())
+      case None => Option(metadata.description)
+    }
+  }
+
+  private val tableComment = CommentTarget(None)
+
+  private val commentTargets = Seq("idCol", "nested.field", "arr.element.field", "m.value.field")
+    .map(path => CommentTarget(Some(path))) :+ tableComment
+
+  for {
+    target <- commentTargets
+    columnMappingMode <- Seq(NoMapping, NameMapping, IdMapping)
+  } {
+    test(s"Comment change conflict resolution - INSERT, ${target.name}, " +
+        s"column mapping: ${columnMappingMode.name}") {
+      assertCommentChangeResolved(
+        target,
+        losingTxn = Insert(rows = Seq(100L), partitionColumn = None),
+        tableProperties =
+          Seq(s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${columnMappingMode.name}'"))
+      assert(spark.table(testTableName).where("idCol = 100").count() === 1)
+    }
+
+    test(s"Comment change conflict resolution - UPDATE, ${target.name}, " +
+        s"column mapping: ${columnMappingMode.name}") {
+      assertCommentChangeResolved(
+        target,
+        losingTxn = Update(rows = Seq(90L), setValue = -1L),
+        tableProperties =
+          Seq(s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${columnMappingMode.name}'"))
+      assert(spark.table(testTableName).where("idCol = -1").count() === 1)
+    }
+  }
+
+  test("Comment change conflict resolution - DELETE") {
+    assertCommentChangeResolved(
+      CommentTarget(Some("idCol")), losingTxn = Delete(rows = Seq(90L)))
+    assert(spark.table(testTableName).where("idCol = 90").count() === 0)
+  }
+
+  test("Comment change conflict resolution - MERGE") {
+    assertCommentChangeResolved(
+      CommentTarget(Some("idCol")), losingTxn = Merge(deleteRows = Seq(90L)))
+    assert(spark.table(testTableName).where("idCol = 90").count() === 0)
+  }
+
+  for (target <- commentTargets)
+  test("Comment change conflicts with a losing transaction that changes metadata - " +
+      s"${target.name}") {
+    assertMetadataChangedConflict(
+      target.setCommentSql("ids"), losingTxn = MetadataStatement(target.setCommentSql("other ids")))
+  }
+
+  test("Comment change conflict resolution - two comment changes in a row") {
+    val (deltaLog, catalogTable) = createTestTableWithNestedColumns()
+    val ctx = new TestContext(deltaLog)
+    val nestedField = CommentTarget(Some("nested.field"))
+
+    Update(rows = Seq(90L), setValue = -1L).interleave(ctx) {
+      MetadataStatement(nestedField.setCommentSql("fields")).execute(ctx)
+      MetadataStatement(tableComment.setCommentSql("ids")).execute(ctx)
+    }
+
+    assert(spark.table(testTableName).where("idCol = -1").count() === 1)
+    val metadata = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata
+    assert(nestedField.readComment(metadata) === Some("fields"))
+    assert(tableComment.readComment(metadata) === Some("ids"))
+  }
+
+  test("Comment change conflicts when metadata conflict resolution is disabled") {
+    withSQLConf(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key -> "false") {
+      assertMetadataChangedConflict(
+        CommentTarget(Some("idCol")).setCommentSql("ids"),
+        losingTxn = Update(rows = Seq(90L), setValue = -1L))
+    }
+  }
+
+  test("Comment change conflict resolution - removed table comment") {
+    val (deltaLog, catalogTable) = createTestTableWithNestedColumns()
+    sql(s"COMMENT ON TABLE $testTableName IS 'ids'")
+    val ctx = new TestContext(deltaLog)
+
+    Update(rows = Seq(90L), setValue = -1L).interleave(ctx) {
+      MetadataStatement("ALTER TABLE <table> UNSET TBLPROPERTIES ('comment')").execute(ctx)
+    }
+
+    assert(spark.table(testTableName).where("idCol = -1").count() === 1)
+    val metadata = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata
+    assert(tableComment.readComment(metadata) === None)
+  }
+
+  test("Comment change conflict resolution - removed column comments") {
+    val (deltaLog, catalogTable) = createTestTableWithNestedColumns()
+    sql(s"ALTER TABLE $testTableName ALTER COLUMN idCol COMMENT 'ids'")
+    sql(s"ALTER TABLE $testTableName ALTER COLUMN nested.field COMMENT 'fields'")
+    val ctx = new TestContext(deltaLog)
+
+    Update(rows = Seq(90L), setValue = -1L).interleave(ctx) {
+      // ALTER COLUMN can only set a comment, so remove the comments directly. The comments are
+      // the only metadata of these fields.
+      val txn = deltaLog.startTransaction(Some(catalogTable))
+      val schemaWithoutComments =
+        SchemaMergingUtils.transformColumns(txn.metadata.schema) { (path, field, _) =>
+          val commented = Seq(Seq("idCol"), Seq("nested", "field")).contains(path :+ field.name)
+          if (commented) field.copy(metadata = new MetadataBuilder().build()) else field
+        }
+      txn.updateMetadata(txn.metadata.copy(schemaString = schemaWithoutComments.json))
+      txn.commit(Nil, DeltaOperations.ManualUpdate)
+    }
+
+    assert(spark.table(testTableName).where("idCol = -1").count() === 1)
+    val metadata = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata
+    assert(CommentTarget(Some("idCol")).readComment(metadata) === None)
+    assert(CommentTarget(Some("nested.field")).readComment(metadata) === None)
+  }
+
+  test("Comment change conflict resolution - table comment set while enabling column mapping") {
+    val (deltaLog, catalogTable) = createTestTable()
+    val ctx = new TestContext(deltaLog)
+
+    Update(rows = Seq(90L), setValue = -1L).interleave(ctx) {
+      MetadataStatement("ALTER TABLE <table> SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${NameMapping.name}', 'comment' = 'ids')")
+        .execute(ctx)
+    }
+
+    assert(spark.table(testTableName).where("idCol = -1").count() === 1)
+    val metadata = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata
+    assert(metadata.columnMappingMode === NameMapping)
+    assert(tableComment.readComment(metadata) === Some("ids"))
+  }
+
+  /** A metadata change beyond comments, and the table properties its statement needs. */
+  case class ChangeBeyondComments(
+      name: String, statement: String, tableProperties: Seq[String] = Seq.empty)
+
+  private val changesBeyondComments = Seq(
+    ChangeBeyondComments("added column with a comment",
+      "ALTER TABLE <table> ADD COLUMN extra STRING COMMENT 'ids'"),
+    ChangeBeyondComments("added nested field with a comment",
+      "ALTER TABLE <table> ADD COLUMN nested.extra STRING COMMENT 'ids'"),
+    ChangeBeyondComments("column comment and a column move",
+      "ALTER TABLE <table> ALTER COLUMN idCol COMMENT 'ids', nested FIRST"),
+    ChangeBeyondComments("table comment and another property",
+      "ALTER TABLE <table> SET TBLPROPERTIES ('comment' = 'ids', 'team' = 'dml')"),
+    ChangeBeyondComments("column default",
+      "ALTER TABLE <table> ALTER COLUMN idCol SET DEFAULT 5",
+      Seq("'delta.feature.allowColumnDefaults' = 'supported'")),
+    ChangeBeyondComments("renamed nested field",
+      "ALTER TABLE <table> RENAME COLUMN nested.field TO renamed",
+      Seq(s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${NameMapping.name}'")),
+    ChangeBeyondComments("widened nested field",
+      "ALTER TABLE <table> ALTER COLUMN nested.field TYPE BIGINT",
+      Seq(s"'${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'true'")),
+    // Enabling column mapping adds column mapping metadata to nested fields. That metadata is
+    // part of the data type, where only comment changes are resolved.
+    ChangeBeyondComments("column mapping enablement with nested columns",
+      "ALTER TABLE <table> SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')"))
+
+  for (change <- changesBeyondComments)
+  test(s"Metadata change beyond comments conflicts - ${change.name}") {
+    assertMetadataChangedConflict(
+      change.statement,
+      losingTxn = Update(rows = Seq(90L), setValue = -1L),
+      tableProperties = change.tableProperties)
+  }
+
+  for (fieldPath <- Seq(Seq("idCol"), Seq("nested", "field")))
+  test("Metadata change beyond comments conflicts - nullability alongside a comment of " +
+      fieldPath.mkString(".")) {
+    val (deltaLog, catalogTable) = createTestTableWithNestedColumns()
+    val ctx = new TestContext(deltaLog)
+    val losingTxn = Update(rows = Seq(90L), setValue = -1L)
+    losingTxn.start(ctx)
+
+    // SQL can't change nullability and a comment in one commit, so commit the schema directly.
+    val txn = deltaLog.startTransaction(Some(catalogTable))
+    val changedSchema =
+      SchemaMergingUtils.transformColumns(txn.metadata.schema) { (path, field, _) =>
+        if (path :+ field.name == fieldPath) {
+          field.copy(nullable = !field.nullable).withComment("ids")
+        } else {
+          field
+        }
+      }
+    txn.updateMetadata(txn.metadata.copy(schemaString = changedSchema.json))
+    txn.commit(Nil, DeltaOperations.ManualUpdate)
+
+    val e = intercept[SparkException](losingTxn.commit(ctx))
+    assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
+  }
+
+  test("Metadata change beyond comments conflicts - comment change, then a type change") {
+    val (deltaLog, _) = createTestTableWithNestedColumns(
+      Seq(s"'${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'true'"))
+    val ctx = new TestContext(deltaLog)
+    val losingTxn = Update(rows = Seq(90L), setValue = -1L)
+
+    losingTxn.start(ctx)
+    MetadataStatement(CommentTarget(Some("nested.field")).setCommentSql("ids")).execute(ctx)
+    MetadataStatement("ALTER TABLE <table> ALTER COLUMN nested.field TYPE BIGINT").execute(ctx)
+    val e = intercept[SparkException](losingTxn.commit(ctx))
+    assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
   }
 
   private def assertCheckpointFormat(

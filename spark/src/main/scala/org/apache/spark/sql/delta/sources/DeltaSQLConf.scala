@@ -611,7 +611,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     buildConf("featureEnablement.conflictResolution.enabled")
       .internal()
       .doc(
-        """Controls whether we attempt to resolve feature enablement with allowlist.
+        """Controls whether we attempt to resolve metadata conflicts: feature enablement with an
+          |allowlist, metadata-only schema changes and comment changes.
           |This is only intended to be used as a kill switch.""".stripMargin)
       .booleanConf
       .createWithDefault(true)

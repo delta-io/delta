@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
@@ -714,8 +715,9 @@ private[delta] class ConflictChecker(
 
   /**
    * Attempts to resolve metadata conflicts between the current and winning transactions.
-   * Currently, we only support the resolution of configuration changes. This is achieved with
-   * the use of an allow-list that defines which configuration changes are allowed.
+   * Currently, we support the resolution of configuration changes, metadata-only schema changes
+   * and comment changes. Configuration changes are resolved with an allow-list that defines
+   * which configuration changes are allowed.
    *
    * We primarily focus on feature enablement. Features should be considered on a case-by-case
    * basis whether they are eligible for white listing. The main consideration is whether
@@ -749,9 +751,7 @@ private[delta] class ConflictChecker(
     val winningCommitMetadata = winningCommitSummary.metadataUpdates.head
     val propertyNamesDiff = currentMetadata.diffFieldNames(winningCommitMetadata)
 
-    // We only support the resolution of configuration changes at the moment and metadata
-    // only schema changes.
-    if (!propertyNamesDiff.subsetOf(Set("configuration", "schemaString"))) {
+    if (!propertyNamesDiff.subsetOf(resolvableMetadataFieldNames)) {
       throwMetadataChangedException()
     }
 
@@ -798,6 +798,14 @@ private[delta] class ConflictChecker(
       changed: Map[String, String] = Map.empty) {
     def addedAndChanged : Map[String, String] = added ++ changed
   }
+
+  /**
+   * Metadata fields whose changes can be resolved: allow-listed configuration changes,
+   * metadata-only schema changes (see [[checkSchemaChangesForConflicts]], which ignores column
+   * comments) and the table comment (`description`). Comments don't affect how data is
+   * written or read.
+   */
+  private val resolvableMetadataFieldNames = Set("configuration", "schemaString", "description")
 
   /** Allow list for [[checkConfigurationChangesForConflicts]]. */
   private lazy val metadataConfigurationChangeAllowList: Set[String] = {
@@ -1000,20 +1008,21 @@ private[delta] class ConflictChecker(
       currentMetadata: Metadata,
       winningMetadata: Metadata): Boolean = {
 
-    val currentSchema = currentMetadata.schema
-    val winningSchema = winningMetadata.schema
+    // Comments, nested ones included, don't affect how data is written or read.
+    val currentSchema = dropComments(currentMetadata.schema)
+    val winningSchema = dropComments(winningMetadata.schema)
 
     if (currentSchema.fields.length != winningSchema.fields.length) {
       return false
     }
 
-    // Currently we only support column mapping metadata changes. If column mapping is not
-    // enabled fail (assumes the method was called because schema changes were detected).
+    // Besides comments, we only support column mapping metadata changes, while column mapping
+    // is being enabled.
     val columnMappingEnabled =
       currentMetadata.columnMappingMode == NoMapping &&
       winningMetadata.columnMappingMode == NameMapping
     if (!columnMappingEnabled) {
-      return false
+      return currentSchema == winningSchema
     }
 
     val allowedMetadataFields = DeltaColumnMapping.COLUMN_MAPPING_METADATA_KEYS
@@ -1042,6 +1051,12 @@ private[delta] class ConflictChecker(
 
     true
   }
+
+  private def dropComments(schema: StructType): StructType =
+    SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
+      val metadata = new MetadataBuilder().withMetadata(field.metadata).remove("comment").build()
+      field.copy(metadata = metadata)
+    }
 
   /**
    * Filters the [[files]] list with the partition predicates of the current transaction
