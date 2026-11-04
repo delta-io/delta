@@ -427,7 +427,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    *
    * @param baseRowId The entry's first row ID; leaf entries may inherit it from their parent.
    */
-  private def addFileColumn(
+  private[amt] def addFileColumn(
       spark: SparkSession, field: StructField, baseRowId: Column): Column = {
     val metadata = checkpointAction.metaData
     val value = field.name match {
