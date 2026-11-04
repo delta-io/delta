@@ -331,7 +331,7 @@ object SparkVersionSpec {
   )
 
   private val spark43 = SparkVersionSpec(
-    fullVersion = "4.3.0-SNAPSHOT",
+    fullVersion = "4.3.0",
     targetJvm = "17",
     additionalSourceDirs = Seq(
       "scala-shims/spark-4.2-4.3",
@@ -340,8 +340,7 @@ object SparkVersionSpec {
     supportIceberg = false,
     supportHudi = false,
     antlr4Version = "4.13.1",
-    additionalJavaOptions = java17TestSettings,
-    sourceBuildDefaultRef = Some("3db813416c8716996b0d4d2fbb94fed5dc121fd2")
+    additionalJavaOptions = java17TestSettings
   )
 
   /** Default Spark version */
