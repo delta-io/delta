@@ -1237,7 +1237,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
               op = op,
               context = Map.empty,
               metrics = Map.empty,
-              dataChange = Some(true))
+              dataChange = true)
           } else {
             log.startTransaction().commit(actions, op)
           }
