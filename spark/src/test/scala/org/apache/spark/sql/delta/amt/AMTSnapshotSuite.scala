@@ -16,12 +16,13 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, Checkpoints, DeletionVectorsTestUtils, DeltaIllegalStateException, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
+import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArrayFormat
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -1200,6 +1201,55 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         // The restored table still reads the single surviving logical row.
         checkAnswer(spark.table(t), Seq(Row(2)))
       }
+    }
+  }
+
+  /** Returns `dvActions` with each [[AddFile]]'s DV replaced by an inline DV over `bitmap`. */
+  private def withInlineDv(dvActions: Seq[Action], bitmap: RoaringBitmapArray): Seq[Action] = {
+    val inlineDv = DeletionVectorDescriptor.inlineInLog(
+      bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable), bitmap.cardinality)
+    dvActions.map {
+      case a: AddFile => a.copy(deletionVector = inlineDv)
+      case other => other
+    }
+  }
+
+  for (useCommitLarge <- Seq(false, true))
+  test(s"commit rejects an inline DV on an AMT table, useCommitLarge=$useCommitLarge") {
+    withTable("amt_inline_dv") {
+      val t = "amt_inline_dv"
+      createAMTTable(t, checkpointInterval = 100)
+      Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(t)
+      val log = deltaLogForName(t)
+      val file = log.update().allFiles.collect().head
+      val bitmap = RoaringBitmapArray(0L)
+      val versionBefore = log.update().version
+
+      val ex = withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
+        intercept[DeltaIllegalStateException] {
+          val actions = withInlineDv(writeFileWithDVOnDisk(log, file, bitmap), bitmap)
+          val op = DeltaOperations.Delete(predicate = Nil)
+          if (useCommitLarge) {
+            log.startTransaction().commitLarge(
+              spark,
+              nonProtocolMetadataActions = actions.iterator,
+              newProtocolOpt = None,
+              op = op,
+              context = Map.empty,
+              metrics = Map.empty,
+              dataChange = Some(true))
+          } else {
+            log.startTransaction().commit(actions, op)
+          }
+        }
+      }
+      checkError(
+        ex,
+        condition = "DELTA_ADAPTIVE_METADATA_INLINE_DELETION_VECTOR_DISALLOWED",
+        sqlState = "XXKDS",
+        parameters = Map("feature" -> AdaptiveMetadataTableFeature.name))
+      assert(log.update().version == versionBefore)
+      checkAnswer(spark.table(t), Seq(Row(1), Row(2)))
     }
   }
 
