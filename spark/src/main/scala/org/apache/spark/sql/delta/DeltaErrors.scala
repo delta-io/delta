@@ -2653,6 +2653,12 @@ trait DeltaErrorsBase
     )
   }
 
+  def adaptiveMetadataInlineDeletionVectorDisallowed(featureName: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ADAPTIVE_METADATA_INLINE_DELETION_VECTOR_DISALLOWED",
+      messageParameters = Array(featureName))
+  }
+
   def maxColumnIdNotSetCorrectly(tableMax: Long, fieldMax: Long): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY",

@@ -1275,10 +1275,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     val addFileMustHaveWideBounds = op.checkAddFileWithDeletionVectorStatsAreNotTightBounds
 
+    // A manifest tree cannot store inline DVs, so the next tree build would fail on such a file.
+    val inlineDeletionVectorDisallowed = AMTUtils.amtEnabled(metadata, protocol)
+
     action => action match {
       case a: AddFile if a.deletionVector != null =>
         if (!deletionVectorAllowedForAddFiles) {
           throw DeltaErrors.addingDeletionVectorsDisallowedException()
+        }
+
+        if (inlineDeletionVectorDisallowed && a.deletionVector.isInline) {
+          throw DeltaErrors.adaptiveMetadataInlineDeletionVectorDisallowed(
+            AdaptiveMetadataTableFeature.name)
         }
 
         // Protocol requirement checks:
