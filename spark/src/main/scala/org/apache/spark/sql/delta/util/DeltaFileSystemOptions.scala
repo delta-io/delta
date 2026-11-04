@@ -15,11 +15,14 @@
  */
 package org.apache.spark.sql.delta.util
 
+import java.util.Locale
+
 import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 
 /**
  * Shared helpers for deriving Hadoop filesystem options from DataFrame options and catalog table
@@ -32,8 +35,13 @@ object DeltaFileSystemOptions {
    * prefix ([[DeltaTableUtils.validDeltaTableHadoopPrefixes]]).
    */
   private[delta] def filterHadoopOptions(options: Map[String, String]): Map[String, String] = {
-    options.filter { case (k, _) =>
-      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+    val caseSensitiveOptions = options match {
+      case ci: CaseInsensitiveMap[String @unchecked] => ci.originalMap
+      case other => other
+    }
+    caseSensitiveOptions.filter { case (k, _) =>
+      val lowerKey = k.toLowerCase(Locale.ROOT)
+      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(lowerKey.startsWith)
     }
   }
 

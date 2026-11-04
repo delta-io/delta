@@ -109,7 +109,10 @@ class DeltaDataSource
     val options = new CaseInsensitiveStringMap(properties)
     val path = options.get("path")
     if (path == null) throw DeltaErrors.pathNotSpecifiedException
-    DeltaTableV2(SparkSession.active, new Path(path), options = options.asScala.toMap)
+    DeltaTableV2(
+      SparkSession.active,
+      new Path(path),
+      options = options.asCaseSensitiveMap().asScala.toMap)
   }
 
   override def sourceSchema(
@@ -326,10 +329,14 @@ class DeltaDataSource
             DeltaDataSource.CDC_END_TIMESTAMP_KEY)
         }
       }
+      val caseSensitiveParams = parameters match {
+        case ci: CaseInsensitiveMap[String @unchecked] => ci.originalMap
+        case other => other
+      }
       val dfOptions: Map[String, String] =
         if (sqlContext.sparkSession.sessionState.conf.getConf(
             DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-          parameters ++ cdcOptions
+          caseSensitiveParams ++ cdcOptions
         } else {
           cdcOptions.toMap
         }
