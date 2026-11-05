@@ -15,8 +15,6 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_FEATURE;
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE;
 import static org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamUtils.*;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -26,9 +24,6 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import java.io.IOException;
@@ -46,6 +41,7 @@ import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
+import org.apache.spark.sql.delta.NoMapping$;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.TypeWidening;
@@ -73,7 +69,6 @@ import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseO
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
@@ -117,12 +112,7 @@ class DeltaV2MicroBatchStream
   private final DeltaOptions options;
   private final boolean ignoreFileDeletion;
   private final boolean skipChangeCommits;
-  // TODO: migrate to the V1 Snapshot class and remove deltaSnapshotAtSourceInit.
-  private final SnapshotImpl snapshotAtSourceInit;
-
-  /** The V1 view of {@link #snapshotAtSourceInit}, the provider of the shared V1 usage events. */
-  private final Snapshot deltaSnapshotAtSourceInit;
-
+  private final Snapshot snapshotAtSourceInit;
   private final String tableId;
   private final SnapshotDescriptor readSnapshotDescriptor;
   private final StructType readSchemaAtSourceInit;
@@ -232,9 +222,9 @@ class DeltaV2MicroBatchStream
     this.sqlConf = SQLConf.get();
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
 
-    this.deltaSnapshotAtSourceInit = snapshotAtSourceInit;
-    this.snapshotAtSourceInit = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotAtSourceInit);
-    this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
+    this.snapshotAtSourceInit =
+        Objects.requireNonNull(snapshotAtSourceInit, "snapshotAtSourceInit is null");
+    this.tableId = this.snapshotAtSourceInit.metadata().id();
 
     // The effective descriptor for reading, mirroring v1's readSnapshotDescriptor. When schema
     // tracking has a persisted entry, layer it onto the source-init descriptor so
@@ -281,12 +271,9 @@ class DeltaV2MicroBatchStream
     this.excludeRegex = ScalaUtils.toJavaOptional(options.excludeRegex());
 
     boolean isStreamingFromColumnMappingTable =
-        ColumnMapping.getColumnMappingMode(
-                this.snapshotAtSourceInit.getMetadata().getConfiguration())
-            != ColumnMappingMode.NONE;
+        this.snapshotAtSourceInit.metadata().columnMappingMode() != NoMapping$.MODULE$;
     boolean isTypeWideningSupportedInProtocol =
-        this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)
-            || this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_FEATURE);
+        TypeWidening.isSupported(this.snapshotAtSourceInit.protocol());
     this.schemaReadOptions =
         Objects.requireNonNull(
             DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
@@ -372,7 +359,7 @@ class DeltaV2MicroBatchStream
     } else {
       // No starting version specified in the options, use snapshot captured
       // at source initialization.
-      version = snapshotAtSourceInit.getVersion();
+      version = snapshotAtSourceInit.version();
       isInitialSnapshot = true;
     }
 
@@ -651,10 +638,10 @@ class DeltaV2MicroBatchStream
               + "version {} (readMode={})",
           tableId,
           file.getVersion(),
-          snapshotAtSourceInit.getVersion(),
+          snapshotAtSourceInit.version(),
           options.readChangeFeed() ? "CDC" : "table");
       throw DeltaErrors.streamingDeletionVectorsNotReadableException(
-          file.getVersion(), snapshotAtSourceInit.getVersion());
+          file.getVersion(), snapshotAtSourceInit.version());
     }
   }
 
@@ -702,7 +689,7 @@ class DeltaV2MicroBatchStream
   private void cleanUpSnapshotResources() {
     if (initialSnapshot != null) {
       initialSnapshot.close(
-          /* unpersistSnapshot= */ initialSnapshotVersion < snapshotAtSourceInit.getVersion());
+          /* unpersistSnapshot= */ initialSnapshotVersion < snapshotAtSourceInit.version());
       initialSnapshot = null;
     }
   }
@@ -729,7 +716,7 @@ class DeltaV2MicroBatchStream
       cachedStartingVersion =
           ScalaUtils.toJavaOptional(
                   DeltaSource.getStartingVersionFromOptions(
-                      spark, options, streamingBackend, deltaSnapshotAtSourceInit))
+                      spark, options, streamingBackend, snapshotAtSourceInit))
               .map(version -> (Long) version);
     }
     return cachedStartingVersion;
@@ -954,14 +941,12 @@ class DeltaV2MicroBatchStream
     if (cdfEnabledOnStreamStartValidated) {
       return;
     }
-    SnapshotImpl startSnapshot;
-    if (startVersion == snapshotAtSourceInit.getVersion()) {
+    Snapshot startSnapshot;
+    if (startVersion == snapshotAtSourceInit.version()) {
       startSnapshot = snapshotAtSourceInit;
     } else {
       try {
-        startSnapshot =
-            DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-                streamingBackend.getSnapshotAt(startVersion));
+        startSnapshot = streamingBackend.getSnapshotAt(startVersion);
       } catch (io.delta.kernel.exceptions.KernelException e) {
         // startVersion may not yet exist (e.g. startingVersion=latest resolves to latest+1).
         // TODO(#6745): narrow this catch once kernel exposes a specific exception subclass
@@ -969,8 +954,7 @@ class DeltaV2MicroBatchStream
         return;
       }
     }
-    // TODO: Replace the Kernel startSnapshot with a V1 snapshot to remove this conversion.
-    if (!isCDFEnabled(KernelActionUtils$.MODULE$.metadataFromKernel(startSnapshot.getMetadata()))) {
+    if (!isCDFEnabled(startSnapshot.metadata())) {
       throw new RuntimeException(
           DeltaErrors.changeDataNotRecordedException(startVersion, startVersion, startVersion));
     }
@@ -1043,7 +1027,7 @@ class DeltaV2MicroBatchStream
     if (endVersionOpt.isPresent()) {
       // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
       // endVersion to be an actual existing version or empty.
-      long latestVersion = snapshotAtSourceInit.getVersion();
+      long latestVersion = snapshotAtSourceInit.version();
       if (endVersionOpt.get() > latestVersion) {
         // This could happen because:
         // 1. data could be added after snapshotAtSourceInit was captured.
@@ -1109,7 +1093,7 @@ class DeltaV2MicroBatchStream
         StreamingHelper.getCommitActionsFromRangeUnsafe(
             engine,
             (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
-            snapshotAtSourceInit.getPath(),
+            snapshotAtSourceInit.dataPath().toString(),
             actionSet));
   }
 
@@ -1137,7 +1121,7 @@ class DeltaV2MicroBatchStream
               commit,
               version,
               startVersion,
-              snapshotAtSourceInit.getPath(),
+              snapshotAtSourceInit.dataPath().toString(),
               endOffsetOpt,
               /* verifyMetadataAction= */ !trackingMetadataChange);
 
@@ -1333,15 +1317,12 @@ class DeltaV2MicroBatchStream
         batchEndVersion != null ? batchEndVersion : "latest");
 
     Metadata newMetadata, oldMetadata;
-    // TODO: Use a V1 snapshot for snapshotAtSourceInit to remove these conversions.
-    if (version < snapshotAtSourceInit.getVersion()) {
-      newMetadata =
-          KernelActionUtils$.MODULE$.metadataFromKernel(snapshotAtSourceInit.getMetadata());
+    if (version < snapshotAtSourceInit.version()) {
+      newMetadata = snapshotAtSourceInit.metadata();
       oldMetadata = metadata;
     } else {
       newMetadata = metadata;
-      oldMetadata =
-          KernelActionUtils$.MODULE$.metadataFromKernel(snapshotAtSourceInit.getMetadata());
+      oldMetadata = snapshotAtSourceInit.metadata();
     }
 
     // Table ID has changed during streaming
@@ -1372,7 +1353,7 @@ class DeltaV2MicroBatchStream
       // There is a schema change. All files after this commit will use `schemaChange`. Hence, we
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
       // query) to read these new files safely.
-      boolean backfilling = version < snapshotAtSourceInit.getVersion();
+      boolean backfilling = version < snapshotAtSourceInit.version();
 
       DeltaStreamUtils.SchemaCompatibilityResult checkResult =
           DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
@@ -1483,12 +1464,10 @@ class DeltaV2MicroBatchStream
 
     if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return;
 
-    SnapshotImpl startVersionSnapshot = null;
+    Snapshot startVersionSnapshot = null;
     Exception err = null;
     try {
-      startVersionSnapshot =
-          DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-              streamingBackend.getSnapshotAt(batchStartVersion));
+      startVersionSnapshot = streamingBackend.getSnapshotAt(batchStartVersion);
     } catch (Exception e) {
       err = e;
     }
@@ -1507,11 +1486,9 @@ class DeltaV2MicroBatchStream
         || !schemaReadOptions
             .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart()) {
       if (startVersionSnapshot != null) {
-        // TODO: Replace the Kernel startVersionSnapshot with a V1 snapshot to remove
-        // this metadata conversion.
         checkReadIncompatibleSchemaChanges(
-            KernelActionUtils$.MODULE$.metadataFromKernel(startVersionSnapshot.getMetadata()),
-            startVersionSnapshot.getVersion(),
+            startVersionSnapshot.metadata(),
+            startVersionSnapshot.version(),
             batchStartVersion,
             batchEndVersion,
             /* validatedDuringStreamStart= */ true);
@@ -1822,7 +1799,7 @@ class DeltaV2MicroBatchStream
           if (add.getDeletionVector().isPresent() || remove.getDeletionVector().isPresent()) {
             // DV-based delete/restore: compute the bitmap diff and emit one CDC file per diff
             // entry. Path.toString() avoids percent-encoding that breaks DV file resolution.
-            String dataPath = snapshotAtSourceInit.getDataPath().toString();
+            String dataPath = snapshotAtSourceInit.dataPath().toString();
             for (CDCDataFile f :
                 CDCDeletionVectorHelper.generateDVDiffCDCFiles(
                     add, remove, timestamp, dataPath, hadoopConf)) {
