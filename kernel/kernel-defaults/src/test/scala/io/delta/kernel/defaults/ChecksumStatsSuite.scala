@@ -555,8 +555,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         engine,
         actions(addFileToRow(addFile("second.parquet", Some(5L)))))
 
-      // Corrupts the base CRC: incremental replay must produce 11 / 35 for dv metrics, while full log
-      // replay would reconstruct the actual totals of 2 / 8.
+      // Corrupt the base CRC: incremental replay must produce DV metrics of 11 / 35.
+      // Full log replay would reconstruct the actual totals of 2 / 8.
       val crcPath = buildCrcPath(path, 1)
       val mapper = new ObjectMapper()
       val baseCrc = mapper.readTree(Files.readAllBytes(crcPath)).asInstanceOf[ObjectNode]
