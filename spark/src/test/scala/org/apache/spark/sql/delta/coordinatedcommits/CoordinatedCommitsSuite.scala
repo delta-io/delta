@@ -331,7 +331,6 @@ class CatalogOwnedSuite
     // Make sure all new tables in tests use CatalogOwned table feature by default.
     super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
   }
-
 }
 
 abstract class CommitCoordinatorSuiteBase
