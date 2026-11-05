@@ -495,6 +495,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
   /** The log-maintenance work this txn decided after committing. */
   private[delta] var maintenanceOperation: MaintenanceOperation = MaintenanceOperation()
 
+  /**
+   * When true, this transaction does not write a checkpoint after it commits, even if its
+   * version is due one. Used by commands that commit many times in a row and write their own
+   * checkpoints. Only applies to tables without AMT.
+   */
+  private[delta] var skipPostCommitCheckpoint: Boolean = false
+
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
 
@@ -3443,7 +3450,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     maintenanceOperation = if (
         !AMTUtils.amtEnabled(postCommitSnapshot)) {
       MaintenanceOperation(
-        shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
+        shouldCheckpoint = !skipPostCommitCheckpoint &&
+          isCheckpointNeeded(attemptVersion, postCommitSnapshot))
     } else if (amtWriteResultOpt.isEmpty) {
       // The AMT writer did not write inline, so schedule a follow-up OPTIMIZE CHECKPOINT commit
       // (issued by the post-commit checkpoint hook)

@@ -1566,6 +1566,31 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "'backfill.maxNumFilesFactor' must be greater than zero.")
       .createWithDefault(3)
 
+  val DELTA_BACKFILL_SINGLE_SCAN_ENABLED =
+    buildConf("backfill.singleScan.enabled")
+      .internal()
+      .doc(
+        """When true, a backfill that needs more than one commit finds the files to backfill
+          |with a single scan of the table and commits them in batches, instead of scanning the
+          |table again before every batch. Each batch reads the table version committed by the
+          |previous batch, so it is only conflict checked against concurrent transactions.
+          |Only used by backfills that support it.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_BACKFILL_SINGLE_SCAN_CHECKPOINT_INTERVAL =
+    buildConf("backfill.singleScan.checkpointInterval")
+      .internal()
+      .doc(
+        """Number of commits between the checkpoints written by a backfill that runs from a
+          |single scan. Such a backfill does not checkpoint after each of its commits; it writes
+          |a checkpoint itself after every this many commits and when it finishes. Defaults to
+          |the checkpoint interval of the table. 0 writes a single checkpoint when the backfill
+          |finishes.""".stripMargin)
+      .intConf
+      .checkValue(_ >= 0, "'backfill.singleScan.checkpointInterval' must not be negative.")
+      .createOptional
+
   val DELTA_ROW_TRACKING_IGNORE_SUSPENSION =
     buildConf("rowTracking.ignoreSuspension")
       .internal()
