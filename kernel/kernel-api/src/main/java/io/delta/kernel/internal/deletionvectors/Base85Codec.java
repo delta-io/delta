@@ -147,6 +147,7 @@ public final class Base85Codec {
       sum += inputCharDecoder.decodeInputChar(inputIndex + 2) * BASE_2ND_POWER;
       sum += inputCharDecoder.decodeInputChar(inputIndex + 3) * BASE;
       sum += inputCharDecoder.decodeInputChar(inputIndex + 4);
+      checkArgument(sum <= 0xFFFFFFFFL, () -> "Input is not valid Z85: " + encoded);
       buffer.putInt((int) sum);
       inputIndex += 5;
     }
