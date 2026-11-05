@@ -25,6 +25,7 @@ import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{AppendOnlyTableFeature, DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, InvariantsTableFeature, TestReaderWriterFeature, TestRemovableReaderWriterFeature, TestRemovableWriterFeature, TestWriterFeature}
+import org.apache.spark.sql.delta.DeltaTestUtils
 import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -37,7 +38,9 @@ import org.apache.hadoop.fs.{Path, UnsupportedFileSystemException}
 import org.apache.spark.SparkException
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
@@ -135,6 +138,135 @@ class DeltaTableSuite extends QueryTest
       checkAnswer(
         DeltaTable.forPath(dir.getAbsolutePath).as("tbl").toDF.select("tbl.value"),
         testData.select("value").collect().toSeq)
+    }
+  }
+
+  /** Creates a CHAR table with the requested read-side padding setting for API DML tests. */
+  private def withCharTable(readSideCharPadding: Boolean)(f: DeltaTable => Unit): Unit = {
+    withSQLConf(
+      DeltaSQLConf.DELTA_DELETE_FILE_INDEX_DEDUPLICATION_ENABLED.key -> "true",
+      SQLConf.READ_SIDE_CHAR_PADDING.key -> readSideCharPadding.toString
+    ) {
+      withTable("char_table") {
+        sql("CREATE TABLE char_table (id INT, charcol CHAR(3)) USING DELTA")
+        sql("INSERT INTO char_table VALUES (1, '67'), (2, '89'), (3, NULL)")
+        f(DeltaTable.forName(spark, "char_table"))
+      }
+    }
+  }
+
+  DeltaTestUtils.BOOLEAN_DOMAIN.foreach { readSideCharPadding =>
+    val val1 = if (readSideCharPadding) "67 " else "67"
+    val val2 = if (readSideCharPadding) "89 " else "89"
+    val val3 = if (readSideCharPadding) null else null
+    val val4 = if (readSideCharPadding) "24 " else "24"
+    val val5 = if (readSideCharPadding) "42 " else "42"
+
+    test(s"delete with CHAR column and deduplication disabled " +
+      s"(readSideCharPadding=$readSideCharPadding)") {
+      withCharTable(readSideCharPadding) { table =>
+        withSQLConf(DeltaSQLConf.DELTA_DELETE_FILE_INDEX_DEDUPLICATION_ENABLED.key -> "false") {
+          if (readSideCharPadding) {
+            val deltaLog = DeltaLog.forTable(spark, TableIdentifier("char_table"))
+            val versionBeforeDelete = deltaLog.update().version
+            val error = intercept[AnalysisException] {
+              table.delete()
+            }
+            assert(error.getCondition == "DELTA_UNSUPPORTED_SOURCE")
+            assert(error.getMessageParameters.get("operation") == "DELETE")
+            assert(deltaLog.update().version == versionBeforeDelete)
+          } else {
+            table.delete()
+            checkAnswer(spark.table("char_table"), Nil)
+          }
+        }
+      }
+    }
+
+    test(s"delete all rows with CHAR column (readSideCharPadding=$readSideCharPadding)") {
+      withCharTable(readSideCharPadding) { table =>
+        table.delete()
+        checkAnswer(spark.table("char_table"), Nil)
+      }
+    }
+
+    test(s"delete matching rows with CHAR column (readSideCharPadding=$readSideCharPadding)") {
+      withCharTable(readSideCharPadding) { table =>
+        table.as("target").delete("target.charcol = '67'")
+        checkAnswer(spark.table("char_table"), Seq(Row(2, val2), Row(3, val3)))
+        table.delete(functions.col("charcol").isNull)
+        checkAnswer(spark.table("char_table"), Seq(Row(2, val2)))
+      }
+    }
+
+    test(s"delete no matching rows with CHAR column (readSideCharPadding=$readSideCharPadding)") {
+      withCharTable(readSideCharPadding) { table =>
+        table.delete("charcol = '42'")
+        checkAnswer(spark.table("char_table"), Seq(Row(1, val1), Row(2, val2), Row(3, val3)))
+      }
+    }
+
+    test(s"SQL delete with CHAR column (readSideCharPadding=$readSideCharPadding)") {
+      withCharTable(readSideCharPadding) { _ =>
+        sql("DELETE FROM char_table WHERE charcol = '67'")
+        checkAnswer(spark.table("char_table"), Seq(Row(2, val2), Row(3, val3)))
+      }
+    }
+
+    test(
+      s"update with CHAR column (readSideCharPadding=$readSideCharPadding)"
+    ) {
+      withCharTable(readSideCharPadding) { table =>
+        table.updateExpr("charcol = '67'", Map("charcol" -> "'42'"))
+        checkAnswer(
+          spark.table("char_table"),
+          // NOTE: UpdateExpr pads values on the write path, so the result is always padded.
+          Seq(Row(1, "42 " ), Row(2, val2), Row(3, val3))
+        )
+      }
+    }
+
+    test(s"merge with CHAR column (readSideCharPadding=$readSideCharPadding)") {
+      withCharTable(readSideCharPadding) { table =>
+        val source =
+          sql("SELECT 1 AS id, '42' AS charcol UNION ALL SELECT 4, '24'")
+        table
+          .as("target")
+          .merge(source.as("source"), "target.id = source.id")
+          .whenMatched()
+          .updateAll()
+          .whenNotMatched()
+          .insertAll()
+          .execute()
+        checkAnswer(
+          spark.table("char_table"),
+          Seq(Row(1, val5), Row(2, val2), Row(3, val3), Row(4, val4))
+        )
+      }
+    }
+  }
+
+  test("delete rejects a partial scan with CHAR padding") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_DELETE_FILE_INDEX_DEDUPLICATION_ENABLED.key -> "true",
+      SQLConf.READ_SIDE_CHAR_PADDING.key -> "true"
+    ) {
+      withTempDir { dir =>
+        withTable("partitioned_char_table") {
+          val path = dir.getCanonicalPath
+          sql(s"""CREATE TABLE partitioned_char_table (id INT, charcol CHAR(2))
+                 |USING DELTA PARTITIONED BY (id) LOCATION '$path'""".stripMargin)
+          sql("INSERT INTO partitioned_char_table VALUES (1, '67'), (2, '89')")
+          val deltaLog = DeltaLog.forTable(spark, path)
+          val versionBeforeDelete = deltaLog.update().version
+          val error = intercept[AnalysisException] {
+            DeltaTable.forPath(spark, s"$path/id=1").delete()
+          }
+          checkError(error, "DELTA_UNEXPECTED_PARTIAL_SCAN",
+            parameters = Map("path" -> deltaLog.dataPath.toString))
+          assert(deltaLog.update().version == versionBeforeDelete)
+        }
+      }
     }
   }
 
