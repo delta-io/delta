@@ -10,7 +10,7 @@ import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import java.util.Objects;
 import org.apache.hadoop.conf.Configuration;
@@ -51,11 +51,12 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
         Objects.requireNonNull(
             SparkSession.active().sparkContext().hadoopConfiguration(), "hadoopConf is null");
     Engine engine = KernelEngineFactory.createDefaultEngine(hadoopConf);
-    DeltaV2SnapshotManager snapshotManager = deltaV2Table.getSnapshotManager();
+    DeltaV2TableManager tableManager = deltaV2Table.getTableManager();
     CommitRange commitRange =
-        snapshotManager.getTableChanges(
+        tableManager.getTableChanges(
             engine,
-            GetTableChangesParam$.MODULE$.apply(startVersion, Option.apply(endVersion)));
+            GetTableChangesParam$.MODULE$.apply(startVersion, Option.apply(endVersion)),
+            deltaV2Table.getQueryContext());
     // Boundary checks: both endpoints must already carry the schema + RT state that
     // DeltaV2ChangelogBatch will validate each in-range Metadata action against. Without these,
     // an RT-disabled boundary with no in-range toggle commit would surface as a raw
@@ -66,9 +67,10 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
     // enabled), so emit DELTA_CHANGELOG_REQUIRES_ROW_TRACKING. Only if the end has RT
     // but the start does not, the toggle happened within the range -- emit
     // DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE with the offending start version.
-    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
+    Snapshot startSnapshot =
+        tableManager.loadSnapshotAt(startVersion, deltaV2Table.getQueryContext());
     SnapshotImpl startSnapshotImpl = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(startSnapshot);
-    Snapshot endSnapshot = snapshotManager.loadSnapshotAt(endVersion);
+    Snapshot endSnapshot = tableManager.loadSnapshotAt(endVersion, deltaV2Table.getQueryContext());
     StructType endSchema = endSnapshot.schema();
     if (!RowTracking$.MODULE$.isEnabled(endSnapshot.protocol(), endSnapshot.metadata())) {
       DeltaErrors.throwChangelogRequiresRowTracking(deltaV2Table.name());
