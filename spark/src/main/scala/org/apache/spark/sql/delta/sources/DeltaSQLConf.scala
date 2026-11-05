@@ -3142,6 +3142,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACE_USING_CAST_MATCHING_KEYS_ENABLED =
+    buildConf("replaceUsing.castMatchingKeys.enabled")
+      .internal()
+      .doc("When enabled, row-based REPLACE USING converts source matching keys to their " +
+        "corresponding destination insertion types using the insert assignment rules. When " +
+        "disabled, row-based matching uses the original source keys without insertion " +
+        "conversions. The dynamic partition overwrite path is unaffected.")
+      .booleanConf
+      .createWithDefault(true)
+
   val ALLOW_ARBITRARY_TABLE_PROPERTIES =
     buildConf("allowArbitraryProperties.enabled")
       .doc(
