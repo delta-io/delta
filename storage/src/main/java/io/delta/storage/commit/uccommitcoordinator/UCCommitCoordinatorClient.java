@@ -210,9 +210,15 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     Optional<Long> lastKnownBackfilledVersion =
       listAndGetLastKnownBackfilledVersion(listFromVersion, logStore, hadoopConf, logPath);
     if (!lastKnownBackfilledVersion.isPresent()) {
-      // In case we don't find anything in the last 100 commits (should not happen)
-      // we go to UC to find the earliest commit it is tracking as the commit prior
-      // to that must have been backfilled.
+      // An empty listing here does not prove nothing is backfilled: this optimized listing
+      // can transiently observe no backfilled delta file even when one exists on storage.
+      // Fall back to UC for the boundary. The earliest commit UC still tracks implies its
+      // predecessor was backfilled, and if UC tracks no commits, everything up to the latest
+      // table version was backfilled. Confirm that inferred boundary with a direct
+      // getFileStatus check, which observes the specific file even when the listing did not,
+      // for version 0 too. We never trust UC alone: CREATE writes a physical 0.json before
+      // registering the table, so it must be observable, and a missing N.json is a real log
+      // gap that must fail the commit.
       recordDeltaEvent(
         UCCoordinatedCommitsUsageLogs.UC_LAST_KNOWN_BACKFILLED_VERSION_NOT_FOUND,
         new HashMap<String, Object>() {{
@@ -223,22 +229,62 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         }},
         logPath.getParent()
       );
-      long minVersion =
-        getCommits(tableDesc, null, null)
+      GetCommitsResponse commitsResponse = getCommits(tableDesc, null, null);
+      Optional<Long> minVersion =
+        commitsResponse
           .getCommits()
           .stream()
           .min(Comparator.comparingLong(Commit::getVersion))
-          .map(Commit::getVersion)
-          .orElseThrow(() -> new IllegalStateException("Couldn't find any unbackfilled commit " +
-            "for table at " + logPath + " at version " + commitVersion));
-      lastKnownBackfilledVersion = listAndGetLastKnownBackfilledVersion(
-        minVersion - 1, logStore, hadoopConf, logPath);
-      if (!lastKnownBackfilledVersion.isPresent()) {
-        throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
-          logPath + " at version " + commitVersion);
+          .map(Commit::getVersion);
+      if (minVersion.isPresent()) {
+        long inferredLastKnownBackfilledVersion = minVersion.get() - 1;
+        if (inferredLastKnownBackfilledVersion < 0) {
+          throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
+            logPath + " at version " + commitVersion);
+        }
+        lastKnownBackfilledVersion = getBackfilledVersionIfFileExists(
+          inferredLastKnownBackfilledVersion, hadoopConf, logPath);
+        if (!lastKnownBackfilledVersion.isPresent()) {
+          throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
+            logPath + " at version " + commitVersion);
+        }
+      } else {
+        long latestTableVersion = commitsResponse.getLatestTableVersion();
+        if (latestTableVersion >= 0 && latestTableVersion < commitVersion) {
+          lastKnownBackfilledVersion = getBackfilledVersionIfFileExists(
+            latestTableVersion, hadoopConf, logPath);
+          if (!lastKnownBackfilledVersion.isPresent()) {
+            throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
+              logPath + " at version " + commitVersion);
+          }
+        } else {
+          throw new IllegalStateException("Couldn't find any unbackfilled commit " +
+            "for table at " + logPath + " at version " + commitVersion);
+        }
       }
     }
     return lastKnownBackfilledVersion.get();
+  }
+
+  /**
+   * Confirms a candidate backfilled version by checking that its delta file physically
+   * exists via a direct getFileStatus call. This is the correctness anchor for the UC
+   * fallback: getFileStatus observes a backfilled file (including 0.json) even when the
+   * directory listing transiently did not. Returns empty if the file is absent so the
+   * caller fails the commit instead of reporting a non-existent backfilled version to UC,
+   * which would risk a Delta log gap.
+   */
+  private Optional<Long> getBackfilledVersionIfFileExists(
+      long version,
+      Configuration hadoopConf,
+      Path logPath) {
+    Path deltaFilePath = CoordinatedCommitsUtils.getBackfilledDeltaFilePath(logPath, version);
+    try {
+      FileSystem fs = logPath.getFileSystem(hadoopConf);
+      return fs.exists(deltaFilePath) ? Optional.of(version) : Optional.empty();
+    } catch (IOException e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   protected Iterator<FileStatus> listFrom(
