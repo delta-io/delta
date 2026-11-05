@@ -48,8 +48,10 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
   protected static final IcebergCompatRequiredTablePropertyEnforcer CM_ID_MODE_ENABLED =
       new IcebergCompatRequiredTablePropertyEnforcer<>(
           TableConfig.COLUMN_MAPPING_MODE,
-          (value) -> ColumnMapping.ColumnMappingMode.ID == value,
-          ColumnMapping.ColumnMappingMode.ID.value,
+          (value) ->
+              ColumnMapping.ColumnMappingMode.ID == value
+                  || ColumnMapping.ColumnMappingMode.NAME == value,
+          ColumnMapping.ColumnMappingMode.NAME.value,
           // We need to update the CM info in the schema here because we check that the physical
           // name is correctly set as part of icebergWriterCompat checks
           (inputContext) ->
