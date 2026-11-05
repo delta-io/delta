@@ -2901,7 +2901,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val tableRoot = deltaLog.dataPath
     val committedKeys =
       committedFileActions.map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
-    val provider = new AMTCheckpointProvider(
+    val provider = AMTCheckpointProvider(
       manifestCommitVersion = attemptVersion,
       checkpointAction = result.checkpoint,
       leaves = result.leaves,

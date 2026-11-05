@@ -1321,7 +1321,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       leaf.copy(manifest_info =
         leaf.manifest_info.copy(dv = Some(mdvBytesFor(deletedPos)))) +:
         base.leaves.tail
-    val provider = new AMTCheckpointProvider(
+    val provider = AMTCheckpointProvider(
       base.manifestCommitVersion, base.checkpointAction, patchedLeaves, base.tableRoot)
 
     val reconstructed = reconstructedPaths(provider, snapshot.deltaLog)
@@ -1384,7 +1384,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         case _ => leaf
       }
     }
-    val provider = new AMTCheckpointProvider(
+    val provider = AMTCheckpointProvider(
       base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
 
     val dropped =
@@ -1454,7 +1454,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
           dv = Some(mdvBytesFor(bLeafAndPos._2))))
       } else leaf
     }
-    val provider = new AMTCheckpointProvider(
+    val provider = AMTCheckpointProvider(
       base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
 
     val survivors = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)

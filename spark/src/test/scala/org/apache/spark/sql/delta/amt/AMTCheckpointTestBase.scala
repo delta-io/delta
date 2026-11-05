@@ -95,7 +95,7 @@ trait AMTCheckpointTestBase
       domainMetadata = Nil,
       txns = Nil,
       sidecars = Nil)
-    new AMTCheckpointProvider(
+    AMTCheckpointProvider(
       manifestCommitVersion = cpVersion,
       checkpointAction = checkpoint,
       leaves = Nil,
