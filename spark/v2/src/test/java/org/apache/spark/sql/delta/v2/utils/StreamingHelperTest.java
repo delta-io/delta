@@ -32,13 +32,11 @@ import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.VectorUtils;
-import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.io.IOException;
@@ -73,35 +71,21 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   private PathBasedSnapshotManager snapshotManager;
 
   @Test
-  public void testGetAddFileRespectsSelectionAndDataChange() {
-    Row addRow = createAddFileRow(true);
+  public void testGetAddFileWithDataChange() {
     ColumnVector adds =
         VectorUtils.buildColumnVector(
-            Arrays.asList(addRow, addRow, addRow, createAddFileRow(false)), SCHEMA_WITHOUT_STATS);
+            Arrays.asList(createAddFileRow(true), createAddFileRow(false)), SCHEMA_WITHOUT_STATS);
     ColumnarBatch batch = createAddFileBatch(adds);
-    ColumnVector selection =
-        VectorUtils.buildColumnVector(Arrays.asList(true, false, null, true), BooleanType.BOOLEAN);
-    FilteredColumnarBatch selected = new FilteredColumnarBatch(batch, Optional.of(selection));
 
-    Optional<AddFile> addFile = StreamingHelper.getAddFile(selected, 0);
+    Optional<AddFile> addFile = StreamingHelper.getAddFileWithDataChange(batch, 0);
     assertTrue(addFile.isPresent());
     assertEquals("file.parquet", addFile.get().path());
     assertTrue(addFile.get().dataChange());
-    assertFalse(StreamingHelper.getAddFile(selected, 1).isPresent());
-    assertFalse(StreamingHelper.getAddFile(selected, 2).isPresent());
-    assertFalse(StreamingHelper.getAddFile(selected, 3).get().dataChange());
-
-    FilteredColumnarBatch unfiltered = new FilteredColumnarBatch(batch, Optional.empty());
-    assertTrue(StreamingHelper.getAddFile(unfiltered, 1).isPresent());
-    assertTrue(StreamingHelper.getAddFileWithDataChange(batch, 0).isPresent());
-    assertFalse(StreamingHelper.getAddFileWithDataChange(batch, 3).isPresent());
+    assertFalse(StreamingHelper.getAddFileWithDataChange(batch, 1).isPresent());
 
     ColumnVector absentAdd =
         VectorUtils.buildColumnVector(Collections.singletonList(null), SCHEMA_WITHOUT_STATS);
     ColumnarBatch absentBatch = createAddFileBatch(absentAdd);
-    assertFalse(
-        StreamingHelper.getAddFile(new FilteredColumnarBatch(absentBatch, Optional.empty()), 0)
-            .isPresent());
     assertFalse(StreamingHelper.getAddFileWithDataChange(absentBatch, 0).isPresent());
   }
 
