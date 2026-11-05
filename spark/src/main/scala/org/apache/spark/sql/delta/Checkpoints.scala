@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.util.UUID
 import java.util.concurrent.{Future, TimeUnit}
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.collection.mutable
 import scala.concurrent.duration.Duration
@@ -311,6 +312,12 @@ trait Checkpoints extends DeltaLogging {
 
   /** The path to the file that holds metadata about the most recent checkpoint. */
   val LAST_CHECKPOINT = new Path(logPath, Checkpoints.LAST_CHECKPOINT_FILE_NAME)
+
+  /**
+   * Number of checkpoints of this log that this process is writing, plus one while
+   * [[checkpointUnlessInProgress]] is checkpointing.
+   */
+  private[delta] val numCheckpointsInProgress = new AtomicInteger(0)
 
   /**
    * Catch non-fatal exceptions related to checkpointing, since the checkpoint is written
@@ -791,7 +798,33 @@ trait Checkpoints extends DeltaLogging {
       snapshotToCheckpoint: Snapshot,
       catalogTableOpt: Option[CatalogTable] = None): LastCheckpointInfo = {
     assertNonAMTCheckpointAllowed(snapshotToCheckpoint)
-    Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint, catalogTableOpt)
+    numCheckpointsInProgress.incrementAndGet()
+    try {
+      Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint, catalogTableOpt)
+    } finally {
+      numCheckpointsInProgress.decrementAndGet()
+    }
+  }
+
+  /**
+   * Like [[checkpoint]], but does nothing if this process is already writing a checkpoint of
+   * this log. Returns whether it wrote the checkpoint.
+   *
+   * Skipping a checkpoint is safe: checkpoints only make loading snapshots faster, and log cleanup
+   * only deletes commits that a checkpoint covers. A later commit writes the next checkpoint.
+   */
+  private[delta] def checkpointUnlessInProgress(
+      snapshotToCheckpoint: Snapshot,
+      catalogTableOpt: Option[CatalogTable]): Boolean = {
+    if (!numCheckpointsInProgress.compareAndSet(0, 1)) {
+      return false
+    }
+    try {
+      checkpoint(snapshotToCheckpoint, catalogTableOpt)
+      true
+    } finally {
+      numCheckpointsInProgress.decrementAndGet()
+    }
   }
 
   /**

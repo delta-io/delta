@@ -18,11 +18,13 @@ package org.apache.spark.sql.delta.hooks
 
 import org.apache.spark.sql.delta.CommittedTransaction
 import org.apache.spark.sql.delta.amt.AMTUtils
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.SparkSession
 
 /** Write a new checkpoint at the version committed by the txn if required. */
-object CheckpointHook extends PostCommitHook {
+object CheckpointHook extends PostCommitHook with DeltaLogging {
   override val name: String = "Post commit checkpoint trigger"
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
@@ -42,6 +44,20 @@ object CheckpointHook extends PostCommitHook {
           catalogTableOpt = txn.catalogTable,
           enforceTimeTravelWithinDeletedFileRetention = false)
       }
+    if (!AMTUtils.amtEnabled(snapshotToCheckpoint) &&
+        spark.conf.get(DeltaSQLConf.DELTA_CHECKPOINT_SKIP_IF_IN_PROGRESS)) {
+      // Skip the checkpoint if this process is already writing one for this table, for example
+      // after a concurrent commit to the same table. A later commit writes the next one.
+      val checkpointed =
+        txn.deltaLog.checkpointUnlessInProgress(snapshotToCheckpoint, txn.catalogTable)
+      if (!checkpointed) {
+        recordDeltaEvent(
+          txn.deltaLog,
+          opType = "delta.checkpoint.skippedInProgress",
+          data = Map("version" -> txn.committedVersion))
+      }
+      return
+    }
     txn.deltaLog.checkpoint(
       snapshotToCheckpoint,
       txn.catalogTable,

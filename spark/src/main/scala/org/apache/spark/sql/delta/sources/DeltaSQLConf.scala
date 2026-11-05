@@ -1905,6 +1905,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CHECKPOINT_SKIP_IF_IN_PROGRESS =
+    buildConf("checkpoint.skipIfInProgress.enabled")
+      .internal()
+      .doc(
+        """When true, the checkpoint after a commit is skipped if this process is already
+          |writing a checkpoint of the same table, for example for a concurrent commit. Explicit
+          |checkpoints are never skipped. Does not apply to AMT tables.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME =
     buildConf("resolveMergeUpdateStructsByName.enabled")
       .internal()
