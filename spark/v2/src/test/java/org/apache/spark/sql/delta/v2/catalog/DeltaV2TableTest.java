@@ -229,8 +229,13 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     }
 
     // ===== Test getTablePath returns Path from tablePath =====
+    // A catalog table keeps the scheme of its location; a path-based table keeps the given path.
+    Path expectedPath =
+        method == ConstructionMethod.FROM_CATALOG_TABLE
+            ? new Path(catalogTable.location())
+            : new Path(path);
     Path retrievedPath = kernelTable.getTablePath();
-    assertEquals(new Path(path), retrievedPath, "getTablePath should return Path from tablePath");
+    assertEquals(expectedPath, retrievedPath, "getTablePath should return Path from tablePath");
   }
 
   /** Enum to represent different construction methods for DeltaV2Table */
@@ -493,9 +498,9 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     URI uri = new URI("file:///data/spark%25dir%25prefix/table");
     String result = (String) getDecodedPath.invoke(null, uri);
 
-    // For file URIs, getDecodedPath returns just the path without the scheme
+    // The file scheme is kept, so the path does not resolve against the default filesystem
     assertEquals(
-        "/data/spark%dir%prefix/table",
+        "file:/data/spark%dir%prefix/table",
         result, "URL-encoded characters should be properly decoded");
   }
 
