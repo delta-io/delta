@@ -23,7 +23,8 @@ import scala.jdk.CollectionConverters._
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaSingleCommit, Snapshot, VersionNotFoundException}
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend
 import org.apache.spark.sql.delta.v2.exception.{VersionNotFoundException => V2VersionNotFoundException}
-import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SnapshotManager}
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException
 
 
@@ -37,14 +38,14 @@ import io.delta.kernel.exceptions.UnsupportedTableFeatureException
  *                     triggers.
  */
 private[read] class DeltaV2StreamingBackend(
-    snapshotManager: DeltaV2SnapshotManager,
+    tableManager: DeltaV2TableManager,
     queryContext: DeltaV2QueryContext)
   extends DeltaStreamingBackend {
 
   @volatile private var latestSnapshot: Snapshot = _
 
   override def update(): Snapshot = {
-    latestSnapshot = snapshotManager.loadLatestSnapshot(queryContext)
+    latestSnapshot = tableManager.loadLatestSnapshot(queryContext)
     latestSnapshot
   }
 
@@ -53,14 +54,14 @@ private[read] class DeltaV2StreamingBackend(
     Option(latestSnapshot).getOrElse(update())
 
   override def getSnapshotAt(version: Long): Snapshot =
-    snapshotManager.loadSnapshotAt(version, queryContext)
+    tableManager.loadSnapshotAt(version, queryContext)
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean): Unit = {
     try {
-      snapshotManager.checkVersionExists(
+      tableManager.checkVersionExists(
         version, mustBeRecreatable, allowOutOfRange, queryContext)
     } catch {
       case e: V2VersionNotFoundException =>
@@ -73,7 +74,7 @@ private[read] class DeltaV2StreamingBackend(
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
-    val commit = snapshotManager.getActiveCommitAtTime(
+    val commit = tableManager.getActiveCommitAtTime(
       timestamp.getTime,
       canReturnLastCommit,
       mustBeRecreatable,

@@ -193,7 +193,7 @@ class DeltaV2Table private (
         SparkSession.active,
         initialSnapshotValue,
         options,
-        tableManager.snapshotManager(queryContext.catalogTableOpt),
+        tableManager,
         kernelEngine(),
         queryContext)
 
@@ -450,7 +450,7 @@ class DeltaV2Table private (
       initialSnapshot = initialSnapshotValue,
       kernelEngine = kernelEngine(),
       catalogTable = toScalaOption(catalogTableValue),
-      snapshotManager = getSnapshotManager(),
+      tableManager = tableManager,
       dataSchema = schemaProvider.getDataSchema(),
       partitionSchema = schemaProvider.getPartitionSchema(),
       tableSchema = schemaProvider.getRawSchema(),

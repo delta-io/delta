@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.TableManagerTestAdapter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -46,7 +47,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
     String path = createTable(tempDir, /* commits= */ 1);
     DeltaV2StreamingBackend backend =
         new DeltaV2StreamingBackend(
-            new PathBasedSnapshotManager(path, defaultKernelContext),
+            TableManagerTestAdapter.apply(new PathBasedSnapshotManager(path, defaultKernelContext)),
             DeltaV2QueryContext$.MODULE$.empty());
     assertEquals(0L, backend.update().version());
 
@@ -69,7 +70,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
     String path = createTable(tempDir, /* commits= */ 3);
     DeltaV2StreamingBackend backend =
         new DeltaV2StreamingBackend(
-            new PathBasedSnapshotManager(path, defaultKernelContext),
+            TableManagerTestAdapter.apply(new PathBasedSnapshotManager(path, defaultKernelContext)),
             DeltaV2QueryContext$.MODULE$.empty());
 
     VersionNotFoundException e =
@@ -103,7 +104,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
                 + "\"]}}"));
     DeltaV2StreamingBackend backend =
         new DeltaV2StreamingBackend(
-            new PathBasedSnapshotManager(path, defaultKernelContext),
+            TableManagerTestAdapter.apply(new PathBasedSnapshotManager(path, defaultKernelContext)),
             DeltaV2QueryContext$.MODULE$.empty());
 
     DeltaUnsupportedTableFeatureException e =

@@ -43,6 +43,7 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.TableManagerTestAdapter;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
@@ -1048,9 +1049,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   private static void setSnapshotManager(DeltaV2Scan scan, PathBasedSnapshotManager snapshotManager)
       throws Exception {
-    Field snapshotManagerField = DeltaV2Scan.class.getDeclaredField("snapshotManager");
-    snapshotManagerField.setAccessible(true);
-    snapshotManagerField.set(scan, snapshotManager);
+    Field tableManagerField = DeltaV2Scan.class.getDeclaredField("tableManager");
+    tableManagerField.setAccessible(true);
+    tableManagerField.set(scan, TableManagerTestAdapter.apply(snapshotManager));
   }
 
   private static final class RecordingPathBasedSnapshotManager extends PathBasedSnapshotManager {
