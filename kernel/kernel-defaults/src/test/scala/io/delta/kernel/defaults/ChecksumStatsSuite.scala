@@ -312,6 +312,59 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
     }
   }
 
+  test("SIMPLE CRC omits DV metrics when creating a table with DV supported but not enabled") {
+    withTempDirAndEngine { (path, engine) =>
+      commitSimple(
+        getCreateTxn(
+          engine,
+          path,
+          testSchema,
+          tableProperties = Map(
+            "delta.feature.deletionVectors" -> "supported",
+            "delta.enableDeletionVectors" -> "false")),
+        engine)
+      assert(getProtocol(engine, path).getReaderFeatures.contains("deletionVectors"))
+      checkCrcCorrect(engine, path, 0, 0, 0, Some(histogramForSize100Files(0)))
+    }
+  }
+
+  test("SIMPLE CRC preserves DV metrics when DV supported but not enabled") {
+    withTempDirAndEngine { (path, engine) =>
+      val firstDv = addFile("first.parquet", Some(3L))
+      commitSimple(
+        getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
+        engine,
+        addFileToRow(firstDv))
+      commitSimple(
+        getUpdateTxn(
+          engine,
+          path,
+          tableProperties = Map("delta.enableDeletionVectors" -> "false")),
+        engine,
+        addFileToRow(addFile("plain.parquet")))
+      checkCrcCorrect(
+        engine,
+        path,
+        1,
+        2,
+        200,
+        Some(histogramForSize100Files(2)),
+        Some(1L),
+        Some(3L))
+
+      commitSimple(getUpdateTxn(engine, path), engine, addFileToRemoveFileRow(firstDv))
+      checkCrcCorrect(
+        engine,
+        path,
+        2,
+        1,
+        100,
+        Some(histogramForSize100Files(1)),
+        Some(0L),
+        Some(0L))
+    }
+  }
+
   test("SIMPLE CRC maintains DV metrics across appends, DV updates, and removals") {
     withTempDirAndEngine { (path, engine) =>
       val firstDv = addFile("first.parquet", Some(3L))
