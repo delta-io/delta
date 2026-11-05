@@ -107,6 +107,37 @@ public interface Scan {
   CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine);
 
   /**
+   * Get an iterator of data files to scan, optionally including file-level statistics (such as row
+   * counts) in the returned rows.
+   *
+   * <p>When {@code includeStats=true}, the JSON file statistics are always read from the log and
+   * included in the returned columnar batches. Specifically, the {@code add} struct in each
+   * returned row gains an additional {@code stats} field (a JSON string containing per-file
+   * statistics such as {@code numRecords}, {@code minValues}, and {@code maxValues}). The full
+   * schema of the returned rows is defined by {@link
+   * io.delta.kernel.internal.InternalScanFileUtils#SCAN_FILE_SCHEMA_WITH_STATS}. This is useful for
+   * connectors that need per-file metadata to implement optimizations such as limit pushdown.
+   *
+   * <p>When {@code includeStats=false}, this method behaves identically to {@link
+   * #getScanFiles(Engine)} and the returned row schema matches {@link
+   * io.delta.kernel.internal.InternalScanFileUtils#SCAN_FILE_SCHEMA}.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @param includeStats whether to read and include the JSON file statistics in the returned rows.
+   * @return iterator of {@link FilteredColumnarBatch}s where each selected row corresponds to one
+   *     scan file.
+   * @since 4.3.0
+   */
+  default CloseableIterator<FilteredColumnarBatch> getScanFiles(
+      Engine engine, boolean includeStats) {
+    if (includeStats) {
+      throw new UnsupportedOperationException(
+          "This Scan implementation does not support includeStats=true.");
+    }
+    return getScanFiles(engine);
+  }
+
+  /**
    * Get the remaining filter that is not guaranteed to be satisfied for the data Delta Kernel
    * returns. This filter is used by Delta Kernel to do data skipping when possible.
    *
