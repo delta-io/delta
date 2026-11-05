@@ -203,7 +203,7 @@ Required table features that must also be enabled:
 - `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
 - `inCommitTimestamp`: Reliable timestamp-based metadata cleanup and time travel
 
-`adaptiveMetadata` is active when it is supported and the table property `delta.enableAdaptiveMetadata` is absent or set to `true`. A table that supports `adaptiveMetadata` can also support `v2Checkpoint`, which is dormant while `adaptiveMetadata` is active.
+`adaptiveMetadata` is active when it is supported and the table property `delta.enableAdaptiveMetadata` is absent or set to `true`. Once the property is `false`, writers must not change it. A table that supports `adaptiveMetadata` can also support `v2Checkpoint`, which is dormant while `adaptiveMetadata` is active.
 
 ## Storage Layout
 
@@ -780,7 +780,7 @@ When `adaptiveMetadata` is added to `readerFeatures` and `writerFeatures`, the r
 
 ## Feature Removal
 
-To remove `adaptiveMetadata`, a writer first sets `delta.enableAdaptiveMetadata` to `false`. A writer must not set it back to `true`. From that commit on, writers write no manifest commits, no standalone checkpoints and no `backReference`, but they can write classic or V2 checkpoints. Each commit still carries `lastManifestCommit` forward until the commit that removes the feature from the protocol. Readers take the latest checkpoint across manifest commits, standalone checkpoints, `_last_checkpoint`, and classic or V2 checkpoints.
+To remove `adaptiveMetadata`, a writer first sets `delta.enableAdaptiveMetadata` to `false`. From that commit on, writers write no manifest commits, no standalone checkpoints and no `backReference`, but they can write classic or V2 checkpoints. Each commit still carries `lastManifestCommit` forward until the commit that removes the feature from the protocol. Readers take the latest checkpoint across manifest commits, standalone checkpoints, `_last_checkpoint`, and classic or V2 checkpoints.
 
 Before a writer removes `adaptiveMetadata` from the protocol, a writer must produce classic or V2 checkpoints from the current metadata tree state, so that clients without `adaptiveMetadata` support can read the table. Manifest files that are no longer referenced may be cleaned up.
 
