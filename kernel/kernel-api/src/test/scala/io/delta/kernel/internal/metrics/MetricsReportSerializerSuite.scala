@@ -20,6 +20,7 @@ import java.util.{Collections, Optional, UUID}
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor
 import io.delta.kernel.metrics.{ScanReport, SnapshotReport, TransactionReport}
 import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructType}
 
@@ -148,7 +149,11 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numRemoveFiles":${transactionMetrics.getNumRemoveFiles},
          |"numTotalActions":${transactionMetrics.getNumTotalActions},
          |"totalAddFilesSizeInBytes":${transactionMetrics.getTotalAddFilesSizeInBytes},
-         |"totalRemoveFilesSizeInBytes":${transactionMetrics.getTotalRemoveFilesSizeInBytes}
+         |"totalRemoveFilesSizeInBytes":${transactionMetrics.getTotalRemoveFilesSizeInBytes},
+         |"numDeletionVectorsInAddFiles":${transactionMetrics.getNumDeletionVectorsInAddFiles},
+         |"numDeletionVectorsInRemoveFiles":${transactionMetrics.getNumDeletionVectorsInRemoveFiles},
+         |"numDeletedRecordsInAddFiles":${transactionMetrics.getNumDeletedRecordsInAddFiles},
+         |"numDeletedRecordsInRemoveFiles":${transactionMetrics.getNumDeletedRecordsInRemoveFiles}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -164,9 +169,13 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val transactionMetrics1 = TransactionMetrics.forNewTable();
     transactionMetrics1.totalCommitTimer.record(200)
     transactionMetrics1.commitAttemptsCounter.increment(2)
-    transactionMetrics1.updateForAddFile(1000)
-    transactionMetrics1.updateForAddFile(100)
-    transactionMetrics1.updateForRemoveFile(1000)
+    transactionMetrics1.updateForAddFile(
+      1000,
+      Optional.of(new DeletionVectorDescriptor("p", "/added.bin", Optional.empty(), 32, 3)))
+    transactionMetrics1.updateForAddFile(100, Optional.empty())
+    transactionMetrics1.updateForRemoveFile(
+      1000,
+      Optional.of(new DeletionVectorDescriptor("p", "/removed.bin", Optional.empty(), 32, 2)))
     transactionMetrics1.totalActionsCounter.increment(90)
 
     val transactionReport1 = new TransactionReportImpl(
@@ -200,13 +209,26 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numRemoveFiles":1,
          |"numTotalActions":90,
          |"totalAddFilesSizeInBytes":1100,
-         |"totalRemoveFilesSizeInBytes":1000
+         |"totalRemoveFilesSizeInBytes":1000,
+         |"numDeletionVectorsInAddFiles":1,
+         |"numDeletionVectorsInRemoveFiles":1,
+         |"numDeletedRecordsInAddFiles":3,
+         |"numDeletedRecordsInRemoveFiles":2
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
     assert(expectedJson == transactionReport1.toJson())
     // Check with test function
     testTransactionReport(transactionReport1)
+
+    // Retrying clears both add/remove DV metrics without changing the captured report.
+    transactionMetrics1.resetActionMetricsForRetry()
+    val resetMetrics = transactionMetrics1.captureTransactionMetricsResult()
+    assert(resetMetrics.getNumDeletionVectorsInAddFiles === 0)
+    assert(resetMetrics.getNumDeletionVectorsInRemoveFiles === 0)
+    assert(resetMetrics.getNumDeletedRecordsInAddFiles === 0)
+    assert(resetMetrics.getNumDeletedRecordsInRemoveFiles === 0)
+    assert(expectedJson == transactionReport1.toJson())
 
     // Initialize snapshot report for the empty table case
     val snapshotReport2 = SnapshotReportImpl.forSuccess(
