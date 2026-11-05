@@ -20,6 +20,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
+import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
@@ -39,9 +40,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       startVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
       startTimestampOpt: Optional[java.lang.Long] = emptyLongOpt,
       endVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
-      endTimestampOpt: Optional[java.lang.Long] = emptyLongOpt,
-      commitRangeValidationOpt: Optional[java.lang.Boolean] = Optional.empty(),
-      failOnDataLossOpt: Optional[java.lang.Boolean] = Optional.empty()) = {
+      endTimestampOpt: Optional[java.lang.Long] = emptyLongOpt): CommitRange = {
     ucCatalogManagedClient.loadCommitRange(
       engine,
       ucTableId,
@@ -52,8 +51,8 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
         startTimestampOpt,
         endVersionOpt,
         endTimestampOpt,
-        commitRangeValidationOpt,
-        failOnDataLossOpt))
+        Optional.empty(),
+        Optional.empty()))
   }
 
   private def testLoadCommitRange(
@@ -124,10 +123,22 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       loadCommitRange(ucCatalogManagedClient, endTimestampOpt = null)
     }
     assertThrows[NullPointerException] {
-      loadCommitRange(ucCatalogManagedClient, commitRangeValidationOpt = null)
+      new UCLoadCommitRangeOptions(
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt,
+        null,
+        Optional.empty())
     }
     assertThrows[NullPointerException] {
-      loadCommitRange(ucCatalogManagedClient, failOnDataLossOpt = null)
+      new UCLoadCommitRangeOptions(
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt,
+        Optional.empty(),
+        null)
     }
   }
 
@@ -154,13 +165,18 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
           new TableData(maxRatifiedVersion, ArrayBuffer(commits: _*)))
         val client = new UCCatalogManagedClient(ucClient)
 
-        def loadRange() = loadCommitRange(
-          client,
-          tablePath = tablePath,
-          startVersionOpt = Optional.of(0L),
-          endVersionOpt = endVersionOpt,
-          commitRangeValidationOpt = commitRangeValidationOpt,
-          failOnDataLossOpt = failOnDataLossOpt)
+        def loadRange(): CommitRange = client.loadCommitRange(
+          defaultEngine,
+          "testUcTableId",
+          tablePath,
+          new UCTableIdentifier("cat", "sch", "tbl"),
+          new UCLoadCommitRangeOptions(
+            Optional.of(0L),
+            emptyLongOpt,
+            endVersionOpt,
+            emptyLongOpt,
+            commitRangeValidationOpt,
+            failOnDataLossOpt))
 
         if (commitRangeValidationOpt.orElse(true)) {
           val ex = intercept[InvalidTableException](loadRange())
