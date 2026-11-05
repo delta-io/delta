@@ -51,7 +51,7 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action must include a `backReference` when the file's entry lives in a leaf manifest, set `extendedFileMetadata` to true, and have a null `deletionTimestamp`:</ins>
+<ins>When the `adaptiveMetadata` table feature is supported and active, the `remove` action must include a `backReference` when the file's entry lives in a leaf manifest, set `extendedFileMetadata` to true, and have a null `deletionTimestamp`:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
