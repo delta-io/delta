@@ -203,7 +203,7 @@ Required table features that must also be enabled:
 - `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
 - `inCommitTimestamp`: Reliable timestamp-based metadata cleanup and time travel
 
-`adaptiveMetadata` and `v2Checkpoint` are mutually exclusive: a table must not enable both.
+`adaptiveMetadata` is active when it is supported and the table property `delta.enableAdaptiveMetadata` is absent or set to `true`. `adaptiveMetadata` and `v2Checkpoint` are mutually exclusive: a table must not enable both.
 
 ## Storage Layout
 
