@@ -17,6 +17,7 @@
 package io.delta.flink.sink;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.flink.TestHelper;
@@ -103,6 +104,77 @@ class DeltaWriterTaskTest extends TestHelper {
                   assertEquals(idx, rows.get(idx).getInt(0));
                 }
               });
+        });
+  }
+
+  @Test
+  void testNewColumnEvolutionPadsMissingNullableColumns() {
+    withTempDir(
+        dir -> {
+          StructType tableSchema =
+              new StructType()
+                  .add("id", IntegerType.INTEGER)
+                  .add("added", new StructType().add("value", StringType.STRING));
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(dir.getAbsolutePath()),
+                  Collections.emptyMap(),
+                  tableSchema,
+                  Collections.emptyList());
+          table.open();
+
+          StructType sinkSchema = new StructType().add("id", IntegerType.INTEGER);
+          DeltaWriterTask writerTask =
+              new DeltaWriterTask(
+                  "test-job-id",
+                  0,
+                  0,
+                  table,
+                  new DeltaSinkConf(
+                      sinkSchema, Map.of(DeltaSinkConf.SCHEMA_EVOLUTION_MODE.key(), "newcolumn")),
+                  Collections.emptyMap());
+          writerTask.write(GenericRowData.of(1), new TestSinkWriterContext(0, 0));
+
+          DeltaWriterResult result = writerTask.complete().get(0);
+          AddFile addFile =
+              new AddFile(result.getDeltaActions().get(0).getStruct(SingleAction.ADD_FILE_ORDINAL));
+          Path fullPath = dir.toPath().resolve(addFile.getPath()).toAbsolutePath();
+          List<Row> rows = readParquet(fullPath, table.getPhysicalSchema());
+
+          assertEquals(1, rows.size());
+          assertEquals(1, rows.get(0).getInt(0));
+          assertTrue(rows.get(0).isNullAt(1));
+        });
+  }
+
+  @Test
+  void testWriterRejectsReorderedSinkSchema() {
+    withTempDir(
+        dir -> {
+          StructType tableSchema =
+              new StructType().add("first", StringType.STRING).add("second", StringType.STRING);
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(dir.getAbsolutePath()),
+                  Collections.emptyMap(),
+                  tableSchema,
+                  Collections.emptyList());
+          table.open();
+
+          StructType sinkSchema =
+              new StructType().add("second", StringType.STRING).add("first", StringType.STRING);
+          assertThrows(
+              IllegalStateException.class,
+              () ->
+                  new DeltaWriterTask(
+                      "test-job-id",
+                      0,
+                      0,
+                      table,
+                      new DeltaSinkConf(
+                          sinkSchema,
+                          Map.of(DeltaSinkConf.SCHEMA_EVOLUTION_MODE.key(), "newcolumn")),
+                      Collections.emptyMap()));
         });
   }
 
