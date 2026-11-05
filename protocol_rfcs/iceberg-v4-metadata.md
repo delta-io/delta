@@ -780,6 +780,8 @@ When `adaptiveMetadata` is added to `readerFeatures` and `writerFeatures`, the r
 
 ## Feature Removal
 
+To remove `adaptiveMetadata`, a writer first sets `delta.enableAdaptiveMetadata` to `false`. From that commit on, writers write no manifest commits, no standalone checkpoints and no `backReference`, but they can write classic or V2 checkpoints.
+
 When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current metadata tree state so that the table can be read without adaptiveMetadata support. Manifest files that are no longer referenced may be cleaned up.
 
 ## Compatibility Notes
