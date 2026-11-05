@@ -19,7 +19,7 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.expressions.{Column, Expression, Predicate}
+import io.delta.kernel.expressions.{Column, Expression, Predicate, ScalarExpression}
 import io.delta.kernel.internal.skipping.DataSkippingUtils.constructDataSkippingFilter
 import io.delta.kernel.internal.skipping.StatsSchemaHelper.{MAX, MIN, STATS_WITH_COLLATION}
 import io.delta.kernel.internal.util.ExpressionUtils.createPredicate
@@ -397,7 +397,81 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
           dataSkippingPredicate(
             "<=",
             Seq(nestedCol(s"$MIN.b"), literal(7)),
-            Set(nestedCol(s"$MIN.b")))))))
+            Set(nestedCol(s"$MIN.b")))))),
+      // STARTS_WITH: column STARTS_WITH 'prefix'
+      // Expected: SUBSTRING(min, 1, 3) <= 'abc' AND SUBSTRING(max, 1, 3) >= 'abc'
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate(
+          "STARTS_WITH",
+          col("a"),
+          literal("abc"),
+          Optional.empty[CollationIdentifier]),
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicate(
+            "<=",
+            Seq(
+              new ScalarExpression(
+                "SUBSTRING",
+                Seq(nestedCol(s"$MIN.a"), literal(1), literal(3)).asJava),
+              literal("abc")),
+            Set(nestedCol(s"$MIN.a"))),
+          dataSkippingPredicate(
+            ">=",
+            Seq(
+              new ScalarExpression(
+                "SUBSTRING",
+                Seq(nestedCol(s"$MAX.a"), literal(1), literal(3)).asJava),
+              literal("abc")),
+            Set(nestedCol(s"$MAX.a")))))),
+      // STARTS_WITH with empty string prefix - should still work with length 0
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate("STARTS_WITH", col("a"), literal(""), Optional.empty[CollationIdentifier]),
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicate(
+            "<=",
+            Seq(
+              new ScalarExpression(
+                "SUBSTRING",
+                Seq(nestedCol(s"$MIN.a"), literal(1), literal(0)).asJava),
+              literal("")),
+            Set(nestedCol(s"$MIN.a"))),
+          dataSkippingPredicate(
+            ">=",
+            Seq(
+              new ScalarExpression(
+                "SUBSTRING",
+                Seq(nestedCol(s"$MAX.a"), literal(1), literal(0)).asJava),
+              literal("")),
+            Set(nestedCol(s"$MAX.a")))))),
+      // STARTS_WITH with non-string literal should return None
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate("STARTS_WITH", col("a"), literal(123), Optional.empty[CollationIdentifier]),
+        None),
+      // STARTS_WITH with column on right side (unsupported) should return None
+      (
+        new StructType()
+          .add("a", StringType.STRING)
+          .add("b", StringType.STRING),
+        createPredicate("STARTS_WITH", col("a"), col("b"), Optional.empty[CollationIdentifier]),
+        None),
+      // STARTS_WITH on non-skipping-eligible column should return None
+      (
+        new StructType()
+          .add("a", new StructType().add("nested", StringType.STRING)),
+        createPredicate(
+          "STARTS_WITH",
+          col("a"),
+          literal("abc"),
+          Optional.empty[CollationIdentifier]),
+        None))
 
     testCases.foreach { case (schema, predicate, expectedDataSkippingPredicateOpt) =>
       val dataSkippingPredicateOpt =
