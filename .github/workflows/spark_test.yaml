@@ -17,6 +17,8 @@ on:
         required: false
         type: string
 # Source-build jobs are commented out while all supported Spark versions use releases.
+# With no snapshot versions, enabled source-build jobs appear as skipped.
+# The merge bot can report these checks as failures and confuse contributors.
 # Uncomment both source-build jobs below when adding the next Spark snapshot.
 # Workflow jobs:
 # 1. generate-matrix: split Spark versions (from CrossSparkVersions.scala) into published
