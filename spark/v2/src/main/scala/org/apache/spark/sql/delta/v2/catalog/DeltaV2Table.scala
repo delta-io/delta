@@ -193,8 +193,9 @@ class DeltaV2Table private (
         SparkSession.active,
         initialSnapshotValue,
         options,
-        tableManager.snapshotManager(queryContext.catalogTableOpt),
-        kernelEngine())
+        tableManager,
+        kernelEngine(),
+        queryContext)
 
     val (rawSchema, partitionColumnNames) = if (persistedMetadata.isPresent) {
       val persisted = persistedMetadata.get()
@@ -449,7 +450,7 @@ class DeltaV2Table private (
       initialSnapshot = initialSnapshotValue,
       kernelEngine = kernelEngine(),
       catalogTable = toScalaOption(catalogTableValue),
-      snapshotManager = getSnapshotManager(),
+      tableManager = tableManager,
       dataSchema = schemaProvider.getDataSchema(),
       partitionSchema = schemaProvider.getPartitionSchema(),
       tableSchema = schemaProvider.getRawSchema(),
@@ -479,10 +480,11 @@ class DeltaV2Table private (
       hadoopConf,
       initialSnapshotValue,
       catalogTableValue,
-      getSnapshotManager(),
+      tableManager,
       schemaProvider.getDataSchema(),
       schemaProvider.getPartitionSchema(),
-      info)
+      info,
+      queryContext)
   }
 
   /**

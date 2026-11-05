@@ -39,8 +39,10 @@ import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.TableManagerTestAdapter;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
@@ -146,15 +148,18 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     return new MetadataEvolutionHandler(
         spark,
         "test-table-id",
-        THROWING_SNAPSHOT_MANAGER,
-        new DeltaV2StreamingBackend(THROWING_SNAPSHOT_MANAGER),
+        TableManagerTestAdapter.apply(THROWING_SNAPSHOT_MANAGER),
+        new DeltaV2StreamingBackend(
+            TableManagerTestAdapter.apply(THROWING_SNAPSHOT_MANAGER),
+            DeltaV2QueryContext$.MODULE$.empty()),
         defaultEngine,
         emptyDeltaOptions(),
         readOptions,
         trackingLog,
         DEFAULT_METADATA,
         DEFAULT_PROTOCOL,
-        "/tmp/fake-table/_delta_log/_streaming_metadata");
+        "/tmp/fake-table/_delta_log/_streaming_metadata",
+        DeltaV2QueryContext$.MODULE$.empty());
   }
 
   /**
@@ -202,15 +207,18 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new MetadataEvolutionHandler(
             spark,
             "test-table-id",
-            snapshotManager,
-            new DeltaV2StreamingBackend(snapshotManager),
+            TableManagerTestAdapter.apply(snapshotManager),
+            new DeltaV2StreamingBackend(
+                TableManagerTestAdapter.apply(snapshotManager),
+                DeltaV2QueryContext$.MODULE$.empty()),
             defaultEngine,
             emptyDeltaOptions(),
             schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false),
             Option.apply(trackingLog),
             tableMetadata,
             tableProtocol,
-            tablePath + "/_delta_log/_streaming_metadata");
+            tablePath + "/_delta_log/_streaming_metadata",
+            DeltaV2QueryContext$.MODULE$.empty());
 
     return new HandlerWithLog(handler, trackingLog);
   }
@@ -965,10 +973,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         spark,
         snapshot,
         options,
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         defaultEngine,
         Option.empty(),
-        /* mergeConsecutiveSchemaChanges= */ false);
+        /* mergeConsecutiveSchemaChanges= */ false,
+        DeltaV2QueryContext$.MODULE$.empty());
   }
 
   /** No schema-tracking option → Option.empty. */
@@ -1102,7 +1111,12 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(tablePath, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-        spark, snapshot, options, snapshotManager, defaultEngine);
+        spark,
+        snapshot,
+        options,
+        TableManagerTestAdapter.apply(snapshotManager),
+        defaultEngine,
+        DeltaV2QueryContext$.MODULE$.empty());
   }
 
   /** Schema-tracking set but the log has no entry → empty. */
@@ -1141,10 +1155,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
                       spark,
                       dsv1Snapshot,
                       options,
-                      snapshotManager,
+                      TableManagerTestAdapter.apply(snapshotManager),
                       defaultEngine,
                       Option.empty(),
-                      /* mergeConsecutiveSchemaChanges= */ false)
+                      /* mergeConsecutiveSchemaChanges= */ false,
+                      DeltaV2QueryContext$.MODULE$.empty())
                   .get();
           // Use a non-zero version so it's distinct from a default-init entry.
           long seededVersion = 42L;
@@ -1159,7 +1174,12 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
           Optional<PersistedMetadata> result =
               MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-                  spark, dsv1Snapshot, options, snapshotManager, defaultEngine);
+                  spark,
+                  dsv1Snapshot,
+                  options,
+                  TableManagerTestAdapter.apply(snapshotManager),
+                  defaultEngine,
+                  DeltaV2QueryContext$.MODULE$.empty());
           assertTrue(result.isPresent());
           assertEquals(seededVersion, result.get().deltaCommitVersion());
         });
@@ -1380,7 +1400,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current, snapshotManager, defaultEngine, tablePath);
+            current,
+            TableManagerTestAdapter.apply(snapshotManager),
+            defaultEngine,
+            tablePath,
+            DeltaV2QueryContext$.MODULE$.empty());
 
     if (expectedMergedVersion == EXPECTED_NO_MERGE) {
       assertTrue(result.isEmpty());
@@ -1443,7 +1467,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current, snapshotManager, defaultEngine, tablePath);
+            current,
+            TableManagerTestAdapter.apply(snapshotManager),
+            defaultEngine,
+            tablePath,
+            DeltaV2QueryContext$.MODULE$.empty());
 
     // v3 is metadata-only → merge advances to v3. v4 has file actions → stop.
     assertTrue(result.isDefined());

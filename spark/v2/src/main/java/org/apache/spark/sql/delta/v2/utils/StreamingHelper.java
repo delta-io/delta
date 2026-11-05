@@ -39,11 +39,12 @@ import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.read.CDCDataFile;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 
 /**
  * Helper class providing utilities for working with Delta table data in streaming scenarios.
@@ -224,21 +225,24 @@ public class StreamingHelper {
    *
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
-   * @param snapshotManager snapshot manager backing the table
+   * @param tableManager table manager backing the table
    * @param engine the Delta engine
+   * @param originalQueryContext request-scoped catalog inputs used to load the commit range
    */
   public static Map<Long, Metadata> collectMetadataActions(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaV2SnapshotManager snapshotManager,
-      Engine engine) {
+      DeltaV2TableManager tableManager,
+      Engine engine,
+      DeltaV2QueryContext originalQueryContext) {
     return collectActions(
         startVersion,
         endVersionOpt,
-        snapshotManager,
+        tableManager,
         engine,
         DeltaLogActionUtils.DeltaAction.METADATA,
-        Metadata.class);
+        Metadata.class,
+        originalQueryContext);
   }
 
   /**
@@ -257,21 +261,24 @@ public class StreamingHelper {
    *
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
-   * @param snapshotManager snapshot manager backing the table
+   * @param tableManager table manager backing the table
    * @param engine the Delta engine
+   * @param originalQueryContext request-scoped catalog inputs used to load the commit range
    */
   public static Map<Long, Protocol> collectProtocolActions(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaV2SnapshotManager snapshotManager,
-      Engine engine) {
+      DeltaV2TableManager tableManager,
+      Engine engine,
+      DeltaV2QueryContext originalQueryContext) {
     return collectActions(
         startVersion,
         endVersionOpt,
-        snapshotManager,
+        tableManager,
         engine,
         DeltaLogActionUtils.DeltaAction.PROTOCOL,
-        Protocol.class);
+        Protocol.class,
+        originalQueryContext);
   }
 
   /**
@@ -281,16 +288,17 @@ public class StreamingHelper {
   private static <T extends Action> Map<Long, T> collectActions(
       long startVersion,
       Optional<Long> endVersionOpt,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Engine engine,
       DeltaLogActionUtils.DeltaAction actionType,
-      Class<T> actionClass) {
+      Class<T> actionClass,
+      DeltaV2QueryContext originalQueryContext) {
     // LinkedHashMap to preserve insertion order
     Map<Long, T> versionToAction = new LinkedHashMap<>();
     try (ClosableIterator<DeltaSingleCommit> commitsIter =
         ScalaUtils.toClosableIterator(
-            snapshotManager
-                .getTableChanges(engine, startVersion, endVersionOpt)
+            tableManager
+                .getTableChanges(engine, startVersion, endVersionOpt, originalQueryContext)
                 .getCommitActions(engine, Set.of(actionType))
                 .map(DeltaV2SingleCommit$.MODULE$::apply))) {
       while (commitsIter.hasNext()) {

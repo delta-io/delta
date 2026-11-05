@@ -23,7 +23,8 @@ import scala.jdk.CollectionConverters._
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaSingleCommit, Snapshot, VersionNotFoundException}
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend
 import org.apache.spark.sql.delta.v2.exception.{VersionNotFoundException => V2VersionNotFoundException}
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException
 
 
@@ -32,14 +33,19 @@ import io.delta.kernel.exceptions.UnsupportedTableFeatureException
  * and `getSnapshotToValidateProtocol` throw the same Delta errors as
  * [[org.apache.spark.sql.delta.sources.DeltaLogStreamingBackend]]. The other methods can
  * throw Kernel errors.
+ *
+ * @param queryContext request-scoped inputs for every snapshot load. The stream reuses it across
+ *                     triggers.
  */
-private[read] class DeltaV2StreamingBackend(snapshotManager: DeltaV2SnapshotManager)
+private[read] class DeltaV2StreamingBackend(
+    tableManager: DeltaV2TableManager,
+    queryContext: DeltaV2QueryContext)
   extends DeltaStreamingBackend {
 
   @volatile private var latestSnapshot: Snapshot = _
 
   override def update(): Snapshot = {
-    latestSnapshot = snapshotManager.loadLatestSnapshot()
+    latestSnapshot = tableManager.loadLatestSnapshot(queryContext)
     latestSnapshot
   }
 
@@ -47,14 +53,16 @@ private[read] class DeltaV2StreamingBackend(snapshotManager: DeltaV2SnapshotMana
   override def unsafeVolatileSnapshot: Snapshot =
     Option(latestSnapshot).getOrElse(update())
 
-  override def getSnapshotAt(version: Long): Snapshot = snapshotManager.loadSnapshotAt(version)
+  override def getSnapshotAt(version: Long): Snapshot =
+    tableManager.loadSnapshotAt(version, queryContext)
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean): Unit = {
     try {
-      snapshotManager.checkVersionExists(version, mustBeRecreatable, allowOutOfRange)
+      tableManager.checkVersionExists(
+        version, mustBeRecreatable, allowOutOfRange, queryContext)
     } catch {
       case e: V2VersionNotFoundException =>
         throw VersionNotFoundException(e.getUserVersion, e.getEarliest, e.getLatest)
@@ -66,8 +74,12 @@ private[read] class DeltaV2StreamingBackend(snapshotManager: DeltaV2SnapshotMana
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
-    val commit = snapshotManager.getActiveCommitAtTime(
-      timestamp.getTime, canReturnLastCommit, mustBeRecreatable, canReturnEarliestCommit)
+    val commit = tableManager.getActiveCommitAtTime(
+      timestamp.getTime,
+      canReturnLastCommit,
+      mustBeRecreatable,
+      canReturnEarliestCommit,
+      queryContext)
     // Refresh after the lookup, so the latest snapshot is at least as new as the commit, unless
     // `update` returns a cached snapshot.
     // TODO(#5999): optimize duplicate loadLatestSnapshot calls

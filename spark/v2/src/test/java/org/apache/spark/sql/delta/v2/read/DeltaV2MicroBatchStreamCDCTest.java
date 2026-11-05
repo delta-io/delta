@@ -44,7 +44,9 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.TableManagerTestAdapter;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
 import org.apache.spark.sql.types.StructField;
@@ -1051,10 +1053,11 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                 spark,
                 latestSnapshot,
                 javaOptions,
-                snapshotManager,
+                TableManagerTestAdapter.apply(snapshotManager),
                 engine,
                 Option.empty(),
-                /* mergeConsecutiveSchemaChanges= */ false)
+                /* mergeConsecutiveSchemaChanges= */ false,
+                DeltaV2QueryContext$.MODULE$.empty())
             .get();
     org.apache.spark.sql.delta.sources.PersistedMetadata seeded =
         org.apache.spark.sql.delta.sources.PersistedMetadata.apply(
@@ -1067,7 +1070,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     StructType tableSchema = seededSnapshot.metadata().schema();
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         latestSnapshot,
         hadoopConf,
         spark,
@@ -1080,7 +1083,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         scalaOptions,
         Option.apply(trackingLog),
-        tablePath + "/_checkpoint");
+        tablePath + "/_checkpoint",
+        DeltaV2QueryContext$.MODULE$.empty());
   }
 
   /**
@@ -1196,7 +1200,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                 .filter(field -> !partitionColNames.contains(field.name()))
                 .toArray(StructField[]::new));
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         snapshot,
         hadoopConf,
         spark,
@@ -1209,7 +1213,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.<String, String>empty(),
         /* metadataTrackingLog= */ scala.Option.empty(),
-        /* metadataPath= */ "");
+        /* metadataPath= */ "",
+        DeltaV2QueryContext$.MODULE$.empty());
   }
 
   private DeltaV2MicroBatchStream createStream(String tablePath) {
