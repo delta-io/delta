@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.types
 
-import java.util.{Arrays, HashSet, Optional}
+import java.util.{Arrays, HashSet, Locale, Optional}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -59,7 +59,7 @@ class CollationIdentifierSuite extends AnyFunSuite {
       s"$PROVIDER_ICU.sr_Cyrl_SRB",
       s"$PROVIDER_ICU.sr_Cyrl_SRB.75.1").foreach { stringIdentifier =>
       val first = CollationIdentifier.fromString(stringIdentifier)
-      val second = CollationIdentifier.fromString(stringIdentifier.toLowerCase)
+      val second = CollationIdentifier.fromString(stringIdentifier.toLowerCase(Locale.ROOT))
       assert(first == second)
       assert(first.hashCode == second.hashCode)
       assert(new HashSet(Arrays.asList(first, second)).size == 1)
