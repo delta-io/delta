@@ -33,9 +33,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -71,11 +68,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
-import org.apache.spark.sql.delta.v2.adapters.KernelMetadataAdapter;
-import org.apache.spark.sql.delta.v2.adapters.KernelProtocolAdapter;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.tablemanager.CachedSnapshotManager;
@@ -1071,13 +1065,9 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     // Capture v0 metadata BEFORE evolving the table.
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, createKernelContext());
-    SnapshotImpl snapshotV0 =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-            snapshotManager.loadSnapshotAt(
-                0L, DeltaV2QueryContext$.MODULE$.apply(Optional.empty())));
-    Metadata metadataV0 = snapshotV0.getMetadata();
-    Protocol protocolV0 = snapshotV0.getProtocol();
-    String tableId = metadataV0.getId();
+    Snapshot snapshotV0 =
+        snapshotManager.loadSnapshotAt(0L, DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
+    String tableId = snapshotV0.metadata().id();
 
     // Seed the schema log with v0's metadata (id INT data, name STRING partition).
     DeltaSourceMetadataTrackingLog trackingLog =
@@ -1095,8 +1085,8 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         PersistedMetadata.apply(
             tableId,
             0L,
-            new KernelMetadataAdapter(metadataV0),
-            new KernelProtocolAdapter(protocolV0),
+            snapshotV0.metadata(),
+            snapshotV0.protocol(),
             tablePath + "/_delta_log/_streaming_metadata");
     trackingLog.writeNewMetadata(seededEntry, false);
 
