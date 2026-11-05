@@ -442,4 +442,27 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     assert(v1Lines.contains(headProtocol.json),
       s"v1 log should contain the unversioned head protocol, got: $v1Lines")
   }
+
+  private def hashWith(metadataId: String, version: Long = 0L): String = {
+    DeltaSharingUtils.getQueryParamsHashId(
+      options = new DeltaSharingOptions(Map("path" -> "share.schema.table")),
+      partitionFiltersString = "",
+      dataFiltersString = "",
+      jsonPredicateHints = "",
+      limitHint = "",
+      version = version,
+      metadataId = metadataId
+    )
+  }
+
+  test("getQueryParamsHashId is deterministic and sensitive to metadataId and version") {
+    // Same (metadataId, version) => same hash.
+    assert(hashWith("table-uuid-a", version = 1L) == hashWith("table-uuid-a", version = 1L))
+
+    // Same version, different metadataId => different hash.
+    assert(hashWith("table-uuid-a", version = 0L) != hashWith("table-uuid-b", version = 0L))
+
+    // Same metadataId, different version => different hash.
+    assert(hashWith("table-uuid-a", version = 0L) != hashWith("table-uuid-a", version = 1L))
+  }
 }
