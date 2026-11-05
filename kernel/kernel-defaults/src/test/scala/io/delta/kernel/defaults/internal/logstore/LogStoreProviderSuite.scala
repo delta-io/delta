@@ -39,6 +39,7 @@ class LogStoreProviderSuite extends AnyFunSuite {
     "hdfs" -> classOf[HDFSLogStore].getName,
     "file" -> classOf[HDFSLogStore].getName,
     "gs" -> classOf[GCSLogStore].getName,
+    "gfs" -> classOf[GooseFSLogStore].getName,
     "abfss" -> classOf[AzureLogStore].getName,
     "abfs" -> classOf[AzureLogStore].getName,
     "adl" -> classOf[AzureLogStore].getName,

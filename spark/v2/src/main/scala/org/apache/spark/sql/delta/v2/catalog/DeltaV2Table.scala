@@ -479,7 +479,7 @@ class DeltaV2Table private (
       hadoopConf,
       initialSnapshotValue,
       catalogTableValue,
-      getSnapshotManager(),
+      tableManager,
       schemaProvider.getDataSchema(),
       schemaProvider.getPartitionSchema(),
       info)
@@ -560,13 +560,13 @@ private[catalog] object DeltaV2Table {
    *
    * <p>Uses Hadoop's Path class to properly handle all URI schemes (file, s3, abfss, gs, hdfs,
    * etc.), not just file:// URIs.
+   *
+   * <p>A location keeps its scheme, including `file`. A path without a scheme would resolve
+   * against the default filesystem, which need not be the filesystem that holds the table.
    */
   def getDecodedPath(location: URI): String = {
     val hadoopPath = new Path(location)
-    // For local file system paths, return just the path component without the scheme
-    // to maintain consistency with path-based table construction where tablePath is a
-    // plain filesystem path string.
-    if (location.getScheme == null || "file".equals(location.getScheme)) {
+    if (location.getScheme == null) {
       return hadoopPath.toUri.getPath
     }
     hadoopPath.toString

@@ -201,7 +201,7 @@ object CheckpointProvider extends DeltaLogging {
     new LazyCompleteAMTCheckpointProvider(provider) {
       override def createCheckpointProvider(): AMTCheckpointProvider = {
         val leaves = checkpointReadFuture.get(Duration.Inf)
-        new AMTCheckpointProvider(
+        AMTCheckpointProvider(
           manifestCommitVersion = provider.manifestCommitVersion,
           checkpointAction = provider.checkpointAction,
           leaves = leaves,

@@ -438,8 +438,9 @@ class AMTWriterManager(
       // re-derived for blind appends. With multiple tree winners, an incremental checkpoint always
       // skips; a full checkpoint skips if any winner wrote a full tree, even when a later winner
       // wrote an incremental tree.
-      // [2] The losing new tree remains valid if every winning log commit's file actions have a
-      // defaultRowCommitVersion newer than the losing tree's content-root version.
+      // [2] The losing new tree remains valid if every winning log commit is after the losing
+      // tree's contentRootVersion and its file actions have a defaultRowCommitVersion newer than
+      // that version.
     }
 
     def materializeNewTree(incremental: Boolean, trigger: String): AMTWriteResult = {
@@ -526,6 +527,19 @@ class AMTWriterManager(
         s"conflicted range [$lastAttemptVersion, $nextAttemptVersion).")
   }
 
+  /** Whether a losing OPTIMIZE checkpoint can commit the tree it already wrote. */
+  private def losingTreeStillValid(
+      losingTree: AMTWriteResult,
+      winners: Seq[WinningCommitMetrics],
+      firstWinnerVersion: Long): Boolean = {
+    // A tree rebuilt in an earlier round describes that round's attempt version: its own planned
+    // commit. A winner that took that version is not in the tree.
+    val winnerAtOrBelowTreeVersion = firstWinnerVersion <= losingTree.contentRootVersion
+    val winnersTouchOnlyNewerFiles = winners.forall(
+      _.allFileActionsHaveDefaultCommitVersionNewerThan(losingTree.contentRootVersion))
+    !winnerAtOrBelowTreeVersion && winnersTouchOnlyNewerFiles
+  }
+
   /**
    * Decides the AMT write for a losing OPTIMIZE checkpoint on a conflict-resolution retry.
    *
@@ -605,8 +619,8 @@ class AMTWriterManager(
       throw exception
     }
     val baseVersion = baseResult.contentRootVersion
-    if (winningCommitMetricsForConflictedRange.forall(
-        _.allFileActionsHaveDefaultCommitVersionNewerThan(baseVersion))) {
+    if (losingTreeStillValid(
+        baseResult, winningCommitMetricsForConflictedRange, lastAttemptVersion)) {
       // Every file action in every winner commit is a new FileAction with
       // defaultRowCommitVersion > Losing FULL AMT's checkpoint version (X)
       // This means, none of them should have backreferences also.
@@ -642,6 +656,8 @@ class AMTWriterManager(
         nextAttemptVersion, currentTransactionInfo, preCommitLogSegment,
         incremental = true, trigger = triggerName)
       metrics.singleAMTWriteMetrics = Some(result.amtWriteMetrics)
+      // Lets a test commit another winner after this round rebuilt the tree.
+      DeltaTestBarrier.waitIfEnabled(AMTWriterManager.REBUILT_OPTIMIZE_CHECKPOINT_TREE_TEST_BARRIER)
       Some(result)
     } else {
       // A winner changed content the full base tree describes, so it cannot be reused as-is.
@@ -922,8 +938,7 @@ class AMTWriterManager(
     val allWinnersAreLogOnly = numLogOnly == winningCommitMetrics.size
     val allLogWinnersPreserveLosingTree = lastAMTWriteResultOpt.flatMap { result =>
       if (winningCommitMetrics.nonEmpty && allWinnersAreLogOnly) {
-        Some(winningCommitMetrics.forall(
-          _.allFileActionsHaveDefaultCommitVersionNewerThan(result.contentRootVersion)))
+        Some(losingTreeStillValid(result, winningCommitMetrics, firstVersion))
       } else {
         None
       }
@@ -965,6 +980,13 @@ object AMTWriterManager extends DeltaLogging {
    */
   private[delta] val FULL_AMT_REGENERATE_RETRY_TEST_BARRIER =
     "AMTWriterManager.fullAMTRegenerateRetry"
+
+  /**
+   * Test barrier label. When a suite arms this barrier, a losing OPTIMIZE checkpoint pauses right
+   * after a conflict round rebuilt its incremental tree, letting the suite commit another winner.
+   */
+  private[delta] val REBUILT_OPTIMIZE_CHECKPOINT_TREE_TEST_BARRIER =
+    "AMTWriterManager.rebuiltOptimizeCheckpointTree"
 
 
   /**

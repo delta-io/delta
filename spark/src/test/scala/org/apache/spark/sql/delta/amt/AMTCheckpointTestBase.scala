@@ -95,7 +95,7 @@ trait AMTCheckpointTestBase
       domainMetadata = Nil,
       txns = Nil,
       sidecars = Nil)
-    new AMTCheckpointProvider(
+    AMTCheckpointProvider(
       manifestCommitVersion = cpVersion,
       checkpointAction = checkpoint,
       leaves = Nil,
@@ -734,9 +734,19 @@ trait AMTCheckpointTestBase
   protected def rootFiles(path: String): Seq[File] =
     metadataFiles(path, isRootFileName)
 
-  /** Returns the actions committed at exactly `version`. */
+  /**
+   * Return JSON only actions without reconstructing the AMT tree.
+   */
+  protected def getJsonOnlyChanges(
+      deltaLog: DeltaLog,
+      startVersion: Long): Iterator[(Long, Seq[Action])] =
+    deltaLog.getSingleCommitIterator(startVersion).map { commit =>
+      (commit.version, commit.getActionsIterator().processAndClose(_.toList))
+    }
+
+  /** Returns the actions committed at exactly `version`, as written in its log file. */
   protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] =
-    deltaLog.getChanges(version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
+    getJsonOnlyChanges(deltaLog, version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
 
   /**
    * The live `AddFile` set reconstructed from the commit-log deltas alone (not the AMT tree). An
@@ -745,7 +755,7 @@ trait AMTCheckpointTestBase
    */
   protected def liveAddFilesFromLog(deltaLog: DeltaLog): Seq[AddFile] = {
     val live = scala.collection.mutable.LinkedHashMap.empty[String, AddFile]
-    deltaLog.getChanges(0).foreach { case (_, actions) =>
+    getJsonOnlyChanges(deltaLog, 0).foreach { case (_, actions) =>
       actions.foreach {
         case a: AddFile => live(a.path) = a
         case r: RemoveFile => live.remove(r.path)

@@ -991,8 +991,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
    *   configurations is finalized.
    */
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
-    assert(CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration).isEmpty,
-      "Command-specified Coordinated Commits configurations should have been blocked earlier.")
     assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
       "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
     // Extract any existing ucTableId from the snapshot metadata.
@@ -1275,10 +1273,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     val addFileMustHaveWideBounds = op.checkAddFileWithDeletionVectorStatsAreNotTightBounds
 
+    // A manifest tree cannot store inline DVs, so the next tree build would fail on such a file.
+    val inlineDeletionVectorDisallowed = AMTUtils.amtEnabled(metadata, protocol)
+
     action => action match {
       case a: AddFile if a.deletionVector != null =>
         if (!deletionVectorAllowedForAddFiles) {
           throw DeltaErrors.addingDeletionVectorsDisallowedException()
+        }
+
+        if (inlineDeletionVectorDisallowed && a.deletionVector.isInline) {
+          throw DeltaErrors.adaptiveMetadataInlineDeletionVectorDisallowed(
+            AdaptiveMetadataTableFeature.name)
         }
 
         // Protocol requirement checks:
@@ -2893,7 +2899,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val tableRoot = deltaLog.dataPath
     val committedKeys =
       committedFileActions.map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
-    val provider = new AMTCheckpointProvider(
+    val provider = AMTCheckpointProvider(
       manifestCommitVersion = attemptVersion,
       checkpointAction = result.checkpoint,
       leaves = result.leaves,

@@ -44,7 +44,6 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
@@ -1045,8 +1044,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, spark.sessionState().conf());
 
     Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
-    io.delta.kernel.internal.SnapshotImpl seededSnapshot =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(snapshotManager.loadSnapshotAt(seededVersion));
+    Snapshot seededSnapshot = snapshotManager.loadSnapshotAt(seededVersion);
 
     org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
@@ -1060,18 +1058,14 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
             .get();
     org.apache.spark.sql.delta.sources.PersistedMetadata seeded =
         org.apache.spark.sql.delta.sources.PersistedMetadata.apply(
-            seededSnapshot.getMetadata().getId(),
+            seededSnapshot.metadata().id(),
             seededVersion,
-            new org.apache.spark.sql.delta.v2.adapters.KernelMetadataAdapter(
-                seededSnapshot.getMetadata()),
-            new org.apache.spark.sql.delta.v2.adapters.KernelProtocolAdapter(
-                seededSnapshot.getProtocol()),
+            seededSnapshot.metadata(),
+            seededSnapshot.protocol(),
             tablePath + "/_delta_log/_streaming_metadata");
     trackingLog.writeNewMetadata(seeded, /* replaceCurrent= */ false);
 
-    StructType tableSchema =
-        org.apache.spark.sql.delta.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
-            seededSnapshot.getSchema());
+    StructType tableSchema = seededSnapshot.metadata().schema();
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         latestSnapshot,
