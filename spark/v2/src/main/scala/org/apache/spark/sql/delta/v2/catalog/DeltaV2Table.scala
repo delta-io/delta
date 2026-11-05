@@ -142,6 +142,7 @@ class DeltaV2Table private (
   requireNonNull(tablePath, "tablePath is null")
   private val catalogTableValue = catalogTable
   private val queryContext = DeltaV2QueryContext(catalogTableValue)
+  private val spark = SparkSession.active
   // Merge options: file system options from catalog + user options (user takes precedence)
   // This follows the same pattern as DeltaTableV2 in delta-spark
   private val (options, hadoopConf, kernelContext, tableManager) = {
@@ -152,10 +153,9 @@ class DeltaV2Table private (
     // User options override catalog properties
     merged.putAll(userOptions)
     val options = Collections.unmodifiableMap[String, String](merged)
-    val activeSession = SparkSession.active
-    val hadoopConf = activeSession.sessionState.newHadoopConfWithOptions(toScalaMap(options))
+    val hadoopConf = spark.sessionState.newHadoopConfWithOptions(toScalaMap(options))
     val tableManager =
-      DeltaV2TableManagerCache.forTable(activeSession, tablePath, options, catalogTableOpt)
+      DeltaV2TableManagerCache.forTable(spark, tablePath, options, catalogTableOpt)
     (options, hadoopConf, tableManager.kernelContext, tableManager)
   }
 
