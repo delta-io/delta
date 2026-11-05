@@ -29,6 +29,7 @@ import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.InternalRowTestUtils;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -137,7 +138,8 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
             TABLE_SCHEMA,
             new StructType(),
             info,
-            /* variantShreddingEnabled */ false);
+            /* variantShreddingEnabled */ false,
+            DeltaV2QueryContext$.MODULE$.empty());
     return (DeltaV2DataWriterFactory)
         write.toBatch().createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(1));
   }
