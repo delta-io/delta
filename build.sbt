@@ -212,6 +212,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
   .settings(
     name := "delta-connect-client",
     commonSettings,
+    TestParallelization.shardSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     // Shared refresh test traits compiled into both this module and the `spark`
@@ -271,6 +272,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
   .settings(
     name := "delta-connect-server",
     commonSettings,
+    TestParallelization.shardSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     // Export as JAR instead of classes directory. Required for connectClient test setup so that
@@ -914,6 +916,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
   .settings(
     name := "delta-spark-unitycatalog",
     commonSettings,
+    TestParallelization.shardSettings,
     skipReleaseSettings,
     javafmtCheckSettings(),
     CrossSparkVersions.sparkDependentSettings(sparkVersion),

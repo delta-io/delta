@@ -1,5 +1,3 @@
-import scala.util.hashing.MurmurHash3
-
 import sbt.Keys._
 import sbt._
 
@@ -20,6 +18,27 @@ object TestParallelization {
     } else {
       Seq.empty[Setting[_]]
     }
+  }
+
+  /** Shard tests without changing their JVM groups or parallel execution settings. */
+  lazy val shardSettings = {
+    if (numShardsOpt.exists(_ > 1) && shardIdOpt.exists(_ >= 0)) {
+      Seq(Test / testGrouping := {
+        shardGroups((Test / testGrouping).value, numShardsOpt.get, shardIdOpt.get)
+      })
+    } else {
+      Seq.empty[Setting[_]]
+    }
+  }
+
+  def shardGroups(groups: Seq[Tests.Group], numShards: Int, shard: Int): Seq[Tests.Group] = {
+    require(shard >= 0 && shard < numShards,
+      s"Assigned shard ID $shard is not between 0 and ${numShards - 1} inclusive")
+    val (assignment, _) = MinShardGroupDurationStrategy.optimalAssignment(
+      groups.flatMap(_.tests).map(_.name), numShards, 1,
+      MinShardGroupDurationStrategy.TEST_SUITE_DURATIONS)
+    val suites = assignment(shard)(0)
+    groups.map(group => group.withTests(group.tests.filter(test => suites.contains(test.name))))
   }
 
   /**
@@ -59,7 +78,12 @@ object TestParallelization {
       val groupsCount = (Test / forkTestJVMCount).value
       val shard = (Test / shardId).value
       val baseJvmDir = baseDirectory.value
-      MinShardGroupDurationStrategy(groupsCount, baseJvmDir, shard, defaultForkOptions.value)
+      MinShardGroupDurationStrategy(
+        groupsCount,
+        baseJvmDir,
+        shard,
+        defaultForkOptions.value,
+        (Test / definedTests).value)
     },
     Test / parallelExecution := true,
     Global / concurrentRestrictions := {
@@ -118,23 +142,20 @@ object TestParallelization {
   }
 
   /**
-   * GreedyHashStrategy is a grouping strategy used to distribute test suites across multiple shards
-   * and groups (threads) based on their estimated duration. It aims to balance the test load across
-   * the shards and groups by utilizing a greedy assignment algorithm that assigns test suites to
-   * the group with the smallest estimated runtime.
+   * MinShardGroupDurationStrategy balances each project's test suites by estimated duration.
+   * It uses a greedy assignment across shards and JVM groups.
    *
    * @param groups The initial mapping of group indices to their respective [[sbt.Tests.Group]]
    *               objects, which hold test definitions.
    * @param shardId The shard ID that this instance is responsible for.
-   * @param highDurationTestAssignment Precomputed assignments of high-duration test suites to
-   *                                   specific groups within the shard.
+   * @param testAssignment Precomputed assignments of this project's test suites to groups.
    * @param groupRuntimes Array holding the current total runtime for each group within the shard.
    */
   class MinShardGroupDurationStrategy private(
       groups: scala.collection.mutable.Map[Int, Tests.Group],
       shardId: Int,
-      highDurationTestAssignment: Array[Set[String]],
-      var groupRuntimes: Array[Double]
+      testAssignment: Array[Set[String]],
+      groupRuntimes: Array[Double]
   ) extends GroupingStrategy {
     import TestParallelization.MinShardGroupDurationStrategy._
 
@@ -143,48 +164,15 @@ object TestParallelization {
         s"Assigned shard ID $shardId is not between 0 and ${NUM_SHARDS - 1} inclusive")
     }
 
-    lazy val testGroups = groups.values.toList
+    lazy val testGroups = groups.toSeq.sortBy(_._1).map(_._2).toList
 
     override def add(testDefinition: TestDefinition): GroupingStrategy = {
-      val testSuiteName = testDefinition.name
-      val isHighDurationTest = TOP_N_HIGH_DURATION_TEST_SUITES.exists(_._1 == testSuiteName)
-
-      if (isHighDurationTest) {
-        val highDurationTestGroupIndex =
-          highDurationTestAssignment.indexWhere(_.contains(testSuiteName))
-
-        if (highDurationTestGroupIndex >= 0) {
-          // Case 1: this is a high duration test that was pre-computed in the optimal assignment to
-          // belong to this shard. Assign it.
-          val duration = TOP_N_HIGH_DURATION_TEST_SUITES.find(_._1 == testSuiteName).get._2
-
-          val currentGroup = groups(highDurationTestGroupIndex)
-          val updatedGroup = currentGroup.withTests(currentGroup.tests :+ testDefinition)
-          groups(highDurationTestGroupIndex) = updatedGroup
-
-          // Do NOT update groupRuntimes -- this was already included in the initial value of
-          // groupRuntimes
-
-          this
-        } else {
-          // Case 2: this is a high duration test that does NOT belong to this shard. Skip it.
-          this
-        }
-      } else if (math.abs(MurmurHash3.stringHash(testDefinition.name) % NUM_SHARDS) == shardId) {
-        // Case 3: this is a normal test that belongs to this shard. Assign it.
-
-        val minDurationGroupIndex = groupRuntimes.zipWithIndex.minBy(_._1)._2
-        val currentGroup = groups(minDurationGroupIndex)
-        val updatedGroup = currentGroup.withTests(currentGroup.tests :+ testDefinition)
-        groups(minDurationGroupIndex) = updatedGroup
-
-        groupRuntimes(minDurationGroupIndex) += AVG_TEST_SUITE_DURATION_EXCLUDING_TOP_N
-
-        this
-      } else {
-        // Case 4: this is a normal test that does NOT belong to this shard. Skip it.
-        this
+      val groupIndex = testAssignment.indexWhere(_.contains(testDefinition.name))
+      if (groupIndex >= 0) {
+        val currentGroup = groups(groupIndex)
+        groups(groupIndex) = currentGroup.withTests(currentGroup.tests :+ testDefinition)
       }
+      this
     }
 
     override def toString: String = {
@@ -206,25 +194,25 @@ object TestParallelization {
 
     val NUM_SHARDS = numShardsOpt.getOrElse(1)
 
-    val AVG_TEST_SUITE_DURATION_EXCLUDING_TOP_N = 0.83
+    val DEFAULT_TEST_SUITE_DURATION = 0.83
 
     /**
-     * High-duration test suites loaded from project/test-durations.csv.
+     * Test suite durations loaded from project/test-durations.csv.
      *
      * To update, run: python3 project/scripts/collect_test_durations.py
      */
-    val TOP_N_HIGH_DURATION_TEST_SUITES: List[(String, Double)] = {
+    val TEST_SUITE_DURATIONS: Map[String, Double] = {
       val csvFile = new java.io.File("project/test-durations.csv")
       if (!csvFile.exists()) {
         println(s"Warning: ${csvFile.getPath} not found, using empty test durations")
-        List.empty
+        Map.empty
       } else {
         val source = scala.io.Source.fromFile(csvFile)
         try {
           source.getLines().drop(1).filter(_.trim.nonEmpty).map { line =>
             val idx = line.lastIndexOf(',')
             (line.substring(0, idx), line.substring(idx + 1).toDouble)
-          }.toList
+          }.toMap
         } finally {
           source.close()
         }
@@ -232,9 +220,10 @@ object TestParallelization {
     }
 
     /**
-     * Generates the optimal test assignment across shards and groups for high duration test suites.
+     * Assigns the current project's discovered suites across shards and groups.
      *
-     * Will assign the high duration test suites in descending order, always assigning to the
+     * Assigns suites in descending duration order, with the suite name as a stable tie break.
+     * Suites without timings use the default duration. Always assigns to the
      * group with the smallest total duration. In case of ties (e.g. early on when some group
      * durations are still 0, will assign to the shard with the smallest total duration).
      *
@@ -270,12 +259,19 @@ object TestParallelization {
      * - Shard 1: Group 0 = 21.46 mins, Group 1 = 11.68 mins
      * - Shard 2: Group 0 = 16.85 mins, Group 1 = 12.48 mins
      */
-    def highDurationOptimalAssignment(numGroups: Int):
-        (Array[Array[Set[String]]], Array[Array[Double]]) = {
-      val assignment = Array.fill(NUM_SHARDS)(Array.fill(numGroups)(List.empty[String]))
-      val groupDurations = Array.fill(NUM_SHARDS)(Array.fill(numGroups)(0.0))
-      val shardDurations = Array.fill(NUM_SHARDS)(0.0)
-      val sortedTestSuites = TOP_N_HIGH_DURATION_TEST_SUITES.sortBy(-_._2)
+    def optimalAssignment(
+        testSuiteNames: Seq[String],
+        numShards: Int,
+        numGroups: Int,
+        durations: Map[String, Double]): (Array[Array[Set[String]]], Array[Array[Double]]) = {
+      require(numShards > 0, "The number of test shards must be positive")
+      require(numGroups > 0, "The number of JVM groups must be positive")
+      val assignment = Array.fill(numShards)(Array.fill(numGroups)(List.empty[String]))
+      val groupDurations = Array.fill(numShards)(Array.fill(numGroups)(0.0))
+      val shardDurations = Array.fill(numShards)(0.0)
+      val sortedTestSuites = testSuiteNames.map { name =>
+        name -> durations.getOrElse(name, DEFAULT_TEST_SUITE_DURATION)
+      }.sortBy { case (name, duration) => (-duration, name) }
 
       sortedTestSuites.foreach { case (testSuiteName, duration) =>
         val (shardIdx, groupIdx) =
@@ -295,7 +291,6 @@ object TestParallelization {
      * Selects the group with the smallest total duration, and in case of ties, selects the shard
      * with the smallest total duration.
      *
-     * @param numShards      Number of shards
      * @param numGroups      Number of groups per shard
      * @param shardDurations Total duration per shard
      * @param groupDurations Total duration per group in each shard
@@ -310,7 +305,7 @@ object TestParallelization {
       var minGroupDuration = Double.MaxValue
       var minShardDuration = Double.MaxValue
 
-      for (shardIdx <- 0 until NUM_SHARDS) {
+      for (shardIdx <- groupDurations.indices) {
         for (groupIdx <- 0 until numGroups) {
           val currentGroupDuration = groupDurations(shardIdx)(groupIdx)
           val currentShardDuration = shardDurations(shardIdx)
@@ -333,7 +328,11 @@ object TestParallelization {
         groupCount: Int,
         baseDir: File,
         shardId: Int,
-        forkOptionsTemplate: ForkOptions): GroupingStrategy = {
+        forkOptionsTemplate: ForkOptions,
+        tests: Seq[TestDefinition]): GroupingStrategy = {
+      require(
+        shardId >= 0 && shardId < NUM_SHARDS,
+        s"Assigned shard ID $shardId is not between 0 and ${NUM_SHARDS - 1} inclusive")
       val testGroups = scala.collection.mutable.Map((0 until groupCount).map {
         groupIdx =>
           val tmpDir = s"$baseDir/target/tmp/$groupIdx"
@@ -352,7 +351,7 @@ object TestParallelization {
       }: _*)
 
       val (allShardsTestAssignments, allShardsGroupDurations) =
-        highDurationOptimalAssignment(groupCount)
+        optimalAssignment(tests.map(_.name), NUM_SHARDS, groupCount, TEST_SUITE_DURATIONS)
 
       new MinShardGroupDurationStrategy(
         testGroups,
