@@ -921,9 +921,9 @@ public class TransactionImpl implements Transaction {
     if (!protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)) {
       return Optional.empty();
     }
+    // Only new tables start from zero; existing tables need the metric from the previous CRC.
     Optional<Long> baseValue =
         readSnapshotOpt.isPresent() ? currentCrcInfo.flatMap(getter) : Optional.of(0L);
-    // Only new tables start from zero; existing tables need the metric from the previous CRC.
     return baseValue.map(value -> value + delta);
   }
 

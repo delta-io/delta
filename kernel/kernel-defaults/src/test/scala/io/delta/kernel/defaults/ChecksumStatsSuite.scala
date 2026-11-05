@@ -61,38 +61,26 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
 
       val dataFiles = Map("file1.parquet" -> 100L, "file2.parquet" -> 100802L)
       addFiles(engine, tablePath, dataFiles, expectedFileSizeHistogram)
-      for (recompute <- Seq(false, true)) {
-        if (recompute) {
-          engine.getFileSystemClient.delete(buildCrcPath(tablePath, 1).toString)
-          Table.forPath(engine, tablePath).checksum(engine, 1)
-        }
-        checkCrcCorrect(
-          engine,
-          tablePath,
-          version = 1,
-          expectedFileCount = 2,
-          expectedTableSize = 100902,
-          expectedFileSizeHistogram = Some(expectedFileSizeHistogram))
-      }
+      checkCrcCorrect(
+        engine,
+        tablePath,
+        version = 1,
+        expectedFileCount = 2,
+        expectedTableSize = 100902,
+        expectedFileSizeHistogram = expectedFileSizeHistogram)
 
       removeFiles(
         engine,
         tablePath,
         Map("file1.parquet" -> 100),
         expectedFileSizeHistogram)
-      for (recompute <- Seq(false, true)) {
-        if (recompute) {
-          engine.getFileSystemClient.delete(buildCrcPath(tablePath, 2).toString)
-          Table.forPath(engine, tablePath).checksum(engine, 2)
-        }
-        checkCrcCorrect(
-          engine,
-          tablePath,
-          version = 2,
-          expectedFileCount = 1,
-          expectedTableSize = 100902 - 100,
-          expectedFileSizeHistogram = Some(expectedFileSizeHistogram))
-      }
+      checkCrcCorrect(
+        engine,
+        tablePath,
+        version = 2,
+        expectedFileCount = 1,
+        expectedTableSize = 100902 - 100,
+        expectedFileSizeHistogram = expectedFileSizeHistogram)
     }
   }
 
@@ -104,10 +92,34 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
    * @param version The table version to check
    * @param expectedFileCount Expected number of files in the table
    * @param expectedTableSize Expected total size of all files in bytes
-   * @param expectedFileSizeHistogram Expected file size histogram, or None if absent
-   * @param expectedNumDeletionVectors Expected DV count, or None if absent
-   * @param expectedNumDeletedRecords Expected DV-deleted record count, or None if absent
+   * @param expectedFileSizeHistogram Expected file size histogram
    */
+  def checkCrcCorrect(
+      engine: Engine,
+      tablePath: String,
+      version: Long,
+      expectedFileCount: Long,
+      expectedTableSize: Long,
+      expectedFileSizeHistogram: FileSizeHistogram): Unit = {
+    def verifyCrcExistsAndCorrect(): Unit = {
+      val crcInfo = ChecksumReader.tryReadChecksumFile(
+        engine,
+        FileStatus.of(checksumFile(
+          new Path(tablePath + "/_delta_log"),
+          version).toString))
+        .orElseThrow(() => new AssertionError("CRC information should be present"))
+      assert(crcInfo.getNumFiles === expectedFileCount)
+      assert(crcInfo.getTableSizeBytes === expectedTableSize)
+      assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
+    }
+    verifyCrcExistsAndCorrect()
+    // Delete existing CRC to regenerate a new one from state construction.
+    engine.getFileSystemClient.delete(buildCrcPath(tablePath, version).toString)
+    Table.forPath(engine, tablePath).checksum(engine, version)
+    verifyCrcExistsAndCorrect()
+  }
+
+  /** Verifies the stored CRC, including DV metrics, without regenerating it. */
   def checkCrcCorrect(
       engine: Engine,
       tablePath: String,
@@ -259,7 +271,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
 
   private def addFileToRow(file: AddFile): Row = SingleAction.createAddFileSingleAction(file.toRow)
 
-  private def removeFileToRow(file: AddFile): Row =
+  private def addFileToRemoveFileRow(file: AddFile): Row =
     SingleAction.createRemoveFileSingleAction(file.toRemoveFileRow(true, Optional.empty()))
 
   private def actions(rows: Row*): CloseableIterable[Row] =
@@ -302,13 +314,13 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
 
   test("SIMPLE CRC maintains DV metrics across appends, DV updates, and removals") {
     withTempDirAndEngine { (path, engine) =>
-      val first = addFile("first.parquet", Some(3L))
-      val second = addFile("second.parquet", Some(5L))
-      val plain = addFile("plain.parquet")
+      val firstDv = addFile("first.parquet", Some(3L))
+      val secondDv = addFile("second.parquet", Some(5L))
+      val noDV = addFile("plain.parquet")
       commitSimple(
         getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
         engine,
-        addFileToRow(first))
+        addFileToRow(firstDv))
       checkCrcCorrect(
         engine,
         path,
@@ -319,7 +331,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Some(1L),
         Some(3L))
 
-      commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(second))
+      commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(secondDv))
       checkCrcCorrect(
         engine,
         path,
@@ -329,7 +341,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Some(histogramForSize100Files(2)),
         Some(2L),
         Some(8L))
-      commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(plain))
+      commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(noDV))
       checkCrcCorrect(
         engine,
         path,
@@ -340,12 +352,12 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Some(2L),
         Some(8L))
 
-      val updatedFirst = addFile("first.parquet", Some(7L))
+      val updatedFirstDv = addFile("first.parquet", Some(7L))
       commitSimple(
         getUpdateTxn(engine, path),
         engine,
-        removeFileToRow(first),
-        addFileToRow(updatedFirst))
+        addFileToRemoveFileRow(firstDv),
+        addFileToRow(updatedFirstDv))
       checkCrcCorrect(
         engine,
         path,
@@ -358,8 +370,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
       commitSimple(
         getUpdateTxn(engine, path),
         engine,
-        removeFileToRow(second),
-        removeFileToRow(plain))
+        addFileToRemoveFileRow(secondDv),
+        addFileToRemoveFileRow(noDV))
       checkCrcCorrect(
         engine,
         path,
@@ -369,7 +381,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Some(histogramForSize100Files(1)),
         Some(1L),
         Some(7L))
-      commitSimple(getUpdateTxn(engine, path), engine, removeFileToRow(updatedFirst))
+      commitSimple(getUpdateTxn(engine, path), engine, addFileToRemoveFileRow(updatedFirstDv))
       checkCrcCorrect(
         engine,
         path,
@@ -423,7 +435,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
     }
   }
 
-  test("SIMPLE CRC leaves missing DV metrics unknown on an existing DV table") {
+  test("SIMPLE CRC leaves missing DV metrics unknown on a DV table") {
     withTempDirAndEngine { (path, engine) =>
       commitSimple(
         getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
@@ -479,7 +491,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
     }
   }
 
-  test("FULL CRC can incrementally replay from a CRC with expected fields") {
+  test("FULL CRC writing mode can incrementally replay from a CRC with expected fields") {
     withTempDirAndMetricsEngine { (path, engine) =>
       commitSimple(
         getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
@@ -490,7 +502,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         engine,
         actions(addFileToRow(addFile("second.parquet", Some(5L)))))
 
-      // Change only the base CRC: incremental replay must produce 11 / 35, while full log
+      // Corrupts the base CRC: incremental replay must produce 11 / 35 for dv metrics, while full log
       // replay would reconstruct the actual totals of 2 / 8.
       val crcPath = buildCrcPath(path, 1)
       val mapper = new ObjectMapper()
