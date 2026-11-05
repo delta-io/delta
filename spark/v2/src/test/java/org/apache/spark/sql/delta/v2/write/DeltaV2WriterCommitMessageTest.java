@@ -29,7 +29,7 @@ import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.InternalRowTestUtils;
-import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -121,9 +121,8 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
   }
 
   private DeltaV2DataWriterFactory dataWriterFactory(String path) {
-    PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, createKernelContext());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    DeltaV2TableManager tableManager = WriteTestUtils.tableManager(spark, path);
+    Snapshot snapshot = WriteTestUtils.latestSnapshot(tableManager);
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
     DeltaV2Write write =
@@ -133,7 +132,7 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            tableManager,
             TABLE_SCHEMA,
             new StructType(),
             info,

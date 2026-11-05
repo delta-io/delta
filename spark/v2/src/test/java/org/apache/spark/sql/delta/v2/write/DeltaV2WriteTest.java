@@ -30,7 +30,7 @@ import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
-import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -107,13 +107,13 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
     StructType partitionSchema =
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("name", DataTypes.StringType, true)});
-    PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(path, createKernelContext());
+    DeltaV2TableManager mgr = WriteTestUtils.tableManager(spark, path);
     DeltaV2Write write =
         new DeltaV2Write(
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
-            mgr.loadLatestSnapshot(),
+            WriteTestUtils.latestSnapshot(mgr),
             Optional.empty(),
             mgr,
             dataSchema,
@@ -154,13 +154,13 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
               DataTypes.createStructField("p1", DataTypes.StringType, true),
               DataTypes.createStructField("p2", DataTypes.IntegerType, true)
             });
-    PathBasedSnapshotManager mgr = new PathBasedSnapshotManager(path, createKernelContext());
+    DeltaV2TableManager mgr = WriteTestUtils.tableManager(spark, path);
     DeltaV2Write write =
         new DeltaV2Write(
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
-            mgr.loadLatestSnapshot(),
+            WriteTestUtils.latestSnapshot(mgr),
             Optional.empty(),
             mgr,
             dataSchema,
@@ -186,9 +186,8 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
   }
 
   private DeltaV2Write newWrite(String path, CaseInsensitiveStringMap options) {
-    PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, createKernelContext());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    DeltaV2TableManager tableManager = WriteTestUtils.tableManager(spark, path);
+    Snapshot snapshot = WriteTestUtils.latestSnapshot(tableManager);
     LogicalWriteInfo info = WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, options);
     return new DeltaV2Write(
         defaultEngine,
@@ -196,7 +195,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         path,
         snapshot,
         Optional.empty(),
-        snapshotManager,
+        tableManager,
         TABLE_SCHEMA,
         new StructType(),
         info,
