@@ -442,6 +442,20 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
       }
   }
 
+  test("field ids do not require ids for array and map elements") {
+    val parquetSchema = ParquetSchemaUtils.toParquetSchema(testParquetFileDeltaSchema)
+    val arrayField = parquetSchema.getFields.get(1)
+    val mapField = parquetSchema.getFields.get(2)
+
+    assert(arrayField.getId.intValue() === 4)
+    assert(parquetSchema.getType("f1", "list").getId === null)
+    assert(parquetSchema.getType("f1", "list", "element").getId === null)
+    assert(mapField.getId.intValue() === 7)
+    assert(parquetSchema.getType("f2", "key_value").getId === null)
+    assert(parquetSchema.getType("f2", "key_value", "key").getId === null)
+    assert(parquetSchema.getType("f2", "key_value", "value").getId === null)
+  }
+
   test("toParquetSchema - GeometryType maps to BINARY with GEOMETRY annotation") {
     val deltaSchema = new StructType()
       .add("geom", new GeometryType("OGC:CRS84"))

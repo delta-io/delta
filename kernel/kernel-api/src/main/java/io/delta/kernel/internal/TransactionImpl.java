@@ -87,12 +87,16 @@ public class TransactionImpl implements Transaction {
         TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetadata(
             TransactionStateRow.getConfiguration(transactionState));
 
-    // Get the list of partition columns to exclude
+    // Statistics use the physical schema, so partition columns must use physical names too.
     Set<String> partitionColumns =
-        new HashSet<>(TransactionStateRow.getPartitionColumnsList(transactionState));
+        new HashSet<>(
+            PartitionUtils.toPhysicalPartitionColNames(
+                TransactionStateRow.getLogicalSchema(transactionState),
+                TransactionStateRow.getPartitionColumnsList(transactionState),
+                TransactionStateRow.getColumnMappingMode(transactionState)));
 
     // Collect the leaf-level columns for statistics calculation.
-    // This call selects only the first 'numIndexedCols' leaf columns from the logical schema,
+    // This call selects only the first 'numIndexedCols' leaf columns from the physical schema,
     // excluding any column whose top-level name appears in 'partitionColumns'.
     // NOTE: Nested columns (i.e. each leaf within a StructType) count individually toward the
     // numIndexedCols limit (not Map/ArrayTypes - they're not stats compatible types).
