@@ -1073,16 +1073,37 @@ case class AlterTableChangeColumnDeltaCommand(
     // first (original data type is already normalized as we store char/varchar as string type with
     // special metadata in the Delta log), then apply Delta-specific checks.
     val newType = CharVarcharUtils.replaceCharVarcharWithString(newColumn.dataType)
+    val typeWideningEnabled = TypeWidening.isEnabled(txn.protocol, txn.metadata)
     if (SchemaUtils.canChangeDataType(
         originalField.dataType,
         newType,
         resolver,
         txn.metadata.columnMappingMode,
         columnPath :+ originalField.name,
-        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata)
+        allowTypeWidening = typeWideningEnabled
       ).nonEmpty) {
+      // If the change is rejected AND type widening is disabled, check whether the requested
+      // change would have been accepted with type widening enabled. If so, surface a more
+      // actionable error that names the exact table property to set — avoids sending users to
+      // the docs to figure out `delta.enableTypeWidening`.
+      val fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name
+      if (!typeWideningEnabled &&
+          SchemaUtils.canChangeDataType(
+            originalField.dataType,
+            newType,
+            resolver,
+            txn.metadata.columnMappingMode,
+            columnPath :+ originalField.name,
+            allowTypeWidening = true
+          ).isEmpty) {
+        throw DeltaErrors.alterColumnTypeWideningNotEnabledException(
+          fieldPath = fieldPath,
+          fromType = originalField.dataType,
+          toType = newType,
+          tableName = table.name())
+      }
       throw DeltaErrors.alterTableChangeColumnException(
-        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        fieldPath = fieldPath,
         oldField = originalField,
         newField = newColumn
       )
