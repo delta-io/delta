@@ -363,9 +363,6 @@ abstract class CloneTableBase(
       targetSnapshot: SnapshotDescriptor,
       validatedOverrides: Map[String, String]): Map[String, String] = {
     if (tableExists(targetSnapshot)) {
-      assert(validatedOverrides.isEmpty,
-        "Explicit overrides on Coordinated Commits configurations for existing tables" +
-          " are not supported, and should have been caught earlier.")
       CoordinatedCommitsUtils.getExplicitCCConfigurations(targetSnapshot.metadata.configuration)
     } else {
       if (validatedOverrides.nonEmpty) {
