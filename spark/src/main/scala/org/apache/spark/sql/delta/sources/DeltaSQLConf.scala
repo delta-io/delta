@@ -670,6 +670,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "entriesPerLeaf must be positive.")
       .createWithDefault(50000)
 
+  val AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED =
+    buildConf("amt.columnarStateReconstruction.enabled")
+      .internal()
+      .doc("When enabled, AMT state reconstruction builds the AddFiles as column expressions " +
+        "over the persisted manifest rows instead of decoding and converting every manifest " +
+        "entry on the executors. Read when the AMT checkpoint provider is created.")
+      .booleanConf
+      .createWithDefault(false)
+
   val AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT =
     buildConf("amt.largeCommitActionsCountThresholdForInlineManifestCommit")
       .internal()
