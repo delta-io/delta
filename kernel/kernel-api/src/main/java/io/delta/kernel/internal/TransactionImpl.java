@@ -864,6 +864,7 @@ public class TransactionImpl implements Transaction {
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
+    // TODO(#8026): Use the incremental operation allowlist for SIMPLE CRCs.
     Optional<Long> numDeletedRecords =
         updatedDvMetric(CRCInfo::getNumDeletedRecords, metricsResult.getNumDeletedRecordsDelta());
     Optional<Long> numDeletionVectors =

@@ -370,6 +370,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
       val firstDv = addFile("first.parquet", Some(3L))
       val secondDv = addFile("second.parquet", Some(5L))
       val noDV = addFile("plain.parquet")
+      // Initialize the CRC with one DV and 3 deleted records.
       commitSimple(
         getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
         engine,
@@ -384,6 +385,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Some(1L),
         Some(3L))
 
+      // Adding a second DV increases both counters.
       commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(secondDv))
       checkCrcCorrect(
         engine,
@@ -394,6 +396,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Some(histogramForSize100Files(2)),
         Some(2L),
         Some(8L))
+      // Adding a file without a DV changes file statistics but leaves DV counters unchanged.
       commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(noDV))
       checkCrcCorrect(
         engine,
@@ -405,6 +408,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Some(2L),
         Some(8L))
 
+      // Replacing the first DV keeps 2 vectors but changes deleted records from 8 to 12.
       val updatedFirstDv = addFile("first.parquet", Some(7L))
       commitSimple(
         getUpdateTxn(engine, path),
@@ -420,6 +424,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Some(histogramForSize100Files(3)),
         Some(2L),
         Some(12L))
+      // Remove the second DV and the plain file, leaving only the updated first DV.
       commitSimple(
         getUpdateTxn(engine, path),
         engine,
@@ -434,6 +439,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Some(histogramForSize100Files(1)),
         Some(1L),
         Some(7L))
+      // Removing the last file leaves present zero counters, rather than dropping the fields.
       commitSimple(getUpdateTxn(engine, path), engine, addFileToRemoveFileRow(updatedFirstDv))
       checkCrcCorrect(
         engine,
