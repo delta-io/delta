@@ -289,10 +289,12 @@ class DeltaV2TableManagerImplSuite
           val error = intercept[IllegalArgumentException] {
             if (actionName == "metaData") {
               StreamingHelper.collectMetadataActions(
-                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine)
+                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine,
+                DeltaV2QueryContext.empty)
             } else {
               StreamingHelper.collectProtocolActions(
-                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine)
+                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine,
+                DeltaV2QueryContext.empty)
             }
           }
           assert(error.getMessage ===

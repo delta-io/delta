@@ -56,6 +56,7 @@ import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.util.JsonUtils;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
@@ -2118,7 +2119,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty(),
             Option.empty(),
-            testTablePath + "/_checkpoint");
+            testTablePath + "/_checkpoint",
+            DeltaV2QueryContext$.MODULE$.empty());
 
     InputPartition[] partitions = stream.planInputPartitions(startOffset, planPartitionsEndOffset);
     PartitionReaderFactory readerFactory = stream.createReaderFactory();
@@ -2303,7 +2305,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty(),
             Option.empty(),
-            testTablePath + "/_checkpoint");
+            testTablePath + "/_checkpoint",
+            DeltaV2QueryContext$.MODULE$.empty());
 
     InputPartition[] partitions = stream.planInputPartitions(startOffset, endOffset);
     PartitionReaderFactory readerFactory = stream.createReaderFactory();
@@ -4370,7 +4373,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty(),
         /* metadataTrackingLog= */ Option.empty(),
-        /* metadataPath= */ tablePath + "/_checkpoint");
+        /* metadataPath= */ tablePath + "/_checkpoint",
+        DeltaV2QueryContext$.MODULE$.empty());
   }
 
   private DeltaV2MicroBatchStream createSchemaTrackingTestStream(
@@ -4397,7 +4401,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty(),
         metadataTrackingLog,
-        metadataPath);
+        metadataPath,
+        DeltaV2QueryContext$.MODULE$.empty());
   }
 
   private DeltaSourceMetadataTrackingLog createTrackingLog(
