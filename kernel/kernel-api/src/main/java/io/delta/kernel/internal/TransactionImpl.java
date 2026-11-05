@@ -865,15 +865,9 @@ public class TransactionImpl implements Transaction {
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
     Optional<Long> numDeletedRecords =
-        updatedDvMetric(
-            CRCInfo::getNumDeletedRecords,
-            metricsResult.getNumDeletedRecordsInAddFiles(),
-            metricsResult.getNumDeletedRecordsInRemoveFiles());
+        updatedDvMetric(CRCInfo::getNumDeletedRecords, metricsResult.getNumDeletedRecordsDelta());
     Optional<Long> numDeletionVectors =
-        updatedDvMetric(
-            CRCInfo::getNumDeletionVectors,
-            metricsResult.getNumDeletionVectorsInAddFiles(),
-            metricsResult.getNumDeletionVectorsInRemoveFiles());
+        updatedDvMetric(CRCInfo::getNumDeletionVectors, metricsResult.getNumDeletionVectorsDelta());
     if (isCreateOrReplace) {
       // We don't need to worry about conflicting transaction here since new tables always commit
       // metadata (and thus fail any conflicts)
@@ -923,22 +917,20 @@ public class TransactionImpl implements Transaction {
                     Optional.empty())); // allFiles
   }
 
-  private Optional<Long> updatedDvMetric(
-      Function<CRCInfo, Optional<Long>> getter, long added, long removed) {
+  private Optional<Long> updatedDvMetric(Function<CRCInfo, Optional<Long>> getter, long delta) {
     if (!protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)) {
       return Optional.empty();
     }
-    if (isCreateOrReplace) {
-      return Optional.of(added);
-    }
-    return currentCrcInfo.flatMap(
-        base -> {
-          // A table without DV support has no DVs. Missing metrics on a DV table stay unknown.
-          if (!base.getProtocol().supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)) {
-            return Optional.of(added - removed);
-          }
-          return getter.apply(base).map(value -> value + added - removed);
-        });
+    Optional<Long> baseValue =
+        readSnapshotOpt.isPresent()
+            ? currentCrcInfo.flatMap(
+                base ->
+                    base.getProtocol().supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
+                        ? getter.apply(base)
+                        : Optional.of(0L))
+            : Optional.of(0L);
+    // Only new tables or a base without DV support can start from zero; otherwise keep unknown.
+    return baseValue.map(value -> value + delta);
   }
 
   private TransactionReport recordTransactionReport(

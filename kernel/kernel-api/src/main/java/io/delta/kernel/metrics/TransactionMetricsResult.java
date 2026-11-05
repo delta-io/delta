@@ -28,10 +28,8 @@ import java.util.Optional;
   "numTotalActions",
   "totalAddFilesSizeInBytes",
   "totalRemoveFilesSizeInBytes",
-  "numDeletionVectorsInAddFiles",
-  "numDeletionVectorsInRemoveFiles",
-  "numDeletedRecordsInAddFiles",
-  "numDeletedRecordsInRemoveFiles"
+  "numDeletionVectorsDelta",
+  "numDeletedRecordsDelta"
 })
 public interface TransactionMetricsResult {
 
@@ -72,28 +70,18 @@ public interface TransactionMetricsResult {
   long getTotalRemoveFilesSizeInBytes();
 
   /**
-   * @return the number of add files with a deletion vector committed in this transaction. For a
+   * @return the net change in the number of deletion vectors committed in this transaction: the
+   *     number in add files minus the number in remove files. Can be negative. For a failed
+   *     transaction this metric may be incomplete.
+   */
+  long getNumDeletionVectorsDelta();
+
+  /**
+   * @return the net change in records invalidated by deletion vectors committed in this
+   *     transaction: add-file cardinalities minus remove-file cardinalities. Can be negative. For a
    *     failed transaction this metric may be incomplete.
    */
-  long getNumDeletionVectorsInAddFiles();
-
-  /**
-   * @return the number of remove files with a deletion vector committed in this transaction. For a
-   *     failed transaction this metric may be incomplete.
-   */
-  long getNumDeletionVectorsInRemoveFiles();
-
-  /**
-   * @return the sum of deletion-vector cardinalities in add files committed in this transaction.
-   *     For a failed transaction this metric may be incomplete.
-   */
-  long getNumDeletedRecordsInAddFiles();
-
-  /**
-   * @return the sum of deletion-vector cardinalities in remove files committed in this transaction.
-   *     For a failed transaction this metric may be incomplete.
-   */
-  long getNumDeletedRecordsInRemoveFiles();
+  long getNumDeletedRecordsDelta();
 
   /**
    * @return the file size histogram information for the table version committed in this

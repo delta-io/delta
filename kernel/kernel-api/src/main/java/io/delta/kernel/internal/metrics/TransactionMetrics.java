@@ -62,10 +62,10 @@ public class TransactionMetrics {
 
   private final Counter removeFilesSizeInBytesCounter = new Counter();
 
-  private final Counter deletionVectorsInAddFilesCounter = new Counter();
-  private final Counter deletionVectorsInRemoveFilesCounter = new Counter();
-  private final Counter deletedRecordsInAddFilesCounter = new Counter();
-  private final Counter deletedRecordsInRemoveFilesCounter = new Counter();
+  private final Counter numDeletionVectorsCounter = new Counter();
+  // Net change in records invalidated by DVs: add-file cardinalities minus remove-file
+  // cardinalities.
+  private final Counter numDeletedRecordsCounter = new Counter();
 
   private Optional<FileSizeHistogram> tableFileSizeHistogram;
 
@@ -75,7 +75,7 @@ public class TransactionMetrics {
 
   /**
    * Updates the metrics for a seen AddFile with size {@code addFileSize}. Specifically, updates the
-   * file count, size, deletion-vector metrics, and tableFileSizeHistogram. Note, it does NOT
+   * file count, table size, deletion-vector metrics, and tableFileSizeHistogram. Note, it does NOT
    * increment totalActionsCounter; this needs to be done separately.
    *
    * @param addFileSize the size of the add file to update the metrics for
@@ -88,16 +88,16 @@ public class TransactionMetrics {
     addFilesSizeInBytesCounter.increment(addFileSize);
     deletionVector.ifPresent(
         dv -> {
-          deletionVectorsInAddFilesCounter.increment();
-          deletedRecordsInAddFilesCounter.increment(dv.getCardinality());
+          numDeletionVectorsCounter.increment();
+          numDeletedRecordsCounter.increment(dv.getCardinality());
         });
     tableFileSizeHistogram.ifPresent(histogram -> histogram.insert(addFileSize));
   }
 
   /**
    * Updates the metrics for a seen RemoveFile with size {@code removeFileSize}. Specifically,
-   * updates the file count, size, deletion-vector metrics, and tableFileSizeHistogram. Note, it
-   * does NOT increment totalActionsCounter; this needs to be done separately.
+   * updates the file count, table size, deletion-vector metrics, and tableFileSizeHistogram. Note,
+   * it does NOT increment totalActionsCounter; this needs to be done separately.
    *
    * @param removeFileSize the size of the remove file to update the metrics for
    * @param deletionVector the deletion vector attached to the remove file, if any
@@ -109,8 +109,8 @@ public class TransactionMetrics {
     removeFilesSizeInBytesCounter.increment(removeFileSize);
     deletionVector.ifPresent(
         dv -> {
-          deletionVectorsInRemoveFilesCounter.increment();
-          deletedRecordsInRemoveFilesCounter.increment(dv.getCardinality());
+          numDeletionVectorsCounter.increment(-1);
+          numDeletedRecordsCounter.increment(-dv.getCardinality());
         });
     tableFileSizeHistogram.ifPresent(histogram -> histogram.remove(removeFileSize));
   }
@@ -134,10 +134,8 @@ public class TransactionMetrics {
     removeFilesCounter.reset();
     totalActionsCounter.reset();
     removeFilesSizeInBytesCounter.reset();
-    deletionVectorsInAddFilesCounter.reset();
-    deletionVectorsInRemoveFilesCounter.reset();
-    deletedRecordsInAddFilesCounter.reset();
-    deletedRecordsInRemoveFilesCounter.reset();
+    numDeletionVectorsCounter.reset();
+    numDeletedRecordsCounter.reset();
     // For now, on retry we set tableFileSizeHistogram = Optional.empty() because we don't know the
     // correct state of tableFileSizeHistogram after conflicting transaction has committed
     tableFileSizeHistogram = Optional.empty();
@@ -153,10 +151,8 @@ public class TransactionMetrics {
       final long numRemoveFiles = removeFilesCounter.value();
       final long numTotalActions = totalActionsCounter.value();
       final long totalRemoveFileSizeInBytes = removeFilesSizeInBytesCounter.value();
-      final long numDeletionVectorsInAddFiles = deletionVectorsInAddFilesCounter.value();
-      final long numDeletionVectorsInRemoveFiles = deletionVectorsInRemoveFilesCounter.value();
-      final long numDeletedRecordsInAddFiles = deletedRecordsInAddFilesCounter.value();
-      final long numDeletedRecordsInRemoveFiles = deletedRecordsInRemoveFilesCounter.value();
+      final long numDeletionVectorsDelta = numDeletionVectorsCounter.value();
+      final long numDeletedRecordsDelta = numDeletedRecordsCounter.value();
       final Optional<FileSizeHistogramResult> tableFileSizeHistogramResult =
           tableFileSizeHistogram.map(FileSizeHistogram::captureFileSizeHistogramResult);
 
@@ -196,23 +192,13 @@ public class TransactionMetrics {
       }
 
       @Override
-      public long getNumDeletionVectorsInAddFiles() {
-        return numDeletionVectorsInAddFiles;
+      public long getNumDeletionVectorsDelta() {
+        return numDeletionVectorsDelta;
       }
 
       @Override
-      public long getNumDeletionVectorsInRemoveFiles() {
-        return numDeletionVectorsInRemoveFiles;
-      }
-
-      @Override
-      public long getNumDeletedRecordsInAddFiles() {
-        return numDeletedRecordsInAddFiles;
-      }
-
-      @Override
-      public long getNumDeletedRecordsInRemoveFiles() {
-        return numDeletedRecordsInRemoveFiles;
+      public long getNumDeletedRecordsDelta() {
+        return numDeletedRecordsDelta;
       }
 
       @Override
@@ -227,9 +213,8 @@ public class TransactionMetrics {
     return String.format(
         "TransactionMetrics(totalCommitTimer=%s, commitAttemptsCounter=%s, addFilesCounter=%s, "
             + "removeFilesCounter=%s, totalActionsCounter=%s, totalAddFilesSizeInBytes=%s,"
-            + "totalRemoveFilesSizeInBytes=%s, numDeletionVectorsInAddFiles=%s, "
-            + "numDeletionVectorsInRemoveFiles=%s, numDeletedRecordsInAddFiles=%s, "
-            + "numDeletedRecordsInRemoveFiles=%s, tableFileSizeHistogram=%s)",
+            + "totalRemoveFilesSizeInBytes=%s, numDeletionVectorsDelta=%s, "
+            + "numDeletedRecordsDelta=%s, tableFileSizeHistogram=%s)",
         totalCommitTimer,
         commitAttemptsCounter,
         addFilesCounter,
@@ -237,10 +222,8 @@ public class TransactionMetrics {
         totalActionsCounter,
         addFilesSizeInBytesCounter,
         removeFilesSizeInBytesCounter,
-        deletionVectorsInAddFilesCounter,
-        deletionVectorsInRemoveFilesCounter,
-        deletedRecordsInAddFilesCounter,
-        deletedRecordsInRemoveFilesCounter,
+        numDeletionVectorsCounter,
+        numDeletedRecordsCounter,
         tableFileSizeHistogram);
   }
 }

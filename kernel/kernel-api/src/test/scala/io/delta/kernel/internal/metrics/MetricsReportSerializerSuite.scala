@@ -150,10 +150,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numTotalActions":${transactionMetrics.getNumTotalActions},
          |"totalAddFilesSizeInBytes":${transactionMetrics.getTotalAddFilesSizeInBytes},
          |"totalRemoveFilesSizeInBytes":${transactionMetrics.getTotalRemoveFilesSizeInBytes},
-         |"numDeletionVectorsInAddFiles":${transactionMetrics.getNumDeletionVectorsInAddFiles},
-         |"numDeletionVectorsInRemoveFiles":${transactionMetrics.getNumDeletionVectorsInRemoveFiles},
-         |"numDeletedRecordsInAddFiles":${transactionMetrics.getNumDeletedRecordsInAddFiles},
-         |"numDeletedRecordsInRemoveFiles":${transactionMetrics.getNumDeletedRecordsInRemoveFiles}
+         |"numDeletionVectorsDelta":${transactionMetrics.getNumDeletionVectorsDelta},
+         |"numDeletedRecordsDelta":${transactionMetrics.getNumDeletedRecordsDelta}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -210,10 +208,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numTotalActions":90,
          |"totalAddFilesSizeInBytes":1100,
          |"totalRemoveFilesSizeInBytes":1000,
-         |"numDeletionVectorsInAddFiles":1,
-         |"numDeletionVectorsInRemoveFiles":1,
-         |"numDeletedRecordsInAddFiles":3,
-         |"numDeletedRecordsInRemoveFiles":2
+         |"numDeletionVectorsDelta":0,
+         |"numDeletedRecordsDelta":1
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -221,13 +217,20 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     // Check with test function
     testTransactionReport(transactionReport1)
 
-    // Retrying clears both add/remove DV metrics without changing the captured report.
+    // A remove-only attempt has negative deltas; retries reset them without changing snapshots.
+    transactionMetrics1.resetActionMetricsForRetry()
+    transactionMetrics1.updateForRemoveFile(
+      1000,
+      Optional.of(new DeletionVectorDescriptor("p", "/removed.bin", Optional.empty(), 32, 2)))
+    val removeMetrics = transactionMetrics1.captureTransactionMetricsResult()
+    assert(removeMetrics.getNumDeletionVectorsDelta === -1)
+    assert(removeMetrics.getNumDeletedRecordsDelta === -2)
     transactionMetrics1.resetActionMetricsForRetry()
     val resetMetrics = transactionMetrics1.captureTransactionMetricsResult()
-    assert(resetMetrics.getNumDeletionVectorsInAddFiles === 0)
-    assert(resetMetrics.getNumDeletionVectorsInRemoveFiles === 0)
-    assert(resetMetrics.getNumDeletedRecordsInAddFiles === 0)
-    assert(resetMetrics.getNumDeletedRecordsInRemoveFiles === 0)
+    assert(resetMetrics.getNumDeletionVectorsDelta === 0)
+    assert(resetMetrics.getNumDeletedRecordsDelta === 0)
+    assert(removeMetrics.getNumDeletionVectorsDelta === -1)
+    assert(removeMetrics.getNumDeletedRecordsDelta === -2)
     assert(expectedJson == transactionReport1.toJson())
 
     // Initialize snapshot report for the empty table case
