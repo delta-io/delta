@@ -42,6 +42,7 @@ import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.TableManagerTestAdapter;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
@@ -147,9 +148,10 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     return new MetadataEvolutionHandler(
         spark,
         "test-table-id",
-        THROWING_SNAPSHOT_MANAGER,
+        TableManagerTestAdapter.apply(THROWING_SNAPSHOT_MANAGER),
         new DeltaV2StreamingBackend(
-            THROWING_SNAPSHOT_MANAGER, DeltaV2QueryContext$.MODULE$.empty()),
+            TableManagerTestAdapter.apply(THROWING_SNAPSHOT_MANAGER),
+            DeltaV2QueryContext$.MODULE$.empty()),
         defaultEngine,
         emptyDeltaOptions(),
         readOptions,
@@ -205,8 +207,10 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new MetadataEvolutionHandler(
             spark,
             "test-table-id",
-            snapshotManager,
-            new DeltaV2StreamingBackend(snapshotManager, DeltaV2QueryContext$.MODULE$.empty()),
+            TableManagerTestAdapter.apply(snapshotManager),
+            new DeltaV2StreamingBackend(
+                TableManagerTestAdapter.apply(snapshotManager),
+                DeltaV2QueryContext$.MODULE$.empty()),
             defaultEngine,
             emptyDeltaOptions(),
             schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false),
@@ -969,7 +973,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         spark,
         snapshot,
         options,
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         defaultEngine,
         Option.empty(),
         /* mergeConsecutiveSchemaChanges= */ false,
@@ -1110,7 +1114,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         spark,
         snapshot,
         options,
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         defaultEngine,
         DeltaV2QueryContext$.MODULE$.empty());
   }
@@ -1151,7 +1155,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
                       spark,
                       dsv1Snapshot,
                       options,
-                      snapshotManager,
+                      TableManagerTestAdapter.apply(snapshotManager),
                       defaultEngine,
                       Option.empty(),
                       /* mergeConsecutiveSchemaChanges= */ false,
@@ -1173,7 +1177,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
                   spark,
                   dsv1Snapshot,
                   options,
-                  snapshotManager,
+                  TableManagerTestAdapter.apply(snapshotManager),
                   defaultEngine,
                   DeltaV2QueryContext$.MODULE$.empty());
           assertTrue(result.isPresent());
@@ -1397,7 +1401,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
             current,
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             defaultEngine,
             tablePath,
             DeltaV2QueryContext$.MODULE$.empty());
@@ -1464,7 +1468,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
             current,
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             defaultEngine,
             tablePath,
             DeltaV2QueryContext$.MODULE$.empty());

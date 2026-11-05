@@ -43,6 +43,7 @@ import org.apache.spark.sql.delta.v2.InternalRowTestUtils;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.TableManagerTestAdapter;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -148,7 +149,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
                     path,
                     snapshot,
                     Optional.empty(),
-                    snapshotManager,
+                    TableManagerTestAdapter.apply(snapshotManager),
                     TABLE_SCHEMA,
                     new StructType(),
                     info,
@@ -647,7 +648,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             TABLE_SCHEMA,
             new StructType(),
             info,
@@ -713,7 +714,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             VARIANT_TABLE_SCHEMA,
             new StructType(),
             info,
@@ -757,7 +758,7 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             path,
             snapshot,
             Optional.empty(),
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
             info,

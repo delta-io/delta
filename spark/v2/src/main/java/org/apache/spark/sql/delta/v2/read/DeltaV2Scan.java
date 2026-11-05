@@ -43,10 +43,10 @@ import org.apache.spark.sql.delta.stats.DeltaScan;
 import org.apache.spark.sql.delta.v2.DeltaV2JavaLogging;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext;
 import org.apache.spark.sql.delta.v2.read.deletionvector.DeletionVectorSchemaContext;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils;
 import org.apache.spark.sql.delta.v2.utils.PartitionValueCaster;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
@@ -70,7 +70,7 @@ import scala.collection.immutable.Seq;
 class DeltaV2Scan extends DeltaV2JavaLogging
     implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
-  private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2TableManager tableManager;
   private final DeltaV2QueryContext originalQueryContext;
   private final Snapshot initialSnapshot;
   private final StructType readDataSchema;
@@ -112,7 +112,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
 
   // TODO(#6743): bundle scan-level schemas into a single ScanSchemaContext.
   public DeltaV2Scan(
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       Snapshot initialSnapshot,
       StructType tableSchema,
       StructType dataSchema,
@@ -126,7 +126,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
       OptionalInt pushedLimit,
       DeltaV2QueryContext originalQueryContext) {
 
-    this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
+    this.tableManager = Objects.requireNonNull(tableManager, "tableManager is null");
     this.originalQueryContext =
         Objects.requireNonNull(originalQueryContext, "originalQueryContext is null");
     this.initialSnapshot = Objects.requireNonNull(initialSnapshot, "initialSnapshot is null");
@@ -265,7 +265,7 @@ class DeltaV2Scan extends DeltaV2JavaLogging
     // checks. DeltaV2Scan's initialSnapshot is from analysis time and may be stale by stream
     // start/restart.
     // Matches V1's DeltaDataSource.createSource() behavior.
-    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot(originalQueryContext);
+    Snapshot latestSnapshot = tableManager.loadLatestSnapshot(originalQueryContext);
     SparkSession spark = SparkSession.active();
 
     // Create metadata tracking log for non-additive schema evolution support.
@@ -276,14 +276,14 @@ class DeltaV2Scan extends DeltaV2JavaLogging
             spark,
             latestSnapshot,
             options,
-            snapshotManager,
+            tableManager,
             KernelEngineFactory.createDefaultEngine(hadoopConf),
             Option.apply(checkpointLocation),
             /* mergeConsecutiveSchemaChanges= */ false,
             originalQueryContext);
 
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        tableManager,
         latestSnapshot,
         hadoopConf,
         spark,

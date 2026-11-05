@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.TableManagerTestAdapter;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -116,7 +117,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             mgr.loadLatestSnapshot(),
             Optional.empty(),
-            mgr,
+            TableManagerTestAdapter.apply(mgr),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()),
@@ -164,7 +165,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
             path,
             mgr.loadLatestSnapshot(),
             Optional.empty(),
-            mgr,
+            TableManagerTestAdapter.apply(mgr),
             dataSchema,
             partitionSchema,
             WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()),
@@ -199,7 +200,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         path,
         snapshot,
         Optional.empty(),
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         TABLE_SCHEMA,
         new StructType(),
         info,
