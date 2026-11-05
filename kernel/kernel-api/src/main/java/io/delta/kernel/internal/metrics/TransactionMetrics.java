@@ -62,10 +62,13 @@ public class TransactionMetrics {
 
   private final Counter removeFilesSizeInBytesCounter = new Counter();
 
-  private final Counter numDeletionVectorsCounter = new Counter();
-  // Net change in records invalidated by DVs: add-file cardinalities minus remove-file
-  // cardinalities.
-  private final Counter numDeletedRecordsCounter = new Counter();
+  // Number of DVs in add files minus the number in remove files. Updates numDeletionVectorsOpt
+  // in the post-commit CRC.
+  private final Counter numDeletionVectorsDeltaCounter = new Counter();
+
+  // Net change in records deleted through DVs only: add-file DV cardinalities minus remove-file
+  // DV cardinalities. Updates numDeletedRecordsOpt in the post-commit CRC.
+  private final Counter numDeletedRecordsDeltaCounter = new Counter();
 
   private Optional<FileSizeHistogram> tableFileSizeHistogram;
 
@@ -88,8 +91,8 @@ public class TransactionMetrics {
     addFilesSizeInBytesCounter.increment(addFileSize);
     deletionVector.ifPresent(
         dv -> {
-          numDeletionVectorsCounter.increment();
-          numDeletedRecordsCounter.increment(dv.getCardinality());
+          numDeletionVectorsDeltaCounter.increment();
+          numDeletedRecordsDeltaCounter.increment(dv.getCardinality());
         });
     tableFileSizeHistogram.ifPresent(histogram -> histogram.insert(addFileSize));
   }
@@ -109,8 +112,8 @@ public class TransactionMetrics {
     removeFilesSizeInBytesCounter.increment(removeFileSize);
     deletionVector.ifPresent(
         dv -> {
-          numDeletionVectorsCounter.increment(-1);
-          numDeletedRecordsCounter.increment(-dv.getCardinality());
+          numDeletionVectorsDeltaCounter.increment(-1);
+          numDeletedRecordsDeltaCounter.increment(-dv.getCardinality());
         });
     tableFileSizeHistogram.ifPresent(histogram -> histogram.remove(removeFileSize));
   }
@@ -119,7 +122,9 @@ public class TransactionMetrics {
    * Resets any action metrics for a failed commit to prepare them for retrying. Specifically,
    *
    * <ul>
-   *   <li>Resets all action counters, including deletion-vector metrics, to 0
+   *   <li>Resets addFilesCounter, removeFilesCounter, totalActionsCounter,
+   *       addFilesSizeInBytesCounter, removeFilesSizeInBytesCounter,
+   *       numDeletionVectorsDeltaCounter, and numDeletedRecordsDeltaCounter to 0
    *   <li>Sets tableFileSizeHistogram to be empty since we don't know the updated distribution
    *       after the conflicting txn committed
    * </ul>
@@ -134,8 +139,8 @@ public class TransactionMetrics {
     removeFilesCounter.reset();
     totalActionsCounter.reset();
     removeFilesSizeInBytesCounter.reset();
-    numDeletionVectorsCounter.reset();
-    numDeletedRecordsCounter.reset();
+    numDeletionVectorsDeltaCounter.reset();
+    numDeletedRecordsDeltaCounter.reset();
     // For now, on retry we set tableFileSizeHistogram = Optional.empty() because we don't know the
     // correct state of tableFileSizeHistogram after conflicting transaction has committed
     tableFileSizeHistogram = Optional.empty();
@@ -151,8 +156,8 @@ public class TransactionMetrics {
       final long numRemoveFiles = removeFilesCounter.value();
       final long numTotalActions = totalActionsCounter.value();
       final long totalRemoveFileSizeInBytes = removeFilesSizeInBytesCounter.value();
-      final long numDeletionVectorsDelta = numDeletionVectorsCounter.value();
-      final long numDeletedRecordsDelta = numDeletedRecordsCounter.value();
+      final long numDeletionVectorsDelta = numDeletionVectorsDeltaCounter.value();
+      final long numDeletedRecordsDelta = numDeletedRecordsDeltaCounter.value();
       final Optional<FileSizeHistogramResult> tableFileSizeHistogramResult =
           tableFileSizeHistogram.map(FileSizeHistogram::captureFileSizeHistogramResult);
 
@@ -222,8 +227,8 @@ public class TransactionMetrics {
         totalActionsCounter,
         addFilesSizeInBytesCounter,
         removeFilesSizeInBytesCounter,
-        numDeletionVectorsCounter,
-        numDeletedRecordsCounter,
+        numDeletionVectorsDeltaCounter,
+        numDeletedRecordsDeltaCounter,
         tableFileSizeHistogram);
   }
 }

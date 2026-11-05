@@ -15,21 +15,21 @@
  */
 package io.delta.kernel.defaults
 
-import java.nio.file.FileAlreadyExistsException
+import java.nio.file.{FileAlreadyExistsException, Files}
 import java.util.{Collections, Optional}
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
+import io.delta.kernel.{Snapshot, Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
+import io.delta.kernel.internal.{TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, DeletionVectorDescriptor, GenerateIcebergCompatActionUtils, SingleAction}
-import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumUtils, CRCInfo}
+import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.stats.FileSizeHistogram
@@ -40,6 +40,8 @@ import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -59,26 +61,38 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
 
       val dataFiles = Map("file1.parquet" -> 100L, "file2.parquet" -> 100802L)
       addFiles(engine, tablePath, dataFiles, expectedFileSizeHistogram)
-      checkCrcCorrect(
-        engine,
-        tablePath,
-        version = 1,
-        expectedFileCount = 2,
-        expectedTableSize = 100902,
-        expectedFileSizeHistogram = expectedFileSizeHistogram)
+      for (recompute <- Seq(false, true)) {
+        if (recompute) {
+          engine.getFileSystemClient.delete(buildCrcPath(tablePath, 1).toString)
+          Table.forPath(engine, tablePath).checksum(engine, 1)
+        }
+        checkCrcCorrect(
+          engine,
+          tablePath,
+          version = 1,
+          expectedFileCount = 2,
+          expectedTableSize = 100902,
+          expectedFileSizeHistogram = Some(expectedFileSizeHistogram))
+      }
 
       removeFiles(
         engine,
         tablePath,
         Map("file1.parquet" -> 100),
         expectedFileSizeHistogram)
-      checkCrcCorrect(
-        engine,
-        tablePath,
-        version = 2,
-        expectedFileCount = 1,
-        expectedTableSize = 100902 - 100,
-        expectedFileSizeHistogram = expectedFileSizeHistogram)
+      for (recompute <- Seq(false, true)) {
+        if (recompute) {
+          engine.getFileSystemClient.delete(buildCrcPath(tablePath, 2).toString)
+          Table.forPath(engine, tablePath).checksum(engine, 2)
+        }
+        checkCrcCorrect(
+          engine,
+          tablePath,
+          version = 2,
+          expectedFileCount = 1,
+          expectedTableSize = 100902 - 100,
+          expectedFileSizeHistogram = Some(expectedFileSizeHistogram))
+      }
     }
   }
 
@@ -90,7 +104,9 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
    * @param version The table version to check
    * @param expectedFileCount Expected number of files in the table
    * @param expectedTableSize Expected total size of all files in bytes
-   * @param expectedFileSizeHistogram Expected file size histogram
+   * @param expectedFileSizeHistogram Expected file size histogram, or None if absent
+   * @param expectedNumDeletionVectors Expected DV count, or None if absent
+   * @param expectedNumDeletedRecords Expected DV-deleted record count, or None if absent
    */
   def checkCrcCorrect(
       engine: Engine,
@@ -98,25 +114,19 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
       version: Long,
       expectedFileCount: Long,
       expectedTableSize: Long,
-      expectedFileSizeHistogram: FileSizeHistogram): Unit = {
-    def verifyCrcExistsAndCorrect(): Unit = {
-      val crcInfo = readCrc(engine, tablePath, version)
-      assert(crcInfo.getNumFiles === expectedFileCount)
-      assert(crcInfo.getTableSizeBytes === expectedTableSize)
-      assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
-    }
-    verifyCrcExistsAndCorrect()
-    // Delete existing CRC to regenerate a new one from state construction.
-    engine.getFileSystemClient.delete(buildCrcPath(tablePath, version).toString)
-    Table.forPath(engine, tablePath).checksum(engine, version)
-    verifyCrcExistsAndCorrect()
-  }
-
-  protected def readCrc(engine: Engine, tablePath: String, version: Long): CRCInfo =
-    ChecksumReader.tryReadChecksumFile(
+      expectedFileSizeHistogram: Option[FileSizeHistogram],
+      expectedNumDeletionVectors: Option[Long] = None,
+      expectedNumDeletedRecords: Option[Long] = None): Unit = {
+    val crcInfo = ChecksumReader.tryReadChecksumFile(
       engine,
       FileStatus.of(checksumFile(new Path(tablePath + "/_delta_log"), version).toString))
       .orElseThrow(() => new AssertionError("CRC information should be present"))
+    assert(crcInfo.getNumFiles === expectedFileCount)
+    assert(crcInfo.getTableSizeBytes === expectedTableSize)
+    assert(crcInfo.getFileSizeHistogram.toScala === expectedFileSizeHistogram)
+    assert(crcInfo.getNumDeletionVectors.toScala.map(_.longValue()) === expectedNumDeletionVectors)
+    assert(crcInfo.getNumDeletedRecords.toScala.map(_.longValue()) === expectedNumDeletedRecords)
+  }
 
   /**
    * Adds files to the table and updates the expected histogram.
@@ -247,9 +257,9 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         Optional.of(false)))))
   }
 
-  private def add(file: AddFile): Row = SingleAction.createAddFileSingleAction(file.toRow)
+  private def addFileToRow(file: AddFile): Row = SingleAction.createAddFileSingleAction(file.toRow)
 
-  private def remove(file: AddFile): Row =
+  private def removeFileToRow(file: AddFile): Row =
     SingleAction.createRemoveFileSingleAction(file.toRemoveFileRow(true, Optional.empty()))
 
   private def actions(rows: Row*): CloseableIterable[Row] =
@@ -261,9 +271,10 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
       rows: Row*): TransactionCommitResult =
     commitTransaction(txn, engine, actions(rows: _*))
 
-  private def checkDvMetrics(crc: CRCInfo, vectors: Long, records: Long): Unit = {
-    assert(crc.getNumDeletionVectors === Optional.of(Long.box(vectors)))
-    assert(crc.getNumDeletedRecords === Optional.of(Long.box(records)))
+  private def histogramForSize100Files(numFiles: Int): FileSizeHistogram = {
+    val result = FileSizeHistogram.createDefaultHistogram()
+    (0 until numFiles).foreach(_ => result.insert(100L))
+    result
   }
 
   for (supportsDv <- Seq(false, true)) {
@@ -276,13 +287,15 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
             testSchema,
             tableProperties = if (supportsDv) dvProperties else Map.empty[String, String]),
           engine)
-        val crc = readCrc(engine, path, 0)
-        if (supportsDv) {
-          checkDvMetrics(crc, 0, 0)
-        } else {
-          assert(!crc.getNumDeletionVectors.isPresent)
-          assert(!crc.getNumDeletedRecords.isPresent)
-        }
+        checkCrcCorrect(
+          engine,
+          path,
+          0,
+          0,
+          0,
+          Some(histogramForSize100Files(0)),
+          expectedNumDeletionVectors = if (supportsDv) Some(0L) else None,
+          expectedNumDeletedRecords = if (supportsDv) Some(0L) else None)
       }
     }
   }
@@ -295,74 +308,118 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
       commitSimple(
         getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
         engine,
-        add(first))
-      checkDvMetrics(readCrc(engine, path, 0), 1, 3)
+        addFileToRow(first))
+      checkCrcCorrect(
+        engine,
+        path,
+        0,
+        1,
+        100,
+        Some(histogramForSize100Files(1)),
+        Some(1L),
+        Some(3L))
 
-      commitSimple(getUpdateTxn(engine, path), engine, add(second))
-      checkDvMetrics(readCrc(engine, path, 1), 2, 8)
-      commitSimple(getUpdateTxn(engine, path), engine, add(plain))
-      checkDvMetrics(readCrc(engine, path, 2), 2, 8)
+      commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(second))
+      checkCrcCorrect(
+        engine,
+        path,
+        1,
+        2,
+        200,
+        Some(histogramForSize100Files(2)),
+        Some(2L),
+        Some(8L))
+      commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(plain))
+      checkCrcCorrect(
+        engine,
+        path,
+        2,
+        3,
+        300,
+        Some(histogramForSize100Files(3)),
+        Some(2L),
+        Some(8L))
 
       val updatedFirst = addFile("first.parquet", Some(7L))
-      commitSimple(getUpdateTxn(engine, path), engine, remove(first), add(updatedFirst))
-      checkDvMetrics(readCrc(engine, path, 3), 2, 12)
-      commitSimple(getUpdateTxn(engine, path), engine, remove(second), remove(plain))
-      checkDvMetrics(readCrc(engine, path, 4), 1, 7)
-      commitSimple(getUpdateTxn(engine, path), engine, remove(updatedFirst))
-      checkDvMetrics(readCrc(engine, path, 5), 0, 0)
+      commitSimple(
+        getUpdateTxn(engine, path),
+        engine,
+        removeFileToRow(first),
+        addFileToRow(updatedFirst))
+      checkCrcCorrect(
+        engine,
+        path,
+        3,
+        3,
+        300,
+        Some(histogramForSize100Files(3)),
+        Some(2L),
+        Some(12L))
+      commitSimple(
+        getUpdateTxn(engine, path),
+        engine,
+        removeFileToRow(second),
+        removeFileToRow(plain))
+      checkCrcCorrect(
+        engine,
+        path,
+        4,
+        1,
+        100,
+        Some(histogramForSize100Files(1)),
+        Some(1L),
+        Some(7L))
+      commitSimple(getUpdateTxn(engine, path), engine, removeFileToRow(updatedFirst))
+      checkCrcCorrect(
+        engine,
+        path,
+        5,
+        0,
+        0,
+        Some(histogramForSize100Files(0)),
+        Some(0L),
+        Some(0L))
     }
   }
 
-  test("SIMPLE CRC replacement applies the DV delta to the previous CRC") {
+  test("Missing previous CRC selects FULL and reconstructs DV metrics") {
     withTempDirAndEngine { (path, engine) =>
       commitSimple(
         getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
         engine,
-        add(addFile("old.parquet", Some(9L))))
-      commitSimple(
-        getReplaceTxn(engine, path, testSchema, tableProperties = dvProperties),
+        addFileToRow(addFile("old.parquet", Some(9L))))
+      deleteChecksumFileForTable(path, Seq(0))
+      val result = getUpdateTxn(engine, path).commit(
         engine,
-        add(addFile("new.parquet", Some(2L))))
-      checkDvMetrics(readCrc(engine, path, 1), 1, 2)
-
-      commitSimple(
-        getReplaceTxn(engine, path, testSchema, tableProperties = dvProperties),
-        engine)
-      checkDvMetrics(readCrc(engine, path, 2), 0, 0)
+        actions(addFileToRow(addFile("new.parquet", Some(2L)))))
+      val checksumHooks = result.getPostCommitHooks.asScala.filter(hook =>
+        hook.getType == PostCommitHookType.CHECKSUM_SIMPLE ||
+          hook.getType == PostCommitHookType.CHECKSUM_FULL)
+      assert(checksumHooks.map(_.getType) === Seq(PostCommitHookType.CHECKSUM_FULL))
+      checksumHooks.head.threadSafeInvoke(engine)
+      checkCrcCorrect(
+        engine,
+        path,
+        1,
+        2,
+        200,
+        Some(histogramForSize100Files(2)),
+        Some(2L),
+        Some(11L))
     }
   }
 
-  for (missingCrc <- Seq(false, true)) {
-    test(s"SIMPLE CRC replacement leaves unknown DV totals absent: missing CRC=$missingCrc") {
-      withTempDirAndEngine { (path, engine) =>
-        commitSimple(
-          getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
-          engine,
-          add(addFile("old.parquet", Some(9L))))
-        if (missingCrc) {
-          deleteChecksumFileForTable(path, Seq(0))
-        } else {
-          rewriteChecksumFileToExcludeDvMetrics(engine, path, 0)
-        }
-        commitSimple(
-          getReplaceTxn(engine, path, testSchema, tableProperties = dvProperties),
-          engine,
-          add(addFile("new.parquet", Some(2L))))
-        val crc = readCrc(engine, path, 1)
-        assert(!crc.getNumDeletionVectors.isPresent)
-        assert(!crc.getNumDeletedRecords.isPresent)
-      }
-    }
-  }
-
-  test("SIMPLE CRC seeds DV metrics from zero when enabling DV support") {
+  test("SIMPLE CRC keeps missing DV metrics absent when enabling DV support") {
     withTempDirAndEngine { (path, engine) =>
-      commitSimple(getCreateTxn(engine, path, testSchema), engine, add(addFile("plain.parquet")))
+      commitSimple(
+        getCreateTxn(engine, path, testSchema),
+        engine,
+        addFileToRow(addFile("plain.parquet")))
       commitSimple(
         getUpdateTxn(engine, path, tableProperties = dvProperties),
         engine,
-        add(addFile("dv.parquet", Some(4L))))
-      checkDvMetrics(readCrc(engine, path, 1), 1, 4)
+        addFileToRow(addFile("dv.parquet", Some(4L))))
+      checkCrcCorrect(engine, path, 1, 2, 200, Some(histogramForSize100Files(2)))
     }
   }
 
@@ -371,21 +428,22 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
       commitSimple(
         getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
         engine,
-        add(addFile("old.parquet", Some(3L))))
+        addFileToRow(addFile("old.parquet", Some(3L))))
       rewriteChecksumFileToExcludeDvMetrics(engine, path, 0)
-      commitSimple(getUpdateTxn(engine, path), engine, add(addFile("new.parquet", Some(5L))))
-      val crc = readCrc(engine, path, 1)
-      assert(!crc.getNumDeletionVectors.isPresent)
-      assert(!crc.getNumDeletedRecords.isPresent)
+      commitSimple(
+        getUpdateTxn(engine, path),
+        engine,
+        addFileToRow(addFile("new.parquet", Some(5L))))
+      checkCrcCorrect(engine, path, 1, 2, 200, Some(histogramForSize100Files(2)))
     }
   }
 
-  test("SIMPLE CRC rebases DV metrics and counts retried actions only once") {
+  test("SIMPLE CRC correctly preserves stats for retries") {
     withTempDirAndEngine { (path, engine) =>
       commitSimple(
         getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
         engine,
-        add(addFile("initial.parquet", Some(3L))))
+        addFileToRow(addFile("initial.parquet", Some(3L))))
 
       val fileIO = new HadoopFileIO(new Configuration())
       var attempts = 0
@@ -409,29 +467,54 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         override def getJsonHandler: DefaultJsonHandler = handler
       }
       val losingTxn = getUpdateTxn(retryEngine, path)
-      commitSimple(getUpdateTxn(engine, path), engine, add(addFile("winner.parquet", Some(5L))))
-      val result = commitSimple(losingTxn, retryEngine, add(addFile("loser.parquet", Some(7L))))
+      commitSimple(
+        getUpdateTxn(engine, path),
+        engine,
+        addFileToRow(addFile("winner.parquet", Some(5L))))
+      val result =
+        commitSimple(losingTxn, retryEngine, addFileToRow(addFile("loser.parquet", Some(7L))))
       assert(result.getVersion === 2)
       assert(attempts === 2)
-      checkDvMetrics(readCrc(engine, path, 2), 3, 15)
+      checkCrcCorrect(engine, path, 2, 3, 300, None, Some(3L), Some(15L))
     }
   }
 
-  test("FULL CRC can incrementally replay from a SIMPLE CRC on a DV table") {
+  test("FULL CRC can incrementally replay from a CRC with expected fields") {
     withTempDirAndMetricsEngine { (path, engine) =>
       commitSimple(
         getCreateTxn(engine, path, testSchema, tableProperties = dvProperties),
         engine,
-        add(addFile("first.parquet", Some(3L))))
-      commitSimple(getUpdateTxn(engine, path), engine, add(addFile("plain.parquet")))
-      getUpdateTxn(engine, path).commit(engine, actions(add(addFile("second.parquet", Some(5L)))))
-      val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
-        .asInstanceOf[SnapshotImpl]
-      engine.resetMetrics()
+        addFileToRow(addFile("first.parquet", Some(3L))))
+      commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(addFile("plain.parquet")))
+      getUpdateTxn(engine, path).commit(
+        engine,
+        actions(addFileToRow(addFile("second.parquet", Some(5L)))))
 
-      val crc = ChecksumUtils.computeChecksum(engine, snapshot.getLogSegment)
-      checkDvMetrics(crc, 2, 8)
+      // Change only the base CRC: incremental replay must produce 11 / 35, while full log
+      // replay would reconstruct the actual totals of 2 / 8.
+      val crcPath = buildCrcPath(path, 1)
+      val mapper = new ObjectMapper()
+      val baseCrc = mapper.readTree(Files.readAllBytes(crcPath)).asInstanceOf[ObjectNode]
+      baseCrc.put("numDeletionVectorsOpt", 10L)
+      baseCrc.put("numDeletedRecordsOpt", 30L)
+      val output = new HadoopFileIO(new Configuration())
+        .newOutputFile(crcPath.toString).create(false)
+      try output.write(mapper.writeValueAsBytes(baseCrc))
+      finally output.close()
+
+      val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
+      engine.resetMetrics()
+      snapshot.writeChecksum(engine, Snapshot.ChecksumWriteMode.FULL)
       assertMetrics(engine, Seq(2L), Nil, expChecksumReadSet = Seq(1L))
+      checkCrcCorrect(
+        engine,
+        path,
+        2,
+        3,
+        300,
+        Some(histogramForSize100Files(3)),
+        Some(11L),
+        Some(35L))
     }
   }
 }

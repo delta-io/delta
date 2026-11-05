@@ -78,8 +78,8 @@ public interface TransactionMetricsResult {
 
   /**
    * @return the net change in records invalidated by deletion vectors committed in this
-   *     transaction: add-file cardinalities minus remove-file cardinalities. Can be negative. For a
-   *     failed transaction this metric may be incomplete.
+   *     transaction: add-file DV cardinalities minus remove-file DV cardinalities. Can be negative.
+   *     For a failed transaction this metric may be incomplete.
    */
   long getNumDeletedRecordsDelta();
 

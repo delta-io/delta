@@ -217,7 +217,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     // Check with test function
     testTransactionReport(transactionReport1)
 
-    // A remove-only attempt has negative deltas; retries reset them without changing snapshots.
+    // A remove-only attempt has negative DV deltas; retries reset them without changing snapshots.
     transactionMetrics1.resetActionMetricsForRetry()
     transactionMetrics1.updateForRemoveFile(
       1000,
