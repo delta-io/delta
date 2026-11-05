@@ -713,6 +713,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val AMT_SINGLE_COMMIT_READ_ENABLED =
+    buildConf("amt.singleCommitRead.enabled")
+      .internal()
+      .doc("When enabled, DeltaLog.getChanges reads each commit through SingleCommit, which " +
+        "reconstructs the AddFile and RemoveFile actions of an inline manifest commit from its " +
+        "AMT. When disabled, it reads each commit's log file as written.")
+      .booleanConf
+      .createWithDefault(false)
+
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
       .internal()

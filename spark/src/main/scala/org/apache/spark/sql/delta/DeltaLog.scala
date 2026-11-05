@@ -339,28 +339,68 @@ class DeltaLog private(
    * return an empty Iterator.
    * Callers are encouraged to use the other override which takes the endVersion if available to
    * avoid I/O and improve performance of this method.
+   *
+   * @param startVersion the first version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`. There is performance benefit on
+   *                                    AMT tables when set. This only takes effect when
+   *                                    [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled.
    */
   def getChanges(
       startVersion: Long,
       catalogTableOpt: Option[CatalogTable] = None,
-      failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(
-        startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
-      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      failOnDataLoss: Boolean = false,
+      skipNoDataChangeFileActions: Boolean = false): Iterator[(Long, Seq[Action])] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)) {
+      getSingleCommitIterator(startVersion, catalogTableOpt, failOnDataLoss)
+        .map(_.asInstanceOf[SingleCommit])
+        .map { commit =>
+          (commit.version, commit.getActions(skipNoDataChangeFileActions))
+        }
+    } else {
+      getChangeLogFiles(
+          startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
+        (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      }
     }
   }
 
+  /**
+   * Get all actions over [startVersion, endVersion] (both inclusive).
+   *
+   * @param startVersion the first version to read.
+   * @param endVersion the last version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`. There is performance benefit on
+   *                                    AMT tables when set. This only takes effect when
+   *                                    [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled.
+   */
   private[sql] def getChanges(
       startVersion: Long,
       endVersion: Long,
       catalogTableOpt: Option[CatalogTable],
-      failOnDataLoss: Boolean): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(
-        startVersion,
-        endVersion,
-        catalogTableOpt,
-        failOnDataLoss).map { case (version, status) =>
-      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      failOnDataLoss: Boolean,
+      skipNoDataChangeFileActions: Boolean): Iterator[(Long, Seq[Action])] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)) {
+      getSingleCommitIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss)
+        .map(_.asInstanceOf[SingleCommit])
+        .map { commit =>
+          (commit.version, commit.getActions(skipNoDataChangeFileActions))
+        }
+    } else {
+      getChangeLogFiles(
+          startVersion,
+          endVersion,
+          catalogTableOpt,
+          failOnDataLoss).map { case (version, status) =>
+        (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      }
     }
   }
 
