@@ -87,7 +87,7 @@ This design enables:
 
 <ins>The `checkpoint` action is self-contained: it embeds the content root reference along with all non-content metadata (`protocol`, `metaData`, `domainMetadata`, `txn`, and `sidecar` entries). Together with the referenced manifest tree, a single `checkpoint` action represents the complete table state up to `checkpointMetadata.version`. Log commits after that version must still be replayed.</ins>
 
-<ins>Once `adaptiveMetadata` is enabled, writers must not produce classic (single-file, multi-part) or V2 checkpoints; checkpoint state is instead carried by the `checkpoint` action, including in [standalone checkpoints](#standalone-checkpoint).</ins>
+<ins>While `adaptiveMetadata` is active, writers must not produce classic (single-file, multi-part) or V2 checkpoints; checkpoint state is instead carried by the `checkpoint` action, including in [standalone checkpoints](#standalone-checkpoint).</ins>
 
 <ins>Table-level aggregates (file count, total size, row count) are derived from the root manifest's aggregated metrics, not from a checkpoint that enumerates every file. Because checkpoints retain no remove tombstones, the count of removes is not part of checkpoint state, and multi-part checkpoint sizing based on that count does not apply.</ins>
 
@@ -203,7 +203,7 @@ Required table features that must also be enabled:
 - `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
 - `inCommitTimestamp`: Reliable timestamp-based metadata cleanup and time travel
 
-`adaptiveMetadata` is active when it is supported and the table property `delta.enableAdaptiveMetadata` is absent or set to `true`. `adaptiveMetadata` and `v2Checkpoint` are mutually exclusive: a table must not enable both.
+`adaptiveMetadata` is active when it is supported and the table property `delta.enableAdaptiveMetadata` is absent or set to `true`. A table that supports `adaptiveMetadata` can also support `v2Checkpoint`, which is dormant while `adaptiveMetadata` is active.
 
 ## Storage Layout
 
