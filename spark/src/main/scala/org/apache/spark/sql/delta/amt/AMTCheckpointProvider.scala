@@ -199,6 +199,9 @@ final class PerRowAMTCheckpointProvider(
     toAddSingleActions(
       loadLeafDataEntriesWithRowIdPrefix(deltaLog, liveLeavesWithManifestFilters),
       dataEntryResolverProvider(parentLeaves = liveLeaves))
+
+  override private[amt] def readLiveRootDataEntries(deltaLog: DeltaLog): Seq[AddFile] =
+    AMTCheckpointProvider.readLiveRootDataEntries(deltaLog, checkpointAction)
 }
 
 /**
@@ -224,6 +227,9 @@ final class ColumnarAMTCheckpointProvider(
     toAddSingleActions(
       leafEntriesWithRowIdPrefix(deltaLog, liveLeavesWithManifestFilters),
       baseRowId = inheritedBaseRowId)
+
+  override private[amt] def readLiveRootDataEntries(deltaLog: DeltaLog): Seq[AddFile] =
+    rootLiveAddSingleActions(deltaLog).collect().toSeq.map(_.add)
 
   /**
    * Like [[loadLeafDataEntriesWithRowIdPrefix]], but returns the persisted rows of the entries,
@@ -564,6 +570,9 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
 
   /** Reconstructs the AddFiles of every live leaf, taking care of inheritance. */
   protected def leafLiveAddSingleActions(deltaLog: DeltaLog): Dataset[SingleAction]
+
+  /** The live AddFiles that the root holds, for the incremental writer. */
+  private[amt] def readLiveRootDataEntries(deltaLog: DeltaLog): Seq[AddFile]
 
   /** The live leaves, each with the row-index filter of its manifest DV, if it has one. */
   protected def liveLeavesWithManifestFilters

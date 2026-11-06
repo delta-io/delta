@@ -93,7 +93,7 @@ class BaseAMTCheckpointActionsProvider(
       protocol = checkpoint.protocol,
       setTransactions = checkpoint.txns,
       domainMetadatas = checkpoint.domainMetadata,
-      fileActionsFromRoot = AMTCheckpointProvider.readLiveRootDataEntries(deltaLog, checkpoint),
+      fileActionsFromRoot = checkpointProvider.readLiveRootDataEntries(deltaLog),
       allLeafs = checkpointProvider.leaves,
       version = checkpoint.contentRoot.version,
       lastManifestCommitWithFullRewrite = checkpoint.contentRoot.lastManifestCommitWithFullRewrite)
