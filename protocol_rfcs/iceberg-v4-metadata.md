@@ -144,13 +144,11 @@ This design enables:
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>version</ins> | <ins>Long</ins> | <ins>The version of the manifest commit that emitted the latest [`checkpoint` action](#checkpoint-action).</ins> |
-| <ins>contentRootVersion</ins> | <ins>Long</ins> | <ins>The `contentRoot.version` of that `checkpoint` action. Not newer than `version`.</ins> |
-| <ins>contentRootPath</ins> | <ins>String</ins> | <ins>The `contentRoot.path` of that `checkpoint` action, byte-for-byte as written there.</ins> |
-| <ins>contentRootSizeInBytes</ins> | <ins>Long</ins> | <ins>The `contentRoot.sizeInBytes` of that `checkpoint` action.</ins> |
+| <ins>contentRoot</ins> | <ins>Struct</ins> | <ins>An exact copy of the `contentRoot` entry of that `checkpoint` action, including all of its fields. Schema defined in [Checkpoint Action Contents](#checkpoint-action-contents).</ins> |
 
-<ins>When the `adaptiveMetadata` table feature is enabled, each log commit must carry `lastManifestCommit` forward from the prior commit, including its absence before the first manifest commit. A manifest commit must set `version` to its own commit version, and `contentRootVersion`, `contentRootPath`, and `contentRootSizeInBytes` to the `contentRoot.version`, `contentRoot.path`, and `contentRoot.sizeInBytes` of its emitted `checkpoint` action.</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, each log commit must carry `lastManifestCommit` forward from the prior commit, including its absence before the first manifest commit. A manifest commit must set `version` to its own commit version and `contentRoot` to the `contentRoot` of its emitted `checkpoint` action.</ins>
 
-<ins>All fields of `lastManifestCommit` are required. Readers can therefore start reading the root manifest from `contentRootPath` without first reading the `checkpoint` action from the commit at `version`.</ins>
+<ins>All fields of `lastManifestCommit` are required. Readers can therefore start reading the root manifest from `contentRoot.path` without first reading the `checkpoint` action from the commit at `version`.</ins>
 
 ### Version Checksum File
 
