@@ -102,6 +102,9 @@ object AMTUsageLogs {
   // A leaf without live files gains new manifest deletion vector positions.
   val ALERT_MDV_WITHOUT_LIVE_FILES = "amt.commit.mdvWithoutLiveFiles"
 
+  // A back reference names a leaf manifest that is not a live leaf of the base tree.
+  val ALERT_BACK_REFERENCE_NOT_IN_BASE_TREE = "amt.commit.backReferenceNotInBaseTree"
+
   // A removed file without a back reference remains in the live set.
   // This usually happens when the same (file, DV) is removed and added in one commit.
   val ALERT_NO_BACKREF_REMOVE_STILL_LIVE =

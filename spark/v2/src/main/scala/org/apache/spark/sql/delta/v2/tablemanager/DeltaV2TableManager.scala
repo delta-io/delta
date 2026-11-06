@@ -53,7 +53,7 @@ private[v2] trait DeltaV2TableManager {
    * @param failOnDataLoss whether to fail when commits in the range are missing. Only false is
    *   currently supported.
    */
-  private[v2] def getChangesIterator(
+  private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
       catalogTableOpt: Option[CatalogTable],

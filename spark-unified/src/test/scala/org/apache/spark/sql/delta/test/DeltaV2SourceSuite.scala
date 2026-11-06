@@ -162,6 +162,7 @@ object DeltaV2SourceSuite {
     "streaming read with column mapping id and partition column in middle",
     "streaming read after column rename with partition column in middle",
     "streaming read preserves percent-literal string partition value",
+    "self union a Delta table should pass the catalog table assert",
     "initial snapshot: checkpoint resume produces all rows without duplicates",
     "initial snapshot: Trigger.AvailableNow processes all data and terminates",
     "initial snapshot: checkpoint resume after new commits produces all rows"
@@ -214,23 +215,8 @@ object DeltaV2SourceSuite {
 
     // === Tests that bypass V2 by not using loadStreamWithOptions ===
     "disallow user specified schema", // Uses .schema() directly
-    "self union a Delta table should pass the catalog table assert", // Uses .table() directly
     "allow user specified schema if consistent: v1 source", // Uses DataSource directly
     // Calls deltaSource.createSource() directly
     "createSource should create source with empty or matching table schema provided"
   )
-}
-
-/**
- * Runs DeltaV2SourceSuite with the distributed initial snapshot path enabled.
- * Every test that reads from the beginning (no startingVersion) automatically
- * exercises the DataFrame-based snapshot cache.
- */
-class DeltaV2SourceDistributedInitialSnapshotSuite extends DeltaV2SourceSuite {
-  import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
-  override protected def sparkConf: org.apache.spark.SparkConf = {
-    super.sparkConf.set(
-      DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT.key, "true")
-  }
 }

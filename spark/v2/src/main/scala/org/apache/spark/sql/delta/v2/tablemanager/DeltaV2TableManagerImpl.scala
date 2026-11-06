@@ -77,7 +77,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     cachedSnapshotManager
   }
 
-  override private[v2] def getChangesIterator(
+  override private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
       catalogTableOpt: Option[CatalogTable],
@@ -85,7 +85,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
       : ClosableIterator[DeltaSingleCommit] = {
     if (failOnDataLoss) {
       throw DeltaErrors.assertionFailedError(
-        "getChangesIterator does not support failOnDataLoss = true")
+        "getSingleCommitIterator does not support failOnDataLoss = true")
     }
     val kernelEngine = kernelContext.getDefaultEngine()
     val commitRange = cachedSnapshotManager.getTableChanges(

@@ -311,7 +311,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     val name = context.tableName
     DeltaLog.clearCache()
     val snapshot = deltaLogForName(name).update()
-    assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider],
+    assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProviderBase],
       s"${context.scenario.name}: expected the table to be read from an AMT checkpoint")
     val rowCount = spark.table(name).count()
     assert(rowCount > 0)

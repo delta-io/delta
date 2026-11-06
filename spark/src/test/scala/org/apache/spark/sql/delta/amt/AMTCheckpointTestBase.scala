@@ -22,7 +22,7 @@ import scala.collection.immutable.ListMap
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, AMTCheckpointAction, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
@@ -74,6 +74,8 @@ trait AMTCheckpointTestBase
   protected def amtProvider(snapshot: Snapshot): Option[AMTCheckpointProvider] =
     snapshot.checkpointProvider match {
       case amt: AMTCheckpointProvider => Some(amt)
+      case lazyAmt: LazyCompleteAMTCheckpointProvider =>
+        Some(lazyAmt.underlyingCheckpointProvider)
       case _ => None
     }
 
@@ -83,7 +85,7 @@ trait AMTCheckpointTestBase
    */
   protected def fakeAMTProviderAt(
       cpVersion: Long,
-      protocol: Protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature),
+      protocol: Protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature),
       metadata: Metadata = Metadata()): AMTCheckpointProvider = {
     val checkpoint = Checkpoint(
       version = cpVersion,
@@ -93,7 +95,7 @@ trait AMTCheckpointTestBase
       domainMetadata = Nil,
       txns = Nil,
       sidecars = Nil)
-    new AMTCheckpointProvider(
+    AMTCheckpointProvider(
       manifestCommitVersion = cpVersion,
       checkpointAction = checkpoint,
       leaves = Nil,
@@ -142,7 +144,8 @@ trait AMTCheckpointTestBase
       checkpointInterval: Int = 2,
       location: Option[String] = None,
       tableSchema: String = "id INT",
-      partitionColumns: Seq[String] = Seq.empty): Unit = {
+      partitionColumns: Seq[String] = Seq.empty,
+      amtFeature: TableFeature = AdaptiveMetadataPreviewTableFeature): Unit = {
     val locationClause = location.map(l => s"LOCATION '$l'").getOrElse("")
     val partitionClause =
       if (partitionColumns.isEmpty) ""
@@ -152,7 +155,7 @@ trait AMTCheckpointTestBase
          |$locationClause
          |$partitionClause
          |TBLPROPERTIES (
-         |  '${propertyKey(AdaptiveMetadataTableFeature)}' = '$FEATURE_PROP_SUPPORTED',
+         |  '${propertyKey(amtFeature)}' = '$FEATURE_PROP_SUPPORTED',
          |  'delta.columnMapping.mode' = 'id',
          |  'delta.enableDeletionVectors' = 'true',
          |  'delta.checkpointInterval' = '$checkpointInterval')""".stripMargin)
@@ -731,9 +734,19 @@ trait AMTCheckpointTestBase
   protected def rootFiles(path: String): Seq[File] =
     metadataFiles(path, isRootFileName)
 
-  /** Returns the actions committed at exactly `version`. */
+  /**
+   * Return JSON only actions without reconstructing the AMT tree.
+   */
+  protected def getJsonOnlyChanges(
+      deltaLog: DeltaLog,
+      startVersion: Long): Iterator[(Long, Seq[Action])] =
+    deltaLog.getSingleCommitIterator(startVersion).map { commit =>
+      (commit.version, commit.getActionsIterator().processAndClose(_.toList))
+    }
+
+  /** Returns the actions committed at exactly `version`, as written in its log file. */
   protected def actionsAt(deltaLog: DeltaLog, version: Long): Seq[Action] =
-    deltaLog.getChanges(version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
+    getJsonOnlyChanges(deltaLog, version).find(_._1 == version).map(_._2).getOrElse(Seq.empty)
 
   /**
    * The live `AddFile` set reconstructed from the commit-log deltas alone (not the AMT tree). An
@@ -742,7 +755,7 @@ trait AMTCheckpointTestBase
    */
   protected def liveAddFilesFromLog(deltaLog: DeltaLog): Seq[AddFile] = {
     val live = scala.collection.mutable.LinkedHashMap.empty[String, AddFile]
-    deltaLog.getChanges(0).foreach { case (_, actions) =>
+    getJsonOnlyChanges(deltaLog, 0).foreach { case (_, actions) =>
       actions.foreach {
         case a: AddFile => live(a.path) = a
         case r: RemoveFile => live.remove(r.path)

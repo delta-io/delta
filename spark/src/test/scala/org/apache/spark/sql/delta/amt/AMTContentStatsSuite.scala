@@ -190,7 +190,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
   /**
    * A [[Protocol]] representative of a real AMT table: it carries every
-   * feature `AdaptiveMetadataTableFeature` requires. In particular it is
+   * feature `AdaptiveMetadataPreviewTableFeature` requires. In particular it is
    * DV-capable, so Delta's derived stats schema always carries `tightBounds`.
    */
   private def amtProtocol: Protocol =

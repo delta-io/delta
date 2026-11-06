@@ -13,32 +13,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.sql.delta.v2.read;
 
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
+package io.delta.kernel;
 
-/** Cached sorted AddFile DataFrame, keyed by version. Callers synchronize externally. */
-public class DataFrameSnapshotCache implements AutoCloseable {
+import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.utils.FileStatus;
+
+/** Immutable metadata for one commit JSON file in a {@link CommitRange}. */
+@Evolving
+public final class CommitFileStatus {
   private final long version;
-  private final Dataset<Row> sortedAddFiles;
+  private final FileStatus fileStatus;
 
-  public DataFrameSnapshotCache(long version, Dataset<Row> sortedAddFiles) {
+  public CommitFileStatus(long version, FileStatus fileStatus) {
     this.version = version;
-    this.sortedAddFiles = sortedAddFiles;
+    this.fileStatus = requireNonNull(fileStatus, "fileStatus is null");
   }
 
+  /** Returns the commit version represented by the file. */
   public long getVersion() {
     return version;
   }
 
-  public Dataset<Row> getSortedAddFiles() {
-    return sortedAddFiles;
-  }
-
-  @Override
-  public void close() {
-    sortedAddFiles.unpersist();
+  /** Returns the commit file metadata. */
+  public FileStatus getFileStatus() {
+    return fileStatus;
   }
 }

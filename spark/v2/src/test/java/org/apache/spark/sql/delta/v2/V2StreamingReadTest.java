@@ -21,9 +21,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -34,6 +33,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.delta.DeltaIllegalStateException;
 import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.delta.DeltaRuntimeException;
 import org.apache.spark.sql.delta.stats.StatisticsCollection;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.streaming.StreamingQueryException;
@@ -360,10 +360,16 @@ public class V2StreamingReadTest extends V2TestBase {
                 q.stop();
               }
             });
-    assertInstanceOf(DeltaIllegalStateException.class, ex.cause());
-    assertTrue(
-        ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
-        "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART but got: " + ex.getMessage());
+    DeltaIllegalStateException cause =
+        assertInstanceOf(DeltaIllegalStateException.class, ex.cause());
+    assertEquals(
+        "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED", cause.getCondition());
+    assertEquals("KD007", cause.getSqlState());
+    assertEquals(
+        Map.of(
+            "querySchema", streamingDF.schema().treeString(),
+            "tableSchema", spark.read().format("delta").load(tablePath).schema().treeString()),
+        cause.getMessageParameters());
   }
 
   // TODO(#6232): v2 source cannot adopt type widening schema change without refreshing the
@@ -417,10 +423,16 @@ public class V2StreamingReadTest extends V2TestBase {
                 q.stop();
               }
             });
-    assertInstanceOf(DeltaIllegalStateException.class, ex.cause());
-    assertTrue(
-        ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
-        "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART but got: " + ex.getMessage());
+    DeltaIllegalStateException cause =
+        assertInstanceOf(DeltaIllegalStateException.class, ex.cause());
+    assertEquals(
+        "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED", cause.getCondition());
+    assertEquals("KD007", cause.getSqlState());
+    assertEquals(
+        Map.of(
+            "querySchema", streamingDF.schema().treeString(),
+            "tableSchema", spark.read().format("delta").load(tablePath).schema().treeString()),
+        cause.getMessageParameters());
   }
 
   // TODO(#6232): v2 source cannot adopt type widening schema change without refreshing the
@@ -474,10 +486,128 @@ public class V2StreamingReadTest extends V2TestBase {
                 q.stop();
               }
             });
-    assertInstanceOf(DeltaIllegalStateException.class, ex.cause());
-    assertTrue(
-        ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
-        "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART but got: " + ex.getMessage());
+    DeltaIllegalStateException cause =
+        assertInstanceOf(DeltaIllegalStateException.class, ex.cause());
+    assertEquals(
+        "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED", cause.getCondition());
+    assertEquals("KD007", cause.getSqlState());
+    assertEquals(
+        Map.of(
+            "querySchema", streamingDF.schema().treeString(),
+            "tableSchema", spark.read().format("delta").load(tablePath).schema().treeString()),
+        cause.getMessageParameters());
+  }
+
+  @Test
+  public void testPartitionColumnChangeDetectedOnRestart(
+      @TempDir File deltaTablePath, @TempDir File checkpointDir, @TempDir File outputDir)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    List<Row> initialRows = List.of(RowFactory.create(1, "Alice", 100.0));
+    spark.createDataFrame(initialRows, TEST_SCHEMA).write().format("delta").save(tablePath);
+
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+    String schemaLocation = new File(checkpointDir, "schema").getAbsolutePath();
+    Dataset<Row> streamingDF =
+        spark
+            .readStream()
+            .option("ignoreChanges", "true")
+            .option("schemaTrackingLocation", schemaLocation)
+            .table(dsv2TableRef);
+    StreamingQuery query =
+        streamingDF
+            .writeStream()
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start(outputDir.getAbsolutePath());
+    try {
+      query.processAllAvailable();
+      assertTrue(
+          query.lastProgress().sources()[0].description().contains("DeltaV2MicroBatchStream"));
+      assertDataEquals(
+          spark.read().format("delta").load(outputDir.getAbsolutePath()).collectAsList(),
+          initialRows);
+
+      spark
+          .createDataFrame(List.of(RowFactory.create(2, "Bob", 200.0)), TEST_SCHEMA)
+          .write()
+          .format("delta")
+          .mode("overwrite")
+          .option("overwriteSchema", "true")
+          .partitionBy("name")
+          .save(tablePath);
+      assertEquals(streamingDF.schema(), spark.read().format("delta").load(tablePath).schema());
+
+      StreamingQueryException evolutionException =
+          assertThrows(StreamingQueryException.class, query::processAllAvailable);
+      DeltaRuntimeException evolutionCause =
+          assertInstanceOf(DeltaRuntimeException.class, evolutionException.cause());
+      assertEquals("DELTA_STREAMING_METADATA_EVOLUTION", evolutionCause.getCondition());
+      assertEquals("22000", evolutionCause.getSqlState());
+    } finally {
+      query.stop();
+    }
+
+    StreamingQueryException exception =
+        assertThrows(
+            StreamingQueryException.class,
+            () -> {
+              StreamingQuery restartedQuery =
+                  streamingDF
+                      .writeStream()
+                      .format("delta")
+                      .option("checkpointLocation", checkpointDir.getAbsolutePath())
+                      .start(outputDir.getAbsolutePath());
+              try {
+                restartedQuery.processAllAvailable();
+              } finally {
+                restartedQuery.stop();
+              }
+            });
+    DeltaIllegalStateException cause =
+        assertInstanceOf(DeltaIllegalStateException.class, exception.cause());
+    assertEquals(
+        "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.PARTITION_SCHEMA_CHANGED",
+        cause.getCondition());
+    assertEquals("KD007", cause.getSqlState());
+    assertEquals(
+        Map.of(
+            "tableId", DeltaLog.forTable(spark, tablePath).snapshot().metadata().id(),
+            "analyzedPartitionSchema", "root\n",
+            "analyzedPhysicalNames", "[]",
+            "currentPartitionSchema", "root\n |-- name: string (nullable = true)\n",
+            "currentPhysicalNames", "[`name`]"),
+        cause.getMessageParameters());
+    assertDataEquals(
+        spark.read().format("delta").load(outputDir.getAbsolutePath()).collectAsList(),
+        initialRows);
+
+    Dataset<Row> refreshedDF =
+        spark
+            .readStream()
+            .option("ignoreChanges", "true")
+            .option("schemaTrackingLocation", schemaLocation)
+            .table(dsv2TableRef);
+    StreamingQuery refreshedQuery =
+        refreshedDF
+            .writeStream()
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start(outputDir.getAbsolutePath());
+    try {
+      refreshedQuery.processAllAvailable();
+      assertTrue(
+          refreshedQuery
+              .lastProgress()
+              .sources()[0]
+              .description()
+              .contains("DeltaV2MicroBatchStream"));
+      assertDataEquals(
+          spark.read().format("delta").load(outputDir.getAbsolutePath()).collectAsList(),
+          List.of(RowFactory.create(1, "Alice", 100.0), RowFactory.create(2, "Bob", 200.0)));
+    } finally {
+      refreshedQuery.stop();
+    }
   }
 
   @Test
@@ -563,83 +693,5 @@ public class V2StreamingReadTest extends V2TestBase {
             RowFactory.create(2L, "x", 20, "z", 2.5),
             RowFactory.create(3L, "w", 30, "y", 3.5));
     assertDataEquals(actualRows, expectedRows);
-  }
-
-  // ---- Distributed Initial Snapshot Tests ----
-
-  /**
-   * Creates a Delta table with multiple versions, each containing {@code rowsPerVersion} rows. Rows
-   * use TEST_SCHEMA (id INT, name STRING, value DOUBLE) with deterministic values derived from the
-   * row's global position: id=pos, name="User{pos}", value=pos*10.0.
-   */
-  private void createMultiVersionTable(String tablePath, int numVersions, int rowsPerVersion) {
-    for (int v = 0; v < numVersions; v++) {
-      List<Row> rows = new ArrayList<>();
-      for (int r = 0; r < rowsPerVersion; r++) {
-        int id = v * rowsPerVersion + r + 1;
-        rows.add(RowFactory.create(id, "User" + id, (double) id * 10));
-      }
-      Dataset<Row> df = spark.createDataFrame(rows, TEST_SCHEMA);
-      if (v == 0) {
-        df.write().format("delta").save(tablePath);
-      } else {
-        df.write().format("delta").mode("append").save(tablePath);
-      }
-    }
-  }
-
-  private List<Row> expectedRows(int totalRows) {
-    List<Row> rows = new ArrayList<>();
-    for (int i = 1; i <= totalRows; i++) {
-      rows.add(RowFactory.create(i, "User" + i, (double) i * 10));
-    }
-    return rows;
-  }
-
-  /**
-   * Parity regression test: the distributed initial snapshot path must produce identical results to
-   * the driver path. This is the primary regression guard — if the distributed path ever diverges
-   * (wrong sort order, missed files, duplicate rows), this test catches it.
-   */
-  @Test
-  public void testDistributedInitialSnapshotParityWithDriverPath(@TempDir File deltaTablePath)
-      throws Exception {
-    String tablePath = deltaTablePath.getAbsolutePath();
-    String dfFlagKey = "spark.databricks.delta.streaming.distributedInitialSnapshot";
-
-    createMultiVersionTable(tablePath, 5, 2);
-    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
-
-    try {
-      // Driver path (distributedInitialSnapshot = false, the default)
-      spark.conf().unset(dfFlagKey);
-      Dataset<Row> driverStream = spark.readStream().table(dsv2TableRef);
-      List<Row> driverRows =
-          processStreamingQuery(driverStream, "parity_driver_" + System.nanoTime());
-
-      // Distributed path
-      spark.conf().set(dfFlagKey, "true");
-      Dataset<Row> distributedStream = spark.readStream().table(dsv2TableRef);
-      List<Row> distributedRows =
-          processStreamingQuery(distributedStream, "parity_distributed_" + System.nanoTime());
-
-      assertEquals(
-          driverRows.size(),
-          distributedRows.size(),
-          () ->
-              "Row count mismatch: driver="
-                  + driverRows.size()
-                  + " distributed="
-                  + distributedRows.size());
-
-      Set<Row> driverSet = new HashSet<>(driverRows);
-      Set<Row> distributedSet = new HashSet<>(distributedRows);
-      assertEquals(
-          driverSet,
-          distributedSet,
-          "Distributed path must produce identical results to driver path");
-    } finally {
-      spark.conf().unset(dfFlagKey);
-    }
   }
 }

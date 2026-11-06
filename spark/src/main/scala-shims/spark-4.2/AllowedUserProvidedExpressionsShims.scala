@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.catalyst.expressions
 
-/** Additional classes allowed during user-provided expression validation in Spark 4.2 and 4.3. */
+/** Additional classes allowed during user-provided expression validation in Spark 4.2. */
 object AllowedUserProvidedExpressionsShims {
   val additionalExpressions: Set[Class[_]] = Set(
     classOf[TypedNullLiteral],

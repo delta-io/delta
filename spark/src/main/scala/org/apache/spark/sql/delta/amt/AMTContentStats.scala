@@ -285,10 +285,28 @@ private[amt] object AMTContentStats {
    * `tightBounds`.
    */
   def forRead(df: DataFrame, metadata: Metadata, protocol: Protocol): DataFrame = {
-    val stats = statisticsCollection(df.sparkSession, metadata, protocol)
+    val jsonStats = statsJson(df.sparkSession, metadata, protocol)
+    if (df.columns.contains(CONTENT_STATS_FIELD)) {
+      replaceContentStats(df, jsonStats)
+    } else {
+      df.withColumn(CONTENT_STATS_FIELD, jsonStats)
+    }
+  }
+
+  /** The `AddFile.stats` JSON of a persisted data entry row, as [[toStatsJson]] derives it. */
+  def addFileStatsJson(spark: SparkSession, metadata: Metadata, protocol: Protocol): Column =
+    coalesce(
+      statsJson(spark, metadata, protocol),
+      to_json(struct(numRecords, tightBounds)))
+
+  private def numRecords: Column =
+    col("record_count").cast(LongType).as(DeltaStatistics.NUM_RECORDS)
+
+  /** The persisted `content_stats` of an entry row as the JSON that [[forRead]] decodes it to. */
+  private def statsJson(spark: SparkSession, metadata: Metadata, protocol: Protocol): Column = {
+    val stats = statisticsCollection(spark, metadata, protocol)
     val leaves = statsLeafColumns(stats.statCollectionPhysicalSchema)
-    val numRecords = col("record_count").cast(LongType).as(DeltaStatistics.NUM_RECORDS)
-    val jsonStats = if (leaves.isEmpty) {
+    if (leaves.isEmpty) {
       // No per-column stats were persisted (`content_stats` was dropped from the schema); the
       // encoder decodes `None` and `toStatsJson` supplies the record count and `tightBounds`.
       lit(null).cast(StringType)
@@ -299,10 +317,6 @@ private[amt] object AMTContentStats {
       // serialize it back to the JSON string Delta expects. minValues/maxValues cover only the
       // leaves that carry bounds, matching the sub-schemas Delta itself builds.
       val boundLeaves = leaves.filter(_.hasBounds)
-      // Delta's `tightBounds` is the entry's `tight_stats` as-is. The Delta spec treats an absent
-      // `tightBounds` as tight, whereas Iceberg treats an absent `tight_stats` as not tight, so an
-      // absent flag reads back as `false`.
-      val tightBounds = coalesce(col(TIGHT_STATS_FIELD), lit(false))
       val statsFields =
         boundLeaves.headOption.toSeq.flatMap { _ =>
           Seq(
@@ -310,16 +324,19 @@ private[amt] object AMTContentStats {
             nestByPath(boundLeaves, statOf(typedStats, _, UPPER_BOUND)).as(DeltaStatistics.MAX))
         } ++ leaves.headOption.toSeq.map { _ =>
           nestByPath(leaves, statOf(typedStats, _, NULL_VALUE_COUNT)).as(DeltaStatistics.NULL_COUNT)
-        } :+ tightBounds.as(DeltaStatistics.TIGHT_BOUNDS)
-      val statsJson = to_json(struct(numRecords +: statsFields: _*))
-      when(typedStats.isNull, lit(null).cast(StringType)).otherwise(statsJson)
-    }
-    if (df.columns.contains(CONTENT_STATS_FIELD)) {
-      replaceContentStats(df, jsonStats)
-    } else {
-      df.withColumn(CONTENT_STATS_FIELD, jsonStats)
+        } :+ tightBounds
+      val encoded = to_json(struct(numRecords +: statsFields: _*))
+      when(typedStats.isNull, lit(null).cast(StringType)).otherwise(encoded)
     }
   }
+
+  /**
+   * Delta's `tightBounds` is the entry's `tight_stats` as-is. The Delta spec treats an absent
+   * `tightBounds` as tight, whereas Iceberg treats an absent `tight_stats` as not tight, so an
+   * absent flag reads back as `false`.
+   */
+  private def tightBounds: Column =
+    coalesce(col(TIGHT_STATS_FIELD), lit(false)).as(DeltaStatistics.TIGHT_BOUNDS)
 
   /**
    * Projects one statistic of one leaf column out of a parsed Delta stats struct (used on write),

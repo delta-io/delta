@@ -56,6 +56,7 @@ import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.util.JsonUtils;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
@@ -827,12 +828,14 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     String testTableName = "test_lazy_loading_" + System.nanoTime();
     createEmptyTestTable(testTablePath, testTableName);
 
-    // Create 3 INSERT versions (versions 1-3 with ADD files only)
-    sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", testTableName);
-    sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", testTableName);
-    sql("INSERT INTO %s VALUES (5, 'User5'), (6, 'User6')", testTableName);
+    // Keep both rows in one file so DELETE rewrites a file instead of only removing one.
+    for (int version = 1; version <= 3; version++) {
+      sql(
+          "INSERT INTO %s SELECT /*+ COALESCE(1) */ id, 'User' "
+              + "FROM VALUES (%d), (%d) AS t(id)",
+          testTableName, 2 * version - 1, 2 * version);
+    }
 
-    // Version 4: DELETE operation that will create a REMOVE file
     sql("DELETE FROM %s WHERE id = 1", testTableName);
 
     Configuration hadoopConf = new Configuration();
@@ -841,57 +844,50 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
-    // Get file changes from version 0 (which will include versions 1-4)
-    ClosableIterator<IndexedFile> kernelChanges =
+    // The later DELETE must not prevent iteration over the earlier valid commits.
+    try (ClosableIterator<IndexedFile> changes =
         stream.getFileChanges(
             /* fromVersion= */ 0L,
             /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
             /* isInitialSnapshot= */ false,
-            /* endOffset= */ Optional.empty());
-
-    try {
-      // Partially consume the iterator: only read files from versions 1-2
-      // With lazy loading, this should succeed without hitting the REMOVE file error in version 4
-      List<IndexedFile> partialFiles = new ArrayList<>();
-      int filesRead = 0;
-      int targetVersion = 2; // Only read up to version 2
-
-      while (kernelChanges.hasNext()) {
-        IndexedFile file = kernelChanges.next();
-        partialFiles.add(file);
-        filesRead++;
-
-        // Stop after we've passed version 2's END sentinel
-        // Each version has: BEGIN sentinel + actual files + END sentinel
-        if (file.getVersion() == targetVersion
-            && file.getIndex() == DeltaSourceOffset.END_INDEX()) {
-          break;
-        }
+            /* endOffset= */ Optional.empty())) {
+      // The starting position excludes version 0's BEGIN marker, and CREATE adds no files.
+      assertSentinel(changes, 0L, DeltaSourceOffset.END_INDEX());
+      for (int version = 1; version <= 3; version++) {
+        assertSingleFileCommit(changes, version);
       }
 
-      // If we got here, lazy loading worked - we successfully read versions 1-2 without
-      // encountering the REMOVE file error in version 4
-      // Version 0 (CREATE TABLE): BEGIN + 1 metadata/protocol action + END = 3 files
-      // Version 1 (INSERT): BEGIN + 1 data file + END = 3 files
-      // Version 2 (INSERT): BEGIN + 1 data file + END = 3 files
-      // Total = 9 files
-      assertEquals(9, filesRead, "Should have read exactly 9 IndexedFiles from versions 0-2");
-
-      // Now consume the rest of the iterator - this should hit the REMOVE file in version 4
-      assertThrows(
-          UnsupportedOperationException.class,
-          () -> {
-            while (kernelChanges.hasNext()) {
-              kernelChanges.next(); // This should throw when it reaches version 4's REMOVE
-            }
-          },
-          "Should throw UnsupportedOperationException when reaching version 4 with REMOVE file");
-    } finally {
-      try {
-        kernelChanges.close();
-      } catch (Exception ignored) {
-      }
+      DeltaUnsupportedOperationException deleteException =
+          assertThrows(
+              DeltaUnsupportedOperationException.class,
+              () -> {
+                if (changes.hasNext()) {
+                  changes.next();
+                }
+              },
+              "Advancing to version 4 must reject the DELETE before returning an entry");
+      assertEquals("DELTA_SOURCE_TABLE_IGNORE_CHANGES", deleteException.getErrorClass());
+      assertEquals("DELETE", extractOperationName(deleteException.getMessage()));
+      assertEquals("4", deleteException.getMessageParameters().get("version"));
     }
+  }
+
+  private void assertSentinel(ClosableIterator<IndexedFile> changes, long version, long index) {
+    assertTrue(changes.hasNext(), "Expected a commit boundary marker");
+    IndexedFile sentinel = changes.next();
+    assertEquals(version, sentinel.getVersion());
+    assertEquals(index, sentinel.getIndex());
+    assertNull(sentinel.getAddFile());
+  }
+
+  private void assertSingleFileCommit(ClosableIterator<IndexedFile> changes, long version) {
+    assertSentinel(changes, version, DeltaSourceOffset.BASE_INDEX());
+    assertTrue(changes.hasNext(), "Expected the file added by the INSERT");
+    IndexedFile file = changes.next();
+    assertEquals(version, file.getVersion());
+    assertEquals(0L, file.getIndex());
+    assertNotNull(file.getAddFile());
+    assertSentinel(changes, version, DeltaSourceOffset.END_INDEX());
   }
 
   // ================================================================================================
@@ -2118,7 +2114,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty(),
             Option.empty(),
-            testTablePath + "/_checkpoint");
+            testTablePath + "/_checkpoint",
+            DeltaV2QueryContext$.MODULE$.empty());
 
     InputPartition[] partitions = stream.planInputPartitions(startOffset, planPartitionsEndOffset);
     PartitionReaderFactory readerFactory = stream.createReaderFactory();
@@ -2303,7 +2300,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty(),
             Option.empty(),
-            testTablePath + "/_checkpoint");
+            testTablePath + "/_checkpoint",
+            DeltaV2QueryContext$.MODULE$.empty());
 
     InputPartition[] partitions = stream.planInputPartitions(startOffset, endOffset);
     PartitionReaderFactory readerFactory = stream.createReaderFactory();
@@ -4271,13 +4269,6 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         file.version(), file.index(), file.add() != null);
   }
 
-  /** Helper method to format a DSv2 IndexedFile for debugging. */
-  private String formatKernelIndexedFile(IndexedFile file) {
-    return String.format(
-        "IndexedFile(version=%d, index=%d, hasAdd=%b)",
-        file.getVersion(), file.getIndex(), file.getAddFile() != null);
-  }
-
   private List<Offset> advanceOffsetSequenceDsv1(
       DeltaSource deltaSource, Offset startOffset, int numIterations, ReadLimit limit) {
     List<Offset> offsets = new ArrayList<>();
@@ -4347,7 +4338,15 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     String tablePath = snapshot.dataPath().toString();
-    StructType tableSchema = snapshot.schema();
+    // Split the table schema into data and partition columns, as DeltaV2Table does at analysis.
+    StructType partitionSchema = snapshot.metadata().partitionSchema();
+    Set<String> partitionColNames =
+        Arrays.stream(partitionSchema.fieldNames()).collect(Collectors.toSet());
+    StructType dataSchema =
+        new StructType(
+            Arrays.stream(snapshot.schema().fields())
+                .filter(field -> !partitionColNames.contains(field.name()))
+                .toArray(StructField[]::new));
     return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,
@@ -4355,14 +4354,15 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         spark,
         options,
         /* tablePath= */ tablePath,
-        /* dataSchema= */ tableSchema,
-        /* partitionSchema= */ new StructType(),
+        dataSchema,
+        partitionSchema,
         /* readDataSchema= */ new StructType(),
         /* ddlOrderedReadOutputSchema= */ new StructType(),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty(),
         /* metadataTrackingLog= */ Option.empty(),
-        /* metadataPath= */ tablePath + "/_checkpoint");
+        /* metadataPath= */ tablePath + "/_checkpoint",
+        DeltaV2QueryContext$.MODULE$.empty());
   }
 
   private DeltaV2MicroBatchStream createSchemaTrackingTestStream(
@@ -4389,7 +4389,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty(),
         metadataTrackingLog,
-        metadataPath);
+        metadataPath,
+        DeltaV2QueryContext$.MODULE$.empty());
   }
 
   private DeltaSourceMetadataTrackingLog createTrackingLog(
@@ -4618,18 +4619,18 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     ClosedByInterruptException cbie = new ClosedByInterruptException();
     assertEquals(
         Optional.of(cbie),
-        DeltaV2MicroBatchStream.findClosedByInterruptCause(
+        DeltaV2MicroBatchStreamUtils.findClosedByInterruptCause(
             new io.delta.kernel.exceptions.KernelEngineException("readJsonFile", cbie)));
 
     // Plain RuntimeException -> empty
     assertEquals(
         Optional.empty(),
-        DeltaV2MicroBatchStream.findClosedByInterruptCause(new RuntimeException("unrelated")));
+        DeltaV2MicroBatchStreamUtils.findClosedByInterruptCause(new RuntimeException("unrelated")));
 
     // KernelEngineException wrapping a different IOException -> empty
     assertEquals(
         Optional.empty(),
-        DeltaV2MicroBatchStream.findClosedByInterruptCause(
+        DeltaV2MicroBatchStreamUtils.findClosedByInterruptCause(
             new io.delta.kernel.exceptions.KernelEngineException(
                 "readJsonFile", new java.io.FileNotFoundException("missing"))));
   }
@@ -4653,7 +4654,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     assertDoesNotThrow(
         () ->
-            DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+            DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
   }
 
@@ -4670,7 +4671,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     assertDoesNotThrow(
         () ->
-            DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+            DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
   }
 
@@ -4692,9 +4693,16 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             DeltaIllegalStateException.class,
             () ->
-                DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+                DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
-    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+    assertSchemaChangedOnRestart(
+        ex,
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType)
+            .add("dropped", DataTypes.StringType)
+            .add("part", DataTypes.LongType),
+        snapshotSchema);
   }
 
   @Test
@@ -4713,9 +4721,15 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             DeltaIllegalStateException.class,
             () ->
-                DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+                DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
-    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+    assertSchemaChangedOnRestart(
+        ex,
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType)
+            .add("part", DataTypes.LongType),
+        snapshotSchema);
   }
 
   @Test
@@ -4733,9 +4747,15 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             DeltaIllegalStateException.class,
             () ->
-                DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+                DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
-    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+    assertSchemaChangedOnRestart(
+        ex,
+        new StructType()
+            .add("id", DataTypes.IntegerType)
+            .add("col3", DataTypes.IntegerType)
+            .add("part", DataTypes.LongType),
+        snapshotSchema);
   }
 
   @Test
@@ -4747,7 +4767,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     assertDoesNotThrow(
         () ->
-            DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+            DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
   }
 
@@ -4761,9 +4781,10 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         assertThrows(
             DeltaIllegalStateException.class,
             () ->
-                DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+                DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                     dataSchema, partitionSchema, snapshotSchema));
-    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+    assertSchemaChangedOnRestart(
+        ex, new StructType().add("a", DataTypes.IntegerType), snapshotSchema);
   }
 
   @Test
@@ -4774,8 +4795,19 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     assertDoesNotThrow(
         () ->
-            DeltaV2MicroBatchStream.validateSchemaCompatibilityOnStartup(
+            DeltaV2MicroBatchStreamUtils.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
+  }
+
+  /** The query schema lists the data columns first, followed by the partition columns. */
+  private static void assertSchemaChangedOnRestart(
+      DeltaIllegalStateException ex, StructType querySchema, StructType tableSchema) {
+    assertEquals(
+        "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED", ex.getCondition());
+    assertEquals("KD007", ex.getSqlState());
+    assertEquals(
+        Map.of("querySchema", querySchema.treeString(), "tableSchema", tableSchema.treeString()),
+        ex.getMessageParameters());
   }
 
   /** The shared DeltaSourceSnapshot path returns only END sentinel for an empty table. */

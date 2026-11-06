@@ -21,7 +21,7 @@ import java.sql.Timestamp
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeatureBase, CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
@@ -72,8 +72,9 @@ object DeltaTestImplicits {
             // If neither metadata nor protocol is explicitly passed, then use default Metadata and
             // with the maximum protocol.
             txn.updateMetadataForNewTable(Metadata())
-            // AdaptiveMetadataTableFeature is WIP. Don't enable it by default in test tables.
-            val featuresToExclude = ArrayBuffer[TableFeature](AdaptiveMetadataTableFeature)
+            // The AMT features are WIP. Don't enable them by default in test tables.
+            val featuresToExclude =
+              ArrayBuffer[TableFeature](AdaptiveMetadataTableFeatureBase.features: _*)
             val enableCatalogOwnedByDefault = SparkSession.active.conf.getOption(
               TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
                 .contains("supported")
