@@ -15,13 +15,12 @@
  */
 package org.apache.spark.sql.delta.v2.snapshot.unitycatalog
 
-import java.util.Optional
-
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.exceptions.{KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils, UCTableIdentifier}
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
@@ -278,28 +277,28 @@ class UCManagedTableSnapshotManagerSuite
       val manager = createManager(ucClient, tablePath)
 
       // Valid ranges including v0 and latest boundaries
-      val fullRange = manager.getTableChanges(defaultEngine, 0L, Optional.of(maxRatifiedVersion))
+      val fullRange = manager.getTableChanges(
+        defaultEngine, GetTableChangesParam(0L, Some(maxRatifiedVersion)))
       assert(fullRange.getStartVersion == 0L)
       assert(fullRange.getEndVersion == maxRatifiedVersion)
       assert(ucClient.getLastGetCommitsTableIdentifier.getNamespace.toSeq == Seq("cat", "sch"))
       assert(ucClient.getLastGetCommitsTableIdentifier.getName == "tbl")
 
-      val toLatest = manager.getTableChanges(defaultEngine, 1L, Optional.empty())
+      val toLatest = manager.getTableChanges(defaultEngine, GetTableChangesParam(1L, None))
       assert(toLatest.getStartVersion == 1L)
       assert(toLatest.getEndVersion == maxRatifiedVersion)
 
-      val single = manager.getTableChanges(defaultEngine, 1L, Optional.of(1L))
+      val single = manager.getTableChanges(defaultEngine, GetTableChangesParam(1L, Some(1L)))
       assert(single.getStartVersion == 1L)
       assert(single.getEndVersion == 1L)
 
-      val first = manager.getTableChanges(defaultEngine, 0L, Optional.of(0L))
+      val first = manager.getTableChanges(defaultEngine, GetTableChangesParam(0L, Some(0L)))
       assert(first.getStartVersion == 0L)
       assert(first.getEndVersion == 0L)
 
       val last = manager.getTableChanges(
         defaultEngine,
-        maxRatifiedVersion,
-        Optional.of(maxRatifiedVersion))
+        GetTableChangesParam(maxRatifiedVersion, Some(maxRatifiedVersion)))
       assert(last.getStartVersion == maxRatifiedVersion)
       assert(last.getEndVersion == maxRatifiedVersion)
 
@@ -307,8 +306,7 @@ class UCManagedTableSnapshotManagerSuite
       intercept[IllegalArgumentException] {
         manager.getTableChanges(
           defaultEngine,
-          maxRatifiedVersion,
-          Optional.of(maxRatifiedVersion - 1))
+          GetTableChangesParam(maxRatifiedVersion, Some(maxRatifiedVersion - 1)))
       }
     }
   }
@@ -319,10 +317,10 @@ class UCManagedTableSnapshotManagerSuite
 
       Seq(maxRatifiedVersion + 1, maxRatifiedVersion + 5).foreach { version =>
         intercept[VersionToLoadAfterLatestCommitException] {
-          manager.getTableChanges(defaultEngine, version, Optional.empty())
+          manager.getTableChanges(defaultEngine, GetTableChangesParam(version, None))
         }
         intercept[VersionToLoadAfterLatestCommitException] {
-          manager.getTableChanges(defaultEngine, 0L, Optional.of(version))
+          manager.getTableChanges(defaultEngine, GetTableChangesParam(0L, Some(version)))
         }
       }
     }
@@ -351,7 +349,7 @@ class UCManagedTableSnapshotManagerSuite
     assert(ex3.getCause.isInstanceOf[InvalidTargetTableException])
 
     val ex4 = intercept[RuntimeException] {
-      manager.getTableChanges(defaultEngine, 0L, Optional.empty())
+      manager.getTableChanges(defaultEngine, GetTableChangesParam(0L, None))
     }
     assert(ex4.getCause.isInstanceOf[InvalidTargetTableException])
   }
