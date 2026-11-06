@@ -38,7 +38,7 @@ import org.apache.spark.sql.functions
 
 /**
  * DSv2 parity tests for time travel queries exercising the STRICT-mode Kernel-backed connector
- * ([[io.delta.spark.internal.v2.catalog.DeltaV2Table]]).
+ * ([[org.apache.spark.sql.delta.v2.catalog.DeltaV2Table]]).
  *
  * The helper infrastructure is reused from [[DeltaTimeTravelTestHelpers]].
  */

@@ -15,44 +15,58 @@
  */
 package org.apache.spark.sql.delta.v2.interop
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit}
+import java.io.Closeable
+
+import org.apache.spark.sql.delta.DeltaSingleCommit
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 import io.delta.kernel.{CommitActions => KernelCommitActions}
+import io.delta.kernel.internal.util.{Utils => KernelUtils}
 
+// TODO: Once interop supports commit caching, restore private[interop]
+// and remove with Closeable.
 /**
  * Kernel-backed [[DeltaSingleCommit]].
  *
  * @param singleKernelCommit the single Kernel commit.
  */
-private[interop] class DeltaV2SingleCommit(private val singleKernelCommit: KernelCommitActions)
-    extends DeltaSingleCommit {
+private[v2] class DeltaV2SingleCommit(
+    private val singleKernelCommit: KernelCommitActions
+) extends DeltaSingleCommit with Closeable {
 
-  override def version: Long = singleKernelCommit.getVersion()
+  private val (commitVersion, commitTimestamp): (Long, Long) = try {
+    (singleKernelCommit.getVersion(), singleKernelCommit.getTimestamp())
+  } catch {
+    case error: Throwable =>
+      KernelUtils.closeCloseables(singleKernelCommit)
+      throw error
+  }
 
-  override def timestamp: Long = singleKernelCommit.getTimestamp()
+  override val version: Long = commitVersion
+
+  override val timestamp: Long = commitTimestamp
 
   override def getActionsIterator(
       maxInMemoryFileSizeBytes: Long): ClosableIterator[Action] with SupportsRewinding[Action] = {
-    if (maxInMemoryFileSizeBytes != 0) {
-      throw DeltaErrors.assertionFailedError(
-        "getActionsIterator only supports maxInMemoryFileSizeBytes = 0")
-    }
+    // Kernel does not expose the commit's file size, so always use the zero-cache path.
     new ClosableIterator[Action] with SupportsRewinding[Action] {
       private var delegatedIterator =
         KernelActionUtils.readActions(singleKernelCommit)
-      override def hasNext: Boolean = delegatedIterator.hasNext
-      override def next(): Action = delegatedIterator.next()
+      override def hasNext: Boolean =
+        delegatedIterator.hasNext
+      override def next(): Action =
+        delegatedIterator.next()
       override def close(): Unit = delegatedIterator.close()
       override def rewind(): Unit = {
         close()
-        delegatedIterator = KernelActionUtils.readActions(singleKernelCommit)
+        delegatedIterator =
+          KernelActionUtils.readActions(singleKernelCommit)
       }
     }
   }
 
-  override def close(): Unit = singleKernelCommit.close()
+  override def close(): Unit = KernelUtils.closeCloseables(singleKernelCommit)
 }
 
 object DeltaV2SingleCommit {

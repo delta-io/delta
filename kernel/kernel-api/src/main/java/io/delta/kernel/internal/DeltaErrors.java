@@ -128,6 +128,21 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static InvalidTableException missingCommitVersion(String tablePath, long version) {
+    return new InvalidTableException(
+        tablePath,
+        String.format(
+            "versions are not contiguous: "
+                + "Table version %d is missing or unavailable for this log operation.",
+            version));
+  }
+
+  public static KernelException commitActionIterationNotSupported() {
+    return new KernelException(
+        "Commit action iteration is not supported for a range built with commit range validation "
+            + "disabled.");
+  }
+
   public static KernelException invalidVersionRange(long startVersion, long endVersion) {
     String message =
         String.format(

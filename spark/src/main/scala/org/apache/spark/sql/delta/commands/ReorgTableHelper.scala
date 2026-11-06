@@ -16,13 +16,17 @@
 
 package org.apache.spark.sql.delta.commands
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.{MaterializedRowCommitVersion, MaterializedRowId, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.parquet.hadoop.Footer
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
@@ -97,8 +101,9 @@ trait ReorgTableHelper extends Serializable {
    * Apply a filter on the list of AddFile to only keep the files that have physical parquet schema
    * that satisfies the given filter function.
    *
-   * Note: Filtering happens on the executors: **any variable captured by `filterFileFn` must be
-   * Serializable**
+   * Note: With footer memory admission enabled, filtering happens concurrently on executor worker
+   * threads: **any variable captured by `filterFileFn` must be Serializable and safe for
+   * concurrent use.**
    */
   protected def filterParquetFilesOnExecutors(
       spark: SparkSession,
@@ -109,6 +114,10 @@ trait ReorgTableHelper extends Serializable {
 
     val serializedConf = new SerializableConfiguration(snapshot.deltaLog.newDeltaHadoopConf())
     val dataPath = new Path(snapshot.dataPath.toString)
+    val footerReadParallelism =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_PARALLELISM)
+    val footerScanBatchSize =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REORG_FOOTER_SCAN_BATCH_SIZE)
 
     import org.apache.spark.sql.delta.implicits._
 
@@ -116,12 +125,33 @@ trait ReorgTableHelper extends Serializable {
       // Runs on executors, where no SparkSession is active; SQLConf.get returns the task's
       // read-only conf propagated from the driver.
       val sqlConf = SQLConf.get
-      filterParquetFiles(
-        sqlConf,
-        iter.toList,
-        dataPath,
-        serializedConf.value,
-        ignoreCorruptFiles)(filterFileFn).toIterator
+      // ThreadUtils.parmap eagerly creates the futures and completed-result sequence for its input.
+      // Batching bounds those structures and decoded AddFiles. When enabled, footer admission is
+      // executor-wide and independent of batching. The partition-wide collision set deliberately
+      // stays outside that budget: it is retained for the task and cannot safely hold permits while
+      // later files wait for admission. A zero batch size restores whole-partition input.
+      if (footerScanBatchSize > 0) {
+        val seenAbsolutePaths = mutable.HashSet.empty[String]
+        iter.grouped(footerScanBatchSize).flatMap { batch =>
+          filterParquetFiles(
+            sqlConf,
+            batch,
+            dataPath,
+            serializedConf.value,
+            ignoreCorruptFiles,
+            footerReadParallelism,
+            Some(seenAbsolutePaths))(filterFileFn)
+        }
+      } else {
+        filterParquetFiles(
+          sqlConf,
+          iter.toList,
+          dataPath,
+          serializedConf.value,
+          ignoreCorruptFiles,
+          footerReadParallelism,
+          None)(filterFileFn).toIterator
+      }
     }.collect()
   }
 
@@ -132,33 +162,75 @@ trait ReorgTableHelper extends Serializable {
       configuration: Configuration,
       ignoreCorruptFiles: Boolean)(
       filterFileFn: StructType => Boolean): Seq[AddFile] = {
-    val nameToAddFileMap = generateCandidateFileMap(dataPath, files)
-
-    val fileStatuses = nameToAddFileMap.map { case (absPath, addFile) =>
-      new FileStatus(
-        /* length */ addFile.size,
-        /* isDir */ false,
-        /* blockReplication */ 0,
-        /* blockSize */ 1,
-        /* modificationTime */ addFile.modificationTime,
-        new Path(absPath)
-      )
-    }
-
-    val footers = DeltaFileOperations.readParquetFootersInParallel(
+    filterParquetFiles(
+      sqlConf,
+      files,
+      dataPath,
       configuration,
-      fileStatuses.toList,
-      ignoreCorruptFiles)
+      ignoreCorruptFiles,
+      DeltaFileOperations.DEFAULT_PARQUET_FOOTER_READ_PARALLELISM,
+      None)(filterFileFn)
+  }
+
+  protected def filterParquetFiles(
+      sqlConf: SQLConf,
+      files: Seq[AddFile],
+      dataPath: Path,
+      configuration: Configuration,
+      ignoreCorruptFiles: Boolean,
+      footerReadParallelism: Int,
+      seenAbsolutePaths: Option[mutable.Set[String]])(
+      filterFileFn: StructType => Boolean): Seq[AddFile] = {
+    val (nameToAddFileMap, fileStatuses) =
+      prepareParquetFiles(files, dataPath, seenAbsolutePaths)
 
     // Spark 4.0.1 changed the primary ctor signature (added a param), which breaks binary
     // compatibility for code compiled against Spark 4.0.0. Use the stable SQLConf-based ctor
     // that takes the current SparkSession's SQLConf instead.
     val converter = new ParquetToSparkSchemaConverter(sqlConf)
 
-    val filesNeedToRewrite = footers.filter { footer =>
+    def shouldRewrite(footer: Footer): Boolean = {
       val fileSchema = ParquetFileFormat.readSchemaFromFooter(footer, converter)
       filterFileFn(fileSchema)
-    }.map(_.getFile.toString)
-    filesNeedToRewrite.map(absPath => nameToAddFileMap(absPath))
+    }
+
+    if (sqlConf.getConf(DeltaSQLConf.DELTA_REORG_FOOTER_MEMORY_ADMISSION_ENABLED)) {
+      val filesWithStatuses = fileStatuses.map { status =>
+        nameToAddFileMap(status.getPath.toString) -> status
+      }
+      DeltaFileOperations.filterParquetFilesInParallel(
+        configuration,
+        filesWithStatuses,
+        ignoreCorruptFiles,
+        footerReadParallelism) { (_, footer) => shouldRewrite(footer) }
+    } else {
+      DeltaFileOperations.readParquetFootersInParallel(
+        configuration,
+        fileStatuses,
+        ignoreCorruptFiles,
+        footerReadParallelism)
+        .filter(shouldRewrite)
+        .map(footer => nameToAddFileMap(footer.getFile.toString))
+    }
+  }
+
+  protected def prepareParquetFiles(
+      files: Seq[AddFile],
+      dataPath: Path,
+      seenAbsolutePaths: Option[mutable.Set[String]]): (Map[String, AddFile], Seq[FileStatus]) = {
+    val nameToAddFileMap = seenAbsolutePaths.map { seenPaths =>
+      generateCandidateFileMap(dataPath, files, seenPaths)
+    }.getOrElse(generateCandidateFileMap(dataPath, files))
+
+    val fileStatuses = nameToAddFileMap.iterator.map { case (absPath, addFile) =>
+      new FileStatus(
+        /* length */ addFile.size,
+        /* isDir */ false,
+        /* blockReplication */ 0,
+        /* blockSize */ 1,
+        /* modificationTime */ addFile.modificationTime,
+        new Path(absPath))
+    }.toSeq
+    nameToAddFileMap -> fileStatuses
   }
 }

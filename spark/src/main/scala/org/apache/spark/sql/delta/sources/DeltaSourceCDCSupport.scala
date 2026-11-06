@@ -292,7 +292,11 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
       deltaLog.getChanges(
-          startVersion, catalogTableOpt, options.failOnDataLoss).map { case (version, actions) =>
+          startVersion,
+          catalogTableOpt,
+          options.failOnDataLoss,
+          skipNoDataChangeFileActions = true)
+          .map { case (version, actions) =>
         // skipIndexedFile must be applied after creating IndexedFile so that
         // IndexedFile.index is consistent across all versions.
         val (fileActions, skipIndexedFile, metadataOpt, protocolOpt, commitInfoOpt) =
@@ -457,7 +461,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           shouldSkipIndexedFile = CDCReader.shouldSkipFileActionsInCommit(commitInfo)
           commitInfoAction = Some(commitInfo)
           false
-        case _: AddCDCFile | _: SetTransaction | _: DomainMetadata =>
+        case _: AddCDCFile | _: SetTransaction | _: DomainMetadata | _: Checkpoint =>
           false
         case null => // Some crazy future feature. Ignore
           false

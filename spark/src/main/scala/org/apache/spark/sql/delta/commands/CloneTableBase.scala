@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -362,9 +363,6 @@ abstract class CloneTableBase(
       targetSnapshot: SnapshotDescriptor,
       validatedOverrides: Map[String, String]): Map[String, String] = {
     if (tableExists(targetSnapshot)) {
-      assert(validatedOverrides.isEmpty,
-        "Explicit overrides on Coordinated Commits configurations for existing tables" +
-          " are not supported, and should have been caught earlier.")
       CoordinatedCommitsUtils.getExplicitCCConfigurations(targetSnapshot.metadata.configuration)
     } else {
       if (validatedOverrides.nonEmpty) {
@@ -419,6 +417,30 @@ abstract class CloneTableBase(
       metadata.configuration ++
         validatedConfigurationsWithoutCoordinatedCommits ++
         finalCatalogOwnedMetadata)
+    // An AMT source makes a new target AMT only through the protocol, which the defaults applied
+    // while creating its metadata (e.g. the catalog-owned QoL features) do not see. Request AMT in
+    // the configuration too, so that they skip the features AMT is incompatible with. An existing
+    // target gets none of those defaults.
+    if (!tableExists(targetSnapshot)) {
+      AdaptiveMetadataTableFeatureBase.supportedBy(sourceTable.protocol).foreach { amtFeature =>
+        metadata = metadata.copy(configuration = metadata.configuration +
+          (TableFeatureProtocolUtils.propertyKey(amtFeature) ->
+            TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
+      }
+    }
+    // AMT requires column mapping `id` mode, and a new table gets it enabled automatically. CLONE
+    // copies the source's data files as they are, and files written without column mapping have
+    // no Parquet field IDs, so the target cannot be in `id` mode. Iceberg files carry field IDs.
+    // Match every way the transaction turns AMT on: the configuration (the feature property or
+    // Iceberg Native) or the target protocol.
+    if (!tableExists(targetSnapshot) &&
+        !sourceTable.isInstanceOf[CloneIcebergSource] &&
+        sourceTable.metadata.columnMappingMode != IdMapping &&
+        (AMTUtils.amtRequested(metadata.configuration) ||
+          AMTUtils.amtEnabled(metadata, targetSnapshot.protocol))) {
+      throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
+        AdaptiveMetadataTableFeature.name, sourceTable.metadata.columnMappingMode.name)
+    }
 
     verifyMetadataInvariants(targetSnapshot, metadata)
     metadata

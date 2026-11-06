@@ -16,10 +16,10 @@
 
 package io.delta.sql
 
-import io.delta.internal.{ApplyV2ReadOptions, ApplyV2Streaming, ResolveTableChangesV2}
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.delta.v2.{ApplyV2ReadOptions, ApplyV2Streaming, ResolveTableChangesV2}
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
