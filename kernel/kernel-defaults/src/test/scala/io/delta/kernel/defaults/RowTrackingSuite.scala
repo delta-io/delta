@@ -222,6 +222,103 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
     }
   }
 
+  test("RowTracking.isSuspended - returns true when rowTrackingSuspended is set") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+
+      val snapshot =
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
+      val originalMetadata = snapshot.getMetadata
+
+      val configWithSuspended = originalMetadata.getConfiguration.asScala.toMap +
+        (TableConfig.ROW_TRACKING_SUSPENDED.getKey -> "true")
+      val suspendedMetadata =
+        originalMetadata.withReplacedConfiguration(configWithSuspended.asJava)
+
+      assert(RowTracking.isSuspended(suspendedMetadata))
+    }
+  }
+
+  test("RowTracking.isSuspended - returns false when property is absent") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+
+      val snapshot =
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
+      val metadata = snapshot.getMetadata
+
+      assert(!RowTracking.isSuspended(metadata))
+    }
+  }
+
+  test("RowTracking.isSuspended - throws on illegal combination with enableRowTracking") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+
+      val snapshot =
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
+      val originalMetadata = snapshot.getMetadata
+
+      val configWithBoth = originalMetadata.getConfiguration.asScala.toMap +
+        (TableConfig.ROW_TRACKING_ENABLED.getKey -> "true") +
+        (TableConfig.ROW_TRACKING_SUSPENDED.getKey -> "true")
+      val problematicMetadata =
+        originalMetadata.withReplacedConfiguration(configWithBoth.asJava)
+
+      val e = intercept[KernelException] {
+        RowTracking.isSuspended(problematicMetadata)
+      }
+      assert(e.getMessage.contains("Row tracking cannot be both enabled"))
+      assert(e.getMessage.contains("and suspended"))
+    }
+  }
+
+  test("Row ID assignment is skipped when row tracking is suspended") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with row tracking supported but suspended
+      createTableWithRowTracking(
+        engine,
+        tablePath,
+        extraProps = Map(TableConfig.ROW_TRACKING_SUSPENDED.getKey -> "false"))
+
+      // Write data to set up the table
+      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
+      appendData(engine, tablePath, data = prepareDataForCommit(dataBatch1))
+
+      // Verify row IDs are assigned when not suspended
+      verifyBaseRowIDs(engine, tablePath, Seq(0))
+
+      // Now set the table property to suspended via Spark with arbitrary properties allowed
+      spark.conf.set("spark.databricks.delta.allowArbitraryProperties.enabled", "true")
+      try {
+        spark.sql(
+          s"""ALTER TABLE delta.`$tablePath`
+             |SET TBLPROPERTIES (
+             |  'delta.enableRowTracking' = 'false',
+             |  'delta.rowTrackingSuspended' = 'true'
+             |)""".stripMargin)
+      } finally {
+        spark.conf.set("spark.databricks.delta.allowArbitraryProperties.enabled", "false")
+      }
+
+      // Write more data with the suspension active
+      val dataBatch2 = generateData(testSchema, Seq.empty, Map.empty, 200, 1)
+      appendData(engine, tablePath, data = prepareDataForCommit(dataBatch2))
+
+      // Verify: the new AddFile should NOT have baseRowId assigned (from kernel's perspective)
+      // The scan should still show the old file with baseRowId, plus the new file without one
+      val snapshot =
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
+      val scanFileRows = collectScanFileRows(snapshot.getScanBuilder().build())
+      val baseRowIds = scanFileRows.map(InternalScanFileUtils.getBaseRowId)
+
+      // At least one file should not have a baseRowId (the one written during suspension)
+      assert(
+        baseRowIds.exists(!_.isPresent),
+        "Expected at least one AddFile without baseRowId when row tracking is suspended")
+    }
+  }
+
   test("Base row IDs/default row commit versions are assigned to AddFile actions") {
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithRowTracking(engine, tablePath)
