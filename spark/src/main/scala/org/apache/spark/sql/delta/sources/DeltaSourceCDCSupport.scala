@@ -42,10 +42,12 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
    * for a particular version.
    * @param fileActionsItr - Iterator of IndexedFiles for a particular commit.
    * @param isInitialSnapshot - Indicates whether the commit version is the initial snapshot or not.
+   * @param isInlineManifestCommit - Whether the commit is an inline AMT manifest commit.
    */
   class IndexedChangeFileSeq(
       fileActionsItr: Iterator[IndexedFile],
-      isInitialSnapshot: Boolean) {
+      isInitialSnapshot: Boolean,
+      isInlineManifestCommit: Boolean = false) {
 
     private def moreThanFrom(
         indexedFile: IndexedFile, fromVersion: Long, fromIndex: Long): Boolean = {
@@ -170,9 +172,10 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
             case remove: RemoveFile => remove.deletionVector != null
             case _ => false
           }
-          if (hasDeletionVectors) {
+          if (hasDeletionVectors || isInlineManifestCommit) {
             // We cannot split up add/remove pairs with Deletion Vectors, because we will get the
-            // wrong result.
+            // wrong result. Same goes for an inline AMT manifest commit, as CDF actions may not
+            // in the same order before and after single commit read enablement.
             // So in this case we behave as above with CDC files and either admit all or none.
             if (admissionControl.admit(filteredFiles)) {
               filteredFiles.toIterator
@@ -327,7 +330,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
                   remove = remove,
                   shouldSkip = skipIndexedFile)
             })
-        (version, new IndexedChangeFileSeq(itr, isInitialSnapshot = false), commitInfoOpt)
+        val isInlineManifestCommit = actions.exists {
+          case checkpoint: Checkpoint => checkpoint.contentRoot.version == version
+          case _ => false
+        }
+        (version,
+          new IndexedChangeFileSeq(itr, isInitialSnapshot = false, isInlineManifestCommit),
+          commitInfoOpt)
       }
     }
 
