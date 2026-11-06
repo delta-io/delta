@@ -41,8 +41,8 @@ import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.read.CDCDataFile;
 

@@ -28,9 +28,9 @@ import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
 
 /** Implementation of DeltaV2SnapshotManager for managing Delta snapshots for Path-based Table. */
