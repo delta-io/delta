@@ -14,25 +14,33 @@
  * limitations under the License.
  */
 package io.delta.kernel.defaults
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{Files, Paths}
 import java.util.Optional
 
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters._
 
+import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.internal.json.JsonUtils
 import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
-import io.delta.kernel.internal.checksum.{ChecksumUtils, CRCInfo}
+import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, DomainMetadata => KernelDomainMetadata, Metadata => KernelMetadata, Protocol => KernelProtocol, SetTransaction => KernelSetTransaction}
+import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumUtils, CRCInfo}
+import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.ManualClock
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
+import io.delta.kernel.utils.FileStatus
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.{CommitInfo, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DeletionVectorDescriptor, DomainMetadata, Metadata, Protocol, SetTransaction}
 
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -552,6 +560,275 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       // Second call should be a no-op (no exception thrown)
       ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot.getLogSegment)
       verifyChecksumForSnapshot(snapshot)
+    }
+  }
+
+  private def writeCommitWithOperation(
+      tablePath: String,
+      version: Long,
+      operation: String,
+      actions: Action*): Unit = {
+    val commitInfo = CommitInfo.empty().copy(operation = operation).withTimestamp(version)
+    val json = (commitInfo +: actions).map(_.json).mkString("", "\n", "\n")
+    val logPath = Files.createDirectories(Paths.get(tablePath, "_delta_log"))
+    Files.write(logPath.resolve(f"$version%020d.json"), json.getBytes(UTF_8))
+  }
+
+  private val operationTestMetadata0 = Metadata(
+    id = "crc-operation-test",
+    schemaString = testSchema.toJson,
+    configuration = Map("delta.enableDeletionVectors" -> "true"),
+    createdTime = Some(0L))
+  private val operationTestMetadata1 = operationTestMetadata0.copy(description = "commit 1")
+  private val operationTestMetadata2 = operationTestMetadata0.copy(description = "commit 2")
+  private val operationTestProtocol0 = Protocol(3, 7).copy(
+    readerFeatures = Some(Set("deletionVectors")),
+    writerFeatures = Some(Set("deletionVectors", "domainMetadata")))
+  private val operationTestProtocol2 = operationTestProtocol0.copy(writerFeatures =
+    Some(Set("deletionVectors", "domainMetadata", "appendOnly")))
+  private val operationTestFiles = (1 to 10).map { i =>
+    AddFile(
+      path = s"file-$i.parquet",
+      partitionValues = Map.empty,
+      size = i * 100L,
+      modificationTime = 0L,
+      dataChange = true,
+      stats = """{"numRecords":100,"tightBounds":false}""",
+      deletionVector = DeletionVectorDescriptor(
+        storageType = "p",
+        pathOrInlineDv = s"file:/deletion_vector_$i.bin",
+        sizeInBytes = 32,
+        cardinality = i))
+  }
+  private val operationTestActions0: Seq[Action] = Seq(
+    operationTestMetadata0,
+    operationTestProtocol0,
+    DomainMetadata("keep", "0", removed = false),
+    DomainMetadata("update", "0", removed = false),
+    DomainMetadata("drop", "0", removed = false),
+    SetTransaction("shared", 0L, Some(0L)),
+    SetTransaction("unchanged", 0L, Some(0L))) ++ operationTestFiles.take(6)
+  private val operationTestActions1: Seq[Action] = Seq(
+    operationTestFiles(6),
+    operationTestFiles(7),
+    operationTestFiles(0).remove,
+    operationTestFiles(1).remove,
+    DomainMetadata("update", "1", removed = false),
+    DomainMetadata("drop", "1", removed = false),
+    DomainMetadata("new", "1", removed = false),
+    SetTransaction("shared", 1L, Some(1L)),
+    operationTestMetadata1)
+  private val operationTestActions2: Seq[Action] = Seq(
+    operationTestFiles(8),
+    operationTestFiles(9),
+    operationTestFiles(2).remove,
+    operationTestFiles(3).remove,
+    DomainMetadata("update", "2", removed = false),
+    DomainMetadata("drop", "2", removed = true),
+    SetTransaction("shared", 2L, Some(2L)),
+    operationTestMetadata2,
+    operationTestProtocol2)
+
+  private def operationCrcFixture(
+      tableSizeBytes: Long,
+      numFiles: Long,
+      numDeletedRecords: Long,
+      numDeletionVectors: Long,
+      allFiles: Option[Seq[AddFile]],
+      version: Long = 2L): CRCInfo = {
+    // Every fixture file fits in the first bin; use the explicit expected totals for that bin.
+    val histogram = FileSizeHistogram.createDefaultHistogram().captureFileSizeHistogramResult()
+    histogram.getFileCounts()(0) = numFiles
+    histogram.getTotalBytes()(0) = tableSizeBytes
+    new CRCInfo(
+      version,
+      KernelMetadata.fromRow(JsonUtils.rowFromJson(
+        operationTestMetadata2.json,
+        new StructType().add("metaData", KernelMetadata.FULL_SCHEMA)).getStruct(0)),
+      new KernelProtocol(
+        3,
+        7,
+        Set("deletionVectors").asJava,
+        Set("deletionVectors", "domainMetadata", "appendOnly").asJava),
+      tableSizeBytes,
+      numFiles,
+      Optional.empty(), // txnId
+      Optional.of(Set(
+        new KernelDomainMetadata("keep", "0", false),
+        new KernelDomainMetadata("update", "2", false),
+        new KernelDomainMetadata("new", "1", false)).asJava),
+      Optional.of(FileSizeHistogram.fromFileSizeHistogramResult(histogram)),
+      Optional.empty(), // inCommitTimestamp
+      Optional.of(Seq(
+        new KernelSetTransaction("shared", 2L, Optional.of(2L)),
+        new KernelSetTransaction("unchanged", 0L, Optional.of(0L))).asJava),
+      Optional.of(numDeletedRecords),
+      Optional.of(numDeletionVectors),
+      Optional.ofNullable(allFiles.map(_.map { file =>
+        new KernelAddFile(JsonUtils.rowFromJson(
+          file.json,
+          new StructType().add("add", KernelAddFile.FULL_SCHEMA)).getStruct(0))
+      }.asJava).orNull))
+  }
+
+  private val includeAllCrc = operationCrcFixture(
+    4500L,
+    6L,
+    45L,
+    6L,
+    Some(Seq(4, 5, 8, 9, 6, 7).map(operationTestFiles)))
+  private val ignoreCommit1AddsCrc = operationCrcFixture(3000L, 4L, 30L, 4L, None)
+  private val ignoreCommit1RemovesCrc = operationCrcFixture(4800L, 8L, 48L, 8L, None)
+  private val ignoreCommit2AddsCrc = operationCrcFixture(2600L, 4L, 26L, 4L, None)
+  private val ignoreCommit2RemovesCrc = operationCrcFixture(5200L, 8L, 52L, 8L, None)
+
+  test("FULL CRC applies each operation's policy to fixed actions in two commits") {
+    val normalOperations = Seq(
+      "WRITE",
+      "MERGE",
+      "UPDATE",
+      "DELETE",
+      "TRUNCATE",
+      "OPTIMIZE",
+      "CREATE TABLE",
+      "REPLACE TABLE",
+      "CREATE TABLE AS SELECT",
+      "REPLACE TABLE AS SELECT",
+      "CREATE OR REPLACE TABLE",
+      "CREATE OR REPLACE TABLE AS SELECT",
+      "ADD COLUMNS",
+      "DROP COLUMNS",
+      "RENAME COLUMN",
+      "CHANGE COLUMN",
+      "CHANGE COLUMNS",
+      "REPLACE COLUMNS",
+      "UPDATE SCHEMA",
+      "REMOVE COLUMN MAPPING",
+      "SET TBLPROPERTIES",
+      "UNSET TBLPROPERTIES",
+      "ADD CONSTRAINT",
+      "DROP CONSTRAINT",
+      "UPGRADE PROTOCOL",
+      "RECOMPRESSION",
+      "REORG",
+      "VACUUM START",
+      "VACUUM END",
+      "REPAIR METADATA",
+      "CLUSTER BY",
+      "Empty Commit",
+      "DOMAIN METADATA CLEANUP")
+    val ignoreAddOperations = Seq(
+      "COMPUTE STATS",
+      "ROW TRACKING BACKFILL",
+      "ROW TRACKING UNBACKFILL",
+      "DROP FEATURE",
+      "LIQUID BACKFILL",
+      "LIQUID TAGGING",
+      "REPLACE PARTITIONED BY WITH CLUSTER BY")
+    val ignoreRemoveOperations = Seq("Deletion Vector Tombstones")
+    val cases = normalOperations.map(op => (op, op, includeAllCrc)) ++
+      ignoreAddOperations.flatMap { op =>
+        Seq((op, "WRITE", ignoreCommit1AddsCrc), ("WRITE", op, ignoreCommit2AddsCrc))
+      } ++ ignoreRemoveOperations.flatMap { op =>
+        Seq((op, "WRITE", ignoreCommit1RemovesCrc), ("WRITE", op, ignoreCommit2RemovesCrc))
+      }
+
+    cases.foreach { case (operation1, operation2, expectedCrc) =>
+      withClue(s"commit 1: $operation1, commit 2: $operation2: ") {
+        withTempDirAndMetricsEngine { (path, engine) =>
+          writeCommitWithOperation(path, 0, "CREATE TABLE", operationTestActions0: _*)
+          Table.forPath(engine, path).checksum(engine, 0)
+          writeCommitWithOperation(path, 1, operation1, operationTestActions1: _*)
+          writeCommitWithOperation(path, 2, operation2, operationTestActions2: _*)
+          val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 2)
+          assert(snapshot.getStatistics.getChecksumWriteMode.get() === ChecksumWriteMode.FULL)
+          engine.resetMetrics()
+          snapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
+          assertMetrics(engine, Seq(2, 1), Nil, expChecksumReadSet = Seq(0))
+          val writtenCrc = ChecksumReader.tryReadChecksumFile(
+            engine,
+            FileStatus.of(Paths.get(path, "_delta_log", f"${2L}%020d.crc").toString)).get()
+          assert(writtenCrc === expectedCrc)
+        }
+      }
+    }
+  }
+
+  test("FULL CRC updates allFiles for COMPUTE STATS re-adds without changing aggregates") {
+    val files = Seq(8, 9, 6, 7, 4, 5).map(operationTestFiles)
+    val analyzedFiles = files.take(3).map(_.copy(
+      dataChange = false,
+      stats = """{"numRecords":100,"tightBounds":false,"minValues":{"id":0},""" +
+        """"maxValues":{"id":99},"nullCount":{"id":0}}"""))
+    val expectedCrc = operationCrcFixture(
+      4500L,
+      6L,
+      45L,
+      6L,
+      Some(analyzedFiles ++ files.drop(3)),
+      version = 3L)
+
+    withTempDirAndMetricsEngine { (path, engine) =>
+      writeCommitWithOperation(path, 0, "CREATE TABLE", operationTestActions0: _*)
+      writeCommitWithOperation(path, 1, "WRITE", operationTestActions1: _*)
+      writeCommitWithOperation(path, 2, "WRITE", operationTestActions2: _*)
+      Table.forPath(engine, path).checksum(engine, 2)
+
+      // ANALYZE ... COMPUTE DELTA STATISTICS re-adds the same (path, DV) with new statistics.
+      writeCommitWithOperation(path, 3, "COMPUTE STATS", analyzedFiles: _*)
+      val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 3)
+      assert(snapshot.getStatistics.getChecksumWriteMode.get() === ChecksumWriteMode.FULL)
+      engine.resetMetrics()
+      snapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
+      assertMetrics(engine, Seq(3), Nil, expChecksumReadSet = Seq(2))
+      val writtenCrc = ChecksumReader.tryReadChecksumFile(
+        engine,
+        FileStatus.of(Paths.get(path, "_delta_log", f"${3L}%020d.crc").toString)).get()
+      assert(writtenCrc === expectedCrc)
+      // CRCInfo equality compares only numRecords within file statistics.
+      assert(writtenCrc.getAllFiles.get().asScala.map(_.getStatsJson) ===
+        expectedCrc.getAllFiles.get().asScala.map(_.getStatsJson))
+    }
+  }
+
+  test("FULL CRC falls back to full log replay for unsupported operations") {
+    // Full replay visits the newest files first, instead of retaining the base CRC's file order.
+    val expectedCrc = operationCrcFixture(
+      4500L,
+      6L,
+      45L,
+      6L,
+      Some(Seq(8, 9, 6, 7, 4, 5).map(operationTestFiles)))
+    Seq("Manual Update", "COPY INTO", "UNKNOWN OPERATION", "", null).foreach { operation =>
+      withClue(s"unsupported operation ${Option(operation)}: ") {
+        withTempDirAndMetricsEngine { (path, engine) =>
+          // GIVEN: a readable base CRC with corrupted aggregate counters.
+          writeCommitWithOperation(path, 0, "CREATE TABLE", operationTestActions0: _*)
+          Table.forPath(engine, path).checksum(engine, 0)
+          val crcPath = Paths.get(path, "_delta_log", f"${0L}%020d.crc")
+          val corruptedCrc = OBJ_MAPPER.readTree(Files.readAllBytes(crcPath))
+            .asInstanceOf[ObjectNode]
+          corruptedCrc.put("tableSizeBytes", 999999L)
+          corruptedCrc.put("numDeletedRecordsOpt", 999L)
+          corruptedCrc.put("numDeletionVectorsOpt", 999L)
+          engine.getFileSystemClient.delete(crcPath.toString)
+          Files.write(crcPath, OBJ_MAPPER.writeValueAsBytes(corruptedCrc))
+          assert(ChecksumReader.tryReadChecksumFile(engine, FileStatus.of(crcPath.toString))
+            .get().getTableSizeBytes === 999999L)
+
+          // WHEN: an unsupported operation appears after the base CRC.
+          writeCommitWithOperation(path, 1, operation, operationTestActions1: _*)
+          writeCommitWithOperation(path, 2, "WRITE", operationTestActions2: _*)
+          val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 2)
+          snapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
+
+          // THEN: full log replay recovers the correct CRC without using the corrupted counters.
+          val writtenCrc = ChecksumReader.tryReadChecksumFile(
+            engine,
+            FileStatus.of(Paths.get(path, "_delta_log", f"${2L}%020d.crc").toString)).get()
+          assert(writtenCrc === expectedCrc)
+        }
+      }
     }
   }
 
