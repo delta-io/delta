@@ -28,6 +28,7 @@ import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager$;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
@@ -144,14 +145,15 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
   }
 
   @Override
-  public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
+  public CommitRange getTableChanges(Engine engine, GetTableChangesParam params) {
     CommitRangeBuilder builder =
         TableManager.loadCommitRange(
-            tablePath, CommitRangeBuilder.CommitBoundary.atVersion(startVersion));
+            tablePath, CommitRangeBuilder.CommitBoundary.atVersion(params.startVersion()));
 
-    if (endVersion.isPresent()) {
+    if (params.endVersion().isDefined()) {
       builder =
-          builder.withEndBoundary(CommitRangeBuilder.CommitBoundary.atVersion(endVersion.get()));
+          builder.withEndBoundary(
+              CommitRangeBuilder.CommitBoundary.atVersion((Long) params.endVersion().get()));
     }
 
     return builder.build(engine);

@@ -58,6 +58,7 @@ import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -462,7 +463,8 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     DeltaV2SnapshotManager manager = mock(DeltaV2SnapshotManager.class);
     CommitRange range = mock(CommitRange.class);
     DeltaV2QueryContext emptyContext = DeltaV2QueryContext$.MODULE$.apply(Optional.empty());
-    when(manager.getTableChanges(defaultEngine, 7L, Optional.of(7L), emptyContext))
+    when(manager.getTableChanges(
+            defaultEngine, GetTableChangesParam$.MODULE$.apply(7L, Option.apply(7L)), emptyContext))
         .thenReturn(range);
     when(range.getCommitActions(defaultEngine, Set.of(DeltaLogActionUtils.DeltaAction.PROTOCOL)))
         .thenReturn(commits);

@@ -40,6 +40,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
@@ -1068,11 +1069,10 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     @Override
     public CommitRange getTableChanges(
         Engine engine,
-        long startVersion,
-        Optional<Long> endVersion,
+        GetTableChangesParam params,
         DeltaV2QueryContext queryContext) {
       tableChangesQueryContext = queryContext;
-      return super.getTableChanges(engine, startVersion, endVersion, queryContext);
+      return super.getTableChanges(engine, params, queryContext);
     }
   }
 

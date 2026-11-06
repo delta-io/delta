@@ -41,6 +41,7 @@ import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.read.CDCDataFile;
@@ -267,7 +268,11 @@ public class StreamingHelper {
     try (ClosableIterator<DeltaSingleCommit> commitsIter =
         ScalaUtils.toClosableIterator(
             snapshotManager
-                .getTableChanges(engine, startVersion, endVersionOpt, originalQueryContext)
+                .getTableChanges(
+                    engine,
+                    GetTableChangesParam$.MODULE$.apply(
+                        startVersion, ScalaUtils.toScalaOption(endVersionOpt)),
+                    originalQueryContext)
                 .getCommitActions(engine, Set.of(actionType))
                 .map(DeltaV2SingleCommit$.MODULE$::apply))) {
       while (commitsIter.hasNext()) {

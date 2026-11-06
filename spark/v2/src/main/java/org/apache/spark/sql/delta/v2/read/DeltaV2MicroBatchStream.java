@@ -70,6 +70,7 @@ import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
@@ -1068,7 +1069,10 @@ class DeltaV2MicroBatchStream
       try {
         commitRange =
             snapshotManager.getTableChanges(
-                engine, earliestVersionToFetch, endVersionOpt, originalQueryContext);
+                engine,
+                GetTableChangesParam$.MODULE$.apply(
+                    earliestVersionToFetch, ScalaUtils.toScalaOption(endVersionOpt)),
+                originalQueryContext);
         break;
       } catch (io.delta.kernel.exceptions.StartVersionNotFoundException e) {
         if (options.failOnDataLoss()
