@@ -26,7 +26,7 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
-import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, noonDaysAgo}
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -496,7 +496,7 @@ class DeltaTimeTravelSuite extends QueryTest
   test("as of timestamp in between commits should use commit before timestamp") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
-      val start = System.currentTimeMillis() - 5.days.toMillis
+      val start = noonDaysAgo(5)
       generateCommits(tblLoc, start, start + 20.minutes, start + 40.minutes)
 
       val tablePathUri = identifierWithTimestamp(tblLoc, start + 10.minutes)
@@ -516,7 +516,7 @@ class DeltaTimeTravelSuite extends QueryTest
   test("as of timestamp on exact timestamp") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
-      val start = System.currentTimeMillis() - 5.days.toMillis
+      val start = noonDaysAgo(5)
       generateCommits(tblLoc, start, start + 20.minutes)
 
       // Simulate getting the timestamp directly from Spark SQL
@@ -660,7 +660,7 @@ class DeltaTimeTravelSuite extends QueryTest
     }
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
-      val start = System.currentTimeMillis() - 5.days.toMillis
+      val start = noonDaysAgo(5)
       generateCommits(tblLoc, start, start - 5.seconds, start + 3.minutes)
 
       val ts = getSparkFormattedTimestamps(
@@ -817,7 +817,7 @@ class DeltaTimeTravelSuite extends QueryTest
   test("time travel support in SQL") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
-      val start = System.currentTimeMillis() - 5.days.toMillis
+      val start = noonDaysAgo(5)
       generateCommits(tblLoc, start, start + 20.minutes)
       val tableName = "testTable"
 
