@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Paths}
-import java.util.Optional
+import java.util.{Collections, Optional}
 
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters._
@@ -29,16 +29,17 @@ import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
-import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, DomainMetadata => KernelDomainMetadata, Metadata => KernelMetadata, Protocol => KernelProtocol, SetTransaction => KernelSetTransaction}
+import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, CommitInfo => KernelCommitInfo, DeletionVectorDescriptor, DomainMetadata => KernelDomainMetadata, Format, Metadata => KernelMetadata, Protocol => KernelProtocol, SetTransaction => KernelSetTransaction}
+import io.delta.kernel.internal.actions.SingleAction._
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumUtils, CRCInfo}
 import io.delta.kernel.internal.stats.FileSizeHistogram
-import io.delta.kernel.internal.util.ManualClock
+import io.delta.kernel.internal.util.{ManualClock, VectorUtils}
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import io.delta.kernel.utils.FileStatus
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DeletionVectorDescriptor, DomainMetadata, Metadata, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.actions.{CommitInfo, SetTransaction}
 
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.hadoop.fs.Path
@@ -567,74 +568,101 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       tablePath: String,
       version: Long,
       operation: String,
-      actions: Action*): Unit = {
-    val commitInfo = CommitInfo.empty().copy(operation = operation).withTimestamp(version)
-    val json = (commitInfo +: actions).map(_.json).mkString("", "\n", "\n")
+      actions: Row*): Unit = {
+    val commitInfo = new KernelCommitInfo(
+      Optional.empty(),
+      version,
+      Optional.empty(),
+      Optional.ofNullable(operation),
+      Collections.emptyMap(),
+      Optional.empty(),
+      Optional.empty(),
+      Collections.emptyMap())
+    val json = (createCommitInfoSingleAction(commitInfo.toRow) +: actions)
+      .map(JsonUtils.rowToJson).mkString("", "\n", "\n")
     val logPath = Files.createDirectories(Paths.get(tablePath, "_delta_log"))
     Files.write(logPath.resolve(f"$version%020d.json"), json.getBytes(UTF_8))
   }
 
-  private val operationTestMetadata0 = Metadata(
-    id = "crc-operation-test",
-    schemaString = testSchema.toJson,
-    configuration = Map("delta.enableDeletionVectors" -> "true"),
-    createdTime = Some(0L))
-  private val operationTestMetadata1 = operationTestMetadata0.copy(description = "commit 1")
-  private val operationTestMetadata2 = operationTestMetadata0.copy(description = "commit 2")
-  private val operationTestProtocol0 = Protocol(3, 7).copy(
-    readerFeatures = Some(Set("deletionVectors")),
-    writerFeatures = Some(Set("deletionVectors", "domainMetadata")))
-  private val operationTestProtocol2 = operationTestProtocol0.copy(writerFeatures =
-    Some(Set("deletionVectors", "domainMetadata", "appendOnly")))
+  private def operationTestMetadata(description: Optional[String]): KernelMetadata =
+    new KernelMetadata(
+      "crc-operation-test",
+      Optional.empty(),
+      description,
+      new Format(),
+      testSchema.toJson,
+      testSchema,
+      VectorUtils.buildArrayValue(Collections.emptyList(), StringType.STRING),
+      Optional.of(0L),
+      VectorUtils.stringStringMapValue(Map("delta.enableDeletionVectors" -> "true").asJava))
+
+  private val operationTestMetadata0 = operationTestMetadata(Optional.empty())
+  private val operationTestMetadata1 = operationTestMetadata(Optional.of("commit 1"))
+  private val operationTestMetadata2 = operationTestMetadata(Optional.of("commit 2"))
+  private val operationTestProtocol0 = new KernelProtocol(
+    3,
+    7,
+    Set("deletionVectors").asJava,
+    Set("deletionVectors", "domainMetadata").asJava)
+  private val operationTestProtocol2 = new KernelProtocol(
+    3,
+    7,
+    Set("deletionVectors").asJava,
+    Set("deletionVectors", "domainMetadata", "appendOnly").asJava)
   private val operationTestFiles = (1 to 10).map { i =>
-    AddFile(
-      path = s"file-$i.parquet",
-      partitionValues = Map.empty,
-      size = i * 100L,
-      modificationTime = 0L,
-      dataChange = true,
-      stats = """{"numRecords":100,"tightBounds":false}""",
-      deletionVector = DeletionVectorDescriptor(
-        storageType = "p",
-        pathOrInlineDv = s"file:/deletion_vector_$i.bin",
-        sizeInBytes = 32,
-        cardinality = i))
+    new KernelAddFile(KernelAddFile.createAddFileRowWithStatsJson(
+      s"file-$i.parquet",
+      VectorUtils.stringStringMapValue(Collections.emptyMap[String, String]()),
+      i * 100L,
+      0L,
+      true,
+      Optional.of(new DeletionVectorDescriptor(
+        "p",
+        s"file:/deletion_vector_$i.bin",
+        Optional.empty(),
+        32,
+        i)),
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      Optional.of("""{"numRecords":100,"tightBounds":false}""")))
   }
-  private val operationTestActions0: Seq[Action] = Seq(
-    operationTestMetadata0,
-    operationTestProtocol0,
-    DomainMetadata("keep", "0", removed = false),
-    DomainMetadata("update", "0", removed = false),
-    DomainMetadata("drop", "0", removed = false),
-    SetTransaction("shared", 0L, Some(0L)),
-    SetTransaction("unchanged", 0L, Some(0L))) ++ operationTestFiles.take(6)
-  private val operationTestActions1: Seq[Action] = Seq(
-    operationTestFiles(6),
-    operationTestFiles(7),
-    operationTestFiles(0).remove,
-    operationTestFiles(1).remove,
-    DomainMetadata("update", "1", removed = false),
-    DomainMetadata("drop", "1", removed = false),
-    DomainMetadata("new", "1", removed = false),
-    SetTransaction("shared", 1L, Some(1L)),
-    operationTestMetadata1)
-  private val operationTestActions2: Seq[Action] = Seq(
-    operationTestFiles(8),
-    operationTestFiles(9),
-    operationTestFiles(2).remove,
-    operationTestFiles(3).remove,
-    DomainMetadata("update", "2", removed = false),
-    DomainMetadata("drop", "2", removed = true),
-    SetTransaction("shared", 2L, Some(2L)),
-    operationTestMetadata2,
-    operationTestProtocol2)
+  private val operationTestActions0: Seq[Row] = Seq(
+    createMetadataSingleAction(operationTestMetadata0.toRow),
+    createProtocolSingleAction(operationTestProtocol0.toRow),
+    createDomainMetadataSingleAction(new KernelDomainMetadata("keep", "0", false).toRow),
+    createDomainMetadataSingleAction(new KernelDomainMetadata("update", "0", false).toRow),
+    createDomainMetadataSingleAction(new KernelDomainMetadata("drop", "0", false).toRow),
+    createTxnSingleAction(new KernelSetTransaction("shared", 0L, Optional.of(0L)).toRow),
+    createTxnSingleAction(new KernelSetTransaction("unchanged", 0L, Optional.of(0L)).toRow)) ++
+    operationTestFiles.take(6).map(file => createAddFileSingleAction(file.toRow))
+  private val operationTestActions1: Seq[Row] = Seq(
+    createAddFileSingleAction(operationTestFiles(6).toRow),
+    createAddFileSingleAction(operationTestFiles(7).toRow),
+    createRemoveFileSingleAction(operationTestFiles(0).toRemoveFileRow(true, Optional.of(1L))),
+    createRemoveFileSingleAction(operationTestFiles(1).toRemoveFileRow(true, Optional.of(1L))),
+    createDomainMetadataSingleAction(new KernelDomainMetadata("update", "1", false).toRow),
+    createDomainMetadataSingleAction(new KernelDomainMetadata("drop", "1", false).toRow),
+    createDomainMetadataSingleAction(new KernelDomainMetadata("new", "1", false).toRow),
+    createTxnSingleAction(new KernelSetTransaction("shared", 1L, Optional.of(1L)).toRow),
+    createMetadataSingleAction(operationTestMetadata1.toRow))
+  private val operationTestActions2: Seq[Row] = Seq(
+    createAddFileSingleAction(operationTestFiles(8).toRow),
+    createAddFileSingleAction(operationTestFiles(9).toRow),
+    createRemoveFileSingleAction(operationTestFiles(2).toRemoveFileRow(true, Optional.of(2L))),
+    createRemoveFileSingleAction(operationTestFiles(3).toRemoveFileRow(true, Optional.of(2L))),
+    createDomainMetadataSingleAction(new KernelDomainMetadata("update", "2", false).toRow),
+    createDomainMetadataSingleAction(new KernelDomainMetadata("drop", "2", true).toRow),
+    createTxnSingleAction(new KernelSetTransaction("shared", 2L, Optional.of(2L)).toRow),
+    createMetadataSingleAction(operationTestMetadata2.toRow),
+    createProtocolSingleAction(operationTestProtocol2.toRow))
 
   private def operationTestCrcFixture(
       tableSizeBytes: Long,
       numFiles: Long,
       numDeletedRecords: Long,
       numDeletionVectors: Long,
-      allFiles: Option[Seq[AddFile]],
+      allFiles: Option[Seq[KernelAddFile]],
       version: Long = 2L): CRCInfo = {
     // Every fixture file fits in the first bin; use the explicit expected totals for that bin.
     val histogram = FileSizeHistogram.createDefaultHistogram().captureFileSizeHistogramResult()
@@ -642,9 +670,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     histogram.getTotalBytes()(0) = tableSizeBytes
     new CRCInfo(
       version,
-      KernelMetadata.fromRow(JsonUtils.rowFromJson(
-        operationTestMetadata2.json,
-        new StructType().add("metaData", KernelMetadata.FULL_SCHEMA)).getStruct(0)),
+      operationTestMetadata2,
       new KernelProtocol(
         3,
         7,
@@ -664,11 +690,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
         new KernelSetTransaction("unchanged", 0L, Optional.of(0L))).asJava),
       Optional.of(numDeletedRecords),
       Optional.of(numDeletionVectors),
-      Optional.ofNullable(allFiles.map(_.map { file =>
-        new KernelAddFile(JsonUtils.rowFromJson(
-          file.json,
-          new StructType().add("add", KernelAddFile.FULL_SCHEMA)).getStruct(0))
-      }.asJava).orNull))
+      Optional.ofNullable(allFiles.map(_.asJava).orNull))
   }
 
   private val includeAllCrc = operationTestCrcFixture(
@@ -705,7 +727,6 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       "UPDATE SCHEMA",
       "REMOVE COLUMN MAPPING",
       "SET TBLPROPERTIES",
-      "UNSET TBLPROPERTIES",
       "ADD CONSTRAINT",
       "DROP CONSTRAINT",
       "UPGRADE PROTOCOL",
@@ -756,10 +777,20 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
 
   test("Ignore-add operation list only applies to CRC aggregate stats, not allFiles") {
     val files = Seq(8, 9, 6, 7, 4, 5).map(operationTestFiles)
-    val analyzedFiles = files.take(3).map(_.copy(
-      dataChange = false,
-      stats = """{"numRecords":100,"tightBounds":false,"minValues":{"id":0},""" +
-        """"maxValues":{"id":99},"nullCount":{"id":0}}"""))
+    val analyzedFiles = files.take(3).map { file =>
+      new KernelAddFile(KernelAddFile.createAddFileRowWithStatsJson(
+        file.getPath,
+        file.getPartitionValues,
+        file.getSize,
+        file.getModificationTime,
+        false,
+        file.getDeletionVector,
+        file.getTags,
+        file.getBaseRowId,
+        file.getDefaultRowCommitVersion,
+        Optional.of("""{"numRecords":100,"tightBounds":false,"minValues":{"id":0},""" +
+          """"maxValues":{"id":99},"nullCount":{"id":0}}""")))
+    }
     val expectedCrc = operationTestCrcFixture(
       4500L,
       6L,
@@ -775,7 +806,11 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       Table.forPath(engine, path).checksum(engine, 2)
 
       // ANALYZE ... COMPUTE DELTA STATISTICS re-adds the same (path, DV) with new statistics.
-      writeCommitWithOperation(path, 3, "COMPUTE STATS", analyzedFiles: _*)
+      writeCommitWithOperation(
+        path,
+        3,
+        "COMPUTE STATS",
+        analyzedFiles.map(file => createAddFileSingleAction(file.toRow)): _*)
       val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 3)
       assert(snapshot.getStatistics.getChecksumWriteMode.get() === ChecksumWriteMode.FULL)
       engine.resetMetrics()
@@ -798,37 +833,38 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       45L,
       6L,
       Some(Seq(8, 9, 6, 7, 4, 5).map(operationTestFiles)))
-    Seq("Manual Update", "COPY INTO", "UNKNOWN OPERATION", "", null).foreach { operation =>
-      withClue(s"unsupported operation ${Option(operation)}: ") {
-        withTempDirAndMetricsEngine { (path, engine) =>
-          // GIVEN: a readable base CRC with corrupted aggregate counters.
-          writeCommitWithOperation(path, 0, "CREATE TABLE", operationTestActions0: _*)
-          Table.forPath(engine, path).checksum(engine, 0)
-          val crcPath = Paths.get(path, "_delta_log", f"${0L}%020d.crc")
-          val corruptedCrc = OBJ_MAPPER.readTree(Files.readAllBytes(crcPath))
-            .asInstanceOf[ObjectNode]
-          corruptedCrc.put("tableSizeBytes", 999999L)
-          corruptedCrc.put("numDeletedRecordsOpt", 999L)
-          corruptedCrc.put("numDeletionVectorsOpt", 999L)
-          engine.getFileSystemClient.delete(crcPath.toString)
-          Files.write(crcPath, OBJ_MAPPER.writeValueAsBytes(corruptedCrc))
-          assert(ChecksumReader.tryReadChecksumFile(engine, FileStatus.of(crcPath.toString))
-            .get().getTableSizeBytes === 999999L)
+    Seq("Manual Update", "COPY INTO", "UNSET TBLPROPERTIES", "UNKNOWN OPERATION", "", null)
+      .foreach { operation =>
+        withClue(s"unsupported operation ${Option(operation)}: ") {
+          withTempDirAndMetricsEngine { (path, engine) =>
+            // GIVEN: a readable base CRC with corrupted aggregate counters.
+            writeCommitWithOperation(path, 0, "CREATE TABLE", operationTestActions0: _*)
+            Table.forPath(engine, path).checksum(engine, 0)
+            val crcPath = Paths.get(path, "_delta_log", f"${0L}%020d.crc")
+            val corruptedCrc = OBJ_MAPPER.readTree(Files.readAllBytes(crcPath))
+              .asInstanceOf[ObjectNode]
+            corruptedCrc.put("tableSizeBytes", 999999L)
+            corruptedCrc.put("numDeletedRecordsOpt", 999L)
+            corruptedCrc.put("numDeletionVectorsOpt", 999L)
+            engine.getFileSystemClient.delete(crcPath.toString)
+            Files.write(crcPath, OBJ_MAPPER.writeValueAsBytes(corruptedCrc))
+            assert(ChecksumReader.tryReadChecksumFile(engine, FileStatus.of(crcPath.toString))
+              .get().getTableSizeBytes === 999999L)
 
-          // WHEN: an unsupported operation appears after the base CRC.
-          writeCommitWithOperation(path, 1, operation, operationTestActions1: _*)
-          writeCommitWithOperation(path, 2, "WRITE", operationTestActions2: _*)
-          val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 2)
-          snapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
+            // WHEN: an unsupported operation appears after the base CRC.
+            writeCommitWithOperation(path, 1, operation, operationTestActions1: _*)
+            writeCommitWithOperation(path, 2, "WRITE", operationTestActions2: _*)
+            val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 2)
+            snapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
 
-          // THEN: full log replay recovers the correct CRC without using the corrupted counters.
-          val writtenCrc = ChecksumReader.tryReadChecksumFile(
-            engine,
-            FileStatus.of(Paths.get(path, "_delta_log", f"${2L}%020d.crc").toString)).get()
-          assert(writtenCrc === expectedCrc)
+            // THEN: full log replay recovers the correct CRC without using the corrupted counters.
+            val writtenCrc = ChecksumReader.tryReadChecksumFile(
+              engine,
+              FileStatus.of(Paths.get(path, "_delta_log", f"${2L}%020d.crc").toString)).get()
+            assert(writtenCrc === expectedCrc)
+          }
         }
       }
-    }
   }
 
   test("test checksum -- no checksum, with checkpoint") {

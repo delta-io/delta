@@ -110,7 +110,6 @@ public class ChecksumUtils {
                   "UPDATE SCHEMA",
                   "REMOVE COLUMN MAPPING",
                   "SET TBLPROPERTIES",
-                  "UNSET TBLPROPERTIES",
                   "ADD CONSTRAINT",
                   "DROP CONSTRAINT",
                   "UPGRADE PROTOCOL",
