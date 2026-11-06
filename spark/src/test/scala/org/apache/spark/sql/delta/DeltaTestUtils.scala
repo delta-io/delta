@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.{BufferedReader, File, InputStreamReader}
 import java.nio.charset.StandardCharsets.UTF_8
+import java.time.{LocalDate, LocalTime, ZoneId}
 import java.util.{Locale, TimeZone}
 import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 
@@ -741,6 +742,18 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
       TimeZone.setDefault(currentDefault)
     }
   }
+
+  /**
+   * Returns the epoch millis of 12:00 in the JVM default time zone, `days` days before today.
+   *
+   * Use it as the start of commit timestamps that a test writes as wall-clock strings without
+   * a UTC offset, such as `@yyyyMMddHHmmssSSS` or `TIMESTAMP AS OF '...'`. When clocks go back,
+   * one wall-clock time matches two instants, so a moving "now minus N days" start can make the
+   * string resolve to the wrong commit. Clock changes happen at night, far from noon.
+   */
+  def noonDaysAgo(days: Int): Long =
+    LocalDate.now().minusDays(days).atTime(LocalTime.NOON)
+      .atZone(ZoneId.systemDefault()).toInstant.toEpochMilli
 }
 
 trait DeltaTestUtilsForTempViews
