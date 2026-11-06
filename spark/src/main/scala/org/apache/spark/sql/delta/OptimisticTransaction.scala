@@ -991,8 +991,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
    *   configurations is finalized.
    */
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
-    assert(CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration).isEmpty,
-      "Command-specified Coordinated Commits configurations should have been blocked earlier.")
     assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
       "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
     // Extract any existing ucTableId from the snapshot metadata.
