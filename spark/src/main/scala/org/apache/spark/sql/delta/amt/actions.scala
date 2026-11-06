@@ -20,6 +20,7 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.core.JsonParser
@@ -48,6 +49,8 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  * @param record_count Rows in the file, or rows the manifest summarizes (for pointers).
  * @param file_size_in_bytes On-disk size of `location` in bytes.
  * @param content_stats Column-level statistics for the file.
+ * @param tight_stats Whether `content_stats` are exact for the file's live rows; absent means not
+ *                    tight. AMT always sets it, as `false` for now.
  * @param manifest_info Manifest stats plus inline DV; set iff content_type is DATA_MANIFEST.
  * @param key_metadata Encryption key metadata for the file, if encrypted.
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
@@ -69,6 +72,7 @@ case class AMTSingleAction(
     record_count: Long,                         // ID: 103, required.
     file_size_in_bytes: Long,                   // ID: 104, required.
     content_stats: Option[String],              // ID: 146, optional.
+    tight_stats: Option[Boolean],               // ID: 151, optional.
     manifest_info: Option[ManifestInfo],        // ID: 150, required for DATA_MANIFEST.
     key_metadata: Option[Array[Byte]],          // ID: 131, optional.
     split_offsets: Option[Seq[Long]],           // ID: 132, optional.
@@ -94,6 +98,7 @@ case class AMTSingleAction(
         spec_id = spec_id,
         sort_order_id = sort_order_id,
         content_stats = content_stats,
+        tight_stats = tight_stats,
         key_metadata = key_metadata,
         split_offsets = split_offsets,
         tags = tags)
@@ -108,6 +113,7 @@ case class AMTSingleAction(
         partition = partition,
         spec_id = spec_id,
         content_stats = content_stats,
+        tight_stats = tight_stats,
         key_metadata = key_metadata,
         split_offsets = split_offsets)
     case other =>
@@ -226,6 +232,7 @@ object AMTSingleAction {
     required(103L, "record_count"),
     required(104L, "file_size_in_bytes"),
     optional(146L, "content_stats"),
+    optional(151L, "tight_stats"),
     optional(150L, "manifest_info"),
     optional(131L, "key_metadata"),
     optional(132L, "split_offsets"),
@@ -438,6 +445,8 @@ sealed trait AMTAction {
  * @param spec_id Id of the partition spec the file was written under.
  * @param sort_order_id Id of the sort order the file was written with.
  * @param content_stats Column-level statistics for the file.
+ * @param tight_stats Whether `content_stats` are exact for the file's live rows; absent means not
+ *                    tight. AMT always sets it, as `false` for now.
  * @param key_metadata Encryption key metadata for the file, if encrypted.
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
@@ -455,6 +464,7 @@ case class DataEntry(
     spec_id: Option[Int] = None,
     sort_order_id: Option[Int] = None,
     content_stats: Option[String] = None,
+    tight_stats: Option[Boolean] = Some(false),
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
     tags: Option[Map[String, String]] = None)
@@ -474,6 +484,7 @@ case class DataEntry(
     record_count = record_count,
     file_size_in_bytes = file_size_in_bytes,
     content_stats = content_stats,
+    tight_stats = tight_stats,
     manifest_info = None,
     key_metadata = key_metadata,
     split_offsets = split_offsets,
@@ -481,7 +492,7 @@ case class DataEntry(
 
   def toAddFile(tableRoot: Path): AddFile = {
     val dv = deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
-    val stats = AMTContentStats.toStatsJson(content_stats, record_count)
+    val stats = AMTContentStats.toStatsJson(content_stats, record_count, tight_stats)
     AddFile(
       // RFC-2396 encoding used by Delta.
       path = SparkPath.fromPathString(location).urlEncoded,
@@ -747,6 +758,8 @@ object AMTSnapshotId {
  * @param partition Partition values.
  * @param spec_id Id of the partition spec the manifest was written under.
  * @param content_stats Column-level statistics.
+ * @param tight_stats Whether `content_stats` are exact for the manifest's live rows; absent means
+ *                    not tight. AMT always sets it, as `false` for now.
  * @param key_metadata Encryption key metadata for the manifest, if encrypted.
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
@@ -762,7 +775,9 @@ case class DataManifestEntry(
     partition: Option[Map[String, String]] = None,
     spec_id: Option[Int] = None,
     content_stats: Option[String] = None,
+    tight_stats: Option[Boolean] = Some(false),
     key_metadata: Option[Array[Byte]] = None,
+    @JsonDeserialize(contentUsing = classOf[AMTSplitOffsetsDeserializer])
     split_offsets: Option[Seq[Long]] = None)
   extends AMTAction {
 
@@ -780,6 +795,7 @@ case class DataManifestEntry(
     record_count = record_count,
     file_size_in_bytes = file_size_in_bytes,
     content_stats = content_stats,
+    tight_stats = tight_stats,
     manifest_info = Some(manifest_info),
     key_metadata = key_metadata,
     split_offsets = split_offsets,
@@ -810,6 +826,15 @@ case class DataManifestEntry(
   @JsonIgnore
   def manifestDV: Option[(Array[Byte], Long)] =
     manifest_info.dv.map(dv => (dv, manifest_info.dvCardinality))
+
+  /**
+   * The bitmaps in `tracking.deleted_positions` and `tracking.replaced_positions`, if set. CDF
+   * reads the positions set in any of them.
+   */
+  @JsonIgnore
+  def changedPositionsBitmaps: Seq[ManifestBitmap] =
+    (tracking.deleted_positions.toSeq ++ tracking.replaced_positions)
+      .map(AMTUtils.deserializeMdv)
 }
 
 /**
@@ -828,10 +853,15 @@ case class DataManifestEntry(
  */
 case class Tracking(
     status: Int,                            // ID: 0, required.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     snapshot_id: Option[Long],              // ID: 1, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     modified_snapshot_id: Option[Long],     // ID: 5, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     sequence_number: Option[Long],          // ID: 3, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     file_sequence_number: Option[Long],     // ID: 4, optional.
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     first_row_id: Option[Long],             // ID: 142, optional.
     deleted_positions: Option[Array[Byte]], // ID: 6, optional (bitmap).
     replaced_positions: Option[Array[Byte]] // ID: 7, optional (bitmap).
@@ -891,6 +921,12 @@ object Tracking {
      * REPLACED), for both entry kinds.
      */
     val tombstoneEntryStatuses: Set[Int] = all -- liveEntryStatuses
+
+    /**
+     * Statuses that represent a data change made by the commit that produced the tree.
+     * Used for CDF reconstruction.
+     */
+    val changeEntryStatuses: Set[Int] = Set(Added, Modified, Deleted, Replaced)
 
     /** The spec name of a `status` code, for error messages. */
     def nameOf(status: Int): String = status match {
@@ -1127,4 +1163,7 @@ case class ManifestInfo(
    */
   @JsonIgnore
   def dvCardinality: Long = dv.map(AMTUtils.deserializeMdv(_).cardinality).getOrElse(0L)
+
+  /** All file entries, live and tombstone. */
+  def totalFilesCount: Long = liveFilesCount.toLong + tombstoneFilesCount
 }

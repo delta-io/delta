@@ -21,7 +21,7 @@ import scala.jdk.OptionConverters._
 
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
-import io.delta.spark.internal.v2.kernel.KernelContext
+import org.apache.spark.sql.delta.v2.kernel.KernelContext
 
 import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, RemoveFile, SingleAction}

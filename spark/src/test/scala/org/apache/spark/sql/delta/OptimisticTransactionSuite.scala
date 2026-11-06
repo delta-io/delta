@@ -250,10 +250,12 @@ class OptimisticTransactionSuite
     ),
     concurrentWrites = Seq(
       Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))),
+        featuresToExclude =
+          Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features)),
     actions = Seq(
       Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))))
+        featuresToExclude =
+          Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features)))
 
   check(
     "taint whole table",
@@ -1116,7 +1118,8 @@ class OptimisticTransactionSuite
         .add("part", "string")
       deltaLog.withNewTransaction { txn =>
         val protocol = Action.supportedProtocolVersion(
-          featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))
+          featuresToExclude =
+            Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features)
         val metadata = Metadata(
           schemaString = schema.json,
           partitionColumns = partitionColumns)

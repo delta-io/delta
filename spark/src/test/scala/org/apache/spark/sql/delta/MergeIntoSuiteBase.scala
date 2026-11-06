@@ -430,7 +430,7 @@ trait MergeIntoSuiteBaseMixin
       mergeClauses: MergeClause*)(
       result: Seq[(Int, Int)]): Unit = {
     Seq(true, false).foreach { isPartitioned =>
-      test(s"$namePrefix - $name - isPartitioned: $isPartitioned ") {
+      test(s"$namePrefix - $name - isPartitioned: $isPartitioned") {
         withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
           withConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
             executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
@@ -2253,7 +2253,7 @@ trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
 
   // complex merge condition = has target-only and source-only predicates
   testExtendedMerge(
-    "conditional update + conditional delete + conditional insert + complex merge condition ")(
+    "conditional update + conditional delete + conditional insert + complex merge condition")(
     source = (-1, -10) :: (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: (5, 50) :: Nil,
     target = (-1, -1) :: (1, 1) :: (2, 2) :: (3, 3) :: (5, 5) :: Nil,
     mergeOn = "s.key = t.key AND t.value > 0 AND s.key < 5",
@@ -2974,7 +2974,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
     Seq(true, false).foreach { matchedOnlyEnabled =>
       Seq(true, false).foreach { isPartitioned =>
         val s = if (matchedOnlyEnabled) "enabled" else "disabled"
-        test(s"matched only merge - $s - $name - isPartitioned: $isPartitioned ") {
+        test(s"matched only merge - $s - $name - isPartitioned: $isPartitioned") {
           withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
             withConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> s"$matchedOnlyEnabled") {
               executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)

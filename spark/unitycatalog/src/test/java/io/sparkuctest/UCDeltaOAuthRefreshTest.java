@@ -17,7 +17,17 @@
 package io.sparkuctest;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.sparkuctest.mock.MockOAuthBroker;
+import io.unitycatalog.client.ApiClient;
+import io.unitycatalog.client.ApiException;
+import io.unitycatalog.client.api.CatalogsApi;
+import io.unitycatalog.client.api.GrantsApi;
+import io.unitycatalog.client.model.PermissionsChange;
+import io.unitycatalog.client.model.Privilege;
+import io.unitycatalog.client.model.SecurableType;
+import io.unitycatalog.client.model.UpdatePermissions;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledIf;
@@ -79,5 +89,24 @@ public class UCDeltaOAuthRefreshTest extends UCDeltaTableIntegrationBaseTest {
     assertThat(after)
         .as("token re-issued across later operations (renewal exercised)")
         .isGreaterThan(afterFirstOp[0]);
+
+    // The OAuth user can use its catalog, but it must not have admin access to metastore grants.
+    ApiClient client = unityCatalogInfo().createApiClient();
+    assertThat(new CatalogsApi(client).getCatalog(unityCatalogInfo().catalogName()).getOwner())
+        .isEqualTo(MockOAuthBroker.SUBJECT);
+    UpdatePermissions grantRequest =
+        new UpdatePermissions()
+            .addChangesItem(
+                new PermissionsChange()
+                    .principal(MockOAuthBroker.SUBJECT)
+                    .add(List.of(Privilege.CREATE_CATALOG)));
+    assertThatThrownBy(
+            () -> new GrantsApi(client).update(SecurableType.METASTORE, "metastore", grantRequest))
+        .isInstanceOfSatisfying(
+            ApiException.class,
+            error -> {
+              assertThat(error.getCode()).isEqualTo(403);
+              assertThat(error.getResponseBody()).contains("PERMISSION_DENIED", "Access denied.");
+            });
   }
 }

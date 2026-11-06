@@ -62,7 +62,7 @@ trait BaseAMTActionsProvider {
  */
 class BaseSnapshotActionsProvider(
     snapshot: Snapshot) extends BaseAMTActionsProvider {
-  require(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider],
+  require(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProviderBase],
     "A snapshot-backed AMT base must not already have an AMT checkpoint.")
   require(snapshot.numOfFiles == 0,
     "The snapshot-backed AMT actions provider currently requires an empty snapshot.")

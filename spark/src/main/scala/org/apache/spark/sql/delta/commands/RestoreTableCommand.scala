@@ -187,7 +187,11 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
         val filesToAdd = normalizedSource
           .join(normalizedTarget, joinExprs, "left_anti")
           .select(column("srcAddFile").as[AddFile])
-          .map(_.copy(dataChange = true, snapshotId = None, modifiedSnapshotId = None))
+          .map(_.copy(
+            dataChange = true,
+            backReference = None,
+            snapshotId = None,
+            modifiedSnapshotId = None))
 
         val filesToRemove = normalizedTarget
           .join(normalizedSource, joinExprs, "left_anti")

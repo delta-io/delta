@@ -343,12 +343,13 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
   }
 }
 
-case class AdaptiveMetadataPreDowngradeCommand(table: DeltaTableV2)
+/** Drops the AMT table feature `feature` from `table`. */
+case class AdaptiveMetadataPreDowngradeCommand(table: DeltaTableV2, feature: TableFeature)
   extends PreDowngradeTableFeatureCommand {
 
   override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     throw new UnsupportedOperationException(
-      s"Dropping the ${AdaptiveMetadataTableFeature.name} table feature is not yet supported.")
+      s"Dropping the ${feature.name} table feature is not yet supported.")
   }
 }
 

@@ -680,12 +680,13 @@ public class TransactionImpl implements Transaction {
   private void incrementMetricsForFileActionRow(TransactionMetrics txnMetrics, Row fileActionRow) {
     txnMetrics.totalActionsCounter.increment();
     if (!fileActionRow.isNullAt(ADD_FILE_ORDINAL)) {
-      txnMetrics.updateForAddFile(new AddFile(fileActionRow.getStruct(ADD_FILE_ORDINAL)).getSize());
+      AddFile addFile = new AddFile(fileActionRow.getStruct(ADD_FILE_ORDINAL));
+      txnMetrics.updateForAddFile(addFile.getSize(), addFile.getDeletionVector());
     } else if (!fileActionRow.isNullAt(REMOVE_FILE_ORDINAL)) {
       RemoveFile removeFile = new RemoveFile(fileActionRow.getStruct(REMOVE_FILE_ORDINAL));
       long removeFileSize =
           removeFile.getSize().orElseThrow(DeltaErrorsInternal::missingRemoveFileSizeDuringCommit);
-      txnMetrics.updateForRemoveFile(removeFileSize);
+      txnMetrics.updateForRemoveFile(removeFileSize, removeFile.getDeletionVector());
     }
   }
 
@@ -873,6 +874,11 @@ public class TransactionImpl implements Transaction {
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
+    // TODO(#8026): Use the incremental operation allowlist for SIMPLE CRCs.
+    Optional<Long> numDeletedRecords =
+        updatedDvMetric(CRCInfo::getNumDeletedRecords, metricsResult.getNumDeletedRecordsDelta());
+    Optional<Long> numDeletionVectors =
+        updatedDvMetric(CRCInfo::getNumDeletionVectors, metricsResult.getNumDeletionVectorsDelta());
     if (isCreateOrReplace) {
       // We don't need to worry about conflicting transaction here since new tables always commit
       // metadata (and thus fail any conflicts)
@@ -887,7 +893,12 @@ public class TransactionImpl implements Transaction {
               domainMetadataState.getPostCommitDomainMetadatas(),
               metricsResult
                   .getTableFileSizeHistogram()
-                  .map(FileSizeHistogram::fromFileSizeHistogramResult)));
+                  .map(FileSizeHistogram::fromFileSizeHistogramResult),
+              Optional.empty(), // inCommitTimestamp
+              Optional.empty(), // setTransactions
+              numDeletedRecords,
+              numDeletionVectors,
+              Optional.empty())); // allFiles
     }
 
     return currentCrcInfo
@@ -909,7 +920,25 @@ public class TransactionImpl implements Transaction {
                     domainMetadataState.getPostCommitDomainMetadatas(),
                     metricsResult
                         .getTableFileSizeHistogram()
-                        .map(FileSizeHistogram::fromFileSizeHistogramResult)));
+                        .map(FileSizeHistogram::fromFileSizeHistogramResult),
+                    Optional.empty(), // inCommitTimestamp
+                    Optional.empty(), // setTransactions
+                    numDeletedRecords,
+                    numDeletionVectors,
+                    Optional.empty())); // allFiles
+  }
+
+  private Optional<Long> updatedDvMetric(Function<CRCInfo, Optional<Long>> getter, long delta) {
+    if (!protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)) {
+      return Optional.empty();
+    }
+    boolean isCreate = !readSnapshotOpt.isPresent();
+    if (isCreate && !DELETION_VECTORS_CREATION_ENABLED.fromMetadata(metadata)) {
+      return Optional.empty();
+    }
+    // Only new tables start from zero; existing tables need the metric from the previous CRC.
+    Optional<Long> baseValue = isCreate ? Optional.of(0L) : currentCrcInfo.flatMap(getter);
+    return baseValue.map(value -> value + delta);
   }
 
   private TransactionReport recordTransactionReport(

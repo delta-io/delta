@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta.concurrency
 
+import java.sql.Timestamp
+
+import org.apache.spark.sql.delta.ChecksDeltaInternals
 import org.apache.spark.sql.delta.commands.InsertReplaceOnOrUsingAPIOrigin
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -26,6 +29,77 @@ class DeltaInsertReplaceOnOrUsingMaterializationWithoutParallelConcurrencySuite
   extends DeltaInsertReplaceOnOrUsingConcurrencyTestUtils {
 
   import InsertReplaceOnOrUsingAPIOrigin._
+  import testImplicits._
+
+  for {
+    replaceClause <- Seq("ON", "USING")
+    pinStatementTime <- Seq(false, true)
+    materializeSource <- Seq("auto", "all", "none")
+  } {
+    test(s"INSERT REPLACE $replaceClause retains its source clock during a concurrent append, " +
+        s"pinStatementTime=$pinStatementTime, materializeSource=$materializeSource",
+      ChecksDeltaInternals("uses DELETE/INSERT phase barriers")) {
+      withSQLConf(
+          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key ->
+            pinStatementTime.toString,
+          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE.key -> materializeSource) {
+        withTable("source", "target") {
+          // - Duplicate id=1 rows verify replacement preserves source multiplicity.
+          // - Append id=3 after DELETE, once the source snapshot has been captured.
+          // - The target keeps its id=3 row; only the source table sees the concurrent append.
+          // - Pinning or forced materialization keeps the source clock before DELETE.
+          //   Otherwise, INSERT folds it afterward.
+          val targetTime = Timestamp.valueOf("2020-01-01 00:00:00")
+          createTable("target", Seq("id int", "eventTime timestamp", "rowOrigin string"))
+          insertValues("target", Seq(
+            "(1, TIMESTAMP'2020-01-01 00:00:00', 'target-1')",
+            "(1, TIMESTAMP'2020-01-01 00:00:00', 'target-duplicate')",
+            "(2, TIMESTAMP'2020-01-01 00:00:00', 'target-2')",
+            "(3, TIMESTAMP'2020-01-01 00:00:00', 'target-3')"))
+          createTable("source", Seq("id int", "rowOrigin string"))
+          insertValues("source", Seq(
+            "(1, 'source-1')", "(1, 'source-duplicate')", "(2, 'source-2')"))
+          val context = createObserverCtx("replace-statement-time-executor") {
+            val sourceQuery =
+              "SELECT id, current_timestamp() AS eventTime, rowOrigin FROM source"
+            if (replaceClause == "ON") {
+              executeReplaceOn(DFv1Save, "target", "t.id = s.id", sourceQuery)
+            } else {
+              executeReplaceUsing(DFv1Save, "target", Seq("id"), sourceQuery)
+            }
+          }
+          runWithObserver(context) { controller =>
+            controller.runDelete()
+            insertValues("source", Seq("(3, 'concurrent-source')"))
+            val deleteCompletedAt = sql("SELECT current_timestamp()").as[Timestamp].head()
+            controller.runInsert()
+            controller.runToCompletion()
+
+            val sourceTimes = sql(
+              "SELECT DISTINCT eventTime FROM target WHERE rowOrigin LIKE 'source%'")
+              .as[Timestamp].collect()
+            assert(sourceTimes.length === 1)
+            val sourceEventTime = sourceTimes.head
+            val expectTimeBeforeDelete =
+              pinStatementTime || materializeSource == "all"
+            assert(
+              if (expectTimeBeforeDelete) sourceEventTime.compareTo(deleteCompletedAt) < 0
+              else sourceEventTime.compareTo(deleteCompletedAt) > 0,
+              s"pinStatementTime=$pinStatementTime, materializeSource=$materializeSource, " +
+                s"sourceEventTime=$sourceEventTime, deleteCompletedAt=$deleteCompletedAt")
+            checkAnswer(sql("SELECT * FROM target"), Seq(
+              Row(1, sourceEventTime, "source-1"),
+              Row(1, sourceEventTime, "source-duplicate"),
+              Row(2, sourceEventTime, "source-2"),
+              Row(3, targetTime, "target-3")))
+          }
+          checkAnswer(sql("SELECT * FROM source"), Seq(
+            Row(1, "source-1"), Row(1, "source-duplicate"), Row(2, "source-2"),
+            Row(3, "concurrent-source")))
+        }
+      }
+    }
+  }
 
   // In non-parallel mode, delete is always before insert.
   for (replaceOnAPI <- InsertReplaceOnOrUsingAPIOrigin.values) {

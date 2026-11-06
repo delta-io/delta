@@ -134,11 +134,11 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
         }
         assert(error.getMessage.contains("nonCompactedDeltas are absent in an AMT log segment"))
       }
-      val events = filterUsageRecords(
-        usageRecords, s"delta.assertions.${AMTUsageLogs.ALERT_MISSING_NON_COMPACTED_DELTAS}")
+      val events = filterUsageRecords(usageRecords,
+        s"delta.assertions.${AMTUsageLogs.INCREMENTAL_LOG_SELECTION_MISSING_NON_COMPACTED_DELTAS}")
       assert(events.size == 1)
       val eventData = JsonUtils.fromJson[Map[String, Any]](events.head.blob)
-      assert(eventData("logSegmentVersion") == 9L)
+      assert(eventData("preCommitLogSegmentVersion") == 9L)
       assert(eventData("oldAMTVersion") == 4L)
     }
   }
