@@ -22,8 +22,8 @@ import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.DeltaHistoryManager
 import io.delta.kernel.internal.SnapshotImpl
-import io.delta.spark.internal.v2.exception.VersionNotFoundException
-import io.delta.spark.internal.v2.kernel.KernelContext
+import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
+import org.apache.spark.sql.delta.v2.kernel.KernelContext
 
 import org.apache.spark.sql.delta.Snapshot
 

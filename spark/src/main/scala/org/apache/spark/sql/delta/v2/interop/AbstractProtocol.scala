@@ -19,9 +19,9 @@ package org.apache.spark.sql.delta.v2.interop
 import org.apache.spark.sql.delta.TableFeature
 
 /**
- * Abstract trait for protocol actions in Delta. This trait provides a common
- * abstraction that can be implemented by both Spark's V1 Protocol and Kernel's Protocol
- * in V2 connector. The V2 connector will implement adapters for reusing V1 utilities.
+ * Common interface for Delta protocol actions consumed by shared V1 utilities.
+ * V1 Protocol implements this trait directly. The V2 snapshot facade exposes V1 Protocol
+ * converted from Kernel protocol, allowing both connectors to reuse the same utilities.
  */
 trait AbstractProtocol {
 

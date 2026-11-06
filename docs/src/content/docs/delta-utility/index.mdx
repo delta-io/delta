@@ -289,6 +289,18 @@ The following table lists the map key definitions by operation.
 |  | p50FileSize | Median file size after the table was optimized. |
 |  | p75FileSize | Size of the 75th percentile file after the table was optimized. |
 |  | maxFileSize | Size of the largest file after the table was optimized. |
+|  | numDeletionVectorsRemoved | Number of deletion vectors removed because the files they were attached to were rewritten. |
+| REORG |  |  |
+|  | numAddedFiles | Number of files added. |
+|  | numRemovedFiles | Number of files rewritten. |
+|  | numAddedBytes | Number of bytes added. |
+|  | numRemovedBytes | Number of bytes removed. |
+|  | minFileSize | Size of the smallest file after the reorg. |
+|  | p25FileSize | Size of the 25th percentile file after the reorg. |
+|  | p50FileSize | Median file size after the reorg. |
+|  | p75FileSize | Size of the 75th percentile file after the reorg. |
+|  | maxFileSize | Size of the largest file after the reorg. |
+|  | numDeletionVectorsRemoved | Number of deletion vectors purged. Equal to the number of rewritten files that carried a deletion vector. |
 | VACUUM |  |  |
 |  | numDeletedFiles | Number of deleted files. |
 |  | numVacuumedDirectories | Number of vacuumed directories. |

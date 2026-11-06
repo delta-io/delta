@@ -33,7 +33,7 @@ class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
       val deltaLog = deltaLogForName(tableName)
       val snapshot = deltaLog.update()
       assert(snapshot.numOfFiles === 0L)
-      assert(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider])
+      assert(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProviderBase])
 
       val baseProvider = new BaseSnapshotActionsProvider(snapshot)
       val base = baseProvider.load()
@@ -85,7 +85,7 @@ class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
       val deltaLog = deltaLogForName(tableName)
       deltaLog.startTransaction().commit(Seq(fakeAdd(1)), writeOperation)
       val snapshot = deltaLog.update()
-      assert(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider])
+      assert(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProviderBase])
       assert(snapshot.numOfFiles === 1L)
 
       val error = intercept[IllegalArgumentException] {
@@ -103,7 +103,7 @@ class AMTIncrementalWriteCoreSuite extends AMTIncrementalWriteTestBase {
       commitCheckpoint(deltaLog, incremental = false)
       val snapshot = deltaLog.update()
       assert(snapshot.numOfFiles === 0L)
-      assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider])
+      assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProviderBase])
 
       val error = intercept[IllegalArgumentException] {
         new BaseSnapshotActionsProvider(snapshot)
