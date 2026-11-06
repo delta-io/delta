@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
@@ -426,18 +427,9 @@ object TableFeature {
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency)
     }
-    val adaptiveMetadataFeatureEnabled =
-      try {
-        SparkSession
-          .getActiveSession
-          .map(_.conf.get(DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED))
-          .getOrElse(false)
-      } catch {
-        case _ => false
-      }
-    if (adaptiveMetadataFeatureEnabled) {
-      features += AdaptiveMetadataTableFeature
-    }
+    // Both AMT features are always registered, so every client can read and write their tables;
+    // their SQL confs only gate creating them (see `AdaptiveMetadataTableFeatureBase`).
+    features ++= AdaptiveMetadataTableFeatureBase.features
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
@@ -952,11 +944,21 @@ object DeletionVectorsTableFeature
     DeletionVectorsPreDowngradeCommand(table)
 }
 
-object AdaptiveMetadataTableFeature
-  extends ReaderWriterFeature(name = "adaptiveMetadata-preview")
+/**
+ * The AMT (Adaptive Metadata Tree) table features: [[AdaptiveMetadataPreviewTableFeature]] is the
+ * private-preview feature, and [[AdaptiveMetadataTableFeature]] its successor. Both features enable
+ * AMT; a table has at most one of them. Both are always registered, so their tables stay readable
+ * and writable in every client, and a SQL conf per feature gates creating them (`creationConf`).
+ *
+ * [[AdaptiveMetadataTableFeature]] is named `adaptiveMetadata-dev` while what it adds, the
+ * `tightStats` stats flag (see `StatsTightness`), is in development, so that no client claims to
+ * support `adaptiveMetadata` before it is complete. It will be renamed to `adaptiveMetadata` then.
+ */
+sealed abstract class AdaptiveMetadataTableFeatureBase(name: String)
+  extends ReaderWriterFeature(name)
   with RemovableFeature {
 
-  // The [[AdaptiveMetadataTableFeature]] relies on the following features:
+  // The AMT features rely on the following features:
   //  - catalogManaged: adaptive metadata tables are catalog managed (CCv2) only.
   //  - rowTracking: stable row identity is required by the adaptive metadata layout.
   //  - domainMetadata: listed explicitly even though rowTracking already requires it.
@@ -971,12 +973,42 @@ object AdaptiveMetadataTableFeature
     DeletionVectorsTableFeature,
     ColumnMappingTableFeature)
 
+  // AMT stores its checkpoint in the checkpoint action, so none of these may be on the table.
+  def incompatibleFeatures: Set[TableFeature] = Set(V2CheckpointTableFeature)
+
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
-    AdaptiveMetadataPreDowngradeCommand(table)
+    AdaptiveMetadataPreDowngradeCommand(table, this)
 
   override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = true
 
   override def actionUsesFeature(action: Action): Boolean = false
+}
+
+object AdaptiveMetadataPreviewTableFeature
+  extends AdaptiveMetadataTableFeatureBase(name = "adaptiveMetadata-preview")
+
+object AdaptiveMetadataTableFeature
+  extends AdaptiveMetadataTableFeatureBase(name = "adaptiveMetadata-dev")
+
+object AdaptiveMetadataTableFeatureBase {
+  /** All AMT table features. */
+  val features: Seq[AdaptiveMetadataTableFeatureBase] =
+    Seq(AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature)
+
+  /** The AMT table feature `protocol` supports, if any; a table has at most one. */
+  def supportedBy(protocol: Protocol): Option[AdaptiveMetadataTableFeatureBase] =
+    features.find(protocol.isFeatureSupported)
+
+  /** The SQL conf that gates creating a table with the AMT table feature `feature`. */
+  def creationConf(feature: AdaptiveMetadataTableFeatureBase): ConfigEntry[Boolean] =
+    feature match {
+      case AdaptiveMetadataPreviewTableFeature =>
+        DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED
+      case AdaptiveMetadataTableFeature => DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_ENABLED
+    }
+
+  /** Whether `protocol` supports either AMT table feature. */
+  def isSupportedBy(protocol: Protocol): Boolean = supportedBy(protocol).isDefined
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
@@ -1527,7 +1559,7 @@ object CheckpointProtectionTableFeature
       catalogTableOpt: Option[CatalogTable],
       toVersion: Long): Boolean = {
     deltaLog
-      .getChangesIterator(
+      .getSingleCommitIterator(
         startVersion = 0,
         endVersion = toVersion,
         catalogTableOpt = catalogTableOpt,

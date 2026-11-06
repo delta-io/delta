@@ -49,7 +49,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{LongType, StructType}
 import org.apache.spark.types.variant.{Variant, VariantUtil}
 import org.apache.spark.unsafe.types.VariantVal
 
@@ -724,7 +724,7 @@ class CheckpointsSuite
     }
   }
 
-  test("non-AMT tables do not persist backReference or amtPassthrough in checkpoint or commit") {
+  test("non-AMT tables do not persist AMT-only AddFile fields") {
     withClassicCheckpointPolicyForCatalogOwned {
       withTempDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
@@ -735,7 +735,7 @@ class CheckpointsSuite
         deltaLog.checkpoint()
         val version = deltaLog.snapshot.version
 
-        // 1. The classic checkpoint parquet must carry neither backReference nor amtPassthrough.
+        // 1. The classic checkpoint parquet must not carry AMT-only AddFile fields.
         val checkpointFile =
           FileNames.checkpointFileSingular(deltaLog.logPath, version).toString
         val checkpointSchema = spark.read.format("parquet").load(checkpointFile).schema
@@ -749,8 +749,14 @@ class CheckpointsSuite
           s"checkpoint remove struct must not contain backReference, got: $removeFields")
         assert(!addFields.contains("amtPassthrough"),
           s"checkpoint add struct must not contain amtPassthrough, got: $addFields")
+        Seq("snapshotId", "modifiedSnapshotId").foreach { field =>
+          assert(!addFields.contains(field),
+            s"checkpoint add struct must not contain $field, got: $addFields")
+          assert(!removeFields.contains(field),
+            s"checkpoint remove struct must not contain $field, got: $removeFields")
+        }
 
-        // 2. No commit JSON should mention backReference or amtPassthrough.
+        // 2. No commit JSON should mention AMT-only fields.
         val commitProvider = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot)
         val hadoopConf = deltaLog.newDeltaHadoopConf()
         (0L to version).foreach { v =>
@@ -761,6 +767,10 @@ class CheckpointsSuite
           assert(!content.exists(_.contains("amtPassthrough")),
             s"commit JSON for version $v must not contain amtPassthrough: " +
               s"${content.mkString("\n")}")
+          Seq("snapshotId", "modifiedSnapshotId").foreach { field =>
+            assert(!content.exists(_.contains(field)),
+              s"commit JSON for version $v must not contain $field: ${content.mkString("\n")}")
+          }
         }
       }
     }
@@ -1092,14 +1102,19 @@ class CheckpointsSuite
 
     val actionsToWrite = Checkpoints
       .buildCheckpoint(actionsDS, snapshot)
-      // buildCheckpoint drops backReference (add/remove) and amtPassthrough (add only) from the
-      // on-disk shape, so we re-materialize them as null columns before .as[SingleAction].
+      // buildCheckpoint drops AMT-only fields from the on-disk shape, so re-materialize them as
+      // null columns before .as[SingleAction].
       .withColumn("add", when(col("add.path").isNotNull,
         col("add")
           .withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))
-          .withField("amtPassthrough", lit(null).cast(AMTPassthrough.STRUCT_TYPE))))
+          .withField("amtPassthrough", lit(null).cast(AMTPassthrough.STRUCT_TYPE))
+          .withField("snapshotId", lit(null).cast(LongType))
+          .withField("modifiedSnapshotId", lit(null).cast(LongType))))
       .withColumn("remove", when(col("remove.path").isNotNull,
-        col("remove").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
+        col("remove")
+          .withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))
+          .withField("snapshotId", lit(null).cast(LongType))
+          .withField("modifiedSnapshotId", lit(null).cast(LongType))))
       .as[SingleAction]
       .collect()
       .toSeq

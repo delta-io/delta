@@ -17,10 +17,15 @@ package io.delta.kernel.unitycatalog
 
 import java.util.Optional
 
+import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
+
+import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, VersionToLoadAfterLatestCommitException}
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
+import InMemoryUCClient.TableData
 import org.scalatest.funsuite.AnyFunSuite
 
 class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
@@ -35,16 +40,19 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       startVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
       startTimestampOpt: Optional[java.lang.Long] = emptyLongOpt,
       endVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
-      endTimestampOpt: Optional[java.lang.Long] = emptyLongOpt) = {
+      endTimestampOpt: Optional[java.lang.Long] = emptyLongOpt): CommitRange = {
     ucCatalogManagedClient.loadCommitRange(
       engine,
       ucTableId,
       tablePath,
       ucTableIdentifier,
-      startVersionOpt,
-      startTimestampOpt,
-      endVersionOpt,
-      endTimestampOpt)
+      new UCLoadCommitRangeOptions(
+        startVersionOpt,
+        startTimestampOpt,
+        endVersionOpt,
+        endTimestampOpt,
+        Optional.empty(),
+        Optional.empty()))
   }
 
   private def testLoadCommitRange(
@@ -74,6 +82,14 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
 
+    assertThrows[NullPointerException] {
+      ucCatalogManagedClient.loadCommitRange(
+        defaultEngine,
+        "testUcTableId",
+        "testUcTablePath",
+        new UCTableIdentifier("cat", "sch", "tbl"),
+        null)
+    }
     assertThrows[NullPointerException] {
       // engine is null
       loadCommitRange(ucCatalogManagedClient, engine = null)
@@ -105,6 +121,89 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
     assertThrows[NullPointerException] {
       // endTimestampOpt is null
       loadCommitRange(ucCatalogManagedClient, endTimestampOpt = null)
+    }
+    assertThrows[NullPointerException] {
+      new UCLoadCommitRangeOptions(
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt,
+        null,
+        Optional.empty())
+    }
+    assertThrows[NullPointerException] {
+      new UCLoadCommitRangeOptions(
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt,
+        Optional.empty(),
+        null)
+    }
+  }
+
+  for {
+    commitRangeValidationOpt <- Seq[Optional[java.lang.Boolean]](
+      Optional.empty(),
+      Optional.of(true),
+      Optional.of(false))
+    failOnDataLossOpt <- Seq[Optional[java.lang.Boolean]](
+      Optional.empty(),
+      Optional.of(true),
+      Optional.of(false))
+    endVersionOpt <- Seq(emptyLongOpt, Optional.of[java.lang.Long](2L))
+  } {
+    test(s"loadCommitRange with a missing commit: validation=$commitRangeValidationOpt, " +
+      s"failOnDataLoss=$failOnDataLossOpt, endVersion=$endVersionOpt") {
+      withUCClientAndTestTable { (fixtureClient, tablePath, maxRatifiedVersion) =>
+        // Keep published version 0 and catalog version 2, with version 1 missing between them.
+        val commits = fixtureClient.getTableDataElseThrow("testUcTableId").getCommits
+          .filter(_.getVersion != 1L)
+        val ucClient = new InMemoryUCClientWithMetrics("ucMetastoreId")
+        ucClient.insertTableData(
+          "testUcTableId",
+          new TableData(maxRatifiedVersion, ArrayBuffer(commits: _*)))
+        val client = new UCCatalogManagedClient(ucClient)
+
+        def loadRange(): CommitRange = client.loadCommitRange(
+          defaultEngine,
+          "testUcTableId",
+          tablePath,
+          new UCTableIdentifier("cat", "sch", "tbl"),
+          new UCLoadCommitRangeOptions(
+            Optional.of(0L),
+            emptyLongOpt,
+            endVersionOpt,
+            emptyLongOpt,
+            commitRangeValidationOpt,
+            failOnDataLossOpt))
+
+        if (commitRangeValidationOpt.orElse(true)) {
+          val ex = intercept[InvalidTableException](loadRange())
+          assert(ex.getMessage.contains("Missing delta files"))
+        } else {
+          val commitRange = loadRange()
+          assert(commitRange.getStartVersion == 0L)
+          assert(commitRange.getEndVersion == maxRatifiedVersion)
+          val iter = commitRange.getCommitFiles
+          try {
+            if (failOnDataLossOpt.orElse(true)) {
+              assert(iter.next().getVersion == 0L)
+              val ex = intercept[InvalidTableException](iter.hasNext)
+              assert(ex.getMessage.contains("Table version 1 is missing or unavailable"))
+            } else {
+              val commitFiles = iter.toInMemoryList.asScala
+              assert(commitFiles.map(_.getVersion) == Seq(0L, 2L))
+              assert(commitFiles.last.getFileStatus.getPath.contains("_staged_commits"))
+            }
+          } finally {
+            iter.close()
+          }
+          val ex = intercept[KernelException](commitRange.getActions(null, null, null))
+          assert(ex.getMessage.contains("Commit action iteration is not supported"))
+        }
+        assert(ucClient.getNumGetCommitCalls == 1)
+      }
     }
   }
 
@@ -162,33 +261,31 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       "Cannot provide a start timestamp greater than the end timestamp"))
   }
 
-  test("loadCommitRange throws if startVersion is greater than max ratified version") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    val ex = intercept[IllegalArgumentException] {
-      testLoadCommitRange(
-        expectedStartVersion = 0,
-        expectedEndVersion = 2,
-        startVersionOpt = Optional.of(9L))
+  Seq(3L, 9L).foreach { versionToLoad =>
+    test(s"loadCommitRange throws a typed exception for start version $versionToLoad above max") {
+      val ex = intercept[VersionToLoadAfterLatestCommitException] {
+        testLoadCommitRange(
+          expectedStartVersion = 0,
+          expectedEndVersion = 2,
+          startVersionOpt = Optional.of(versionToLoad))
+      }
+      assert(ex.getMessage ==
+        s"[testUcTableId] Cannot load commit range with start version $versionToLoad " +
+        "as the latest version ratified by UC is 2")
     }
-    assert(ex.getMessage.contains(
-      "Cannot load commit range with start version 9 as the latest version ratified by UC is 2"))
-  }
 
-  test("loadCommitRange throws if endVersion is greater than max ratified version") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    val ex = intercept[IllegalArgumentException] {
-      testLoadCommitRange(
-        expectedStartVersion = 0,
-        expectedEndVersion = 2,
-        startVersionOpt = Optional.of(0L),
-        endVersionOpt = Optional.of(9L))
+    test(s"loadCommitRange throws a typed exception for end version $versionToLoad above max") {
+      val ex = intercept[VersionToLoadAfterLatestCommitException] {
+        testLoadCommitRange(
+          expectedStartVersion = 0,
+          expectedEndVersion = 2,
+          startVersionOpt = Optional.of(0L),
+          endVersionOpt = Optional.of(versionToLoad))
+      }
+      assert(ex.getMessage ==
+        s"[testUcTableId] Cannot load commit range with end version $versionToLoad " +
+        "as the latest version ratified by UC is 2")
     }
-    assert(ex.getMessage.contains(
-      "Cannot load commit range with end version 9 as the latest version ratified by UC is 2"))
   }
 
   test("loadCommitRange throws when no start boundary is provided") {

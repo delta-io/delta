@@ -536,6 +536,213 @@ class DeltaDataFrameWriterV2Suite
 
   import testImplicits._
 
+  import org.apache.spark.sql.delta.sources.DeltaSQLConf.{
+    REPLACEWHERE_CONSTRAINT_CHECK_ENABLED,
+    REPLACEWHERE_DATACOLUMNS_ENABLED,
+    REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED
+  }
+
+  private object OverwriteApi extends Enumeration {
+    val SQL, DATAFRAME_WRITER_V2, REPLACE_WHERE_OPTION = Value
+  }
+
+  private def overwriteTable(
+      api: OverwriteApi.Value,
+      predicate: String,
+      replacement: Dataset[Row]): Unit = {
+    api match {
+      case OverwriteApi.SQL =>
+        withTempView("replacement") {
+          replacement.createOrReplaceTempView("replacement")
+          spark.sql(s"INSERT INTO table_name REPLACE WHERE $predicate SELECT * FROM replacement")
+        }
+      case OverwriteApi.DATAFRAME_WRITER_V2 =>
+        replacement.writeTo("table_name").overwrite(expr(predicate))
+      case OverwriteApi.REPLACE_WHERE_OPTION =>
+        replacement.write.format("delta").mode("overwrite")
+          .option("replaceWhere", predicate).saveAsTable("table_name")
+    }
+  }
+
+  private def withLiteralStringPredicateConf(enabled: Boolean)(f: => Unit): Unit = {
+    withSQLConf(
+        REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED.key -> enabled.toString,
+        "spark.databricks.delta.v2.enableMode" -> "NONE",
+        REPLACEWHERE_DATACOLUMNS_ENABLED.key -> "true",
+        REPLACEWHERE_CONSTRAINT_CHECK_ENABLED.key -> "true",
+        SQLConf.ESCAPED_STRING_LITERALS.key -> "false") {
+      f
+    }
+  }
+
+  for {
+    api <- OverwriteApi.values
+    enabled <- Seq(true, false)
+  } {
+    test(s"Overwrite: literal string predicates: startsWith percent ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          Seq((1, "%first"), (2, "%second"), (3, "plain"), (4, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "%first")).toDF("id", "value")
+
+          overwriteTable(api, "startswith(value, '%')", replacement)
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(3, "plain"), Row(4, null), Row(10, "%first")))
+          } else {
+            checkAnswer(spark.table("table_name"), Seq(Row(4, null), Row(10, "%first")))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: endsWith underscore ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          Seq((1, "first_"), (2, "second_"), (3, "plain"), (4, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "first_")).toDF("id", "value")
+
+          overwriteTable(api, "endswith(value, '_')", replacement)
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(3, "plain"), Row(4, null), Row(10, "first_")))
+          } else {
+            checkAnswer(spark.table("table_name"), Seq(Row(4, null), Row(10, "first_")))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: contains backslash ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          Seq((1, "a\\b"), (2, "c\\d"), (3, "plain"), (4, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "a\\b")).toDF("id", "value")
+          val predicate = """contains(value, r'\')"""
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            overwriteTable(api, predicate, replacement)
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(3, "plain"), Row(4, null), Row(10, "a\\b")))
+          } else {
+            val error = intercept[AnalysisException] {
+              overwriteTable(api, predicate, replacement)
+            }
+            assert(
+              error.getErrorClass.stripSuffix(".INVARIANT_VIOLATION") ==
+                "DELTA_REPLACE_WHERE_MISMATCH")
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(1, "a\\b"), Row(2, "c\\d"), Row(3, "plain"), Row(4, null)))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: contains percent ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          Seq((1, "%first"), (2, "second%"), (3, "plain"), (4, ""), (5, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "%new")).toDF("id", "value")
+
+          overwriteTable(api, "contains(value, '%')", replacement)
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(3, "plain"), Row(4, ""), Row(5, null), Row(10, "%new")))
+          } else {
+            checkAnswer(spark.table("table_name"), Seq(Row(5, null), Row(10, "%new")))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: mixed incoming rows ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          Seq((1, "%old"), (2, "plain"), (3, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "%new"), (11, "plain")).toDF("id", "value")
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            val path = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
+              .asInstanceOf[DeltaTableV2].path
+            val log = DeltaLog.forTable(spark, path)
+            val version = log.update().version
+            val error = intercept[AnalysisException] {
+              overwriteTable(api, "contains(value, '%')", replacement)
+            }
+            assert(
+              error.getErrorClass.stripSuffix(".INVARIANT_VIOLATION") ==
+                "DELTA_REPLACE_WHERE_MISMATCH")
+            assert(log.update().version == version)
+            checkAnswer(
+              spark.table("table_name"), Seq(Row(1, "%old"), Row(2, "plain"), Row(3, null)))
+          } else {
+            overwriteTable(api, "contains(value, '%')", replacement)
+            checkAnswer(
+              spark.table("table_name"), Seq(Row(3, null), Row(10, "%new"), Row(11, "plain")))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: brackets and braces ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          Seq((1, "[a]"), (2, "a{2}"), (3, "[a-c]"), (4, "[^a]"), (5, "^"), (6, "-"),
+            (20, "a"), (21, "aa"), (22, "b"), (23, "c"), (24, "plain"))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "[a]"), (11, "a{2}"), (12, "[a-c]"), (13, "[^a]"),
+            (14, "^"), (15, "-")).toDF("id", "value")
+          val predicate = "contains(value, '[a]') OR contains(value, 'a{2}') OR " +
+            "contains(value, '[a-c]') OR contains(value, '[^a]') OR " +
+            "contains(value, '^') OR contains(value, '-')"
+
+          overwriteTable(api, predicate, replacement)
+
+          checkAnswer(
+            spark.table("table_name"),
+            Seq(Row(10, "[a]"), Row(11, "a{2}"), Row(12, "[a-c]"), Row(13, "[^a]"),
+              Row(14, "^"), Row(15, "-"), Row(20, "a"), Row(21, "aa"), Row(22, "b"),
+              Row(23, "c"), Row(24, "plain")))
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: LIKE prefix wildcard ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          Seq((1, "alice"), (2, "a%b"), (3, "a_b"), (4, "a"), (5, "plain"), (6, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "anna")).toDF("id", "value")
+
+          overwriteTable(api, "value LIKE 'a%'", replacement)
+
+          checkAnswer(
+            spark.table("table_name"), Seq(Row(5, "plain"), Row(6, null), Row(10, "anna")))
+        }
+      }
+    }
+  }
+
   test("Append: basic append by path") {
     spark.sql(createTableSQL("table_name", "id bigint, data string"))
 

@@ -64,10 +64,20 @@ class InMemoryLogReplay(
   private lazy val firstBackReferences =
     new scala.collection.mutable.HashMap[UniqueFileActionTuple, BackReference]()
 
-  override def append(version: Long, actions: Iterator[Action]): Unit = {
-    assert(currentVersion == -1 || version == currentVersion + 1,
-      s"Attempted to replay version $version, but state is at $currentVersion")
-    currentVersion = version
+  override def append(version: Long, actions: Iterator[Action]): Unit =
+    append(version, version, actions)
+
+  /**
+   * Appends actions representing the inclusive commit range `[startVersion, endVersion]`.
+   * This provides clear semantics when replaying compacted deltas.
+   */
+  def append(startVersion: Long, endVersion: Long, actions: Iterator[Action]): Unit = {
+    val rangeStr = s"[$startVersion, $endVersion]"
+    require(startVersion <= endVersion, s"Attempted to replay invalid version range $rangeStr")
+    assert(currentVersion == -1 || startVersion == currentVersion + 1,
+      s"Attempted to replay version range $rangeStr, but state is at $currentVersion")
+    currentVersion = endVersion
+
     actions.foreach {
       case a: SetTransaction =>
         transactions(a.appId) = a

@@ -16,9 +16,11 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.FileStatus
 
 /**
@@ -28,9 +30,16 @@ import org.apache.hadoop.fs.FileStatus
  */
 class SingleCommit private (
     private val deltaLog: DeltaLog,
-    val version: Long,
+    override val version: Long,
     private val fileStatus: FileStatus
-) {
+) extends DeltaSingleCommit {
+  // Read the persisted ICT for this version, so commits before ICT enablement still use mtime.
+  override lazy val timestamp: Long = getActionsIterator().processAndClose { actions =>
+    actions.collectFirst { case commitInfo: CommitInfo => commitInfo }
+      .flatMap(_.inCommitTimestamp)
+      .getOrElse(fileModificationTimestamp)
+  }
+
   /**
    * Open a fresh iterator over all of this commit's actions.
    *
@@ -39,7 +48,7 @@ class SingleCommit private (
    *        Defaults to 0, i.e. always stream via `readAsIterator` -- callers that want the
    *        in-memory/rewind fast path opt in by passing a threshold.
    */
-  def getActionsIterator(
+  override def getActionsIterator(
       maxInMemoryFileSizeBytes: Long = 0): ClosableIterator[Action] with SupportsRewinding[Action] =
     SingleCommit.createRewindableActionIterator(deltaLog, fileStatus, maxInMemoryFileSizeBytes)
 
@@ -67,6 +76,72 @@ class SingleCommit private (
   }
 
   /**
+   * Get this commit's logical actions. For a manifest commit, actions are reconstructed from tree.
+   * AMT does not record a metadata-only re-add of an already-live file (e.g. a stats backfill),
+   * so such AddFiles in an inline AMT commit are omitted.
+   *
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions with
+   *                                    `dataChange = false`. See [[DeltaLog.getChanges]].
+   */
+  def getActions(skipNoDataChangeFileActions: Boolean = false): Seq[Action] = {
+    val actions = getActionsIterator().processAndClose(_.toList)
+    val commitInfoOpt = actions.collectFirst { case commitInfo: CommitInfo => commitInfo }
+    // Use AMT reconstruction only when inline AMT checkpoint exists.
+    val amtCheckpointOpt = actions.collectFirst {
+      case checkpoint: Checkpoint if checkpoint.contentRoot.version == version => checkpoint
+    }
+    amtCheckpointOpt match {
+      // Always take tree actions when present.
+      case Some(amtCheckpoint) =>
+        val commitInfo = commitInfoOpt.getOrElse {
+          throw new IllegalStateException(
+            s"Commit $version is an inline manifest commit but does not have a CommitInfo.")
+        }
+        actions.filter {
+          case _: AddFile | _: RemoveFile => false
+          case _ => true
+        } ++ reconstructAMTFileActions(amtCheckpoint, commitInfo, skipNoDataChangeFileActions)
+      // Trim no data change actions when skipNoDataChangeFileActions is set.
+      // AMT tree may be present in this commit, but it is never read.
+      case None if skipNoDataChangeFileActions =>
+        actions.filter {
+          case add: AddFile => add.dataChange
+          case remove: RemoveFile => remove.dataChange
+          case _ => true
+        }
+      // No AMT tree is present. Return all actions.
+      case None => actions
+    }
+  }
+
+  /**
+   * Reconstructs the AddFile and RemoveFile actions of this commit from the AMT that its inline
+   * `amtCheckpoint` describes, as of this version.
+   *
+   * @param commitInfo the commit's [[CommitInfo]], which records its `dataChange` and timestamp.
+   */
+  private def reconstructAMTFileActions(
+      amtCheckpoint: Checkpoint,
+      commitInfo: CommitInfo,
+      skipNoDataChangeFileActions: Boolean): Seq[FileAction] = {
+    val dataChange = commitInfo.dataChange.getOrElse {
+      throw new IllegalStateException(
+        s"Commit $version is an inline manifest commit but does not have a dataChange flag.")
+    }
+    if (skipNoDataChangeFileActions && !dataChange) {
+      // A commit that changed no data has no data-changing file actions, so skip its tree.
+      Seq.empty
+    } else {
+      val commitTimestamp = commitInfo.inCommitTimestamp.getOrElse {
+        throw new IllegalStateException(
+          s"Commit $version is an inline manifest commit but has no in-commit timestamp.")
+      }
+      AMTCheckpointProvider.fromCheckpoint(deltaLog, amtCheckpoint, version)
+        .reconstructFileActions(deltaLog, dataChange, commitTimestamp)
+    }
+  }
+
+  /**
    * The modification time of this commit's log file.
    */
   private[delta] def fileModificationTimestamp: Long = fileStatus.getModificationTime
@@ -79,13 +154,13 @@ class SingleCommit private (
 
 object SingleCommit {
   /**
-   * Wrap a commit's log file into a [[SingleCommit]] handle. The raw [[FileStatus]] stays hidden
-   * inside the handle so the log's physical layout is not exposed to callers.
+   * Wrap a commit's log file into a [[DeltaSingleCommit]] handle. The raw [[FileStatus]] stays
+   * hidden inside the handle so the log's physical layout is not exposed to callers.
    */
   private[delta] def apply(
       deltaLog: DeltaLog,
       version: Long,
-      fileStatus: FileStatus): SingleCommit =
+      fileStatus: FileStatus): DeltaSingleCommit =
     new SingleCommit(deltaLog, version, fileStatus)
 
   /**
@@ -124,5 +199,30 @@ object SingleCommit {
         delegatedIterator = createClosableIterator()
       }
     }
+  }
+}
+
+/**
+ * A commit reader paired with the inclusive version range its actions cover.
+ *
+ * Compacted files omit CommitInfo, so `commit.timestamp` is the compacted file's modification
+ * time, not the timestamp of any individual source commit. The reader is used only for actions;
+ * `commit.version` identifies the end of the range.
+ */
+private[delta] class RangedSingleCommit private (
+  val commit: DeltaSingleCommit,
+  val startVersion: Long,
+  val endVersion: Long)
+
+private[delta] object RangedSingleCommit {
+  def apply(deltaLog: DeltaLog, file: FileStatus): RangedSingleCommit = {
+    val (startVersion, endVersion) = file match {
+      case FileNames.CompactedDeltaFile(_, start, end) => (start, end)
+      case _ =>
+        val version = FileNames.deltaVersion(file)
+        (version, version)
+    }
+    val commit = SingleCommit(deltaLog, endVersion, file)
+    new RangedSingleCommit(commit, startVersion, endVersion)
   }
 }

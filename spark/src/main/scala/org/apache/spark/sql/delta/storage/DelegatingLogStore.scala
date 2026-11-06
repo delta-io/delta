@@ -212,11 +212,13 @@ object DelegatingLogStore {
   val defaultAzureLogStoreClassName = classOf[io.delta.storage.AzureLogStore].getName
   val defaultHDFSLogStoreClassName = classOf[io.delta.storage.HDFSLogStore].getName
   val defaultGCSLogStoreClassName = classOf[io.delta.storage.GCSLogStore].getName
+  val defaultGooseFSLogStoreClassName = classOf[io.delta.storage.GooseFSLogStore].getName
 
   // Supported schemes with default.
   val s3Schemes = Set("s3", "s3a", "s3n")
   val azureSchemes = Set("abfs", "abfss", "adl", "wasb", "wasbs")
   val gsSchemes = Set("gs")
+  val gfsSchemes = Set("gfs")
 
   // Returns the scheme-only default. getDelegate selects native S3 when capabilities permit.
   // None if we do not have a default for it.
@@ -227,6 +229,8 @@ object DelegatingLogStore {
       return Some(defaultAzureLogStoreClassName)
     } else if (DelegatingLogStore.gsSchemes(scheme: String)) {
       return Some(defaultGCSLogStoreClassName)
+    } else if (gfsSchemes.contains(scheme)) {
+      return Some(defaultGooseFSLogStoreClassName)
     }
     None
   }

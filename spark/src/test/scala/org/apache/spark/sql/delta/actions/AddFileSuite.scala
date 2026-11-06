@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.actions
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaRuntimeException}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.amt.AMTPassthrough
@@ -248,6 +249,39 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
               // Normalized partition values should be string literals of original values
               assert(normalized1("tsCol") == Literal("2000-01-01 12:00:00"))
               assert(normalized2("tsCol") == Literal("2000-01-01T12:00:00.000000Z"))
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (enableNormalization <- BOOLEAN_DOMAIN) {
+    test("normalizedPartitionValues logs unnormalized values once per table, " +
+      s"enableNormalization=$enableNormalization") {
+      withJvmTimeZone("UTC") {
+        withSQLConf(
+          DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key ->
+            enableNormalization.toString,
+          "spark.sql.session.timeZone" -> "UTC") {
+          withTempDir { firstTableDir =>
+            withTempDir { secondTableDir =>
+              val snapshots = Seq(firstTableDir, secondTableDir)
+                .map(tableDir => DeltaLog.forTable(spark, tableDir.getCanonicalPath).update())
+              val partitionSchema = StructType(Seq(StructField("tsCol", TimestampType)))
+              val unnormalizedFiles = Seq("2000-01-01 12:00:00", "2000-01-02 12:00:00")
+                .map(value => createAddFileWithPartitionValue(Map("tsCol" -> value)))
+
+              val usageRecords = Log4jUsageLogger.track {
+                for (snapshot <- snapshots; file <- unnormalizedFiles) {
+                  file.normalizedPartitionValues(spark, partitionSchema, snapshot)
+                }
+              }
+
+              val numUnnormalizedValuesEvents = usageRecords.count(_.tags.get("opType").contains(
+                "delta.normalizedPartitionValues.unnormalizedValuesExist"))
+              val expectedNumUnnormalizedValuesEvents = if (enableNormalization) 2 else 0
+              assert(numUnnormalizedValuesEvents === expectedNumUnnormalizedValuesEvents)
             }
           }
         }

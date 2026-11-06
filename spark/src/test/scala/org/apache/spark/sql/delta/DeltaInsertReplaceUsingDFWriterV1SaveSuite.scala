@@ -49,6 +49,29 @@ class DeltaInsertReplaceUsingDFWriterV1SaveSuite
     writer.save(target)
   }
 
+  for {
+    materializeSource <- Seq("auto", "all")
+    injectSourceMaterializationFailure <- Seq(false, true)
+  } {
+    test("replaceUsing matches current_timestamp source keys, " +
+        s"materializeSource=$materializeSource, " +
+        s"injectSourceMaterializationFailure=$injectSourceMaterializationFailure",
+      ChecksDeltaInternals("uses transaction and source-materialization observers")) {
+      for {
+        pinStatementTime <- Seq(false, true)
+      } {
+        withClue(s"pinStatementTime=$pinStatementTime: ") {
+          checkCurrentTimestampMatchingKey(
+              pinStatementTime,
+              materializeSource, injectSourceMaterializationFailure) { sourceQuery =>
+            val targetPath = sql("DESCRIBE DETAIL target").select("location").as[String].head()
+            writeReplaceUsingDF(sql(sourceQuery), targetPath, "eventTime,id")
+          }
+        }
+      }
+    }
+  }
+
   test("save with replaceUsing: inserts by name with misaligned column positions") {
     withTempDir { dir =>
       val path = dir.getAbsolutePath

@@ -258,7 +258,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         lastExpectedVersion, maxVersionSeen)
     }
     logInfo(log"Getting CDC dataFrame for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
       log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
@@ -292,7 +292,11 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
       deltaLog.getChanges(
-          startVersion, catalogTableOpt, options.failOnDataLoss).map { case (version, actions) =>
+          startVersion,
+          catalogTableOpt,
+          options.failOnDataLoss,
+          skipNoDataChangeFileActions = true)
+          .map { case (version, actions) =>
         // skipIndexedFile must be applied after creating IndexedFile so that
         // IndexedFile.index is consistent across all versions.
         val (fileActions, skipIndexedFile, metadataOpt, protocolOpt, commitInfoOpt) =
@@ -379,7 +383,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     }
 
     logInfo(log"Getting CDC file changes for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, fromIndex=" +
       log"${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} took timeMs=" +
@@ -457,7 +461,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           shouldSkipIndexedFile = CDCReader.shouldSkipFileActionsInCommit(commitInfo)
           commitInfoAction = Some(commitInfo)
           false
-        case _: AddCDCFile | _: SetTransaction | _: DomainMetadata =>
+        case _: AddCDCFile | _: SetTransaction | _: DomainMetadata | _: Checkpoint =>
           false
         case null => // Some crazy future feature. Ignore
           false
