@@ -25,6 +25,7 @@ import java.util.Collections;
 import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
 import org.apache.spark.sql.delta.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -44,7 +45,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
   public void unsafeVolatileSnapshotIsAtLeastAsNewAsActiveCommit(@TempDir File tempDir) {
     String path = createTable(tempDir, /* commits= */ 1);
     DeltaV2StreamingBackend backend =
-        new DeltaV2StreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
+        new DeltaV2StreamingBackend(
+            new PathBasedSnapshotManager(path, defaultKernelContext),
+            DeltaV2QueryContext$.MODULE$.empty());
     assertEquals(0L, backend.update().version());
 
     spark.range(1).write().format("delta").mode("append").save(path);
@@ -65,7 +68,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
   public void checkVersionExistsThrowsDeltaVersionNotFound(@TempDir File tempDir) {
     String path = createTable(tempDir, /* commits= */ 3);
     DeltaV2StreamingBackend backend =
-        new DeltaV2StreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
+        new DeltaV2StreamingBackend(
+            new PathBasedSnapshotManager(path, defaultKernelContext),
+            DeltaV2QueryContext$.MODULE$.empty());
 
     VersionNotFoundException e =
         assertThrows(
@@ -97,7 +102,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
                 + feature
                 + "\"]}}"));
     DeltaV2StreamingBackend backend =
-        new DeltaV2StreamingBackend(new PathBasedSnapshotManager(path, defaultKernelContext));
+        new DeltaV2StreamingBackend(
+            new PathBasedSnapshotManager(path, defaultKernelContext),
+            DeltaV2QueryContext$.MODULE$.empty());
 
     DeltaUnsupportedTableFeatureException e =
         assertThrows(

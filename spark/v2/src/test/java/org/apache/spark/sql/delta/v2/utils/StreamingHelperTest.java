@@ -55,6 +55,8 @@ import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.types.DataTypes;
@@ -459,7 +461,9 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   private DeltaV2SnapshotManager mockSnapshotManager(CloseableIterator<CommitActions> commits) {
     DeltaV2SnapshotManager manager = mock(DeltaV2SnapshotManager.class);
     CommitRange range = mock(CommitRange.class);
-    when(manager.getTableChanges(defaultEngine, 7L, Optional.of(7L))).thenReturn(range);
+    DeltaV2QueryContext emptyContext = DeltaV2QueryContext$.MODULE$.apply(Optional.empty());
+    when(manager.getTableChanges(defaultEngine, 7L, Optional.of(7L), emptyContext))
+        .thenReturn(range);
     when(range.getCommitActions(defaultEngine, Set.of(DeltaLogActionUtils.DeltaAction.PROTOCOL)))
         .thenReturn(commits);
     return manager;
@@ -471,7 +475,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     assertTrue(
         StreamingHelper.collectProtocolActions(
-                7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine)
+                7L,
+                Optional.of(7L),
+                mockSnapshotManager(commits),
+                defaultEngine,
+                DeltaV2QueryContext$.MODULE$.empty())
             .isEmpty());
 
     verify(commits).close();
@@ -495,7 +503,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
             RuntimeException.class,
             () ->
                 StreamingHelper.collectProtocolActions(
-                    7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine));
+                    7L,
+                    Optional.of(7L),
+                    mockSnapshotManager(commits),
+                    defaultEngine,
+                    DeltaV2QueryContext$.MODULE$.empty()));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
@@ -522,7 +534,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
             RuntimeException.class,
             () ->
                 StreamingHelper.collectProtocolActions(
-                    7L, Optional.of(7L), mockSnapshotManager(commits), defaultEngine));
+                    7L,
+                    Optional.of(7L),
+                    mockSnapshotManager(commits),
+                    defaultEngine,
+                    DeltaV2QueryContext$.MODULE$.empty()));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
@@ -570,7 +586,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActions(
-            startVersion, endVersionOpt, snapshotManager, defaultEngine);
+            startVersion,
+            endVersionOpt,
+            snapshotManager,
+            defaultEngine,
+            DeltaV2QueryContext$.MODULE$.empty());
 
     assertArrayEquals(expectedVersions.stream().sorted().toArray(), result.keySet().toArray());
   }
@@ -584,7 +604,12 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Metadata> result =
-        StreamingHelper.collectMetadataActions(0L, Optional.of(2L), snapshotManager, defaultEngine);
+        StreamingHelper.collectMetadataActions(
+            0L,
+            Optional.of(2L),
+            snapshotManager,
+            defaultEngine,
+            DeltaV2QueryContext$.MODULE$.empty());
 
     StructType expectedV0Schema =
         new StructType().add("id", DataTypes.IntegerType).add("name", DataTypes.StringType);
@@ -639,7 +664,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActions(
-            startVersion, endVersionOpt, snapshotManager, defaultEngine);
+            startVersion,
+            endVersionOpt,
+            snapshotManager,
+            defaultEngine,
+            DeltaV2QueryContext$.MODULE$.empty());
 
     assertArrayEquals(expectedVersions.stream().sorted().toArray(), result.keySet().toArray());
   }
@@ -653,7 +682,12 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
 
     Map<Long, Protocol> result =
-        StreamingHelper.collectProtocolActions(0L, Optional.of(2L), snapshotManager, defaultEngine);
+        StreamingHelper.collectProtocolActions(
+            0L,
+            Optional.of(2L),
+            snapshotManager,
+            defaultEngine,
+            DeltaV2QueryContext$.MODULE$.empty());
 
     // v0 default: reader=1, writer=2; v2 upgraded: reader=3, writer=7
     assertEquals(1, result.get(0L).minReaderVersion());

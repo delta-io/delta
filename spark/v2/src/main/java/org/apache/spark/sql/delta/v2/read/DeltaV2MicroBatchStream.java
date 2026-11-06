@@ -67,6 +67,7 @@ import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper;
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseOp;
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
@@ -105,6 +106,7 @@ class DeltaV2MicroBatchStream
 
   private final Engine engine;
   private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2QueryContext originalQueryContext;
 
   /** The Delta log operations that compute offsets. */
   private final DeltaStreamingBackend streamingBackend;
@@ -194,9 +196,12 @@ class DeltaV2MicroBatchStream
       Filter[] dataFilters,
       scala.collection.immutable.Map<String, String> scalaOptions,
       Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog,
-      String metadataPath) {
+      String metadataPath,
+      DeltaV2QueryContext originalQueryContext) {
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
-    this.streamingBackend = new DeltaV2StreamingBackend(snapshotManager);
+    this.originalQueryContext =
+        Objects.requireNonNull(originalQueryContext, "originalQueryContext is null");
+    this.streamingBackend = new DeltaV2StreamingBackend(snapshotManager, this.originalQueryContext);
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
     this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = KernelEngineFactory.createDefaultEngine(hadoopConf);
@@ -291,7 +296,8 @@ class DeltaV2MicroBatchStream
             metadataTrackingLog,
             readSnapshotDescriptor.metadata(),
             readSnapshotDescriptor.protocol(),
-            metadataPath);
+            metadataPath,
+            originalQueryContext);
     boolean shouldValidateSchemaOnRestart =
         (Boolean)
             spark
@@ -1061,7 +1067,8 @@ class DeltaV2MicroBatchStream
     for (int attempt = 1; attempt <= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS; attempt++) {
       try {
         commitRange =
-            snapshotManager.getTableChanges(engine, earliestVersionToFetch, endVersionOpt);
+            snapshotManager.getTableChanges(
+                engine, earliestVersionToFetch, endVersionOpt, originalQueryContext);
         break;
       } catch (io.delta.kernel.exceptions.StartVersionNotFoundException e) {
         if (options.failOnDataLoss()
@@ -1498,7 +1505,11 @@ class DeltaV2MicroBatchStream
         if (batchEndVersion != null) {
           for (Map.Entry<Long, Metadata> entry :
               StreamingHelper.collectMetadataActions(
-                      batchStartVersion, Optional.of(batchEndVersion), snapshotManager, engine)
+                      batchStartVersion,
+                      Optional.of(batchEndVersion),
+                      snapshotManager,
+                      engine,
+                      originalQueryContext)
                   .entrySet()) {
             long version = entry.getKey();
             Metadata metadata = entry.getValue();
