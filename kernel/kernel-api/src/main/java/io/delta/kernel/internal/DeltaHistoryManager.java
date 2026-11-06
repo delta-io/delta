@@ -180,7 +180,7 @@ public final class DeltaHistoryManager {
     // bound the earliest available version.
     Optional<Long> earliestRatifiedCommitVersion =
         catalogCommits.stream()
-            .filter(c -> !FileNames.isPublishedDeltaFile(c.getFileStatus().getPath()))
+            .filter(commit -> !FileNames.isPublishedDeltaFile(commit.getFileStatus().getPath()))
             .map(ParsedLogData::getVersion)
             .min(Long::compare);
 

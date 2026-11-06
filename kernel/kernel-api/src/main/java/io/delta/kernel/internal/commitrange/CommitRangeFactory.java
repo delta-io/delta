@@ -217,13 +217,15 @@ class CommitRangeFactory {
         getPublishedDeltasInVersionRange(engine, startVersion, listingEndVersionOpt);
 
     // Get ratified deltas between startVersion and listingEndVersionOpt
+    // Rely on the filesystem listing for leading published commits: metadata cleanup may have
+    // deleted their files even though the catalog still reports them.
     List<ParsedDeltaData> ratifiedDeltas =
-        dropLeadingPublishedDeltas(
+        dropLeadingPublishedCommits(
             ratifiedCommits.stream()
                 .filter(
-                    x ->
-                        x.getVersion() >= startVersion
-                            && x.getVersion() <= listingEndVersionOpt.orElse(Long.MAX_VALUE))
+                    commit ->
+                        commit.getVersion() >= startVersion
+                            && commit.getVersion() <= listingEndVersionOpt.orElse(Long.MAX_VALUE))
                 .collect(Collectors.toList()));
 
     // Validate the catalog/published relationship and, in strict mode, completeness.
@@ -237,13 +239,14 @@ class CommitRangeFactory {
    * those files, so the listing is authoritative for them. Published catalog commits after the
    * first staged one are kept, since ordered backfill guarantees they still exist.
    */
-  private static List<ParsedDeltaData> dropLeadingPublishedDeltas(List<ParsedDeltaData> deltas) {
+  private static List<ParsedDeltaData> dropLeadingPublishedCommits(
+      List<ParsedDeltaData> catalogCommits) {
     int firstStaged = 0;
-    while (firstStaged < deltas.size()
-        && FileNames.isPublishedDeltaFile(deltas.get(firstStaged).getFileStatus().getPath())) {
+    while (firstStaged < catalogCommits.size()
+        && FileNames.isPublishedDeltaFile(catalogCommits.get(firstStaged).getFileStatus().getPath())) {
       firstStaged++;
     }
-    return deltas.subList(firstStaged, deltas.size());
+    return catalogCommits.subList(firstStaged, catalogCommits.size());
   }
 
   /**
