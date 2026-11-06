@@ -99,7 +99,6 @@ public class ChecksumUtils {
                   "REPLACE TABLE",
                   "CREATE TABLE AS SELECT",
                   "REPLACE TABLE AS SELECT",
-                  "CREATE OR REPLACE TABLE",
                   "CREATE OR REPLACE TABLE AS SELECT",
                   "ADD COLUMNS",
                   "DROP COLUMNS",

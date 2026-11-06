@@ -716,7 +716,6 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       "REPLACE TABLE",
       "CREATE TABLE AS SELECT",
       "REPLACE TABLE AS SELECT",
-      "CREATE OR REPLACE TABLE",
       "CREATE OR REPLACE TABLE AS SELECT",
       "ADD COLUMNS",
       "DROP COLUMNS",
@@ -833,7 +832,14 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       45L,
       6L,
       Some(Seq(8, 9, 6, 7, 4, 5).map(operationTestFiles)))
-    Seq("Manual Update", "COPY INTO", "UNSET TBLPROPERTIES", "UNKNOWN OPERATION", "", null)
+    Seq(
+      "Manual Update",
+      "COPY INTO",
+      "UNSET TBLPROPERTIES",
+      "CREATE OR REPLACE TABLE",
+      "UNKNOWN OPERATION",
+      "",
+      null)
       .foreach { operation =>
         withClue(s"unsupported operation ${Option(operation)}: ") {
           withTempDirAndMetricsEngine { (path, engine) =>
