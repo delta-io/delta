@@ -395,6 +395,23 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
     }
   }
 
+  test("both implementations read the same root files for the incremental writer") {
+    withSyntheticTree("amt_add_file_root_read") { tree =>
+      val leaf = tree.writeLeaf(Seq(dataEntry("data/leaf.parquet", recordCount = 10L)))
+      val checkpoint = tree.checkpoint(Seq(
+        dataEntry("data/a.parquet", recordCount = 4L).wrap,
+        dataEntry("data/deleted.parquet", recordCount = 5L,
+          tracking = existingTracking().copy(status = Tracking.Status.Deleted)).wrap,
+        leafPointer(leaf).wrap))
+      val (perRow, columnar) = providers(tree.deltaLog, checkpoint, checkpoint.version)
+      Seq(perRow, columnar).foreach { provider =>
+        val rootFiles = provider.readLiveRootDataEntries(tree.deltaLog)
+        assertAddFiles(rootFiles.map(add => add.path -> add).toMap,
+          plainAddFile("data/a.parquet", numRecords = 4L))
+      }
+    }
+  }
+
   test("a root pointer without first_row_id is rejected") {
     withSyntheticTree("amt_add_file_pointer_without_row_id") { tree =>
       val leaf = tree.writeLeaf(Seq(dataEntry("data/a.parquet", recordCount = 10L)))
