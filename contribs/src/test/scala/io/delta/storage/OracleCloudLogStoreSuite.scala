@@ -16,11 +16,11 @@
 
 package io.delta.storage
 
-import org.apache.spark.sql.delta.{FakeFileSystem, LogStoreSuiteBase}
+import org.apache.spark.sql.delta.{FakeFileSystem, LogStoreSuiteBase, PublicLogStoreSuite}
 
-class OracleCloudLogStoreSuite extends LogStoreSuiteBase {
+class OracleCloudLogStoreSuite extends PublicLogStoreSuite {
 
-  override val logStoreClassName: String = classOf[OracleCloudLogStore].getName
+  override val publicLogStoreClassName: String = classOf[OracleCloudLogStore].getName
 
   testHadoopConf(
     expectedErrMsg = "No FileSystem for scheme \"fake\"",
