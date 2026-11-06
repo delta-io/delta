@@ -3078,6 +3078,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CDF_BATCH_INLINE_SCAN =
+    buildConf("changeDataFeed.batch.inlineScan.enabled")
+      .internal()
+      .doc(
+        """When true, the optimizer replaces a batch Change Data Feed relation with the file
+          |scans that read its change data, so column pruning, filter pushdown and statistics
+          |apply to them. When false, the change data is read through an RDD that the relation
+          |builds during physical planning. Both resolve an unspecified ending version at the
+          |query's first action. Has no effect when
+          |changeDataFeed.skipNondeterministicFilterPushdown.enabled is false.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
     buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
       .doc(

@@ -117,8 +117,15 @@ object CDCReader extends CDCReaderImpl
       startingSchemaWithVersion,
       endingVersion) {
 
-    override def buildScan(requiredColumns: Seq[Attribute], filters: Seq[Expression]): RDD[Row] = {
-      val df = changesToBatchDF(
+    /**
+     * Returns the DataFrame that reads the change data of this relation. When no ending version
+     * was specified, it reads up to the latest table version at the time of the call, so callers
+     * must call it while planning the query that reads this relation, not when the relation is
+     * created. Used by [[buildScan]] and by
+     * [[org.apache.spark.sql.delta.optimizer.InlineDeltaCDFRelation]].
+     */
+    def changesDF(): DataFrame = {
+      changesToBatchDF(
         deltaLog,
         startingVersion.get,
         // The actual ending version we should scan until during execution, as it might have changed
@@ -128,7 +135,10 @@ object CDCReader extends CDCReaderImpl
         sqlContext.sparkSession,
         catalogTableOpt,
         readSchemaSnapshot = Some(snapshotForBatchSchema))
-      constructRDD(df, requiredColumns, filters)
+    }
+
+    override def buildScan(requiredColumns: Seq[Attribute], filters: Seq[Expression]): RDD[Row] = {
+      constructRDD(changesDF(), requiredColumns, filters)
     }
   }
 
