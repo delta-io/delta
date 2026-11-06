@@ -629,7 +629,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     operationTestMetadata2,
     operationTestProtocol2)
 
-  private def operationCrcFixture(
+  private def operationTestCrcFixture(
       tableSizeBytes: Long,
       numFiles: Long,
       numDeletedRecords: Long,
@@ -671,18 +671,18 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       }.asJava).orNull))
   }
 
-  private val includeAllCrc = operationCrcFixture(
+  private val includeAllCrc = operationTestCrcFixture(
     4500L,
     6L,
     45L,
     6L,
     Some(Seq(4, 5, 8, 9, 6, 7).map(operationTestFiles)))
-  private val ignoreCommit1AddsCrc = operationCrcFixture(3000L, 4L, 30L, 4L, None)
-  private val ignoreCommit1RemovesCrc = operationCrcFixture(4800L, 8L, 48L, 8L, None)
-  private val ignoreCommit2AddsCrc = operationCrcFixture(2600L, 4L, 26L, 4L, None)
-  private val ignoreCommit2RemovesCrc = operationCrcFixture(5200L, 8L, 52L, 8L, None)
+  private val ignoreCommit1AddsCrc = operationTestCrcFixture(3000L, 4L, 30L, 4L, None)
+  private val ignoreCommit1RemovesCrc = operationTestCrcFixture(4800L, 8L, 48L, 8L, None)
+  private val ignoreCommit2AddsCrc = operationTestCrcFixture(2600L, 4L, 26L, 4L, None)
+  private val ignoreCommit2RemovesCrc = operationTestCrcFixture(5200L, 8L, 52L, 8L, None)
 
-  test("FULL CRC applies each operation's policy to fixed actions in two commits") {
+  test("FULL mode using incremental computation with respect to operation types") {
     val normalOperations = Seq(
       "WRITE",
       "MERGE",
@@ -754,13 +754,13 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     }
   }
 
-  test("FULL CRC updates allFiles for COMPUTE STATS re-adds without changing aggregates") {
+  test("Ignore-add operation list only applies to CRC aggregate stats, not allFiles") {
     val files = Seq(8, 9, 6, 7, 4, 5).map(operationTestFiles)
     val analyzedFiles = files.take(3).map(_.copy(
       dataChange = false,
       stats = """{"numRecords":100,"tightBounds":false,"minValues":{"id":0},""" +
         """"maxValues":{"id":99},"nullCount":{"id":0}}"""))
-    val expectedCrc = operationCrcFixture(
+    val expectedCrc = operationTestCrcFixture(
       4500L,
       6L,
       45L,
@@ -792,8 +792,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
   }
 
   test("FULL CRC falls back to full log replay for unsupported operations") {
-    // Full replay visits the newest files first, instead of retaining the base CRC's file order.
-    val expectedCrc = operationCrcFixture(
+    val expectedCrc = operationTestCrcFixture(
       4500L,
       6L,
       45L,

@@ -145,7 +145,7 @@ public class ChecksumUtils {
                   "LIQUID TAGGING",
                   "REPLACE PARTITIONED BY WITH CLUSTER BY")));
 
-  // These tombstones refer to auxiliary DV files, so they do not reduce data-file aggregates.
+  // These tombstones refer to auxiliary DV files, skipping them for CRC stats computation
   private static final Set<String> IGNORE_REMOVE_FILE_OPS =
       Collections.singleton("Deletion Vector Tombstones");
 
@@ -654,9 +654,7 @@ public class ChecksumUtils {
             finalAllFiles));
   }
 
-  /**
-   * Records an AddFile in allFiles and accumulates its metrics unless ignoreAggregateStats is set.
-   */
+  /** Processes an add file record and updates the state tracker. */
   private static void processAddRecord(
       ColumnVector addVector, StateTracker state, int rowId, boolean ignoreAggregateStats) {
     if (!addVector.isNullAt(rowId)) {
