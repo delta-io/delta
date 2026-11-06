@@ -278,7 +278,10 @@ public class UCCatalogManagedClient {
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
    * @throws VersionToLoadAfterLatestCommitException if either startVersionOpt or endVersionOpt is
    *     greater than the latest ratified version from UC
+   * @deprecated Use {@link #loadCommitRange(Engine, String, String, UCTableIdentifier,
+   *     UCLoadCommitRangeOptions)} instead.
    */
+  @Deprecated
   public CommitRange loadCommitRange(
       Engine engine,
       String ucTableId,
@@ -288,14 +291,48 @@ public class UCCatalogManagedClient {
       Optional<Long> startTimestampOpt,
       Optional<Long> endVersionOpt,
       Optional<Long> endTimestampOpt) {
+    return loadCommitRange(
+        engine,
+        ucTableId,
+        tablePath,
+        ucTableIdentifier,
+        new UCLoadCommitRangeOptions(
+            startVersionOpt,
+            startTimestampOpt,
+            endVersionOpt,
+            endTimestampOpt,
+            Optional.empty(),
+            Optional.empty()));
+  }
+
+  /**
+   * Loads a Kernel {@link CommitRange} with the provided boundaries and validation options.
+   *
+   * @param engine The Delta Kernel {@link Engine} to use for loading the table.
+   * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
+   * @param tablePath The path to the Delta table in the underlying storage system.
+   * @param ucTableIdentifier The three-part Unity Catalog table identifier.
+   * @param loadCommitRangeOptions The boundaries and optional validation settings.
+   * @throws IllegalArgumentException if boundaries conflict, no start boundary is provided, or the
+   *     start boundary is greater than the end boundary
+   * @throws VersionToLoadAfterLatestCommitException if a version boundary is greater than the
+   *     latest ratified version from UC
+   */
+  public CommitRange loadCommitRange(
+      Engine engine,
+      String ucTableId,
+      String tablePath,
+      UCTableIdentifier ucTableIdentifier,
+      UCLoadCommitRangeOptions loadCommitRangeOptions) {
     Objects.requireNonNull(engine, "engine is null");
     Objects.requireNonNull(ucTableId, "ucTableId is null");
     Objects.requireNonNull(tablePath, "tablePath is null");
     Objects.requireNonNull(ucTableIdentifier, "ucTableIdentifier is null");
-    Objects.requireNonNull(startVersionOpt, "startVersionOpt is null");
-    Objects.requireNonNull(startTimestampOpt, "startTimestampOpt is null");
-    Objects.requireNonNull(endVersionOpt, "endVersionOpt is null");
-    Objects.requireNonNull(endTimestampOpt, "endTimestampOpt is null");
+    Objects.requireNonNull(loadCommitRangeOptions, "loadCommitRangeOptions is null");
+    Optional<Long> startVersionOpt = loadCommitRangeOptions.getStartVersionOpt();
+    Optional<Long> startTimestampOpt = loadCommitRangeOptions.getStartTimestampOpt();
+    Optional<Long> endVersionOpt = loadCommitRangeOptions.getEndVersionOpt();
+    Optional<Long> endTimestampOpt = loadCommitRangeOptions.getEndTimestampOpt();
     checkArgument(
         !startVersionOpt.isPresent() || !startTimestampOpt.isPresent(),
         "Cannot provide both a start timestamp and start version");
@@ -371,6 +408,17 @@ public class UCCatalogManagedClient {
                 commitRangeBuilder.withEndBoundary(
                     CommitRangeBuilder.CommitBoundary.atTimestamp(
                         endTimestampOpt.get(), latestSnapshot.get()));
+          }
+
+          if (loadCommitRangeOptions.getCommitRangeValidationOpt().isPresent()) {
+            commitRangeBuilder =
+                commitRangeBuilder.withCommitRangeValidation(
+                    loadCommitRangeOptions.getCommitRangeValidationOpt().get());
+          }
+          if (loadCommitRangeOptions.getFailOnDataLossOpt().isPresent()) {
+            commitRangeBuilder =
+                commitRangeBuilder.withFailOnDataLoss(
+                    loadCommitRangeOptions.getFailOnDataLossOpt().get());
           }
 
           return commitRangeBuilder.withLogData(logData).build(engine);
