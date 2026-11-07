@@ -419,6 +419,19 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
+  test("extractAuthConfig: passes the catalog uri as catalogUri") {
+    val cat = "catalogUriCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.uri" -> "https://uc.example.com",
+      s"spark.sql.catalog.$cat.auth.type" -> "oauth"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, cat)
+      assert(config("catalogUri") == "https://uc.example.com")
+      assert(config.size == 2)
+    }
+  }
+
   test("extractAuthConfig: legacy token as static") {
     val cat = "legacyCat"
     withSQLConf(
