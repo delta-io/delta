@@ -147,7 +147,7 @@ public class UCCatalogManagedClient {
 
                 final List<ParsedLogData> logData =
                     getSortedKernelParsedDeltaDataFromRatifiedCommits(
-                        ucTableId, response.getCommits());
+                        ucTableId, tablePath, response.getCommits());
 
                 return metricsCollector.kernelSnapshotBuildTimer.timeChecked(
                     () -> {
@@ -371,7 +371,8 @@ public class UCCatalogManagedClient {
     final long ucTableVersion = response.getLatestTableVersion();
     validateVersionBoundariesExist(ucTableId, startVersionOpt, endVersionOpt, ucTableVersion);
     final List<ParsedLogData> logData =
-        getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
+        getSortedKernelParsedDeltaDataFromRatifiedCommits(
+            ucTableId, tablePath, response.getCommits());
     final Lazy<Snapshot> latestSnapshot =
         new Lazy<>(
             () ->
@@ -579,11 +580,12 @@ public class UCCatalogManagedClient {
 
   /**
    * Converts a list of ratified commits into a sorted list of {@link ParsedLogData} for use in
-   * loading a Delta table.
+   * loading a Delta table. Each commit may be staged or already published.
    */
   @VisibleForTesting
   static List<ParsedLogData> getSortedKernelParsedDeltaDataFromRatifiedCommits(
-      String ucTableId, List<Commit> commits) {
+      String ucTableId, String tablePath, List<Commit> commits) {
+    final String logPath = new Path(tablePath, "_delta_log").toString();
     final List<ParsedLogData> result =
         timeUncheckedOperation(
             logger,
@@ -594,7 +596,9 @@ public class UCCatalogManagedClient {
                     .sorted(Comparator.comparingLong(Commit::getVersion))
                     .map(
                         commit ->
-                            ParsedCatalogCommitData.forFileStatus(
+                            ParsedCatalogCommitData.forCatalogFileStatus(
+                                logPath,
+                                commit.getVersion(),
                                 hadoopFileStatusToKernelFileStatus(commit.getFileStatus())))
                     .collect(Collectors.toList()));
 
