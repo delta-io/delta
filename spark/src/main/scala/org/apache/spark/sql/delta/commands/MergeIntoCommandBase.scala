@@ -23,14 +23,16 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
-import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
+import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeSourceKeyFilePruning, MergeStats}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex, TransactionalWrite}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.SparkContext
-import org.apache.spark.sql.{AnalysisException, DataFrame, Row, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Row, SparkSession}
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -379,6 +381,64 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
         .reduceOption(Or)
       targetOnlyPredicatesOnCondition ++ targetOnlyMatchedPredicate
     }
+  }
+
+  /**
+   * Target-only predicates built from the join key values of a small source, to prune the target
+   * files that the MERGE reads (see [[MergeSourceKeyFilePruning]]). Returns no predicate when the
+   * feature is disabled, the MERGE has NOT MATCHED BY SOURCE clauses, the ON condition has no
+   * usable `target_column = source_expression` conjunct, the source is not materialized, or the
+   * source has more than [[DeltaSQLConf.MERGE_SOURCE_KEY_FILE_PRUNING_MAX_SOURCE_ROWS]] rows.
+   *
+   * The values are read from the materialized source, which is the data the join reads. So the
+   * collected keys are exactly the keys of the join (a key missing from them could prune the file
+   * of a matching row and turn the update of that row into an insert), and collecting them does
+   * not scan the source data again. A source that MERGE does not materialize (for example the
+   * source of an insert-only MERGE, which is read once) is not used.
+   */
+  protected def getSourceKeyFilePruningPredicates(spark: SparkSession): Seq[Expression] = {
+    val maxSourceRows = spark.conf.get(DeltaSQLConf.MERGE_SOURCE_KEY_FILE_PRUNING_MAX_SOURCE_ROWS)
+    if (!spark.conf.get(DeltaSQLConf.MERGE_SOURCE_KEY_FILE_PRUNING_ENABLED) ||
+        maxSourceRows == 0 || notMatchedBySourceClauses.nonEmpty) {
+      return Seq.empty
+    }
+    val keys = MergeSourceKeyFilePruning.equiJoinKeys(condition, target.outputSet, source.outputSet)
+    if (keys.isEmpty) {
+      return Seq.empty
+    }
+
+    val keyColumns = keys.zipWithIndex.map { case ((_, sourceKey), i) =>
+      Column(Alias(sourceKey, s"__merge_source_key_$i")())
+    }
+    val isSourceMaterialized = getMergeSource.isMaterialized
+    val rows = if (isSourceMaterialized) {
+      // Run the projection as an RDD of the MERGE's execution, not as a separate query, and stop
+      // reading the materialized source after `maxSourceRows + 1` rows.
+      getMergeSource.df.select(keyColumns: _*).queryExecution.toRdd
+        .mapPartitionsInternal(_.map(_.copy()))
+        .take(maxSourceRows + 1)
+    } else {
+      Array.empty[InternalRow]
+    }
+    val predicates = if (!isSourceMaterialized || rows.length > maxSourceRows) {
+      Seq.empty
+    } else {
+      keys.zipWithIndex.map { case ((targetKey, _), i) =>
+        val values = rows.iterator.map(_.get(i, targetKey.dataType)).filter(_ != null).toSeq
+        MergeSourceKeyFilePruning.keyIn(targetKey, values)
+      }
+    }
+    recordDeltaEvent(
+      targetDeltaLog,
+      opType = "delta.dml.merge.sourceKeyFilePruning",
+      data = Map(
+        "applied" -> predicates.nonEmpty,
+        "isSourceMaterialized" -> isSourceMaterialized,
+        "numKeyColumns" -> keys.size,
+        "numSourceRowsRead" -> rows.length,
+        "maxSourceRows" -> maxSourceRows,
+        "materializeSourceReason" -> getMergeSource.materializeReason.toString))
+    predicates
   }
 
   protected def seqToString(exprs: Seq[Expression]): String = exprs.map(_.sql).mkString("\n\t")
