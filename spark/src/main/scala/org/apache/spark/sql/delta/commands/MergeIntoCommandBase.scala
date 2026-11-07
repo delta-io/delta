@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.hooks.InflightDMLRegistry
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSource, MergeIntoMaterializeSourceReason, MergeStats}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex, TransactionalWrite}
@@ -173,13 +174,21 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     }
 
     val (materializeSource, _) = shouldMaterializeSource(spark, source, isInsertOnly)
-    if (!materializeSource) {
-      runMerge(spark)
-    } else {
-      // If it is determined that source should be materialized, wrap the execution with retries,
-      // in case the data of the materialized source is lost.
-      runWithMaterializedSourceLostRetries(
-        spark, targetFileIndex.deltaLog, metrics, runMerge)
+    // Async Auto Compaction DML yield: register this MERGE as in-flight on the target table so
+    // that any concurrent async AC worker yields. See InflightDMLRegistry.
+    val mergeTableId = targetFileIndex.deltaLog.unsafeVolatileTableId
+    InflightDMLRegistry.acquire(mergeTableId)
+    try {
+      if (!materializeSource) {
+        runMerge(spark)
+      } else {
+        // If it is determined that source should be materialized, wrap the execution with retries,
+        // in case the data of the materialized source is lost.
+        runWithMaterializedSourceLostRetries(
+          spark, targetFileIndex.deltaLog, metrics, runMerge)
+      }
+    } finally {
+      InflightDMLRegistry.release(mergeTableId)
     }
   }
 
