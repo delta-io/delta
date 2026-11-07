@@ -20,6 +20,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier
 import org.apache.spark.sql.delta.v2.snapshot.unitycatalog.UCTableInfo
+import io.delta.storage.commit.CommitCoordinatorClient
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCConfigUtils}
 import io.unitycatalog.client.auth.TokenProvider
 import org.mockito.{Mock, Mockito}
@@ -518,6 +519,106 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
         any[java.util.Map[String, String]]()
       )
     }
+  }
+
+  private def oauthCatalogConfs(
+      catalogName: String,
+      clientId: String,
+      clientSecret: String): Seq[(String, String)] = Seq(
+    s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+    s"spark.sql.catalog.$catalogName.uri" -> "https://test-uri.com",
+    s"spark.sql.catalog.$catalogName.auth.type" -> "oauth",
+    s"spark.sql.catalog.$catalogName.auth.oauth.uri" -> "https://oauth.example.com/token",
+    s"spark.sql.catalog.$catalogName.auth.oauth.clientId" -> clientId,
+    s"spark.sql.catalog.$catalogName.auth.oauth.clientSecret" -> clientSecret)
+
+  private def buildForOAuthCatalog(
+      catalogName: String,
+      clientId: String,
+      clientSecret: String): CommitCoordinatorClient = {
+    var result: CommitCoordinatorClient = null
+    withSQLConf(oauthCatalogConfs(catalogName, clientId, clientSecret): _*) {
+      result = UCCommitCoordinatorBuilder.buildForCatalog(spark, catalogName)
+    }
+    result
+  }
+
+  private def mockFactoryReturnsNewClients(): Unit = {
+    when(mockFactory.createUCClient(any[java.util.Map[String, String]]()))
+      .thenAnswer(_ => mock(classOf[UCClient]))
+  }
+
+  private def ucClientOf(client: CommitCoordinatorClient): UCClient =
+    client.asInstanceOf[UCCommitCoordinatorClient].ucClient
+
+  test("buildForCatalog caches the client for the same catalog config") {
+    mockFactoryReturnsNewClients()
+    val result1 = buildForOAuthCatalog("test_catalog", "id", "secret")
+    val result2 = buildForOAuthCatalog("test_catalog", "id", "secret")
+    assert(result1 eq result2)
+    assert(result1.semanticEquals(result2))
+    verify(mockFactory, times(1)).createUCClient(any[java.util.Map[String, String]]())
+    verify(ucClientOf(result1), never()).close()
+  }
+
+  test("buildForCatalog shares the client across catalogs with identical config") {
+    mockFactoryReturnsNewClients()
+    withSQLConf(
+      oauthCatalogConfs("catalog1", "id", "secret") ++
+        oauthCatalogConfs("catalog2", "id", "secret"): _*) {
+      val result1 = UCCommitCoordinatorBuilder.buildForCatalog(spark, "catalog1")
+      val result2 = UCCommitCoordinatorBuilder.buildForCatalog(spark, "catalog2")
+      assert(result1 eq result2)
+      verify(mockFactory, times(1)).createUCClient(any[java.util.Map[String, String]]())
+    }
+  }
+
+  test("buildForCatalog uses a separate client when the auth config differs") {
+    mockFactoryReturnsNewClients()
+    // Same catalog name, different credentials, e.g. two sessions of a multi-session server.
+    val resultA = buildForOAuthCatalog("test_catalog", "id-a", "secret-a")
+    val resultB = buildForOAuthCatalog("test_catalog", "id-b", "secret-b")
+    // Same client id with a rotated secret.
+    val resultRotated = buildForOAuthCatalog("test_catalog", "id-a", "secret-a-rotated")
+    val resultAAgain = buildForOAuthCatalog("test_catalog", "id-a", "secret-a")
+
+    assert(Set(resultA, resultB, resultRotated).map(ucClientOf).size === 3)
+    assert(!resultA.semanticEquals(resultB))
+    assert(!resultA.semanticEquals(resultRotated))
+    assert(resultAAgain eq resultA)
+    verify(mockFactory, times(3)).createUCClient(any[java.util.Map[String, String]]())
+    verify(mockFactory).createUCClient(
+      meq(Map(
+        "uri" -> "https://test-uri.com",
+        "auth.type" -> "oauth",
+        "auth.oauth.uri" -> "https://oauth.example.com/token",
+        "auth.oauth.clientId" -> "id-b",
+        "auth.oauth.clientSecret" -> "secret-b").asJava))
+  }
+
+  test("buildForCatalog does not cache a failed client creation") {
+    when(mockFactory.createUCClient(any[java.util.Map[String, String]]()))
+      .thenThrow(new RuntimeException("boom"))
+      .thenAnswer(_ => mock(classOf[UCClient]))
+    withSQLConf(oauthCatalogConfs("test_catalog", "id", "secret"): _*) {
+      intercept[RuntimeException] {
+        UCCommitCoordinatorBuilder.buildForCatalog(spark, "test_catalog")
+      }
+      val result = UCCommitCoordinatorBuilder.buildForCatalog(spark, "test_catalog")
+      assert(result.isInstanceOf[UCCommitCoordinatorClient])
+      verify(mockFactory, times(2)).createUCClient(any[java.util.Map[String, String]]())
+    }
+  }
+
+  test("clearCache resets the buildForCatalog cache without closing clients") {
+    mockFactoryReturnsNewClients()
+    val result1 = buildForOAuthCatalog("test_catalog", "id", "secret")
+    UCCommitCoordinatorBuilder.clearCache()
+    val result2 = buildForOAuthCatalog("test_catalog", "id", "secret")
+    assert(result1 ne result2)
+    assert(ucClientOf(result1) ne ucClientOf(result2))
+    verify(mockFactory, times(2)).createUCClient(any[java.util.Map[String, String]]())
+    verify(ucClientOf(result1), never()).close()
   }
 
   test("extractAppVersions merges defaults with ucConfig entries") {
