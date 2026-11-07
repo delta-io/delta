@@ -127,7 +127,10 @@ public interface SnapshotBuilder {
    *
    * <p>Important: This method is required for catalog-managed tables and must not be used for
    * file-system managed tables. A {@link MaxCatalogVersionException} will be thrown at build time
-   * if this constraint is violated.
+   * if this constraint is violated. For {@link #atVersion(long)}, the constraint applies only to
+   * catalog-managed versions of tables that are still catalog-managed: older file-system managed
+   * versions can be read with or without it, and versions from before a downgrade to file-system
+   * management can be read without it.
    *
    * <p>When specified, the following additional constraints are enforced:
    *
@@ -157,8 +160,9 @@ public interface SnapshotBuilder {
    *
    * @param engine the engine to use for filesystem operations
    * @return the resolved snapshot instance
-   * @throws MaxCatalogVersionException if a catalog-managed snapshot is loaded without a maximum
-   *     catalog version, or a filesystem-managed snapshot is loaded with one
+   * @throws MaxCatalogVersionException if a catalog-managed table is loaded without a maximum
+   *     catalog version, or a filesystem-managed table is loaded with one, subject to the time
+   *     travel exceptions described in {@link #withMaxCatalogVersion(long)}
    */
   Snapshot build(Engine engine);
 }
