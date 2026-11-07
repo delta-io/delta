@@ -146,6 +146,14 @@ In Delta Lake 3.3 and above, you can force reclustering of all records in a tabl
 
 Run `OPTIMIZE FULL` when you change clustering columns. If you have previously run `OPTIMIZE FULL` and there has been no change to clustering columns, `OPTIMIZE FULL` runs the same as `OPTIMIZE`. Always use `OPTIMIZE FULL` to ensure that data layout reflects the current clustering columns.
 
+### Lightweight compaction
+
+Each `OPTIMIZE` clusters the new data together with previously clustered data that has not yet reached the target size, and sorts all of it. On tables that receive small amounts of data between frequent `OPTIMIZE` runs, the same data can be rewritten many times. To reduce this cost, set `spark.databricks.delta.optimize.clustering.lightweight.enabled` to `true`. While the table has less unclustered data than `spark.databricks.delta.optimize.clustering.lightweight.maxUnclusteredBytes` (10 GB by default), `OPTIMIZE` and auto compaction then only compact small unclustered files, and leave clustered files untouched:
+
+- Files are grouped by the minimum and maximum values of one clustering column, so each compacted file covers a narrow range of that column. Rows are not sorted.
+- Set `spark.databricks.delta.optimize.clustering.lightweight.column` to choose the column. Otherwise, the clustering column whose files cover the narrowest part of its value range is used, such as a date column on a table written in daily batches. If the files of every clustering column cover more than `spark.databricks.delta.optimize.clustering.lightweight.maxRelativeFileRange` (0.5 by default) of its value range on average, files are grouped by size.
+- The compacted files remain unclustered. Once the table has accumulated `maxUnclusteredBytes` of unclustered data, `OPTIMIZE` clusters it. `OPTIMIZE FULL` always clusters.
+
 ## Read data from a clustered table
 
 You can read data in a clustered table using any Delta Lake client. For best query results, include clustering columns in your query filters, as in the following example:

@@ -284,6 +284,9 @@ class OptimizeExecutor(
 
   private val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
 
+  private val isLightweightClustering =
+    optimizeStrategy.isInstanceOf[LightweightClusteringStrategy]
+
   private val isMultiDimClustering =
     optimizeStrategy.isInstanceOf[ClusteringStrategy] ||
     optimizeStrategy.isInstanceOf[ZOrderStrategy]
@@ -314,12 +317,12 @@ class OptimizeExecutor(
       // transactions later
       val candidateFiles = snapshot.filesForScan(partitionPredicate, keepNumRecords = true).files
 
-      val filesToProcess = optimizeContext.reorg match {
+      val filesToProcess = optimizeStrategy.prepareFiles(optimizeContext.reorg match {
         case Some(reorgOperation) =>
           reorgOperation.filterFilesToReorg(sparkSession, snapshot, candidateFiles)
         case None =>
           filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
-      }
+      })
       // Group files by their normalized (typed) partition values so that logically equivalent
       // but differently formatted values (e.g. timestamp variants) end up in the same group.
       val partitionsToCompact = filesToProcess
@@ -607,7 +610,11 @@ class OptimizeExecutor(
         predicate = partitionPredicate,
         zOrderBy = zOrderByColumns,
         auto = isAutoCompact,
-        clusterBy = if (isClusteredTable) Option(clusteringColumns).filter(_.nonEmpty) else None,
+        clusterBy = if (isClusteredTable && !isLightweightClustering) {
+          Option(clusteringColumns).filter(_.nonEmpty)
+        } else {
+          None
+        },
         isFull = optimizeContext.isFull)
     }
   }

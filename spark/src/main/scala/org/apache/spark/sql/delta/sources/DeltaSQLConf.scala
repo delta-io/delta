@@ -3682,6 +3682,48 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .checkValue(_ >= 0, "the target must be >= 0")
     .createWithDefault((DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.defaultValue.get * 1.5).toLong)
 
+  val DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_ENABLED =
+  buildConf("optimize.clustering.lightweight.enabled")
+    .doc(
+      "When true, OPTIMIZE and auto compaction on a clustered table only compact the small " +
+        "unclustered files, without clustering them, while the table has less unclustered data " +
+        "than optimize.clustering.lightweight.maxUnclusteredBytes. The files are grouped by " +
+        "the per-file min/max statistics of one clustering column, so each output file covers " +
+        "a narrow range of that column. Existing Z-cubes are not rewritten. OPTIMIZE FULL " +
+        "always clusters.")
+    .booleanConf
+    .createWithDefault(false)
+
+  val DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_MAX_UNCLUSTERED_BYTES =
+  buildConf("optimize.clustering.lightweight.maxUnclusteredBytes")
+    .doc(
+      "Amount of unclustered data, in bytes, at which OPTIMIZE on a clustered table clusters " +
+        "again instead of running lightweight compaction. Only used when " +
+        "optimize.clustering.lightweight.enabled is true.")
+    .bytesConf(ByteUnit.BYTE)
+    .checkValue(_ >= 0, "the threshold must be >= 0")
+    .createWithDefault(10 * DELTA_OPTIMIZE_MAX_FILE_SIZE.defaultValue.get)
+
+  val DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_COLUMN =
+  buildConf("optimize.clustering.lightweight.column")
+    .doc(
+      "Clustering column whose per-file min/max statistics lightweight compaction uses to " +
+        "group files. If not set, the clustering column whose files cover the narrowest part " +
+        "of its value range is used.")
+    .stringConf
+    .createOptional
+
+  val DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_MAX_RELATIVE_FILE_RANGE =
+  buildConf("optimize.clustering.lightweight.maxRelativeFileRange")
+    .doc(
+      "When optimize.clustering.lightweight.column is not set, a clustering column is only " +
+        "picked to group files if the average range of its values in a file, relative to the " +
+        "range of values in all files to compact, is at most this ratio. If no column " +
+        "qualifies, files are grouped by size.")
+    .doubleConf
+    .checkValue(r => r >= 0 && r <= 1, "the ratio must be between 0 and 1")
+    .createWithDefault(0.5)
+
   //////////////////
   // Clustered Table
   //////////////////

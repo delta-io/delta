@@ -4229,6 +4229,17 @@ trait DeltaErrorsBase
     )
   }
 
+  def invalidLightweightClusteringColumn(
+      column: String, clusteringColumns: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INVALID_LIGHTWEIGHT_CLUSTERING_COLUMN",
+      messageParameters = Array(
+        column,
+        DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_COLUMN.key,
+        clusteringColumns.mkString(", "))
+    )
+  }
+
   def clusteringColumnUnsupportedDataTypes(clusteringColumnsWithDataTypes: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
