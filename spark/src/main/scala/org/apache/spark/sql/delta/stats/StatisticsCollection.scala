@@ -134,6 +134,31 @@ trait StatisticsCollection extends DeltaLogging {
 
   lazy val deletionVectorsSupported = protocol.isFeatureSupported(DeletionVectorsTableFeature)
 
+  /** The tightness flags in [[statsSchema]]; see [[StatsTightness]]. */
+  private def tightnessFields: Seq[String] =
+    Option.when(deletionVectorsSupported)(TIGHT_BOUNDS).toSeq ++
+      Option.when(StatsTightness.tightStatsSupported(protocol))(TIGHT_STATS)
+
+  /** The tightness flag that freshly collected stats set to true, or None if they set none. */
+  private def collectedTightnessFlag: Option[String] =
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED)) {
+      None
+    } else if (StatsTightness.tightStatsSupported(protocol)) {
+      Some(TIGHT_STATS)
+    } else {
+      Option.when(deletionVectorsSupported)(TIGHT_BOUNDS)
+    }
+
+  /**
+   * The collector column for tightness flag `field`, if the stats schema has it: true if it is
+   * `tightFlag`, and null, which `to_json` omits, otherwise.
+   */
+  private def tightnessColOpt(field: String, tightFlag: Option[String]): Option[Column] =
+    Option.when(tightnessFields.contains(field)) {
+      if (tightFlag.contains(field)) lit(true).as(field)
+      else lit(null).cast(BooleanType).as(field)
+    }
+
   lazy val variantShreddingSupported: Boolean =
     protocol.isFeatureSupported(VariantShreddingTableFeature) ||
       protocol.isFeatureSupported(VariantShreddingPreviewTableFeature)
@@ -282,12 +307,10 @@ trait StatisticsCollection extends DeltaLogging {
     val variantFieldsLimit =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_LIMIT_PER_VARIANT)
 
-    // On file initialization/stat recomputation TIGHT_BOUNDS is always set to true
-    val tightBoundsColOpt =
-      Option.when(deletionVectorsSupported &&
-          !spark.sessionState.conf.getConf(DeltaSQLConf.TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED)) {
-        lit(true).as(TIGHT_BOUNDS)
-      }
+    // On file initialization/stat recomputation the stats are tight.
+    val tightFlag = collectedTightnessFlag
+    val tightBoundsColOpt = tightnessColOpt(TIGHT_BOUNDS, tightFlag)
+    val tightStatsColOpt = tightnessColOpt(TIGHT_STATS, tightFlag)
 
     val statCols = Seq(
       count(new Column("*")) as NUM_RECORDS,
@@ -324,7 +347,7 @@ trait StatisticsCollection extends DeltaLogging {
       collectStats(NULL_COUNT, statCollectionPhysicalSchema) {
         case (c, _, true) => sum(when(c.isNull, 1).otherwise(0))
         case (_, _, false) => count(new Column("*"))
-      }) ++ tightBoundsColOpt
+      }) ++ tightBoundsColOpt ++ tightStatsColOpt
 
     struct(statCols: _*).as("stats")
   }
@@ -416,15 +439,13 @@ trait StatisticsCollection extends DeltaLogging {
 
     val minMaxStatsSchemaOpt = getMinMaxStatsSchema(statCollectionPhysicalSchema)
     val nullCountSchemaOpt = getNullCountSchema(statCollectionPhysicalSchema)
-    val tightBoundsFieldOpt =
-      Option.when(deletionVectorsSupported)(TIGHT_BOUNDS -> BooleanType)
 
     val fields =
       Array(NUM_RECORDS -> LongType) ++
       minMaxStatsSchemaOpt.map(MIN -> _) ++
       minMaxStatsSchemaOpt.map(MAX -> _) ++
       nullCountSchemaOpt.map(NULL_COUNT -> _) ++
-      tightBoundsFieldOpt
+      tightnessFields.map(_ -> BooleanType)
 
     StructType(fields.map {
       case (name, dataType) => StructField(name, dataType)

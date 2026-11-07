@@ -43,6 +43,7 @@ object KernelCommitActionsTestUtil {
 
   class TestCommitActions(kernelBatches: Seq[KernelColumnarBatch]) extends KernelCommitActions {
     var closed = false
+    var actionBatchesRead = 0
     override def getVersion: Long = 1L
     override def getTimestamp: Long = 0L
     override def getActions(): KernelCloseableIterator[KernelColumnarBatch] = {
@@ -62,6 +63,7 @@ object KernelCommitActionsTestUtil {
           if (!hasNext) {
             throw new NoSuchElementException("No more action batches")
           }
+          actionBatchesRead += 1
           batches.next()
         }
         override def close(): Unit = closed = true

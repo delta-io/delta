@@ -21,22 +21,26 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.CommitInfo;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.utils.CloseableIterator;
-import java.io.IOException;
 import java.util.*;
 import org.apache.spark.annotation.Experimental;
+import org.apache.spark.sql.delta.DeltaSingleCommit;
+import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.actions.Metadata;
+import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.read.CDCDataFile;
@@ -70,37 +74,7 @@ public class StreamingHelper {
     return columnarBatch.getColumnVector(versionColIdx).getLong(0);
   }
 
-  /**
-   * Get AddFile action from a FilteredColumnarBatch at the specified row, if present.
-   *
-   * <p>This method respects the selection vector to filter out duplicate files that may appear when
-   * stats re-collection (e.g., ANALYZE TABLE COMPUTE STATISTICS) re-adds files with updated stats.
-   * The Kernel uses selection vectors to mark which rows (AddFiles) are logically valid.
-   *
-   * @param batch the FilteredColumnarBatch containing AddFile actions
-   * @param rowId the row index to check
-   * @return Optional containing the AddFile if present and selected, empty otherwise
-   */
-  public static Optional<AddFile> getAddFile(FilteredColumnarBatch batch, int rowId) {
-    // Check selection vector first - rows may be filtered out when stats re-collection
-    // re-adds files with updated stats
-    Optional<ColumnVector> selectionVector = batch.getSelectionVector();
-    boolean isFiltered =
-        selectionVector.map(sv -> sv.isNullAt(rowId) || !sv.getBoolean(rowId)).orElse(false);
-    if (isFiltered) {
-      return Optional.empty();
-    }
-
-    return getAddFile(batch.getData(), rowId);
-  }
-
-  /**
-   * Get AddFile action from a ColumnarBatch at the specified row, if present.
-   *
-   * <p>Caller should ensure all rows are valid (e.g., not filtered by selection vector). For
-   * FilteredColumnarBatch with selection vectors, use {@link #getAddFile(FilteredColumnarBatch,
-   * int)} instead.
-   */
+  /** Get AddFile action from a ColumnarBatch at the specified row, if present. */
   private static Optional<AddFile> getAddFile(ColumnarBatch columnarBatch, int rowId) {
     int addIdx = getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.ADD.colName);
     ColumnVector addVector = columnarBatch.getColumnVector(addIdx);
@@ -144,20 +118,24 @@ public class StreamingHelper {
   }
 
   /** Get Metadata action from a batch at the specified row, if present. */
-  public static Optional<Metadata> getMetadata(ColumnarBatch columnarBatch, int rowId) {
+  public static Optional<io.delta.kernel.internal.actions.Metadata> getMetadata(
+      ColumnarBatch columnarBatch, int rowId) {
     int metadataIdx =
         getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.METADATA.colName);
     ColumnVector metadataVector = columnarBatch.getColumnVector(metadataIdx);
-    Metadata metadata = Metadata.fromColumnVector(metadataVector, rowId);
+    io.delta.kernel.internal.actions.Metadata metadata =
+        io.delta.kernel.internal.actions.Metadata.fromColumnVector(metadataVector, rowId);
 
     return Optional.ofNullable(metadata);
   }
 
   /** Get Protocol action from a batch at the specified row, if present. */
-  public static Optional<Protocol> getProtocol(ColumnarBatch batch, int rowId) {
+  public static Optional<io.delta.kernel.internal.actions.Protocol> getProtocol(
+      ColumnarBatch batch, int rowId) {
     int protocolIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.PROTOCOL.colName);
     ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-    Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+    io.delta.kernel.internal.actions.Protocol protocol =
+        io.delta.kernel.internal.actions.Protocol.fromColumnVector(protocolVector, rowId);
 
     return Optional.ofNullable(protocol);
   }
@@ -210,30 +188,30 @@ public class StreamingHelper {
    * <p><b>Throws:</b> {@link IllegalArgumentException} if a single commit contains more than one
    * metadata action; {@link RuntimeException} on underlying I/O errors.
    *
-   * <p><b>Unsafe:</b> bypasses the snapshot-based protocol validation that {@link
-   * io.delta.kernel.CommitRange#getCommitActions} would normally perform. Callers are responsible
-   * for ensuring protocol compatibility.
+   * <p>Kernel validates every protocol action encountered in the range, even though only metadata
+   * actions are returned. Unsupported reader protocol versions and reader features are rejected. It
+   * does not load a snapshot to validate the starting protocol.
    *
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
    * @param snapshotManager snapshot manager backing the table
-   * @param engine Delta kernel engine
-   * @param tablePath path to the Delta table
+   * @param engine the Delta engine
+   * @param originalQueryContext request-scoped catalog inputs used to load the commit range
    */
-  public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
+  public static Map<Long, Metadata> collectMetadataActions(
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2SnapshotManager snapshotManager,
       Engine engine,
-      String tablePath) {
-    return collectActionsFromRangeUnsafe(
+      DeltaV2QueryContext originalQueryContext) {
+    return collectActions(
         startVersion,
         endVersionOpt,
         snapshotManager,
         engine,
-        tablePath,
         DeltaLogActionUtils.DeltaAction.METADATA,
-        StreamingHelper::getMetadata);
+        Metadata.class,
+        originalQueryContext);
   }
 
   /**
@@ -246,86 +224,74 @@ public class StreamingHelper {
    * <p><b>Throws:</b> {@link IllegalArgumentException} if a single commit contains more than one
    * protocol action; {@link RuntimeException} on underlying I/O errors.
    *
-   * <p><b>Unsafe:</b> bypasses the snapshot-based protocol validation that {@link
-   * io.delta.kernel.CommitRange#getCommitActions} would normally perform. Callers are responsible
-   * for ensuring protocol compatibility.
+   * <p>Kernel validates every protocol action encountered in the range. Unsupported reader protocol
+   * versions and reader features are rejected. It does not load a snapshot to validate the protocol
+   * at the start version.
    *
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
    * @param snapshotManager snapshot manager backing the table
-   * @param engine Delta kernel engine
-   * @param tablePath path to the Delta table
+   * @param engine the Delta engine
+   * @param originalQueryContext request-scoped catalog inputs used to load the commit range
    */
-  public static Map<Long, Protocol> collectProtocolActionsFromRangeUnsafe(
+  public static Map<Long, Protocol> collectProtocolActions(
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2SnapshotManager snapshotManager,
       Engine engine,
-      String tablePath) {
-    return collectActionsFromRangeUnsafe(
+      DeltaV2QueryContext originalQueryContext) {
+    return collectActions(
         startVersion,
         endVersionOpt,
         snapshotManager,
         engine,
-        tablePath,
         DeltaLogActionUtils.DeltaAction.PROTOCOL,
-        StreamingHelper::getProtocol);
-  }
-
-  /** Extracts an action of type {@code T} from a single row of a {@link ColumnarBatch}. */
-  @FunctionalInterface
-  private interface RowExtractor<T> {
-    Optional<T> extract(ColumnarBatch batch, int rowId);
+        Protocol.class,
+        originalQueryContext);
   }
 
   /**
-   * Shared implementation for {@link #collectMetadataActionsFromRangeUnsafe} and {@link
-   * #collectProtocolActionsFromRangeUnsafe}: walks the commit range filtered to {@code actionType},
-   * applies {@code extractor} per row, and rejects commits with more than one matching action.
+   * Walks the commit range filtered to {@code actionType} and rejects commits with more than one
+   * matching action.
    */
-  private static <T> Map<Long, T> collectActionsFromRangeUnsafe(
+  private static <T extends Action> Map<Long, T> collectActions(
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2SnapshotManager snapshotManager,
       Engine engine,
-      String tablePath,
       DeltaLogActionUtils.DeltaAction actionType,
-      RowExtractor<T> extractor) {
-    CommitRangeImpl commitRange =
-        (CommitRangeImpl) snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
+      Class<T> actionClass,
+      DeltaV2QueryContext originalQueryContext) {
     // LinkedHashMap to preserve insertion order
     Map<Long, T> versionToAction = new LinkedHashMap<>();
-
-    try (CloseableIterator<CommitActions> commitsIter =
-        getCommitActionsFromRangeUnsafe(engine, commitRange, tablePath, Set.of(actionType))) {
+    try (ClosableIterator<DeltaSingleCommit> commitsIter =
+        ScalaUtils.toClosableIterator(
+            snapshotManager
+                .getTableChanges(engine, startVersion, endVersionOpt, originalQueryContext)
+                .getCommitActions(engine, Set.of(actionType))
+                .map(DeltaV2SingleCommit$.MODULE$::apply))) {
       while (commitsIter.hasNext()) {
-        try (CommitActions commit = commitsIter.next()) {
-          long version = commit.getVersion();
-          try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
-            while (actionsIter.hasNext()) {
-              ColumnarBatch batch = actionsIter.next();
-              int numRows = batch.getSize();
-              for (int rowId = 0; rowId < numRows; rowId++) {
-                Optional<T> actionOpt = extractor.extract(batch, rowId);
-                if (actionOpt.isPresent()) {
-                  T existing = versionToAction.putIfAbsent(version, actionOpt.get());
-                  Preconditions.checkArgument(
-                      existing == null,
-                      "Should not encounter two %s actions in the same commit of version %d",
-                      actionType.colName,
-                      version);
-                }
-              }
+        DeltaSingleCommit commit = commitsIter.next();
+        long version = commit.version();
+        try (DeltaV2SingleCommit v2Commit = (DeltaV2SingleCommit) commit;
+            ClosableIterator<Action> actionsIter =
+                v2Commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) {
+          while (actionsIter.hasNext()) {
+            Action action = actionsIter.next();
+            if (actionClass.isInstance(action)) {
+              T existing = versionToAction.putIfAbsent(version, actionClass.cast(action));
+              Preconditions.checkArgument(
+                  existing == null,
+                  "Should not encounter two %s actions in the same commit of version %d",
+                  actionType.colName,
+                  version);
             }
-          } catch (IOException e) {
-            throw new RuntimeException("Failed to process commit at version " + version, e);
           }
         }
       }
     } catch (RuntimeException e) {
       throw e; // Rethrow runtime exceptions directly
     } catch (Exception e) {
-      // CommitActions.close() throws Exception
       throw new RuntimeException("Failed to process commits", e);
     }
     return versionToAction;

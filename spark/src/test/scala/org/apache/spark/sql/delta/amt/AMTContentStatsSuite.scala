@@ -24,8 +24,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.catalyst.expressions.JsonToStructs
+import org.apache.spark.sql.catalyst.optimizer.ConvertToLocalRelation
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructField, StructType, TimestampNTZType, TimestampType, VariantType}
 
 /**
@@ -122,6 +125,35 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     }
   }
 
+  test("forWrite parses each entry's stats JSON once, however many statistics it reads") {
+    // Four bounded columns read eight bounds and four null counts out of the parsed stats; all of
+    // them must come from one from_json. ConvertToLocalRelation is excluded so the optimized plan
+    // keeps the projections instead of precomputing the local input into a new local relation.
+    val metadata = metadataWithColumnIds(schema = new StructType()
+      .add("a", LongType).add("b", LongType).add("c", StringType).add("d", IntegerType))
+    withSQLConf(
+      SQLConf.OPTIMIZER_EXCLUDED_RULES.key -> ConvertToLocalRelation.ruleName,
+      SQLConf.COLLAPSE_PROJECT_ALWAYS_INLINE.key -> "false") {
+      val persisted =
+        writeStats(getSampleStatsJson(metadata, tightBounds = true), metadata, amtProtocol)
+      val optimizedPlan = persisted.queryExecution.optimizedPlan
+      val numJsonParses = optimizedPlan.collect { case node =>
+        node.expressions.map(_.collect { case parse: JsonToStructs => parse }.size).sum
+      }.sum
+      assert(numJsonParses == 1, s"expected one from_json in the plan:\n$optimizedPlan")
+
+      assert(persisted.columns.forall(_ != "__amt_parsed_stats"))
+      assertStatFields(persisted, "a", Map(
+        "lower_bound" -> (LongType, "1"),
+        "upper_bound" -> (LongType, "9"),
+        "null_value_count" -> (LongType, "0")))
+      assertStatFields(persisted, "c", Map(
+        "lower_bound" -> (StringType, "apple"),
+        "upper_bound" -> (StringType, "pear"),
+        "null_value_count" -> (LongType, "0")))
+    }
+  }
+
   test("forRead reconstructs the stats JSON the delta log holds, for every type") {
     withAllTypesTable("amt_content_stats_roundtrip") { deltaLog =>
       appendRowsAsSeparateFiles(
@@ -190,7 +222,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
   /**
    * A [[Protocol]] representative of a real AMT table: it carries every
-   * feature `AdaptiveMetadataTableFeature` requires. In particular it is
+   * feature `AdaptiveMetadataPreviewTableFeature` requires. In particular it is
    * DV-capable, so Delta's derived stats schema always carries `tightBounds`.
    */
   private def amtProtocol: Protocol =

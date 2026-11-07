@@ -63,6 +63,13 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
   protected def writeOperation: DeltaOperations.Operation =
     DeltaOperations.Write(SaveMode.Append)
 
+  /** Commits actions as a commit to a single AMT table. */
+  protected def commitAmt(
+      amtDeltaLog: DeltaLog,
+      actions: Seq[Action],
+      operation: DeltaOperations.Operation = writeOperation): Unit =
+    amtDeltaLog.startTransaction().commit(actions, operation)
+
   /** Commits the identical `actions` as a "WRITE" commit to both tables. */
   protected def commitBoth(
       baselineDeltaLog: DeltaLog,
@@ -75,7 +82,7 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
       case other => other
     }
     baselineDeltaLog.startTransaction().commit(baselineActions, operation)
-    amtDeltaLog.startTransaction().commit(actions, operation)
+    commitAmt(amtDeltaLog, actions, operation)
   }
 
   /** The live-file path set of a table via its normal snapshot (log replay for the baseline). */
@@ -502,6 +509,15 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
     }
   }
 
+  /** Runs `body` with a fresh single AMT table, cleaning it up afterward. */
+  protected def withAmtTable(body: DeltaLog => Unit): Unit = {
+    val amtDeltaTable = s"amt_subject_${UUID.randomUUID().toString.replace("-", "_")}"
+    withTable(amtDeltaTable) {
+      createAMTTable(amtDeltaTable, checkpointInterval = Int.MaxValue)
+      body(deltaLogForName(amtDeltaTable))
+    }
+  }
+
   /** Metrics with fields defaulted to 0; numIntermediateCommits is derived by the assertion. */
   // scalastyle:off argcount
   protected def createIncrementalAMTWriteMetrics(
@@ -553,7 +569,41 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
       entriesPerLeaf: Int,
       initialIdRangeInLeaf: Range,
       initialIdRangeInRoot: Range = Range(0, 0),
-      rowCountPerDataEntry: Long = 1L): Seq[DataManifestEntry] = {
+      rowCountPerDataEntry: Long = 1L): Seq[DataManifestEntry] =
+    bootstrapTree(
+      amtDeltaLog,
+      adds => commitBoth(baselineDeltaLog, amtDeltaLog, adds),
+      entriesPerLeaf,
+      initialIdRangeInLeaf,
+      initialIdRangeInRoot,
+      rowCountPerDataEntry)
+
+  /** Single-table [[setup]] */
+  protected def setupAmt(
+      amtDeltaLog: DeltaLog,
+      entriesPerLeaf: Int,
+      initialIdRangeInLeaf: Range,
+      initialIdRangeInRoot: Range = Range(0, 0),
+      rowCountPerDataEntry: Long = 1L): Seq[DataManifestEntry] =
+    bootstrapTree(
+      amtDeltaLog,
+      adds => commitAmt(amtDeltaLog, adds),
+      entriesPerLeaf,
+      initialIdRangeInLeaf,
+      initialIdRangeInRoot,
+      rowCountPerDataEntry)
+
+  /**
+   * Shared bootstrap for [[setup]] / [[setupAmt]]: `commitFn` writes adds to desired table(s),
+   * and the AMT tree is checkpointed after.
+   */
+  private def bootstrapTree(
+      amtDeltaLog: DeltaLog,
+      commitFn: Seq[AddFile] => Unit,
+      entriesPerLeaf: Int,
+      initialIdRangeInLeaf: Range,
+      initialIdRangeInRoot: Range,
+      rowCountPerDataEntry: Long): Seq[DataManifestEntry] = {
     require(initialIdRangeInLeaf.size > entriesPerLeaf,
       s"initialIdRangeInLeaf (${initialIdRangeInLeaf.size}) must exceed entriesPerLeaf " +
         s"($entriesPerLeaf).")
@@ -564,12 +614,12 @@ abstract class AMTIncrementalWriteTestBase extends AMTCheckpointTestBase {
         "root-resident adds do not spill.")
     def adds(ids: Range): Seq[AddFile] =
       ids.map(id => fakeAdd(id, dataChange = true, numRecords = rowCountPerDataEntry))
-    commitBoth(baselineDeltaLog, amtDeltaLog, adds(initialIdRangeInLeaf))
+    commitFn(adds(initialIdRangeInLeaf))
     commitCheckpoint(amtDeltaLog, incremental = false)
     assert(leafPointers(amtDeltaLog.update()).size == numLeaves,
       s"the full checkpoint must pack $numLeaves leaves.")
     if (initialIdRangeInRoot.nonEmpty) {
-      commitBoth(baselineDeltaLog, amtDeltaLog, adds(initialIdRangeInRoot))
+      commitFn(adds(initialIdRangeInRoot))
       commitCheckpoint(amtDeltaLog, incremental = true)
       assert(leafPointers(amtDeltaLog.update()).size == numLeaves,
         "the root-resident adds must not spill any leaf.")

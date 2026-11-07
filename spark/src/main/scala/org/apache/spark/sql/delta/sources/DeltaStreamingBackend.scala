@@ -18,13 +18,13 @@ package org.apache.spark.sql.delta.sources
 
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaHistoryManager, Snapshot}
+import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaSingleCommit, Snapshot}
 
 
 /**
  * The Delta log operations that the Delta streaming sources use to discover offsets. Source logic
  * that reads the table through this interface runs on either backend: [[DeltaLogStreamingBackend]]
- * (V1, `DeltaLog`) or `KernelStreamingBackend` (V2, Kernel). Snapshots are always V1
+ * (V1, `DeltaLog`) or `DeltaV2StreamingBackend` (V2, Kernel). Snapshots are always V1
  * [[Snapshot]]s.
  */
 trait DeltaStreamingBackend {
@@ -73,4 +73,13 @@ trait DeltaStreamingBackend {
    * cannot read a table feature at `version`.
    */
   def getSnapshotToValidateProtocol(version: Long): Snapshot
+
+  /**
+   * Returns the commits from `startVersion` to the latest version, in version order.
+   *
+   * @param failOnDataLoss if true, throws if a commit in the range is missing.
+   */
+  def getSingleCommitIterator(
+      startVersion: Long,
+      failOnDataLoss: Boolean): Iterator[DeltaSingleCommit]
 }

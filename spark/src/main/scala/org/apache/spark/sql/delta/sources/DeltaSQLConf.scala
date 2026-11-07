@@ -643,13 +643,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED =
     buildConf("adaptiveMetadataTree.preview.enabled")
       .internal()
-      .doc("When false, the `adaptiveMetadata-preview` reader/writer table feature is not " +
-        "registered in this client's supported-features map. Any attempt to enable the feature " +
-        "on a table is rejected with the standard `unsupported table feature` error, and any " +
-        "table that already has the feature in its protocol fails to be read. Acts as a " +
-        "kill-switch while the feature is in preview.")
+      .doc("When false, creating a table with the `adaptiveMetadata-preview` reader/writer " +
+        "table feature is rejected. The feature is always registered, so tables that already " +
+        "have it can still be read and written.")
       .booleanConf
       .createWithDefault(true)
+
+  val V4_ADAPTIVE_METADATA_TABLE_ENABLED =
+    buildConf("adaptiveMetadataTree.enabled")
+      .internal()
+      .doc("When false, creating a table with the `adaptiveMetadata-dev` reader/writer table " +
+        "feature (to be renamed `adaptiveMetadata` once complete) is rejected. The feature is " +
+        "always registered, so tables that already have it can still be read and written. " +
+        s"Independent of `${V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED.key}`, which gates " +
+        "creating `adaptiveMetadata-preview` tables: with both false no AMT table can be " +
+        "created, with only that one true AMT tables use the preview feature, and with this one " +
+        "true they can use `adaptiveMetadata-dev`.")
+      .booleanConf
+      .createWithDefault(false)
 
   val AMT_ENTRIES_PER_LEAF =
     buildConf("amt.entriesPerLeaf")
@@ -658,6 +669,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .checkValue(_ > 0, "entriesPerLeaf must be positive.")
       .createWithDefault(50000)
+
+  val AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED =
+    buildConf("amt.columnarStateReconstruction.enabled")
+      .internal()
+      .doc("When enabled, AMT state reconstruction builds the AddFiles as column expressions " +
+        "over the persisted manifest rows instead of decoding and converting every manifest " +
+        "entry on the executors. Read when the AMT checkpoint provider is created.")
+      .booleanConf
+      .createWithDefault(false)
 
   val AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT =
     buildConf("amt.largeCommitActionsCountThresholdForInlineManifestCommit")
@@ -701,6 +721,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "without a CRC.")
       .booleanConf
       .createWithDefault(true)
+
+  val AMT_SINGLE_COMMIT_READ_ENABLED =
+    buildConf("amt.singleCommitRead.enabled")
+      .internal()
+      .doc("When enabled, DeltaLog.getChanges reads each commit through SingleCommit, which " +
+        "reconstructs the AddFile and RemoveFile actions of an inline manifest commit from its " +
+        "AMT. When disabled, it reads each commit's log file as written.")
+      .booleanConf
+      .createWithDefault(false)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -853,6 +882,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         " supports concurrent writes.")
       .booleanConf
       .createOptional
+
+  val DELTA_VACUUM_COMMIT_MAX_RETRIES =
+    buildConf("vacuum.commit.maxRetries")
+      .internal()
+      .doc("Maximum number of times VACUUM retries its VACUUM START or VACUUM END commit in a " +
+        "new transaction after the commit fails because a concurrent commit changed the table " +
+        "metadata. 0 disables the retries.")
+      .intConf
+      .checkValue(_ >= 0, "vacuum.commit.maxRetries must be non-negative")
+      .createWithDefault(3)
 
   val LITE_VACUUM_ENABLED =
     buildConf("vacuum.lite.enabled")
@@ -2125,6 +2164,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val STREAMING_PARTITION_SCHEMA_VALIDATION_ON_RESTART =
+    buildConf("streaming.partitionSchemaValidationOnRestart.enabled")
+      .internal()
+      .doc("Whether to validate that the analysis-time partition schema matches the read " +
+        "partition schema when a V2 streaming query starts. This check is independent of " +
+        s"${STREAMING_SCHEMA_VALIDATION_ON_RESTART.key}.")
+      .booleanConf
+      .createWithDefault(true)
+
   val STREAMING_TRAILING_COMMIT_VALIDATION =
     buildConf("streaming.trailingCommitValidation.enabled")
       .internal()
@@ -2190,6 +2238,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "partition-like data skipping can be safely applied.")
       .stringConf
       .createOptional
+
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_FLOATING_POINT_VALIDATION_ENABLED =
+    buildConf("skipping.partitionLikeDataSkipping.floatingPointValidation.enabled")
+      .internal()
+      .doc("Whether to prevent partition-like data skipping from inferring exact FLOAT or DOUBLE " +
+        "values from equal min/max statistics."
+      )
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED =
     buildConf("skipping.enhancedIsNullPushdownExprs.enabled")
@@ -3009,6 +3066,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CDF_RELAX_TIGHTENED_NULLABILITY_ENABLED =
+    buildConf("changeDataFeed.relaxTightenedNullability.enabled")
+      .internal()
+      .doc(
+        """When true, batch CDF relations relax NOT NULL fields that were nullable at the
+          |starting version during analysis. This prevents Catalyst from pruning null filters
+          |before scan-time schema validation can reject an incompatible version range.
+          |When false, the relation retains the selected read schema's nullability and will
+          |not fail on specific invalid CDF scans.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE =
     buildConf("changeDataFeed.defaultSchemaModeForColumnMappingTable")
       .doc(
@@ -3088,6 +3157,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     buildConf("replaceUsing.dataframe.writer.enabled")
       .internal()
       .doc("When false, the `replaceUsing` option is blocked in DataFrameWriter APIs.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACE_USING_CAST_MATCHING_KEYS_ENABLED =
+    buildConf("replaceUsing.castMatchingKeys.enabled")
+      .internal()
+      .doc("When enabled, row-based REPLACE USING converts source matching keys to their " +
+        "corresponding destination insertion types using the insert assignment rules. When " +
+        "disabled, row-based matching uses the original source keys without insertion " +
+        "conversions. The dynamic partition overwrite path is unaffected.")
       .booleanConf
       .createWithDefault(true)
 
@@ -3631,6 +3710,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .timeConf(TimeUnit.MINUTES)
     .createWithDefault(60)
 
+  val DELTA_EVENT_ONCE_PER_TABLE_CACHE_SIZE =
+    buildStaticConf("eventLogging.oncePerTable.cacheSize")
+      .internal()
+      .doc("The maximum number of (table, opType) pairs remembered by " +
+        "recordDeltaEventOncePerTable. A pair that was evicted is logged again.")
+      .longConf
+      .checkValue(_ > 0, "'eventLogging.oncePerTable.cacheSize' must be positive.")
+      .createWithDefault(5000)
+
   //////////////////
   // Delta Sharing
   //////////////////
@@ -4049,19 +4137,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           .stripMargin)
       .booleanConf
       .createWithDefault(true)
-
-  val DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT =
-    buildConf("streaming.distributedInitialSnapshot")
-      .internal()
-      .doc(
-        "When enabled, the V2 streaming connector uses a distributed approach for " +
-        "initial snapshot loading. This avoids driver OOM for large tables by running " +
-        "Kernel log replay on an executor and sorting files via Spark's distributed sort. " +
-        "The persistence level is controlled by " +
-        "spark.databricks.delta.snapshotCache.storageLevel."
-      )
-      .booleanConf
-      .createWithDefault(false)
 
   val TABLE_PARQUET_V2_DEFAULT_TIMESTAMP_ENCODING =
     buildConf("table.parquetV2.timestampOutputType")

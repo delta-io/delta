@@ -69,7 +69,7 @@ private[delta] case class ProtocolMetadataAdapterV2(
   }
 
   override def getReferenceSchema: StructType = {
-    SchemaUtils.convertKernelSchemaToSparkSchema(kernelMetadata.getSchema)
+    SchemaUtils.convertKernelMetadataToSparkSchema(kernelMetadata)
   }
 
   override def isRowIdEnabled: Boolean = KernelRowTracking.isEnabled(kernelProtocol, kernelMetadata)

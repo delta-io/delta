@@ -107,7 +107,7 @@ class AMTCommitLargeSuite extends AMTCheckpointTestBase {
     // replaying the commit log up to commitVersion (deltas only, independent of the AMT tree) so
     // this is a real cross-check rather than a tautological tree-vs-tree count.
     val liveFilePaths = scala.collection.mutable.Set.empty[String]
-    deltaLog.getChanges(0).takeWhile(_._1 <= commitVersion).foreach { case (_, actions) =>
+    getJsonOnlyChanges(deltaLog, 0).takeWhile(_._1 <= commitVersion).foreach { case (_, actions) =>
       actions.foreach {
         case a: AddFile => liveFilePaths += a.path
         case r: RemoveFile => liveFilePaths -= r.path

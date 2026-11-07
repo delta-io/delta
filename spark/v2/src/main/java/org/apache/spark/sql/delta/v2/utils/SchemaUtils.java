@@ -40,9 +40,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import org.apache.spark.sql.catalyst.util.CollationFactory;
+import org.apache.spark.sql.errors.QueryCompilationErrors;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.MetadataBuilder;
+import org.apache.spark.unsafe.Platform;
 import scala.jdk.CollectionConverters;
 
 /** A utility class for converting between Delta Kernel and Spark schemas and data types. */
@@ -52,13 +55,31 @@ public class SchemaUtils {
   // Kernel --> Spark //
   //////////////////////
 
-  /** Converts a Delta Kernel schema to a Spark schema. */
+  /**
+   * Returns the table schema described by {@code metadata}, parsing its schema string the same way
+   * DSv1 does so that string collations recorded in the log are preserved.
+   */
+  public static org.apache.spark.sql.types.StructType convertKernelMetadataToSparkSchema(
+      io.delta.kernel.internal.actions.Metadata metadata) {
+    requireNonNull(metadata);
+    return (org.apache.spark.sql.types.StructType)
+        org.apache.spark.sql.types.DataType.fromJson(metadata.getSchemaString());
+  }
+
+  /**
+   * Converts a Delta Kernel schema to a Spark schema. String collations are not supported and fail
+   * the conversion, so use {@link #convertKernelMetadataToSparkSchema} for table schemas.
+   */
   public static org.apache.spark.sql.types.StructType convertKernelSchemaToSparkSchema(
       StructType kernelSchema) {
     requireNonNull(kernelSchema);
     List<org.apache.spark.sql.types.StructField> fields = new ArrayList<>();
 
     for (StructField field : kernelSchema.fields()) {
+      // Kernel records the collation of every non-UTF8_BINARY string in or under a field here.
+      if (field.getMetadata().contains(StructField.COLLATIONS_METADATA_KEY)) {
+        throw collationsNotSupported(field.getName());
+      }
       fields.add(
           new org.apache.spark.sql.types.StructField(
               field.getName(),
@@ -71,11 +92,21 @@ public class SchemaUtils {
         fields.toArray(new org.apache.spark.sql.types.StructField[0]));
   }
 
-  /** Converts a Delta Kernel data type to a Spark data type. */
+  private static IllegalArgumentException collationsNotSupported(String collated) {
+    return new IllegalArgumentException(
+        "Collated strings are not supported by this conversion: "
+            + collated
+            + ". Use convertKernelMetadataToSparkSchema to convert a table schema.");
+  }
+
+  /** Converts a Delta Kernel data type to a Spark data type. Collated strings are rejected. */
   public static org.apache.spark.sql.types.DataType convertKernelDataTypeToSparkDataType(
       DataType kernelDataType) {
     requireNonNull(kernelDataType);
     if (kernelDataType instanceof StringType) {
+      if (!((StringType) kernelDataType).isUTF8BinaryCollated()) {
+        throw collationsNotSupported(kernelDataType.toString());
+      }
       return DataTypes.StringType;
     } else if (kernelDataType instanceof BooleanType) {
       return DataTypes.BooleanType;
@@ -211,7 +242,15 @@ public class SchemaUtils {
       org.apache.spark.sql.types.DataType sparkDataType) {
     requireNonNull(sparkDataType);
     if (sparkDataType instanceof org.apache.spark.sql.types.StringType) {
-      return StringType.STRING;
+      org.apache.spark.sql.types.StringType sparkString =
+          (org.apache.spark.sql.types.StringType) sparkDataType;
+      if (sparkString.isUTF8BinaryCollation()) {
+        return StringType.STRING;
+      }
+      return new StringType(
+          CollationFactory.fetchCollation(sparkString.collationId())
+              .identifier()
+              .toStringWithoutVersion());
     } else if (sparkDataType instanceof org.apache.spark.sql.types.BooleanType) {
       return BooleanType.BOOLEAN;
     } else if (sparkDataType instanceof org.apache.spark.sql.types.IntegerType) {
@@ -247,6 +286,12 @@ public class SchemaUtils {
     } else if (sparkDataType instanceof org.apache.spark.sql.types.MapType) {
       org.apache.spark.sql.types.MapType sparkMap =
           (org.apache.spark.sql.types.MapType) sparkDataType;
+      // Kernel's MapType rejects collated keys with an unclassified error, so raise V1's instead.
+      if (sparkMap.keyType() instanceof org.apache.spark.sql.types.StringType
+          && !((org.apache.spark.sql.types.StringType) sparkMap.keyType())
+              .isUTF8BinaryCollation()) {
+        Platform.throwException(QueryCompilationErrors.collatedStringsInMapKeysNotSupportedError());
+      }
       return new MapType(
           convertSparkDataTypeToKernelDataType(sparkMap.keyType()),
           convertSparkDataTypeToKernelDataType(sparkMap.valueType()),
