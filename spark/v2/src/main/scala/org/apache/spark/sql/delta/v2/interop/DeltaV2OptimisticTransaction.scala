@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Protocol
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import io.delta.storage.commit.Commit
@@ -192,7 +193,9 @@ private[v2] class DeltaV2OptimisticTransaction(
       endVersion: Long)(mapper: KernelCommitActions => T): Seq[T] = {
     val commitRange = tableManager
       .getTableChanges(
-        kernelEngine, startVersion, Optional.of(java.lang.Long.valueOf(endVersion)), queryContext)
+        kernelEngine,
+        GetTableChangesParam(startVersion, Some(endVersion)),
+        queryContext)
       .asInstanceOf[KernelCommitRangeImpl]
     val actionSet = java.util.EnumSet.allOf(classOf[KernelDeltaAction])
     val commitActionsIter = commitRange.getCommitActions(kernelEngine, actionSet)

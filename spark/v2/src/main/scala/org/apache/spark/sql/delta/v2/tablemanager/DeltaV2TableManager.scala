@@ -15,12 +15,11 @@
  */
 package org.apache.spark.sql.delta.v2.tablemanager
 
-import java.util.Optional
-
 import org.apache.spark.sql.delta.{DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore}
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SnapshotManager}
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 import io.delta.kernel.{CommitRange => KernelCommitRange}
 import io.delta.kernel.engine.{Engine => KernelEngine}
@@ -85,8 +84,7 @@ private[v2] trait DeltaV2TableManager {
   /** Gets table changes using inputs scoped to the current query. */
   def getTableChanges(
       kernelEngine: KernelEngine,
-      startVersion: Long,
-      endVersion: Optional[java.lang.Long],
+      params: GetTableChangesParam,
       queryContext: DeltaV2QueryContext): KernelCommitRange
 
   /** Retires this manager and releases any resources it owns. */

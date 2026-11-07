@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Protocol
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SingleCommit}
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
@@ -122,7 +123,9 @@ class DeltaV2TableManagerImplSuite
         manager.checkVersionExists(3, true, true, queryContext)
 
         val changes = manager.getTableChanges(
-          kernelEngine, 1, Optional.of(java.lang.Long.valueOf(1)), queryContext)
+          kernelEngine,
+          GetTableChangesParam(1, Some(1L)),
+          queryContext)
         val commits = changes.getCommitActions(
           kernelEngine, EnumSet.allOf(classOf[KernelDeltaAction]))
         try {
@@ -150,7 +153,7 @@ class DeltaV2TableManagerImplSuite
         () => manager.loadSnapshotAt(0, null),
         () => manager.getActiveCommitAtTime(0, false, false, false, null),
         () => manager.checkVersionExists(0, false, false, null),
-        () => manager.getTableChanges(null, 0, Optional.empty(), null))
+        () => manager.getTableChanges(null, GetTableChangesParam(0, None), null))
       operations.foreach { operation =>
         val error = intercept[NullPointerException](operation())
         assert(error.getMessage == "queryContext is null")
