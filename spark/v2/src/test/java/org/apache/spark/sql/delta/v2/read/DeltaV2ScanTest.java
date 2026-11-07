@@ -13,7 +13,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.TableIdentifier;
@@ -35,7 +37,6 @@ import org.apache.spark.sql.connector.read.streaming.ReadLimit;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
-import org.apache.spark.sql.delta.stats.DeltaScan;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
@@ -52,8 +53,6 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import scala.Function0;
-import scala.Option;
 
 public class DeltaV2ScanTest extends DeltaV2TestBase {
 
@@ -1263,14 +1262,15 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   private static int[] instrumentDeltaScanSupplier(DeltaV2Scan scan) throws Exception {
     Field supplierField = DeltaV2Scan.class.getDeclaredField("deltaScanSupplier");
     supplierField.setAccessible(true);
-    Function0<DeltaScan> originalSupplier = (Function0<DeltaScan>) supplierField.get(scan);
+    Supplier<org.apache.spark.sql.delta.stats.DeltaScan> originalSupplier =
+        (Supplier<org.apache.spark.sql.delta.stats.DeltaScan>) supplierField.get(scan);
     int[] supplierCalls = new int[] {0};
     supplierField.set(
         scan,
-        (Function0<DeltaScan>)
+        (Supplier<org.apache.spark.sql.delta.stats.DeltaScan>)
             () -> {
               supplierCalls[0]++;
-              return originalSupplier.apply();
+              return originalSupplier.get();
             });
     return supplierCalls;
   }
@@ -1874,10 +1874,10 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   @Test
   public void testLimitPushdown_getterReflectsBuilder() {
-    assertEquals(Option.apply(7), buildScanWithLimit(7).getPushedLimit());
+    assertEquals(OptionalInt.of(7), buildScanWithLimit(7).getPushedLimit());
     DeltaV2Scan noLimit =
         (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
-    assertEquals(Option.empty(), noLimit.getPushedLimit());
+    assertEquals(OptionalInt.empty(), noLimit.getPushedLimit());
   }
 
   @Test
