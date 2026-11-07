@@ -243,7 +243,8 @@ class CommitRangeFactory {
       List<ParsedDeltaData> catalogCommits) {
     int firstStaged = 0;
     while (firstStaged < catalogCommits.size()
-        && FileNames.isPublishedDeltaFile(catalogCommits.get(firstStaged).getFileStatus().getPath())) {
+        && FileNames.isPublishedDeltaFile(
+            catalogCommits.get(firstStaged).getFileStatus().getPath())) {
       firstStaged++;
     }
     return catalogCommits.subList(firstStaged, catalogCommits.size());
