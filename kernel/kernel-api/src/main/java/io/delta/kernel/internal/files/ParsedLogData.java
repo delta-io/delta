@@ -42,7 +42,8 @@ import java.util.Optional;
  *
  * <ul>
  *   <li>Published Deltas: {@code 00000000000000000001.json}
- *   <li>Catalog Commits: {@code _staged_commits/00000000000000000001.uuid-1234.json}
+ *   <li>Catalog Commits: {@code _staged_commits/00000000000000000001.uuid-1234.json}, or a
+ *       published {@code 00000000000000000001.json} when returned by the catalog
  *   <li>Log compaction files: {@code 00000000000000000001.00000000000000000009.compacted.json}
  *   <li>Checksum files: {@code 00000000000000000001.crc}
  *   <li>Classic Checkpoint files: {@code 00000000000000000001.checkpoint.parquet}
