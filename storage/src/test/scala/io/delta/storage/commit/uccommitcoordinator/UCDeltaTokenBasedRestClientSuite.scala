@@ -663,6 +663,114 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
+  // --------------- clustering domain rejection retry ---------------
+
+  private val clusteringRejectedBody =
+    """{"error":"INVALID_PARAMETER_VALUE: Update to Delta domain metadata delta.clustering """ +
+      """is not allowed. (5115)"}"""
+
+  private def domainsInSetUpdate(body: String): Set[String] = {
+    val updates = objectMapper.readTree(body).get("updates")
+    (0 until updates.size()).map(updates.get)
+      .find(_.get("action").asText() == "set-domain-metadata")
+      .map(_.get("updates").fieldNames().asScala.toSet)
+      .getOrElse(Set.empty)
+  }
+
+  test("commit retries without delta.clustering when catalog rejects it, and succeeds") {
+    val requestBodies = scala.collection.mutable.ListBuffer.empty[String]
+    val requestCount = new AtomicInteger(0)
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") {
+        requestBodies += body
+        if (requestCount.getAndIncrement() == 0) {
+          sendJson(exchange, HttpStatus.SC_BAD_REQUEST, clusteringRejectedBody)
+        } else {
+          sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+        }
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+
+    withClient { c =>
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(createCommit(1L)), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        java.util.List.of(
+          dm("delta.clustering", """{"clusteringColumns":[["c1"]]}"""),
+          dm("delta.rowTracking", """{"rowIdHighWaterMark":5}""")),
+        Optional.empty())
+    }
+
+    assert(requestCount.get() === 2, "should retry exactly once after the clustering rejection")
+    assert(domainsInSetUpdate(requestBodies(0)) === Set("delta.clustering", "delta.rowTracking"),
+      "first attempt should optimistically include the clustering domain")
+    assert(domainsInSetUpdate(requestBodies(1)) === Set("delta.rowTracking"),
+      "retry should drop only the clustering domain")
+  }
+
+  test("commit remembers a clustering rejection and skips it up front on the next commit") {
+    val requestCount = new AtomicInteger(0)
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST" && requestCount.getAndIncrement() == 0) {
+        sendJson(exchange, HttpStatus.SC_BAD_REQUEST, clusteringRejectedBody)
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+
+    val client = new UCDeltaTokenBasedRestClient(clientConfig, null)
+    try {
+      client.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(createCommit(1L)), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        java.util.List.of(dm("delta.clustering", """{"clusteringColumns":[["c1"]]}""")),
+        Optional.empty())
+      assert(requestCount.get() === 2, "first commit pays the rejected round trip once")
+
+      var secondBody: String = null
+      deltaHandler = (exchange, body) => {
+        if (exchange.getRequestMethod == "POST") {
+          secondBody = body
+        }
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+      client.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(createCommit(2L)), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        java.util.List.of(dm("delta.clustering", """{"clusteringColumns":[["c1"]]}""")),
+        Optional.empty())
+
+      val updates = objectMapper.readTree(secondBody).get("updates")
+      assert(!(0 until updates.size()).map(updates.get)
+        .exists(_.get("action").asText() == "set-domain-metadata"),
+        "a clustering-only update should be dropped entirely once remembered as rejected")
+    } finally {
+      client.close()
+    }
+  }
+
+  test("commit does not retry on an unrelated 400 that doesn't name delta.clustering") {
+    var requestCount = 0
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST") {
+        requestCount += 1
+      }
+      sendJson(exchange, HttpStatus.SC_BAD_REQUEST, """{"error":"bad request"}""")
+    }
+    withClient { c =>
+      intercept[CommitFailedException] {
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.of(createCommit(1L)), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+          java.util.List.of(dm("delta.clustering", """{"clusteringColumns":[["c1"]]}""")),
+          Optional.empty())
+      }
+    }
+    assert(requestCount === 1, "an unrelated 400 should not trigger the clustering retry")
+  }
+
   // --------------- createStagingTable ---------------
 
   test("createStagingTable sends request and converts response fields") {
