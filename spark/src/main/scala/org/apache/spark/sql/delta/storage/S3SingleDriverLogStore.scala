@@ -41,7 +41,7 @@ import org.apache.spark.SparkConf
  *
  * Regarding file creation, this implementation:
  * - Opens a stream to write to S3 (regardless of the overwrite option).
- * - Failures during stream write may leak resources, but may never result in partial writes.
+ * - Failures during stream write may never result in partial writes.
  *
  * Regarding directory listing, this implementation:
  * - returns a list by merging the files listed from S3 and recently-written files from the cache.
@@ -176,8 +176,7 @@ class S3SingleDriverLogStore(
         throw new java.nio.file.FileAlreadyExistsException(resolvedPath.toUri.toString)
       }
       val stream = new CountingOutputStream(fs.create(resolvedPath, overwrite))
-      actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
-      stream.close()
+      writeActions(stream, actions)
 
       // When a Delta log starts afresh, all cached files in that Delta log become obsolete,
       // so we remove them from the cache.
@@ -258,6 +257,21 @@ object S3SingleDriverLogStore {
           lock.wait()
         }
       }
+    }
+  }
+
+  /**
+   * Writes `actions` to `stream`, closing it whether the write succeeds or fails.
+   * Extracted so the failure path can be exercised deterministically in tests without a real
+   * `FileSystem`.
+   */
+  private[storage] def writeActions(
+      stream: CountingOutputStream,
+      actions: Iterator[String]): Unit = {
+    try {
+      actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
+    } finally {
+      stream.close()
     }
   }
 }
