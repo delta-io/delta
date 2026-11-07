@@ -32,6 +32,7 @@ import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.rdd.RDD
 import org.apache.spark.shuffle._
+import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
@@ -40,6 +41,7 @@ import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
 import org.apache.spark.storage._
 import org.apache.spark.util.ThreadUtils
+import org.apache.spark.util.Utils
 
 
 /**
@@ -77,6 +79,49 @@ case class DeltaOptimizedWriterExec(
       getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS))
   }
 
+  /**
+   * Whether the runtime shuffle manager is different from Spark's built-in
+   * [[SortShuffleManager]]. When true, delegate shuffle reads to
+   * `ShuffleManager.getReader()` instead of directly constructing a
+   * `ShuffleBlockFetcherIterator`, because external shuffle managers
+   * provide their own reader implementations that use their own transport protocols.
+   */
+  private lazy val hasExternalShuffleManager: Boolean = {
+    !SparkEnv.get.shuffleManager.isInstanceOf[SortShuffleManager]
+  }
+
+  /**
+   * Optional helper for external shuffle managers. Resolved from the user-specified class name
+   * in [[DeltaSQLConf.DELTA_OPTIMIZE_WRITE_SHUFFLE_HELPER]], or instantiated as
+   * [[DefaultOptimizedWriteShuffleHelper]] when an external shuffle manager is detected.
+   * `None` when using the default SortShuffleManager without an explicit helper config.
+   * Only used on the driver for bin-packing; not serialized to executors.
+   */
+  @transient private lazy val shuffleHelper: Option[OptimizedWriteShuffleHelper] = {
+    val configured = conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_SHUFFLE_HELPER)
+    configured.map { className =>
+      try {
+        Utils.classForName(className).getConstructor().newInstance()
+          .asInstanceOf[OptimizedWriteShuffleHelper]
+      } catch {
+        case e: ClassNotFoundException =>
+          throw new SparkException(
+            s"Could not load OptimizedWriteShuffleHelper class '$className' configured by " +
+              s"${DeltaSQLConf.DELTA_OPTIMIZE_WRITE_SHUFFLE_HELPER.key}. " +
+              s"Ensure the class is on the classpath and implements " +
+              s"${classOf[OptimizedWriteShuffleHelper].getName}.", e)
+        case e: Exception =>
+          throw new SparkException(
+            s"Failed to instantiate OptimizedWriteShuffleHelper class '$className' configured " +
+              s"by ${DeltaSQLConf.DELTA_OPTIMIZE_WRITE_SHUFFLE_HELPER.key}. " +
+              s"The class must have a no-arg constructor.", e)
+      }
+    }.orElse {
+      if (hasExternalShuffleManager) Some(new DefaultOptimizedWriteShuffleHelper())
+      else None
+    }
+  }
+
   @transient private var cachedShuffleRDD: ShuffledRowRDD = _
 
   @transient private lazy val mapTracker = SparkEnv.get.mapOutputTracker
@@ -112,14 +157,20 @@ case class DeltaOptimizedWriterExec(
     val maxBinSize =
       ByteUnit.BYTE.convertFrom(getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_BIN_SIZE), ByteUnit.MiB)
 
-    val bins = shuffleStats.toSeq.flatMap(_._2).groupBy(_._1.asInstanceOf[ShuffleBlockId].reduceId)
-      .flatMap { case (_, blocks) =>
-        BinPackingUtils.binPackBySize[(BlockId, Long, Int), BlockId](
-          blocks,
-          _._2, // size
-          _._1, // blockId
-          maxBinSize)
-      }
+    val bins = if (shuffleHelper.isDefined) {
+      shuffleHelper.get.computeBins(shuffleStats, maxBinSize)
+    } else {
+      // Default (SortShuffleManager) path: bin-pack individual blocks within each reducer
+      // for optimal file sizes.
+      shuffleStats.toSeq.flatMap(_._2).groupBy(_._1.asInstanceOf[ShuffleBlockId].reduceId)
+        .flatMap { case (_, blocks) =>
+          BinPackingUtils.binPackBySize[(BlockId, Long, Int), BlockId](
+            blocks,
+            _._2, // size
+            _._1, // blockId
+            maxBinSize)
+        }
+    }
 
     bins
       .map { bin =>
@@ -191,7 +242,8 @@ case class DeltaOptimizedWriterExec(
       sparkContext,
       shuffledRDD.dependency,
       readMetrics,
-      new OptimizedWriterBlocks(partitions))
+      new OptimizedWriterBlocks(partitions),
+      shuffleHelper.isDefined)
   }
 
   private def getConf[T](entry: ConfigEntry[T]): T = {
@@ -214,12 +266,17 @@ class OptimizedWriterBlocks(
 /**
  * A specialized implementation similar to `ShuffledRowRDD`, where a partition reads a prepared
  * set of shuffle blocks.
+ *
+ * When `useShuffleManagerReader` is true, shuffle reads are delegated to
+ * `ShuffleManager.getReader()` to ensure compatibility with external shuffle managers.
+ * Otherwise, the original `ShuffleBlockFetcherIterator` path is used.
  */
 private class DeltaOptimizedWriterRDD(
     @transient sparkContext: SparkContext,
     var dep: ShuffleDependency[Int, _, InternalRow],
     metrics: Map[String, SQLMetric],
-    @transient blocks: OptimizedWriterBlocks)
+    @transient blocks: OptimizedWriterBlocks,
+    useShuffleManagerReader: Boolean)
   extends RDD[InternalRow](sparkContext, Seq(dep)) with DeltaLogging {
 
   override def getPartitions: Array[Partition] = Array.tabulate(blocks.bins.length) { i =>
@@ -230,6 +287,49 @@ private class DeltaOptimizedWriterRDD(
     val tempMetrics = context.taskMetrics().createTempShuffleReadMetrics()
     val sqlMetricsReporter = new SQLShuffleReadMetricsReporter(tempMetrics, metrics)
 
+    if (useShuffleManagerReader) {
+      computeWithShuffleManager(split, context, sqlMetricsReporter)
+    } else {
+      computeWithBlockFetcher(split, context, sqlMetricsReporter)
+    }
+  }
+
+  /**
+   * External shuffle manager path: delegate to `ShuffleManager.getReader()` for each reducer.
+   * Each bin contains complete reducers (never partial), so reading by reducer ID produces
+   * exactly the right data without duplication.
+   */
+  private def computeWithShuffleManager(
+      split: Partition,
+      context: TaskContext,
+      sqlMetricsReporter: SQLShuffleReadMetricsReporter): Iterator[InternalRow] = {
+    val partitionBlocks = split.asInstanceOf[ShuffleBlockRDDPartition].blocks
+    val allBlocks = partitionBlocks.flatMap { case (_, blks) => blks }
+    val reducerIds = allBlocks.map(_._1.asInstanceOf[ShuffleBlockId].reduceId).distinct.sorted
+
+    val readers = reducerIds.map { reducerId =>
+      SparkEnv.get.shuffleManager.getReader(
+        dep.shuffleHandle,
+        reducerId,
+        reducerId + 1,
+        context,
+        sqlMetricsReporter)
+    }
+
+    readers.iterator.flatMap { reader =>
+      reader.read().asInstanceOf[Iterator[Product2[Int, InternalRow]]].map(_._2)
+    }
+  }
+
+  /**
+   * Default (SortShuffleManager) path: use `ShuffleBlockFetcherIterator` to fetch specific
+   * blocks directly. This allows block-level bin-packing where a single reducer's blocks
+   * can be split across multiple bins for optimal file sizes.
+   */
+  private def computeWithBlockFetcher(
+      split: Partition,
+      context: TaskContext,
+      sqlMetricsReporter: SQLShuffleReadMetricsReporter): Iterator[InternalRow] = {
     val blocks = if (context.stageAttemptNumber() > 0) {
       // We lost shuffle blocks, so we need to now get new manager addresses
       val executorTracker = SparkEnv.get.mapOutputTracker
