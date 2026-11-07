@@ -1285,7 +1285,7 @@ class DeltaCDCScalaWithCatalogOwnedBatch100Suite extends DeltaCDCScalaSuite {
  *
  * STRICT mode is scoped to the read only. Path-based reads register the path as a named
  * (unmanaged) table so resolution goes through the configured V2 spark_catalog (returns a
- * SparkTable); a bare `delta.`path`` would resolve to a V1 DeltaTableV2 and be rejected by
+ * DeltaV2Table); a bare `delta.`path`` would resolve to a V1 DeltaTableV2 and be rejected by
  * ChangelogSupport.
  */
 trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase with ChangelogSyntaxSupportedShim {

@@ -1052,7 +1052,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
    * Verifies that pre-seeded persisted metadata (older snapshot, fewer columns) overrides the
    * current snapshot schema (which has been evolved with ALTER TABLE).
    */
-  private void verifyPersistedEntryDrivesSparkTableSchema(
+  private void verifyPersistedEntryDrivesDeltaV2TableSchema(
       File tempDir, String optionKey, String tableNameSuffix, boolean usePathBasedConstructor) {
     String tablePath = new File(tempDir, "table").getAbsolutePath();
     String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
@@ -1142,7 +1142,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   /** Persisted entry overrides the snapshot schema when SCHEMA_TRACKING_LOCATION is set. */
   @Test
   public void testSchemaTracking_persistedEntryOverridesSnapshotSchema(@TempDir File tempDir) {
-    verifyPersistedEntryDrivesSparkTableSchema(
+    verifyPersistedEntryDrivesDeltaV2TableSchema(
         tempDir,
         DeltaOptions.SCHEMA_TRACKING_LOCATION(),
         "primary_key",
@@ -1153,7 +1153,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   @Test
   public void testSchemaTracking_persistedEntryOverridesSnapshotSchemaWithAliasKey(
       @TempDir File tempDir) {
-    verifyPersistedEntryDrivesSparkTableSchema(
+    verifyPersistedEntryDrivesDeltaV2TableSchema(
         tempDir,
         DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(),
         "alias_key",
@@ -1164,7 +1164,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   @Test
   public void testSchemaTracking_persistedEntryOverridesSnapshotSchemaWithPathBasedConstructor(
       @TempDir File tempDir) {
-    verifyPersistedEntryDrivesSparkTableSchema(
+    verifyPersistedEntryDrivesDeltaV2TableSchema(
         tempDir,
         DeltaOptions.SCHEMA_TRACKING_LOCATION(),
         "path_based_constructor",
