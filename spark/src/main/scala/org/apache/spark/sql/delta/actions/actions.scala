@@ -1632,6 +1632,7 @@ case class CommitInfo(
     isolationLevel: Option[String],
     isBlindAppend: Option[Boolean],
     dataChange: Option[Boolean],
+    @JsonDeserialize(using = classOf[JsonMetricsDeserializer])
     operationMetrics: Option[Map[String, String]],
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
@@ -2355,6 +2356,28 @@ class JsonMapSerializer extends JsonSerializer[Map[String, String]] {
       }
     }
     jgen.writeEndObject()
+  }
+}
+
+/**
+ * Read-side compatibility for existing commit history containing non-string operation metrics.
+ * Older delta-rs OPTIMIZE commits used JSON objects; newer writers can still emit
+ * numbers and booleans. Delta Spark continues to write string-valued metrics.
+ * This deserializer does not change the writer contract.
+ */
+class JsonMetricsDeserializer extends JsonDeserializer[Option[Map[String, String]]] {
+  override def getNullValue(ctxt: DeserializationContext): Option[Map[String, String]] = None
+
+  override def getAbsentValue(ctxt: DeserializationContext): Option[Map[String, String]] = None
+
+  override def deserialize(
+      jp: JsonParser,
+      ctxt: DeserializationContext): Option[Map[String, String]] = {
+    val metrics = ctxt.readValue(jp, classOf[Map[String, Any]])
+    Option(metrics).map(_.map {
+      case (key, value: String) => key -> value
+      case (key, value) => key -> JsonUtils.toJson(value)
+    })
   }
 }
 
