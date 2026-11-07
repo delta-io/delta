@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.{CommitFileStatus, CommitRange, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{InvalidTableException, KernelException}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, StartVersionNotFoundException}
 import io.delta.kernel.internal.commitrange.{CommitRangeBuilderImpl, CommitRangeImpl}
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedDeltaData, ParsedLogData}
 import io.delta.kernel.internal.fs.Path
@@ -993,7 +993,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         builder.build(mockEngine())
       }.getMessage
 
-      assert(exMsg.contains("Only staged ratified commits are supported"))
+      assert(exMsg.contains("Only file-based ratified catalog commits are supported"))
     }
   }
 
@@ -1418,5 +1418,37 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     // 2 files for each of the versions 0 to 5, then the checksum and the commit file of version 6.
     // Reading the commit file of version 6 stops the listing.
     assert(filesListed == 14)
+  }
+
+  test("withLogData: published and staged catalog commits are both accepted") {
+    val logData = Seq[ParsedLogData](
+      ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 0, deltaFileStatus(0)),
+      ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 1, deltaFileStatus(1)),
+      ParsedCatalogCommitData.forFileStatus(stagedCommitFile(2)))
+    val fileList = deltaFileStatuses(0L to 1L)
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withEndBoundary(CommitBoundary.atVersion(2))
+      .withLogData(logData.toList.asJava)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 2)
+  }
+
+  test("withLogData: published catalog commits removed by metadata cleanup are not trusted") {
+    // UC still reports v0 as a catalog commit, but 0.json has been removed by metadata cleanup
+    val logData = Seq[ParsedLogData](
+      ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 0, deltaFileStatus(0)),
+      ParsedCatalogCommitData.forFileStatus(stagedCommitFile(1)),
+      ParsedCatalogCommitData.forFileStatus(stagedCommitFile(2)))
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withEndBoundary(CommitBoundary.atVersion(2))
+      .withLogData(logData.toList.asJava)
+
+    intercept[StartVersionNotFoundException] {
+      builder.build(createMockFSListFromEngine(deltaFileStatuses(1L to 2L)))
+    }
   }
 }
