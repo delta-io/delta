@@ -1145,7 +1145,8 @@ class CheckpointsSuite
             dfToWrite,
             v2CheckpointPath,
             deltaLog.newDeltaHadoopConf(),
-            false)
+            false,
+            tableProperties = snapshot.metadata.configuration)
         (v2CheckpointPath, Some(schemaOfDfWritten))
       } else {
         throw DeltaErrors.assertionFailedError(
