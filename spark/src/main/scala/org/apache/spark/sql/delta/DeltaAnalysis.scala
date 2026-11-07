@@ -605,7 +605,7 @@ class DeltaAnalysis(protected val session: SparkSession)
       ResolvedTable.create(catalog, u.identifier, table)
 
     case u: UnresolvedPathBasedDeltaTableRelation =>
-      val table = getPathBasedDeltaTable(u.path, u.options.asScala.toMap)
+      val table = getPathBasedDeltaTable(u.path, u.options.asCaseSensitiveMap().asScala.toMap)
       if (!table.tableExists) {
         throw DeltaErrors.notADeltaTableException(u.deltaTableIdentifier)
       }
@@ -1196,7 +1196,7 @@ object DeltaRelation extends DeltaLogging {
       v2Relation: DataSourceV2Relation,
       options: CaseInsensitiveStringMap): LogicalRelation = {
     recordFrameProfile("DeltaAnalysis", "fromV2Relation") {
-      val relation = d.withOptions(options.asScala.toMap).toBaseRelation
+      val relation = d.withOptions(options.asCaseSensitiveMap().asScala.toMap).toBaseRelation
       val output = if (CDCReader.isCDCRead(options)) {
         // Handles cdc for the spark.read.options().table() code path
         // Mapping needed for references to the table's columns coming from Spark Connect.
