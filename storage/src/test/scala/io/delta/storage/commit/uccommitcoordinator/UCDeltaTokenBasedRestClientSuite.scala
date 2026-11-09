@@ -970,6 +970,234 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
+  // --------------- external snapshot sync ---------------
+
+  private def externalSnapshot(version: Long): ObjectNode = {
+    val response = objectMapper.readTree(loadTableJson(tableType = "EXTERNAL"))
+      .asInstanceOf[ObjectNode]
+    response.get("metadata").asInstanceOf[ObjectNode]
+      .put("etag", s"etag-$version").put("last-commit-version", version)
+    response
+  }
+
+  test("external create sends an empty properties map and skips unsupported domains") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") captured = body
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson(tableType = "EXTERNAL"))
+    }
+    withClient { c =>
+      c.createTable(new URI("s3://bucket/table"), testIdentifier,
+        UCDeltaModels.TableType.EXTERNAL,
+        metadata(schema = """{"type":"struct","fields":[]}"""), protocol(1, 2),
+        java.util.List.of(dm("custom.domain", "{}")), 1234L, Optional.empty())
+    }
+    val request = objectMapper.readTree(captured)
+    assert(request.get("table-type").asText() == "EXTERNAL")
+    assert(request.get("properties").isObject && request.get("properties").isEmpty)
+    assert(request.get("columns").isObject)
+    assert(!request.hasNonNull("domain-metadata"))
+  }
+
+  test("external sync reconciles the snapshot without commit or backfill actions") {
+    val response = externalSnapshot(1)
+    val properties = response.get("metadata").get("properties").asInstanceOf[ObjectNode]
+    Seq("delta.minReaderVersion", "delta.minWriterVersion", "delta.feature.clustering",
+      "delta.lastUpdateVersion", "delta.lastCommitTimestamp", "clusteringColumns",
+      "delta.rowTracking.rowIdHighWaterMark", "io.unitycatalog.tableId")
+      .foreach(properties.put(_, "server-value"))
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") captured = body
+      sendJson(exchange, HttpStatus.SC_OK, response.toString)
+    }
+    withClient { c =>
+      c.updateTableMetadata(testTableId.toString, testIdentifier,
+        metadata(schema = """{"type":"struct","fields":[]}""", desc = null,
+          config = Map("new" -> "value").asJava), protocol(3, 7),
+        java.util.List.of(dm("delta.clustering", """{"clusteringColumns":[["id"]]}"""),
+          dm("custom.domain", "{}")), 5L, 5000L)
+    }
+    val request = objectMapper.readTree(captured)
+    val requirements = request.get("requirements").elements().asScala
+      .map(r => r.get("type").asText() -> r).toMap
+    assert(requirements("assert-table-uuid").get("uuid").asText() == testTableId.toString)
+    assert(requirements("assert-etag").get("etag").asText() == "etag-1")
+    val updates = request.get("updates").elements().asScala
+      .map(u => u.get("action").asText() -> u).toMap
+    assert(updates.keySet == Set("set-columns", "set-partition-columns", "set-table-comment",
+      "set-protocol", "set-properties", "remove-properties", "set-domain-metadata",
+      "remove-domain-metadata", "update-metadata-snapshot-version"))
+    assert(updates("set-table-comment").get("comment").asText() == "")
+    assert(updates("set-properties").get("updates").toString == """{"new":"value"}""")
+    assert(updates("remove-properties").get("removals").toString == """["key1"]""")
+    assert(updates("remove-domain-metadata").get("domains").toString ==
+      """["delta.rowTracking"]""")
+    val version = updates("update-metadata-snapshot-version")
+    assert(version.get("last-commit-version").asLong() == 5L)
+    assert(version.get("last-commit-timestamp-ms").asLong() == 5000L)
+  }
+
+  test("external sync retains active supported domains and excludes unknown domains") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") captured = body
+      sendJson(exchange, HttpStatus.SC_OK, externalSnapshot(1).toString)
+    }
+    withClient { c =>
+      c.updateTableMetadata(testTableId.toString, testIdentifier,
+        metadata(schema = """{"type":"struct","fields":[]}"""), protocol(3, 7),
+        java.util.List.of(
+          dm("delta.clustering", """{"clusteringColumns":[["id"]]}"""),
+          dm("delta.rowTracking", """{"rowIdHighWaterMark":42}"""),
+          dm("custom.domain", "{}")), 5L, 5000L)
+    }
+    val updates = objectMapper.readTree(captured).get("updates").elements().asScala
+      .map(u => u.get("action").asText() -> u).toMap
+    val sent = updates("set-domain-metadata").get("updates")
+    assert(sent.path("delta.clustering").path("clusteringColumns").toString == """[["id"]]""")
+    assert(sent.path("delta.rowTracking").path("rowIdHighWaterMark").asLong() == 42L)
+    assert(!sent.has("custom.domain"))
+    assert(!updates.contains("remove-domain-metadata"))
+  }
+
+  test("external sync reloads after an etag conflict and repairs missed property changes") {
+    val requests = scala.collection.mutable.ArrayBuffer.empty[String]
+    var loads = 0
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "GET") {
+        loads += 1
+        val response = externalSnapshot(loads)
+        if (loads == 2) {
+          response.get("metadata").get("properties").asInstanceOf[ObjectNode]
+            .put("added-by-earlier-snapshot", "stale")
+        }
+        sendJson(exchange, HttpStatus.SC_OK, response.toString)
+      } else {
+        requests += body
+        sendJson(exchange, if (requests.size == 1) HttpStatus.SC_CONFLICT else HttpStatus.SC_OK,
+          if (requests.size == 1) "{}" else externalSnapshot(5).toString)
+      }
+    }
+    withClient { c =>
+      c.updateTableMetadata(testTableId.toString, testIdentifier,
+        metadata(schema = """{"type":"struct","fields":[]}"""), protocol(1, 2),
+        Collections.emptyList(), 5L, 5000L)
+    }
+    assert(loads == 2 && requests.size == 2)
+    val retried = objectMapper.readTree(requests.last)
+    val requirements = retried.get("requirements").elements().asScala.toSeq
+    assert(requirements.exists(r => r.path("etag").asText() == "etag-2"))
+    val removals = retried.get("updates").elements().asScala
+      .find(_.get("action").asText() == "remove-properties").get
+    assert(removals.get("removals").elements().asScala.map(_.asText()).toSet ==
+      Set("key1", "added-by-earlier-snapshot"))
+  }
+
+  test("external sync stops retrying when an equal or newer snapshot wins the conflict") {
+    for (winningVersion <- Seq(5L, 6L)) {
+      var loads = 0
+      var attempts = 0
+      deltaHandler = (exchange, _) => {
+        if (exchange.getRequestMethod == "GET") {
+          loads += 1
+          val response = externalSnapshot(if (loads == 1) 1L else winningVersion)
+          sendJson(exchange, HttpStatus.SC_OK, response.toString)
+        } else {
+          attempts += 1
+          sendJson(exchange, HttpStatus.SC_CONFLICT, "{}")
+        }
+      }
+      withClient { c =>
+        c.updateTableMetadata(testTableId.toString, testIdentifier,
+          metadata(schema = """{"type":"struct","fields":[]}"""), protocol(1, 2),
+          Collections.emptyList(), 5L, 5000L)
+      }
+      assert(loads == 2)
+      assert(attempts == 1)
+    }
+  }
+
+  test("external sync skips repeated and older snapshots and rejects a replaced table") {
+    for (catalogVersion <- Seq(5L, 6L)) {
+      deltaHandler = (exchange, _) => {
+        assert(exchange.getRequestMethod == "GET")
+        sendJson(exchange, HttpStatus.SC_OK, externalSnapshot(catalogVersion).toString)
+      }
+      withClient(_.updateTableMetadata(testTableId.toString, testIdentifier,
+        metadata(), protocol(1, 2), Collections.emptyList(), 5L, 5000L))
+    }
+    for (changedIdentity <- Seq(true, false)) {
+      val response = externalSnapshot(1)
+      val current = response.get("metadata").asInstanceOf[ObjectNode]
+      if (changedIdentity) current.put("table-uuid", UUID.randomUUID().toString)
+      else current.put("table-type", "MANAGED")
+      deltaHandler = (exchange, _) => {
+        assert(exchange.getRequestMethod == "GET")
+        sendJson(exchange, HttpStatus.SC_OK, response.toString)
+      }
+      withClient { c =>
+        intercept[java.io.IOException] {
+          c.updateTableMetadata(testTableId.toString, testIdentifier,
+            metadata(), protocol(1, 2), Collections.emptyList(), 5L, 5000L)
+        }
+      }
+    }
+  }
+
+  test("external sync rejects a missing etag without posting an update") {
+    var loads = 0
+    var attempts = 0
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "GET") {
+        loads += 1
+        val response = externalSnapshot(1)
+        response.get("metadata").asInstanceOf[ObjectNode].remove("etag")
+        sendJson(exchange, HttpStatus.SC_OK, response.toString)
+      } else {
+        attempts += 1
+        sendJson(exchange, HttpStatus.SC_OK, externalSnapshot(5).toString)
+      }
+    }
+    withClient { c =>
+      val e = intercept[java.io.IOException] {
+        c.updateTableMetadata(testTableId.toString, testIdentifier,
+          metadata(schema = """{"type":"struct","fields":[]}"""), protocol(1, 2),
+          Collections.emptyList(), 5L, 5000L)
+      }
+      assert(e.getMessage.contains("no etag"))
+    }
+    assert(loads == 1)
+    assert(attempts == 0)
+  }
+
+  test("external sync has bounded conflict retries and propagates other failures") {
+    for ((status, expectedAttempts) <- Seq(HttpStatus.SC_CONFLICT -> 3,
+        HttpStatus.SC_INTERNAL_SERVER_ERROR -> 1)) {
+      var attempts = 0
+      var loads = 0
+      deltaHandler = (exchange, _) => {
+        if (exchange.getRequestMethod == "GET") {
+          loads += 1
+          sendJson(exchange, HttpStatus.SC_OK, externalSnapshot(1).toString)
+        } else {
+          attempts += 1
+          sendJson(exchange, status, "{}")
+        }
+      }
+      withClient { c =>
+        intercept[java.io.IOException] {
+          c.updateTableMetadata(testTableId.toString, testIdentifier,
+            metadata(schema = """{"type":"struct","fields":[]}"""), protocol(1, 2),
+            Collections.emptyList(), 5L, 5000L)
+        }
+      }
+      assert(loads == expectedAttempts)
+      // The SDK can retry a 5xx HTTP response within one sync attempt.
+      assert(attempts >= expectedAttempts)
+    }
+  }
+
   // --------------- finalizeCreate ---------------
 
   test("finalizeCreate sends createTable request with columns and properties") {

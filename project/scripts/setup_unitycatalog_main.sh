@@ -89,7 +89,8 @@ UC_BASE_VERSION=0.8.0-SNAPSHOT
 
 UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
 UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
-UC_REF="${UC_REF:-$UC_PIN_SHA}"
+# Temporarily use UC #2158; restore the default after it merges.
+UC_REF="${UC_REF:-0b7e2c35a276aa51c93fd783e4907d81506f0eb0}"
 UC_FORCE="${UC_FORCE:-0}"
 SPARK_VERSION="${SPARK_VERSION:-4.2}"
 DELTA_RELEASE_MODE="${DELTA_RELEASE_MODE:-0}"

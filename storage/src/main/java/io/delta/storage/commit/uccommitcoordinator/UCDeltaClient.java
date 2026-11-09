@@ -57,14 +57,14 @@ public interface UCDeltaClient extends UCClient {
   StagingTableInfo createStagingTable(TableIdentifier tableIdentifier) throws IOException;
 
   /**
-   * Finalizes a previously staged Delta table, making it visible in the catalog. Mirrors the
+   * Finalizes a staged managed table or registers an external table in the catalog. Mirrors the
    * shape of {@link UCClient#commit}: the catalog-level identity is conveyed by
    * {@code tableId} / {@code tableUri} / {@code tableIdentifier}; the Delta-log shape is
    * conveyed by an {@link AbstractMetadata} (description, schemaString, partitionColumns,
    * configuration) and an {@link AbstractProtocol} (min reader/writer versions, reader/writer
    * features).
    *
-   * @param tableUri               the storage location of the staged table
+   * @param tableUri               the storage location of the Delta table
    * @param tableIdentifier        catalog + schema namespace and table name
    * @param tableType              MANAGED or EXTERNAL
    * @param metadata               the Delta metadata to register; only {@code description},
@@ -89,6 +89,34 @@ public interface UCDeltaClient extends UCClient {
       List<AbstractDomainMetadata> domainMetadata,
       long lastCommitTimestampMs,
       Optional<UniformMetadata> uniformMetadata) throws IOException;
+
+  /**
+   * Syncs an already committed external-table snapshot without proposing a catalog commit.
+   * The caller must pass the UC UUID captured before the write, not the Delta metadata id.
+   * Implementations reconcile the full snapshot against current catalog metadata and protect
+   * the update against concurrent changes. A later snapshot can repair a failed sync.
+   *
+   * @param tableId UC table UUID captured when the table was loaded
+   * @param tableIdentifier catalog + schema namespace and table name
+   * @param metadata committed snapshot metadata
+   * @param protocol committed snapshot protocol
+   * @param domainMetadata committed snapshot's active domain metadata
+   * @param version committed snapshot version
+   * @param timestamp committed snapshot timestamp in milliseconds
+   * @throws IOException if the catalog cannot be updated
+   * @throws UnsupportedOperationException if the client does not implement external table
+   *     metadata sync
+   */
+  default void updateTableMetadata(
+      String tableId,
+      TableIdentifier tableIdentifier,
+      AbstractMetadata metadata,
+      AbstractProtocol protocol,
+      List<AbstractDomainMetadata> domainMetadata,
+      long version,
+      long timestamp) throws IOException {
+    throw new UnsupportedOperationException("External table metadata sync is not supported");
+  }
 
   /**
    * Reports post-commit telemetry for a table (file/row counts, byte counts, file-size

@@ -481,32 +481,47 @@ private[catalog] class UCDeltaCatalogClientImpl(
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       lastCommitTimestampMs: Long,
-      uniformMetadata: Option[StorageUniformMetadata] = None): Unit = {
-    if (table.tableType != CatalogTableType.MANAGED) {
-      throw new IllegalArgumentException(
-        s"UCDeltaClient createTable only supports MANAGED tables; " +
-          s"got ${table.tableType} for ${fullQualifiedTableName(ident)}.")
-    }
+      uniformMetadata: Option[StorageUniformMetadata] = None,
+      lastCommitVersion: Long = 0L): Unit = {
     val locationUri = table.storage.locationUri.getOrElse(throw new IllegalArgumentException(
       s"createTable requires a storage location on the CatalogTable for " +
         s"${fullQualifiedTableName(ident)}"))
-    // Strip V2-only catalog keys (location, owner, ...) before sending the configuration
-    // to UC; they don't belong in table properties.
-    val cleanedConfiguration =
-      metadata.configuration.view
-        .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
-        .toMap
-    ucClient.createTable(
+    val cleanedMetadata = removeReservedProperties(metadata).copy(
+      description = if (table.tableType == CatalogTableType.EXTERNAL) {
+        metadata.description
+      } else {
+        table.comment.orNull
+      })
+    val created = ucClient.createTable(
       locationUri,
       toStorageTableIdent(ident),
       toUcTableType(table.tableType),
-      metadata.copy(
-        description = table.comment.orNull,
-        configuration = cleanedConfiguration),
+      cleanedMetadata,
       protocol,
       domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
       lastCommitTimestampMs,
       uniformMetadata.toJava)
+    // External registration can refer to an existing log. CREATE assumes version zero, so
+    // record the actual snapshot version through the external metadata update action.
+    if (table.tableType == CatalogTableType.EXTERNAL && lastCommitVersion > 0) {
+      try {
+        ucClient.updateTableMetadata(
+          created.getTableId.toString, toStorageTableIdent(ident), cleanedMetadata, protocol,
+          domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
+          lastCommitVersion, lastCommitTimestampMs)
+      } catch {
+        case NonFatal(e) =>
+          logWarning(log"Failed to sync the registered snapshot for " +
+            log"${MDC(DeltaLogKeys.TABLE_NAME, ident)}", e)
+      }
+    }
+  }
+
+  private def removeReservedProperties(metadata: Metadata): Metadata = {
+    // V2 catalog keys (location, owner, ...) are not Delta table properties.
+    metadata.copy(configuration = metadata.configuration.filterNot { case (key, _) =>
+      UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(key)
+    })
   }
 
   // -------------------------------------------------------------------------
@@ -618,9 +633,12 @@ private[catalog] class UCDeltaCatalogClientImpl(
             iceberg.getConvertedDeltaTimestamp
         )
       }.getOrElse(Map.empty[String, String])
+    // Capture UC's identity before a write. The Delta metadata id is a different UUID.
+    val ucTableIdProps = Map(UC_TABLE_ID_KEY -> info.getTableId.toString)
     val clientMaintenanceOperations = info.getClientMaintenanceOperations.asScala
     val mergedStorageProperties = {
-      val merged = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps
+      val merged = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps ++
+        ucTableIdProps
       // Only the catalog's list grants permission. A user-defined table property must not.
       if (clientMaintenanceOperations.isEmpty) {
         merged - ALLOWED_OPERATIONS_PROPERTY

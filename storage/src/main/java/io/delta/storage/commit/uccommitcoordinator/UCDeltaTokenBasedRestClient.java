@@ -41,6 +41,7 @@ import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaAddCommitUpdate;
+import io.unitycatalog.client.delta.model.DeltaAssertEtag;
 import io.unitycatalog.client.delta.model.DeltaAssertTableUUID;
 import io.unitycatalog.client.delta.model.DeltaClusteringDomainMetadata;
 import io.unitycatalog.client.delta.model.DeltaCommit;
@@ -71,6 +72,7 @@ import io.unitycatalog.client.delta.model.DeltaTableMetadata;
 import io.unitycatalog.client.delta.model.DeltaTableType;
 import io.unitycatalog.client.delta.model.DeltaUniformMetadata;
 import io.unitycatalog.client.delta.model.DeltaUniformMetadataIceberg;
+import io.unitycatalog.client.delta.model.DeltaUpdateSnapshotVersionUpdate;
 import io.unitycatalog.client.delta.model.DeltaUpdateTableRequest;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs;
@@ -84,6 +86,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -109,6 +112,15 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private static final int HTTP_BAD_REQUEST = 400;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
+  private static final int MAX_METADATA_SYNC_ATTEMPTS = 3;
+  private static final List<String> SYNC_DOMAINS = Arrays.asList(
+      DeltaDomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING,
+      DeltaDomainMetadataUpdates.JSON_PROPERTY_DELTA_ROW_TRACKING);
+  private static final List<String> SNAPSHOT_DERIVED_PROPERTIES = Arrays.asList(
+      UCCommitCoordinatorClient.UC_TABLE_ID_KEY.toLowerCase(Locale.ROOT),
+      "delta.minreaderversion", "delta.minwriterversion",
+      "delta.lastupdateversion", "delta.lastcommittimestamp", "clusteringcolumns",
+      "delta.rowtracking.rowidhighwatermark");
 
   private DeltaTablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
@@ -532,10 +544,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         sdkRequest.partitionColumns(partitionColumns);
       }
       Map<String, String> configuration = metadata.getConfiguration();
-      if (configuration != null && !configuration.isEmpty()) {
-        sdkRequest.properties(configuration);
-      }
-      DeltaDomainMetadataUpdates updates = toSDKDomainMetadataUpdates(domainMetadata);
+      sdkRequest.properties(configuration != null ? configuration : Collections.emptyMap());
+      DeltaDomainMetadataUpdates updates = toSDKDomainMetadataUpdates(
+          tableType == UCDeltaModels.TableType.EXTERNAL
+              ? supportedSnapshotDomains(domainMetadata) : domainMetadata);
       if (updates != null) {
         sdkRequest.domainMetadata(updates);
       }
@@ -551,6 +563,95 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           String.format("Failed to create table %s (HTTP %s): %s",
               name.fullName, e.getCode(), e.getResponseBody()), e);
     }
+  }
+
+  @Override
+  public void updateTableMetadata(
+      String tableId,
+      TableIdentifier tableIdentifier,
+      AbstractMetadata metadata,
+      AbstractProtocol protocol,
+      List<AbstractDomainMetadata> domainMetadata,
+      long version,
+      long timestamp) throws IOException {
+    ensureOpen();
+    UUID expectedId = UUID.fromString(tableId);
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
+    for (int attempt = 0; attempt < MAX_METADATA_SYNC_ATTEMPTS; attempt++) {
+      try {
+        // Use the metadata endpoint directly: syncing a snapshot needs no storage credentials.
+        DeltaTableMetadata current =
+            deltaTablesApi.loadTable(name.catalog, name.schema, name.table).getMetadata();
+        if (!expectedId.equals(current.getTableUuid())
+            || current.getTableType() != DeltaTableType.EXTERNAL) {
+          throw new IOException("Table " + name.fullName
+              + " is no longer the expected external table (UUID " + tableId + ")");
+        }
+        if (current.getLastCommitVersion() != null && current.getLastCommitVersion() >= version) {
+          return;
+        }
+        if (current.getEtag() == null) {
+          throw new IOException("UC returned no etag for " + name.fullName);
+        }
+        DeltaUpdateTableRequest request = new DeltaUpdateTableRequest()
+            .addRequirementsItem(new DeltaAssertTableUUID()
+                .type("assert-table-uuid").uuid(expectedId))
+            .addRequirementsItem(new DeltaAssertEtag()
+                .type("assert-etag").etag(current.getEtag()))
+            .addUpdatesItem(new DeltaSetSchemaUpdate().action("set-columns")
+                .columns(UCDeltaSchemaConverter.parseSchemaString(metadata.getSchemaString())))
+            .addUpdatesItem(new DeltaSetPartitionColumnsUpdate().action("set-partition-columns")
+                .partitionColumns(metadata.getPartitionColumns()))
+            .addUpdatesItem(new DeltaSetTableCommentUpdate().action("set-table-comment")
+                .comment(Objects.toString(metadata.getDescription(), "")))
+            .addUpdatesItem(new DeltaSetProtocolUpdate().action("set-protocol")
+                .protocol(toSDKDeltaProtocol(protocol)));
+        addPropertyUpdates(request,
+            snapshotProperties(current.getProperties()),
+            snapshotProperties(metadata.getConfiguration()));
+        List<AbstractDomainMetadata> domains = supportedSnapshotDomains(domainMetadata);
+        addDomainMetadataUpdateActions(request, domains);
+        List<String> removals = new ArrayList<>(SYNC_DOMAINS);
+        domains.forEach(d -> removals.remove(d.getDomain()));
+        if (!removals.isEmpty()) {
+          request.addUpdatesItem(new DeltaRemoveDomainMetadataUpdate()
+              .action("remove-domain-metadata").domains(removals));
+        }
+        request.addUpdatesItem(new DeltaUpdateSnapshotVersionUpdate()
+            .action("update-metadata-snapshot-version")
+            .lastCommitVersion(version).lastCommitTimestampMs(timestamp));
+        deltaTablesApi.updateTable(name.catalog, name.schema, name.table, request);
+        return;
+      } catch (ApiException e) {
+        // Reload before retrying: the property removals and etag belong to the previous read.
+        if (e.getCode() != HTTP_CONFLICT || attempt == MAX_METADATA_SYNC_ATTEMPTS - 1) {
+          throw new IOException("Failed to sync external table " + name.fullName
+              + " (HTTP " + e.getCode() + "): " + e.getResponseBody(), e);
+        }
+      }
+    }
+  }
+
+  private static List<AbstractDomainMetadata> supportedSnapshotDomains(
+      List<AbstractDomainMetadata> domains) {
+    return domains.stream()
+        .filter(d -> !d.isRemoved() && SYNC_DOMAINS.contains(d.getDomain()))
+        .collect(Collectors.toList());
+  }
+
+  /** UC derives these keys from identity, protocol, domain metadata, or the snapshot version. */
+  private static Map<String, String> snapshotProperties(Map<String, String> properties) {
+    Map<String, String> result = new LinkedHashMap<>();
+    if (properties == null) {
+      return result;
+    }
+    properties.forEach((key, value) -> {
+      String lower = key.toLowerCase(Locale.ROOT);
+      if (!lower.startsWith("delta.feature.") && !SNAPSHOT_DERIVED_PROPERTIES.contains(lower)) {
+        result.put(key, value);
+      }
+    });
+    return result;
   }
 
   @Override
@@ -936,9 +1037,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           .comment(newMetadata.getDescription()));
     }
 
-    Map<String, String> oldConfig = oldMetadata.getConfiguration();
-    Map<String, String> newConfig = newMetadata.getConfiguration();
+    addPropertyUpdates(request, oldMetadata.getConfiguration(), newMetadata.getConfiguration());
+  }
 
+  private void addPropertyUpdates(
+      DeltaUpdateTableRequest request,
+      Map<String, String> oldConfig,
+      Map<String, String> newConfig) {
     if (!Objects.equals(oldConfig, newConfig)) {
       Map<String, String> toSet = new LinkedHashMap<>();
       for (Map.Entry<String, String> entry : newConfig.entrySet()) {

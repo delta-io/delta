@@ -302,6 +302,62 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
         .loadTable(parts[0], parts[1], parts[2]);
   }
 
+  @Test
+  public void testExternalCreateRegistersCommittedMetadata() throws Exception {
+    withTempDir(
+        path -> {
+          for (boolean ctas : List.of(false, true)) {
+            String table =
+                fullTableName(ctas ? "external_ctas_metadata" : "external_create_metadata");
+            String location = path + (ctas ? "/ctas" : "/create");
+            try {
+              sql(
+                  "CREATE TABLE %s %s USING DELTA PARTITIONED BY (id) LOCATION '%s'"
+                      + " TBLPROPERTIES ('custom.key'='value') %s",
+                  table,
+                  ctas ? "" : "(id INT, value STRING)",
+                  location,
+                  ctas ? "AS SELECT 1 AS id, 'one' AS value" : "");
+              DeltaLoadTableResponse response = loadTable(table);
+              assertThat(response.getMetadata().getTableType().getValue()).isEqualTo("EXTERNAL");
+              assertThat(response.getMetadata().getColumns().getFields())
+                  .extracting(field -> field.getName())
+                  .containsExactly("id", "value");
+              assertThat(response.getMetadata().getPartitionColumns()).containsExactly("id");
+              assertThat(response.getMetadata().getProperties())
+                  .containsEntry("custom.key", "value");
+              assertThat(response.getCommits()).isNullOrEmpty();
+            } finally {
+              sql("DROP TABLE IF EXISTS %s", table);
+            }
+          }
+        });
+  }
+
+  @Test
+  public void testExternalRegistrationOfExistingSnapshot() throws Exception {
+    withTempDir(
+        path -> {
+          String location = path.toString();
+          String table = fullTableName("external_existing_snapshot");
+          try {
+            sql(
+                "CREATE TABLE %s USING DELTA LOCATION '%s' AS SELECT id FROM range(1)",
+                table, location);
+            sql("INSERT INTO %s VALUES (1)", table);
+            assertThat(currentVersion(table)).isEqualTo(1L);
+            sql("DROP TABLE %s", table);
+            sql("CREATE TABLE %s USING DELTA LOCATION '%s'", table, location);
+            DeltaLoadTableResponse response = loadTable(table);
+            assertThat(response.getMetadata().getLastCommitVersion()).isEqualTo(1L);
+            assertThat(response.getCommits()).isNullOrEmpty();
+            check(table, List.of(row("0"), row("1")));
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", table);
+          }
+        });
+  }
+
   /** UC's view of the table's clustering columns (the {@code clusteringColumns} table property). */
   private String clusteringColumns(String tableName) throws Exception {
     return loadTable(tableName).getMetadata().getProperties().get("clusteringColumns");

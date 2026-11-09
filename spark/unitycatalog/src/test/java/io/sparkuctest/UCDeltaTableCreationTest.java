@@ -44,6 +44,7 @@ import lombok.experimental.Accessors;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
+import org.apache.spark.sql.delta.hooks.UpdateCatalog;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -798,13 +799,21 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
     // Verify that properties are set on server. This can not be done by DESC EXTENDED.
     TablesApi tablesApi = new TablesApi(uc.createApiClient());
+    if (tableType == TableType.EXTERNAL) {
+      assertThat(UpdateCatalog.awaitCompletion(10000)).isTrue();
+    }
     TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
     assertThat(tableInfo.getCatalogName()).isEqualTo(catalogName);
     assertThat(tableInfo.getName()).isEqualTo(parseTableName(fullTableName));
     assertThat(tableInfo.getSchemaName()).isEqualTo(schemaName);
     assertThat(tableInfo.getTableType().name()).isEqualTo(tableType.name());
     assertThat(tableInfo.getDataSourceFormat().name()).isEqualTo(DataSourceFormat.DELTA.name());
-    assertThat(tableInfo.getComment()).isEqualTo(comment);
+    if (tableType == TableType.EXTERNAL && comment == null) {
+      // Snapshot sync uses an empty string to clear a comment through the Delta API.
+      assertThat(tableInfo.getComment()).isNullOrEmpty();
+    } else {
+      assertThat(tableInfo.getComment()).isEqualTo(comment);
+    }
     if (tableType == TableType.EXTERNAL && externalTableLocation != null) {
       assertThat(tableInfo.getStorageLocation()).isEqualTo(externalTableLocation);
     }
@@ -812,21 +821,21 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     List<ColumnInfo> columns = tableInfo.getColumns();
     assertThat(columns).isNotNull();
 
+    assertThat(columns).isNotEmpty();
+    List<String> columnNamesFromServer =
+        columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
+    assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
+    if (partitionColumn.isPresent()) {
+      List<ColumnInfo> matchingColumns =
+          columns.stream()
+              .filter(c -> c.getName().equals(partitionColumn.get()))
+              .collect(Collectors.toList());
+      assertThat(matchingColumns).hasSize(1);
+      assertThat(matchingColumns.get(0).getPartitionIndex()).isEqualTo(0);
+    } else {
+      assertThat(columns.stream().anyMatch(c -> c.getPartitionIndex() != null)).isFalse();
+    }
     if (tableType == TableType.MANAGED) {
-      assertThat(columns).isNotEmpty();
-      List<String> columnNamesFromServer =
-          columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
-      assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
-      if (partitionColumn.isPresent()) {
-        List<ColumnInfo> matchingColumns =
-            columns.stream()
-                .filter(c -> c.getName().equals(partitionColumn.get()))
-                .collect(Collectors.toList());
-        assertThat(matchingColumns).hasSize(1);
-        assertThat(matchingColumns.get(0).getPartitionIndex()).isEqualTo(0);
-      } else {
-        assertThat(columns.stream().anyMatch(c -> c.getPartitionIndex() != null)).isFalse();
-      }
       // Delta sent properties of managed tables to server
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
@@ -912,7 +921,13 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
       assertThat(unexpectedTablePropertiesFromServer).isEmpty();
     } else {
-      assertThat(columns).isEmpty();
+      assertThat(tableInfo.getProperties())
+          .containsAllEntriesOf(customizedProps)
+          .containsKeys(
+              "delta.minReaderVersion",
+              "delta.minWriterVersion",
+              "delta.lastUpdateVersion",
+              "delta.lastCommitTimestamp");
     }
 
     // Also verify table using DESC EXTENDED
@@ -956,8 +971,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           .as("is_managed_location must not be persisted in the Delta commit log")
           .doesNotContain(TableCatalog.PROP_IS_MANAGED_LOCATION);
     } else {
-      // Check for UC table ID
-      assertThat(tableProperties).doesNotContain(UC_TABLE_ID_KEY);
+      // The UC identity is a catalog storage option, not a Delta log property.
+      assertThat(tableProperties)
+          .contains("option." + UC_TABLE_ID_KEY + "=" + tableInfo.getTableId());
+      List<String> detailRow = sql("DESCRIBE DETAIL %s", fullTableName).get(0);
+      assertThat(String.join(",", detailRow)).doesNotContain(UC_TABLE_ID_KEY);
       // Check for catalogManaged feature
       assertThat(tableProperties).doesNotContain(DELTA_CATALOG_MANAGED_KEY);
     }

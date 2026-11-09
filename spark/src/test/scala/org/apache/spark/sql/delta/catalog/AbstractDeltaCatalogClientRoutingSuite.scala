@@ -706,7 +706,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     val tableId = UUID.randomUUID()
     val metadata = new TestMetadata(
       description = "a test table",
-      configuration = util.Map.of("ucTableId", tableId.toString, "delta.feature.x", "supported"),
+      configuration = util.Map.of("ucTableId", tableId.toString, "delta.feature.x", "supported",
+        "io.unitycatalog.tableId", "untrusted"),
       createdTime = 42L)
     val info = new TableInfo(
       tableId,
@@ -735,7 +736,21 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     assert(v1.schema.fieldNames.toSeq === Seq("id"))
     val merged = v1.storage.properties
     assert(merged.get("ucTableId") === Some(tableId.toString))
+    assert(merged.get("io.unitycatalog.tableId") === Some(tableId.toString))
     assert(merged.get("fs.s3a.access.key") === Some("key"))
+  }
+
+  test("loadTable preserves external identity when cached schema and properties are absent") {
+    val id = UUID.randomUUID()
+    val info = new TableInfo(id, UcTableType.EXTERNAL, "s3://bucket/table",
+      new TestMetadata(schemaString = null, configuration = null),
+      Collections.emptyMap(), Collections.emptyList(), Optional.empty())
+    val client = new UCDeltaCatalogClientImpl("main", new StubUCDeltaClient(info))
+    val table = client.loadTable(Identifier.of(Array("sch"), "tbl"))
+      .asInstanceOf[V1Table].catalogTable
+    assert(table.schema.isEmpty)
+    assert(table.storage.locationUri.map(_.toString).contains("s3://bucket/table"))
+    assert(table.storage.properties("io.unitycatalog.tableId") == id.toString)
   }
 
   test("loadTable uses only the catalog maintenance operation list") {
@@ -794,8 +809,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       val v1 = table.asInstanceOf[V1Table].catalogTable
       assert(v1.identifier.table === "tbl")
       assert(v1.storage.locationUri.map(_.toString) === Some("s3://bucket/no-creds-table"))
-      assert(v1.storage.properties.isEmpty,
-        s"no credentials should be set on the V1Table; got ${v1.storage.properties}")
+      assert(v1.storage.properties === Map("io.unitycatalog.tableId" -> tableId.toString),
+        "credential fallback must retain the UC identity without adding storage credentials")
       // The fallback path must have flipped SSP on.
       assert(spark.conf.get(sspKey) === "true",
         "Server-side planning conf should be set after CredentialFetchFailedException fallback")

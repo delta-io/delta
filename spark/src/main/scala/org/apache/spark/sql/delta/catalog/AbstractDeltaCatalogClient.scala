@@ -118,6 +118,7 @@ private[delta] trait AbstractDeltaCatalogClient {
    * @param uniformMetadata       UniForm Iceberg metadata generated atomically with the initial
    *                              snapshot;
    *                              [[None]] when the table was not created with UniForm enabled.
+   * @param lastCommitVersion     snapshot version; can be nonzero when registering an existing log.
    */
   def createTable(
       ident: Identifier,
@@ -126,7 +127,8 @@ private[delta] trait AbstractDeltaCatalogClient {
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       lastCommitTimestampMs: Long,
-      uniformMetadata: Option[UniformMetadata] = None): Unit
+      uniformMetadata: Option[UniformMetadata] = None,
+      lastCommitVersion: Long = 0L): Unit
 
   /**
    * Reports post-commit telemetry for the table to the catalog. Implementations build
