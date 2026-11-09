@@ -22,6 +22,8 @@ Two types of constraints are supported:
 - `NOT NULL`: indicates that values in specific columns cannot be null.
 - `CHECK`: indicates that a specified Boolean expression must be true for each input row.
 
+The Apache Spark connector also applies automatic length checks to `CHAR(n)` and `VARCHAR(n)` declarations. These checks come from type metadata, not named `CHECK` constraints, and do not by themselves enable the `checkConstraints` table feature. See [CHAR and VARCHAR columns](/delta-batch/#char-and-varchar-columns) for length units, padding, configuration, and compatibility limits.
+
 ### `NOT NULL` constraint
 
 You specify `NOT NULL` constraints in the schema when you create a table and drop `NOT NULL` constraints using the `ALTER TABLE CHANGE COLUMN` command.

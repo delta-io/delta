@@ -186,6 +186,105 @@ You can create tables in the following ways:
 
 See the [API documentation](/delta-apidoc/) for details.
 
+### CHAR and VARCHAR columns
+
+With the Apache Spark connector, you can declare `CHAR(n)` and `VARCHAR(n)` columns in a Delta table schema, including fields nested in structs, arrays, and map keys or values. Both declarations are stored as `STRING` with metadata retaining the original type.
+
+#### Length and padding
+
+`n` counts **Unicode code points**, not UTF-8 bytes, UTF-16 code units, or displayed characters (grapheme clusters). Leading and trailing spaces count toward the limit. No Unicode normalization is performed by the length check: U+00E9 counts as one code point, while U+0065 followed by U+0301 counts as two. A supplementary character such as U+1F600 counts as one, even though its UTF-8 encoding uses four bytes.
+
+Spark accepts an integer length from `0` through `2147483647`, inclusive. Negative or larger lengths are rejected. This is a declaration limit, not a guarantee that a value of that size can be allocated or written. With a zero-length declaration, only an empty string or `NULL` passes the length check.
+
+With the default character-type configuration, the following rules apply to non-partition columns:
+
+| Operation | `CHAR(n)` | `VARCHAR(n)` |
+|---|---|---|
+| Write a value longer than `n` code points | Reject the write. | Reject the write. |
+| Write a value of at most `n` code points | Store the supplied value without adding padding. | Store the supplied value without adding padding. |
+| Read a value shorter than `n` code points | Right-pad with U+0020 SPACE to length `n`. | Return the value without padding. |
+
+These length checks apply to SQL inserts, DataFrame writes, updates, and merges. Overlength values are not automatically truncated or trimmed, even when the excess consists only of trailing spaces. For example, `'abc '` does not fit in either `CHAR(3)` or `VARCHAR(3)`.
+
+`NULL` values pass the length check and are not padded; [nullability constraints](/delta-constraints/#not-null-constraint) are checked separately. An empty non-null `CHAR(3)` value is returned as three spaces, whereas an empty `VARCHAR(3)` value remains empty.
+
+Partition columns use the same length and padding semantics, but empty strings become null partition values under the existing [partition value serialization rules](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#partition-value-serialization).
+
+<Tabs>
+  <TabItem label="SQL">
+
+    ```sql
+    CREATE TABLE character_examples (
+      id INT,
+      fixed CHAR(3),
+      variable VARCHAR(3)
+    ) USING DELTA;
+
+    INSERT INTO character_examples VALUES
+      (1, 'a', 'a'),
+      (2, '', ''),
+      (3, NULL, NULL);
+
+    SELECT id, length(fixed) AS char_length, length(variable) AS varchar_length
+    FROM character_examples
+    ORDER BY id;
+    -- Results: (1, 3, 1), (2, 3, 0), (3, NULL, NULL)
+
+    -- Fails: the trailing space is the fourth code point.
+    INSERT INTO character_examples VALUES (4, 'abc ', 'a');
+    ```
+
+  </TabItem>
+</Tabs>
+
+The rules describe values supplied to Delta, not transformations performed by an upstream expression. In particular, declaring a column as `VARCHAR(n)` is not equivalent to using `CAST(... AS VARCHAR(n))` to validate a value. Spark's default cast behavior treats that target as `STRING`.
+
+#### Storage and compatibility
+
+The transaction-log schema records the type as `string` and retains the declaration in the field's `__CHAR_VARCHAR_TYPE_STRING` metadata. For nested types, the annotation can describe the containing type, such as `array<varchar(5)>`. See [Character Type Declarations in the protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#character-type-declarations) for complete schema examples.
+
+Parquet stores these values using the same UTF-8 string representation as `STRING`, not a fixed-width encoding. For example, a short `CHAR(3)` value can be stored as `'a'` and returned as `'a  '` when read through Delta with Spark. If an upstream expression or read already padded the value, those spaces can also be stored. Do not assume that all stored CHAR values have length `n`, or that stored values never contain padding.
+
+<Aside
+  type="caution"
+  title="Connector compatibility"
+>
+  The declaration metadata is not a table feature that guarantees length
+  enforcement or padding across engines. Other connectors can expose ordinary
+  strings without applying these semantics. Values written without length
+  validation can exceed `n`; read-side padding does not truncate such values.
+</Aside>
+
+Read-side padding is separate from SQL comparison, collation, and cast rules. Do not assume that every engine treats trailing spaces as equivalent, or that a cast to `STRING` preserves CHAR-specific comparison behavior.
+
+#### Changing a character declaration
+
+You can increase a `VARCHAR` bound, change `CHAR(n)` to `VARCHAR(m)` where `m` is at least `n`, or change either type to `STRING`. Reducing a `VARCHAR` bound is not supported. These metadata-only changes do not require the [Type Widening](/delta-type-widening/) feature.
+
+<Tabs>
+  <TabItem label="SQL">
+
+    ```sql
+    ALTER TABLE character_examples CHANGE COLUMN variable TYPE VARCHAR(5);
+    ALTER TABLE character_examples CHANGE COLUMN fixed TYPE VARCHAR(4);
+    ALTER TABLE character_examples CHANGE COLUMN variable TYPE STRING;
+    ```
+
+  </TabItem>
+</Tabs>
+
+The declaration metadata is updated with the new bound or removed when converting to `STRING`. Existing data files are not rewritten, so spaces already stored in a value are not removed. Older table versions retain their original schema for time travel.
+
+#### Character-type configuration
+
+The examples above use the default settings. The following Spark configurations change character-type behavior:
+
+| Configuration | Default | Effect |
+|---|---|---|
+| `spark.sql.readSideCharPadding` | `true` (Spark 3.4 and above) | Pads short CHAR values on read. Disabling it does not rewrite existing data files. |
+| `spark.sql.charAsVarchar` | `false` | Replaces CHAR with VARCHAR in new or altered declarations. Existing CHAR columns are not changed merely by setting this option. |
+| `spark.sql.legacy.charVarcharAsString` | `false` | When enabled, treats CHAR/VARCHAR as STRING, disabling length checks and CHAR padding. Re-enabling checks does not repair previously written overlength values. |
+
 ### Partition data
 
 You can partition data to speed up queries or DML that have predicates involving the partition columns. To partition data when you create a Delta table, specify a partition by columns. The following example partitions by gender.
