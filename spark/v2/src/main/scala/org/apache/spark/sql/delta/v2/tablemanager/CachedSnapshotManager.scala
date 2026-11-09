@@ -19,7 +19,6 @@ import java.util.Objects
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 
-import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -265,7 +264,7 @@ private[tablemanager] class CachedSnapshotManager(
     f(SnapshotManagerFactory.create(
       tablePath.toString,
       kernelContext,
-      catalogTableOpt.toJava))
+      catalogTableOpt))
   }
 
   private def latestSnapshotFreshnessThreshold(): Long = {

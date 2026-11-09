@@ -519,9 +519,10 @@ lazy val sparkV2 = {
       CrossSparkVersions.sparkDependentSettings(sparkVersion),
       exportJars := true,  // Export as JAR to avoid classpath conflicts
 
-      Test / javaOptions ++= Seq("-ea"),
+      Test / javaOptions ++= Seq("-ea", "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED"),
       libraryDependencies ++= junit5TestDependencies ++ Seq(
         "org.mockito" % "mockito-inline" % "4.11.0" % "test",
+        "org.mockito" %% "mockito-scala" % "1.17.14" % "test",
         "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
