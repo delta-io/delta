@@ -191,7 +191,7 @@ private[delta] class WinningCommitSummary(
 
   // This indicates this commit contains metadata action that is solely for the purpose for
   // updating IDENTITY high water marks. This is used by [[ConflictChecker]] to avoid certain
-  // conflict in [[checkNoMetadataUpdates]].
+  // conflict in [[attemptToResolveMetadataConflicts]].
   val identityOnlyMetadataUpdate = DeltaCommitTag
     .getTagValueFromCommitInfo(commitInfo, DeltaSourceUtils.IDENTITY_COMMITINFO_TAG)
     .exists(_.toBoolean)
@@ -332,11 +332,7 @@ private[delta] class ConflictChecker(
     // Check early the protocol and metadata compatibility that is required for subsequent
     // file-level checks.
     checkProtocolCompatibility()
-    if (spark.conf.get(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED)) {
-      attemptToResolveMetadataConflicts()
-    } else {
-      checkNoMetadataUpdates()
-    }
+    attemptToResolveMetadataConflicts()
     checkIfDomainMetadataConflict()
 
     // Perform cheap check for transaction dependencies before we start checks files.
@@ -634,27 +630,11 @@ private[delta] class ConflictChecker(
     currentTransactionInfo.copy(actions = newActions, readFiles = newReadFiles)
   }
 
-  /**
-   * If the winning commit only does row tracking enablement (i.e. set the table property to
-   * true and assigns materialized row tracking column names), we can safely allow the metadata
-   * update not to fail the current txn if we copy over the table property, materialized column
-   * name assignments and correctly tag the current commit as not preserving row tracking data. It
-   * is not possible to preserve row tracking data prior to the table property being set to true
-   * since there is no guarantee of row tracking data being available on all rows.
-   */
-  protected def tryResolveRowTrackingEnablementOnlyMetadataUpdateConflict(): Boolean = {
-    if (RowTracking.canResolveMetadataUpdateConflict(
-        currentTransactionInfo, winningCommitSummary)) {
-      currentTransactionInfo = RowTracking.resolveRowTrackingEnablementOnlyMetadataUpdateConflict(
-        currentTransactionInfo, winningCommitSummary)
-      return true
-    }
-    false
-  }
-
   // scalastyle:off line.size.limit
   /**
-   * Check if the committed transaction has changed metadata.
+   * Attempts to resolve metadata conflicts between the current and winning transactions. Each
+   * resolver below takes its part of the winning metadata update. Anything that still differs
+   * conflicts.
    *
    * We want to deal with (and optimize for) the case where the winning commit's metadata update is
    * solely for updating IDENTITY high water marks. In addition, we want to allow a metadata update
@@ -668,9 +648,9 @@ private[delta] class ConflictChecker(
    * | Current Metadata (id)                         | Conflict              | Conflict (3)                                  | Conflict                 | No conflict         |
    * | Current Metadata Row Tracking Enablement Only | Conflict (1)          | Conflict (3)                                  | Conflict                 | No conflict         |
    * | Current Metadata (other)                      | Conflict (1)          | Conflict (3)                                  | Conflict                 | No conflict         |
-   * | Current No Metadata                           | No conflict (2)       | No conflict (4)                               | Conflict                 | No conflict         |
+   * | Current No Metadata                           | No conflict (2)       | No conflict (4)                               | Conflict (5)             | No conflict         |
    *
-   * The differences in cases (1), (2), (3), and (4) are:
+   * The differences in cases (1), (2), (3), (4) and (5) are:
    * (1) This is a case we could have done something to avoid conflict, e.g., current transaction
    * adds a column, while winning transaction does blind append that generates IDENTITY values. But
    * it's not a common case and the change to avoid conflict is non-trivial (we have to somehow
@@ -685,39 +665,81 @@ private[delta] class ConflictChecker(
    * to false) is risky.
    * (4) In a row tracking enablement only metadata update, the only difference with the previous
    * metadata are the row tracking table property and materialized column names. These metadata
-   * information only affect the preservation of row tracking. If we copy over the new metadata
-   * configurations and mark the current txn as not preserving row tracking, then the current txn
-   * is respecting the metadata update and does not need to fail.
+   * information only affect the preservation of row tracking. If we copy over the row tracking
+   * properties and mark the current txn as not preserving row tracking, unless row tracking was
+   * already enabled, then the current txn is respecting the metadata update and does not need to
+   * fail.
+   * (5) This conflicts unless the resolvers take all of the winning metadata update, such as
+   * comment changes and allowed feature enablements.
    *
    */
   // scalastyle:on line.size.limit
-  protected def checkNoMetadataUpdates(): Unit = {
-    // If winning commit does not contain metadata update, no conflict.
-    if (winningCommitSummary.metadataUpdates.isEmpty) return
-
-    if (tryResolveRowTrackingEnablementOnlyMetadataUpdateConflict()) {
+  private def attemptToResolveMetadataConflicts(): Unit = {
+    if (winningCommitSummary.metadataUpdates.isEmpty) {
       return
     }
+    checkCurrentTransactionDoesNotUpdateMetadata()
+    // Tolerates an IDENTITY-only metadata update without taking its metadata, see case (2).
+    if (winningCommitSummary.identityOnlyMetadataUpdate) {
+      return
+    }
+    attemptToResolveRowTrackingEnablementOnlyConflicts()
+    attemptToResolveCommentConflicts()
+    attemptToResolveFeatureEnablementConflicts()
+    checkNoMetadataDifferences()
+    currentTransactionInfo = currentTransactionInfo.copy(metadata = winningCommitMetadata)
+    tagRowTrackingNotPreservedIfNewlyEnabled()
+  }
 
-    // The only case in the remaining cases that we will not conflict is winning commit is
-    // identity only metadata update and current commit has no metadata update.
-    val tolerateIdentityOnlyMetadataUpdate = winningCommitSummary.identityOnlyMetadataUpdate &&
-      !currentTransactionInfo.metadataChanged
+  /**
+   * Conflicts if the current transaction also updates the metadata, see cases (1) and (3) of
+   * [[attemptToResolveMetadataConflicts]].
+   */
+  private def checkCurrentTransactionDoesNotUpdateMetadata(): Unit = {
+    if (!currentTransactionInfo.metadataChanged) {
+      return
+    }
+    if (winningCommitSummary.identityOnlyMetadataUpdate) {
+      IdentityColumn.logTransactionAbort(deltaLog)
+    }
+    throwMetadataChangedException()
+  }
 
-    if (!tolerateIdentityOnlyMetadataUpdate) {
-      if (winningCommitSummary.identityOnlyMetadataUpdate) {
-        IdentityColumn.logTransactionAbort(deltaLog)
-      }
-      throw DeltaErrors.metadataChangedException(
-        getTableNameOrPath, winningCommitSummary.commitInfo)
+  /**
+   * Takes the row tracking table property and the materialized column names of a winning commit
+   * tagged as RowTrackingEnablementOnly. [[tagRowTrackingNotPreservedIfNewlyEnabled]] then tags the
+   * current commit as not preserving row tracking.
+   *
+   * [[attemptToResolveFeatureEnablementConflicts]] can take the same properties from a commit
+   * without the tag.
+   */
+  private def attemptToResolveRowTrackingEnablementOnlyConflicts(): Unit = {
+    if (RowTracking.canResolveMetadataUpdateConflict(
+        currentTransactionInfo, winningCommitSummary)) {
+      currentTransactionInfo = RowTracking.resolveRowTrackingEnablementOnlyMetadataUpdateConflict(
+        currentTransactionInfo, winningCommitSummary)
     }
   }
 
   /**
-   * Attempts to resolve metadata conflicts between the current and winning transactions.
-   * Currently, we support the resolution of configuration changes, metadata-only schema changes
-   * and comment changes. Configuration changes are resolved with an allow-list that defines
-   * which configuration changes are allowed.
+   * Takes the table comment and the column comments, nested ones included, of the winning
+   * metadata update. Comments don't affect how Delta writes or reads data.
+   */
+  private def attemptToResolveCommentConflicts(): Unit = {
+    if (winningCommitMetadata.schemaString != currentTransactionInfo.metadata.schemaString) {
+      takeWinningFieldMetadata(Set("comment"), topLevelOnly = false)
+    }
+    val winningDescription = winningCommitMetadata.description
+    if (winningDescription != currentTransactionInfo.metadata.description) {
+      currentTransactionInfo = currentTransactionInfo.copy(
+        metadata = currentTransactionInfo.metadata.copy(description = winningDescription))
+    }
+  }
+
+  /**
+   * Takes the configuration of the winning metadata update if an allow-list allows all of its
+   * changes. If they enable column mapping, also takes the column mapping metadata of the top-level
+   * columns.
    *
    * We primarily focus on feature enablement. Features should be considered on a case-by-case
    * basis whether they are eligible for white listing. The main consideration is whether
@@ -726,65 +748,100 @@ private[delta] class ConflictChecker(
    * features might require reconciliation logic at conflict resolution. Features that require
    * data rewrite for reconciliation are not good candidates for white listing.
    */
-  protected def attemptToResolveMetadataConflicts(): Unit = {
-    def throwMetadataChangedException(): Unit =
-      throw DeltaErrors.metadataChangedException(
-        getTableNameOrPath, winningCommitSummary.commitInfo)
-
-    // If winning commit does not contain metadata update, no conflict.
-    if (winningCommitSummary.metadataUpdates.isEmpty) return
-
-    // Cannot resolve when both transactions have metadata updates.
-    if (currentTransactionInfo.metadataChanged) {
-      if (winningCommitSummary.identityOnlyMetadataUpdate) {
-        IdentityColumn.logTransactionAbort(deltaLog)
-      }
-      throwMetadataChangedException()
-    }
-
-    // Add all special cases here.
-    if (winningCommitSummary.identityOnlyMetadataUpdate) {
+  private def attemptToResolveFeatureEnablementConflicts(): Unit = {
+    if (!spark.conf.get(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED)) {
       return
     }
+    val columnMappingModeBefore = currentTransactionInfo.metadata.columnMappingMode
+    takeAllowedConfigurationChanges()
+    // Enabling column mapping assigns ids and physical names to all columns. Take only those of
+    // the top-level columns, because conflict resolution doesn't support enabling column mapping
+    // on a table with nested fields.
+    val columnMappingEnabled = columnMappingModeBefore == NoMapping &&
+      currentTransactionInfo.metadata.columnMappingMode == NameMapping
+    if (columnMappingEnabled) {
+      takeWinningFieldMetadata(DeltaColumnMapping.COLUMN_MAPPING_METADATA_KEYS, topLevelOnly = true)
+    }
+  }
 
+  /** Takes the configuration of the winning metadata update if all of its changes are allowed. */
+  private def takeAllowedConfigurationChanges(): Unit = {
     val currentMetadata = currentTransactionInfo.metadata
-    val winningCommitMetadata = winningCommitSummary.metadataUpdates.head
-    val propertyNamesDiff = currentMetadata.diffFieldNames(winningCommitMetadata)
+    if (currentMetadata.configuration == winningCommitMetadata.configuration) {
+      return
+    }
+    val configurationChanges =
+      checkConfigurationChangesForConflicts(currentMetadata, winningCommitMetadata)
+    if (!configurationChanges.areValid) {
+      return
+    }
+    currentTransactionInfo = currentTransactionInfo.copy(
+      metadata = currentMetadata.copy(configuration = winningCommitMetadata.configuration))
+  }
 
-    if (!propertyNamesDiff.subsetOf(resolvableMetadataFieldNames)) {
+  /**
+   * Conflicts if the resolvers didn't take all of the winning metadata update. Compares schemas,
+   * not schema strings, because one schema can have different strings.
+   */
+  private def checkNoMetadataDifferences(): Unit = {
+    val currentMetadata = currentTransactionInfo.metadata
+    val schemasDiffer = currentMetadata.schemaString != winningCommitMetadata.schemaString &&
+      currentMetadata.schema != winningCommitMetadata.schema
+    val otherFieldsDiffer =
+      currentMetadata.copy(schemaString = winningCommitMetadata.schemaString) !=
+        winningCommitMetadata
+    if (schemasDiffer || otherFieldsDiffer) {
       throwMetadataChangedException()
     }
+  }
 
-    // Clear configuration changes.
-    var configurationChanges = ConfigurationChanges(areValid = false)
-    if (propertyNamesDiff.contains("configuration")) {
-      configurationChanges = checkConfigurationChangesForConflicts(
-        currentMetadata, winningCommitMetadata)
-      if (!configurationChanges.areValid) {
-        throwMetadataChangedException()
-      }
-    }
-
-    // Clear schema changes.
-    if (propertyNamesDiff.contains("schemaString")) {
-      if (!checkSchemaChangesForConflicts(currentMetadata, winningCommitMetadata)) {
-        throwMetadataChangedException()
-      }
-    }
-
-    // Metadata changes are accepted. Consolidate them.
-    val rowTrackingEnabled = configurationChanges
-      .addedAndChanged
-      .getOrElse(DeltaConfigs.ROW_TRACKING_ENABLED.key, "false")
-      .toBoolean
-    if (rowTrackingEnabled) {
+  /**
+   * Tags the current commit as not preserving row tracking if the winning commit enables row
+   * tracking, because the rows that the current transaction wrote have no row tracking data. If row
+   * tracking was already enabled, the materialized column names don't change, see
+   * [[MaterializedRowTrackingColumn#updateMaterializedColumnName]]. A missing CommitInfo needs no
+   * tag, because a missing [[DeltaCommitTag.PreservedRowTrackingTag]] means false.
+   */
+  private def tagRowTrackingNotPreservedIfNewlyEnabled(): Unit = {
+    val rowTrackingNewlyEnabled =
+      !DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(initialCurrentTransactionInfo.metadata) &&
+        DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(currentTransactionInfo.metadata)
+    if (rowTrackingNewlyEnabled) {
       currentTransactionInfo = currentTransactionInfo.copy(
-        commitInfo = currentTransactionInfo
-          .commitInfo
-          .map(RowTracking.addRowTrackingNotPreservedTag))
+        commitInfo =
+          currentTransactionInfo.commitInfo.map(RowTracking.addRowTrackingNotPreservedTag))
     }
+  }
 
-    currentTransactionInfo = currentTransactionInfo.copy(metadata = winningCommitMetadata)
+  private def winningCommitMetadata: Metadata = winningCommitSummary.metadataUpdates.head
+
+  private def throwMetadataChangedException(): Nothing =
+    throw DeltaErrors.metadataChangedException(getTableNameOrPath, winningCommitSummary.commitInfo)
+
+  /**
+   * Takes the values of `keys` in the field metadata from the same field of the winning schema, or
+   * removes them if the winning field doesn't have them. Fields that aren't in both schemas keep
+   * their metadata. With `topLevelOnly`, only top-level fields take the values.
+   */
+  private def takeWinningFieldMetadata(keys: Set[String], topLevelOnly: Boolean): Unit = {
+    val currentMetadata = currentTransactionInfo.metadata
+    val schemaWithWinningValues = SchemaMergingUtils.transformColumns(
+        currentMetadata.schema, winningCommitMetadata.schema) { (path, field, winningField, _) =>
+      winningField match {
+        case Some(winning) if path.isEmpty || !topLevelOnly =>
+          val winningValues =
+            new ConflictChecker.FieldMetadataBuilder(winning.metadata).retainKeys(keys).build()
+          val fieldMetadataBuilder =
+            new ConflictChecker.FieldMetadataBuilder(field.metadata).removeKeys(keys)
+          field.copy(metadata = fieldMetadataBuilder.withMetadata(winningValues).build())
+        case _ => field
+      }
+    }
+    // Keep the schema string if nothing changed, so that it isn't serialized and parsed again.
+    if (schemaWithWinningValues != currentMetadata.schema) {
+      currentTransactionInfo = currentTransactionInfo.copy(
+        metadata = currentMetadata.copy(schemaString = schemaWithWinningValues.json))
+    }
   }
 
   /**
@@ -795,25 +852,12 @@ private[delta] class ConflictChecker(
       areValid: Boolean,
       removed: Set[String] = Set.empty,
       added: Map[String, String] = Map.empty,
-      changed: Map[String, String] = Map.empty) {
-    def addedAndChanged : Map[String, String] = added ++ changed
-  }
-
-  /**
-   * Metadata fields whose changes can be resolved: allow-listed configuration changes,
-   * metadata-only schema changes (see [[checkSchemaChangesForConflicts]], which ignores column
-   * comments) and the table comment (`description`). Comments don't affect how data is
-   * written or read.
-   */
-  private val resolvableMetadataFieldNames = Set("configuration", "schemaString", "description")
+      changed: Map[String, String] = Map.empty)
 
   /** Allow list for [[checkConfigurationChangesForConflicts]]. */
   private lazy val metadataConfigurationChangeAllowList: Set[String] = {
     val rowTrackingAllowList =
-        Set(
-          MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
-          MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP,
-          DeltaConfigs.ROW_TRACKING_ENABLED.key)
+        RowTracking.enablementTablePropertyKeys
 
     // We can suppress column mapping enablement conflict error since we do not need any
     // data rewrite to reconcile the txns. No metadata is pushed to the parquet
@@ -965,97 +1009,6 @@ private[delta] class ConflictChecker(
 
     currentTransactionInfo.protocol.isFeatureSupported(ColumnMappingTableFeature)
   }
-
-  /** Allows key comparison between two sql.types.Metadata objects. */
-  class DeltaFieldMetadataComparator(metadata: FieldMetadata) extends MetadataBuilder {
-    withMetadata(metadata)
-
-    /** Returns a set of added keys by `other`. */
-    def addedKeys(other: DeltaFieldMetadataComparator): Set[String] = {
-      other.getMap.keySet -- getMap.keySet
-    }
-
-    /** Returns a set of removed keys by `other`. */
-    def removedKeys(other: DeltaFieldMetadataComparator): Set[String] = {
-      getMap.keySet -- other.getMap.keySet
-    }
-
-    /** Returns a set of changed keys by `other`. */
-    def changedKeys(other: DeltaFieldMetadataComparator): Set[String] = {
-      getMap.keySet.intersect(other.getMap.keySet).filterNot { key =>
-        val ourValue = getMap(key)
-        val otherValue = other.getMap(key)
-        (ourValue, otherValue) match {
-          case (v0: Array[Long], v1: Array[Long]) => java.util.Arrays.equals(v0, v1)
-          case (v0: Array[Double], v1: Array[Double]) => java.util.Arrays.equals(v0, v1)
-          case (v0: Array[Boolean], v1: Array[Boolean]) => java.util.Arrays.equals(v0, v1)
-          case (v0: Array[AnyRef], v1: Array[AnyRef]) => java.util.Arrays.equals(v0, v1)
-          case (v0, v1) => v0 == v1
-        }
-      }
-    }
-
-    /** Returns a set of keys that were either added, removed or changed by `other`. */
-    def keysWithAnyChanges(other: DeltaFieldMetadataComparator): Set[String] = {
-      removedKeys(other)
-        .union(addedKeys(other))
-        .union(changedKeys(other))
-    }
-  }
-
-  /** Verifies whether any changes between currentMetadata and winningMetadata are valid. */
-  protected def checkSchemaChangesForConflicts(
-      currentMetadata: Metadata,
-      winningMetadata: Metadata): Boolean = {
-
-    val currentSchema = dropComments(currentMetadata.schema)
-    val winningSchema = dropComments(winningMetadata.schema)
-
-    if (currentSchema.fields.length != winningSchema.fields.length) {
-      return false
-    }
-
-    // Besides comments, we only support column mapping metadata changes, while column mapping
-    // is being enabled.
-    val columnMappingEnabled =
-      currentMetadata.columnMappingMode == NoMapping &&
-      winningMetadata.columnMappingMode == NameMapping
-    if (!columnMappingEnabled) {
-      return currentSchema == winningSchema
-    }
-
-    val allowedMetadataFields = DeltaColumnMapping.COLUMN_MAPPING_METADATA_KEYS
-
-    currentSchema.fields.zipWithIndex.foreach { case (currentField, index) =>
-      val winningField = winningSchema.fields(index)
-      // Currently we only allow metadata changes.
-      if (currentField.name != winningField.name ||
-          currentField.dataType != winningField.dataType ||
-          currentField.nullable != winningField.nullable) {
-        return false
-      }
-
-      if (currentField.metadata != winningField.metadata) {
-        val currentFieldMetadataComparator = new DeltaFieldMetadataComparator(currentField.metadata)
-        val winningFieldMetadataComparator = new DeltaFieldMetadataComparator(winningField.metadata)
-        val keysWithAnyChanges = currentFieldMetadataComparator
-          .keysWithAnyChanges(winningFieldMetadataComparator)
-
-        // We allow all operations on white listed metadata fields.
-        if (!keysWithAnyChanges.subsetOf(allowedMetadataFields)) {
-          return false
-        }
-      }
-    }
-
-    true
-  }
-
-  private def dropComments(schema: StructType): StructType =
-    SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
-      val metadata = new MetadataBuilder().withMetadata(field.metadata).remove("comment").build()
-      field.copy(metadata = metadata)
-    }
 
   /**
    * Filters the [[files]] list with the partition predicates of the current transaction
@@ -1598,6 +1551,18 @@ private[delta] class ConflictChecker(
 }
 
 private[delta] object ConflictChecker extends DeltaLogging {
+  /** A [[MetadataBuilder]] that keeps or removes keys by set. It reads them from `getMap`. */
+  private class FieldMetadataBuilder(metadata: FieldMetadata) extends MetadataBuilder {
+    withMetadata(metadata)
+
+    def retainKeys(keys: Set[String]): this.type = removeKeys(getMap.keySet -- keys)
+
+    def removeKeys(keys: Set[String]): this.type = {
+      keys.foreach(remove)
+      this
+    }
+  }
+
   /**
    * Returns an iterator that validates two `dataChange` invariants in one pass:
    *  - all [[AddFile]] and [[RemoveFile]] actions share a consistent value; and

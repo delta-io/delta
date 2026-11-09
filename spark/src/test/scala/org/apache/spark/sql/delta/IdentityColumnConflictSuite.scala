@@ -191,8 +191,8 @@ trait IdentityColumnConflictSuiteBase
 
   // scalastyle:off line.size.limit
   /**
-   * We are testing the following combinations (see [[ConflictChecker.checkNoMetadataUpdates]]
-   * for details).
+   * We are testing the following combinations (see
+   * [[ConflictChecker.attemptToResolveMetadataConflicts]] for details).
    *
    * |                                               | Winning Metadata (id) | Winning Metadata Row Tracking Enablement Only | Winning Metadata (other) | Winning No Metadata |
    * | --------------------------------------------- | --------------------- | --------------------------------------------- | ------------------------ | ------------------- |
