@@ -18,8 +18,8 @@ package org.apache.spark.sql.delta.v2.read
 
 import java.util.{Locale, Objects, OptionalInt}
 import java.util.concurrent.TimeUnit
-import java.util.function.Supplier
 
+import scala.jdk.OptionConverters._
 import scala.util.control.NonFatal
 
 import io.delta.kernel.engine.Engine
@@ -213,48 +213,47 @@ private[read] class DeltaV2ScanBuilder(
       logLimitDecision(effectiveLimit)
 
       val originalQueryContext = DeltaV2QueryContext(catalogTable)
-      val deltaScanSupplier = new Supplier[DeltaScan] {
-        override def get(): DeltaScan = {
-          val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
+      val deltaScanSupplier = () => {
+        val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
 
-          // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
-          // requires partition-only filters (guaranteed above) and prunes files by accumulating
-          // record counts until the limit is satisfied.
-          def selectFiles(): DeltaScan =
-            if (effectiveLimit.isPresent) {
-              recordFrameProfile("filesForScan.limitAndFilters") {
-                snapshot.filesForScan(
-                  effectiveLimit.getAsInt.toLong,
-                  partitionFiltersForScan)
-              }
-            } else {
-              recordFrameProfile("filesForScan.filters") {
-                snapshot.filesForScan(catalystFilters, keepNumRecords)
-              }
+        // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
+        // requires partition-only filters (guaranteed above) and prunes files by accumulating
+        // record counts until the limit is satisfied.
+        def selectFiles(): DeltaScan =
+          if (effectiveLimit.isPresent) {
+            recordFrameProfile("filesForScan.limitAndFilters") {
+              snapshot.filesForScan(
+                effectiveLimit.getAsInt.toLong,
+                partitionFiltersForScan)
             }
+          } else {
+            recordFrameProfile("filesForScan.filters") {
+              snapshot.filesForScan(catalystFilters, keepNumRecords)
+            }
+          }
 
-          // Select files inline on this path.
-          selectFilesWithLogging(selectFiles())
-        }
+        // Select files inline on this path.
+        selectFilesWithLogging(selectFiles())
       }
 
       val scan = new DeltaV2Scan(
-        snapshotManager,
-        initialSnapshot,
-        tableSchema,
-        dataSchema,
-        partitionSchema,
-        requiredDataSchema,
-        deltaScanSupplier,
-        dataCatalystFilters,
-        partitionCatalystFilters,
-        ScalaUtils.toJavaOptional(catalogStats),
-        options,
-        effectiveLimit,
-        originalQueryContext)
+        snapshotManager = snapshotManager,
+        initialSnapshot = initialSnapshot,
+        tableSchema = tableSchema,
+        dataSchema = dataSchema,
+        partitionSchema = partitionSchema,
+        readDataSchema = requiredDataSchema,
+        scanSupplier = deltaScanSupplier,
+        dataFiltersArg = dataCatalystFilters,
+        partitionFiltersArg = partitionCatalystFilters,
+        catalogStats = catalogStats,
+        options = options,
+        pushedLimit = effectiveLimit.toScala,
+        originalQueryContext = originalQueryContext)
       scan
     }
   }
+
 
   private[read] def getOptions: CaseInsensitiveStringMap = options
 
