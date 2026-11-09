@@ -15,7 +15,7 @@
  */
 package org.apache.spark.sql.delta.v2.tablemanager
 
-import java.util.{Objects, Optional}
+import java.util.Objects
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 
@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.v2.interop.{
   DeltaV2QueryContext,
   DeltaV2SnapshotManager
 }
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 import org.apache.spark.sql.delta.v2.snapshot.SnapshotManagerFactory
 import org.apache.hadoop.fs.Path
@@ -138,19 +139,17 @@ private[tablemanager] class CachedSnapshotManager(
 
   override def getTableChanges(
       kernelEngine: KernelEngine,
-      startVersion: Long,
-      endVersion: Optional[java.lang.Long]): KernelCommitRange =
+      params: GetTableChangesParam): KernelCommitRange =
     withUncachedSnapshotManager(Option(latestCatalogTable.get()))(
-      _.getTableChanges(kernelEngine, startVersion, endVersion))
+      _.getTableChanges(kernelEngine, params))
 
   override def getTableChanges(
       kernelEngine: KernelEngine,
-      startVersion: Long,
-      endVersion: Optional[java.lang.Long],
+      params: GetTableChangesParam,
       queryContext: DeltaV2QueryContext): KernelCommitRange = {
     Objects.requireNonNull(queryContext, "queryContext is null")
     withUncachedSnapshotManager(queryContext.catalogTableOpt)(
-      _.getTableChanges(kernelEngine, startVersion, endVersion))
+      _.getTableChanges(kernelEngine, params))
   }
 
   // === Snapshot lifecycle ===================================================

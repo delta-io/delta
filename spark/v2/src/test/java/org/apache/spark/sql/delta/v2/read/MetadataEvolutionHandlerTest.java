@@ -41,6 +41,7 @@ import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -110,8 +111,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         }
 
         @Override
-        public CommitRange getTableChanges(
-            Engine engine, long startVersion, Optional<Long> endVersion) {
+        public CommitRange getTableChanges(Engine engine, GetTableChangesParam params) {
           throw new UnsupportedOperationException("not expected in this test");
         }
       };

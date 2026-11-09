@@ -45,6 +45,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
@@ -1230,7 +1231,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
 
     CommitRange commitRange =
-        snapshotManager.getTableChanges(engine, version, Optional.of(version));
+        snapshotManager.getTableChanges(
+            engine, GetTableChangesParam$.MODULE$.apply(version, Option.apply(version)));
 
     try (CloseableIterator<CommitActions> iter =
         StreamingHelper.getCommitActionsFromRangeUnsafe(

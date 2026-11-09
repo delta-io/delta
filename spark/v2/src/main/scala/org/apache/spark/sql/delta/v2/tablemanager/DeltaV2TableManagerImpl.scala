@@ -15,10 +15,8 @@
  */
 package org.apache.spark.sql.delta.v2.tablemanager
 
-import java.util.{EnumSet, Optional}
+import java.util.EnumSet
 import java.util.concurrent.atomic.AtomicReference
-
-import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStoreProvider}
@@ -27,6 +25,7 @@ import org.apache.spark.sql.delta.v2.interop.{
   DeltaV2SingleCommit,
   DeltaV2SnapshotManager
 }
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
 import io.delta.kernel.{CommitRange => KernelCommitRange}
@@ -91,8 +90,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     val kernelEngine = kernelContext.getDefaultEngine()
     val commitRange = cachedSnapshotManager.getTableChanges(
       kernelEngine,
-      startVersion,
-      endVersion.map(Long.box).toJava,
+      GetTableChangesParam(startVersion, endVersion),
       DeltaV2QueryContext(catalogTableOpt))
     val kernelCommits = commitRange.getCommitActions(
       kernelEngine, EnumSet.allOf(classOf[KernelDeltaAction]))
@@ -132,10 +130,9 @@ private[tablemanager] class DeltaV2TableManagerImpl(
 
   override def getTableChanges(
       kernelEngine: KernelEngine,
-      startVersion: Long,
-      endVersion: Optional[java.lang.Long],
+      params: GetTableChangesParam,
       queryContext: DeltaV2QueryContext): KernelCommitRange =
-    cachedSnapshotManager.getTableChanges(kernelEngine, startVersion, endVersion, queryContext)
+    cachedSnapshotManager.getTableChanges(kernelEngine, params, queryContext)
 
   override def retire(): Unit = cachedSnapshotManager.retire()
 }

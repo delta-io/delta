@@ -54,6 +54,7 @@ import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
@@ -612,7 +613,9 @@ public class MetadataEvolutionHandler {
     CommitRangeImpl commitRange =
         (CommitRangeImpl)
             snapshotManager.getTableChanges(
-                engine, currentMetadataVersion, Optional.empty(), originalQueryContext);
+                engine,
+                GetTableChangesParam$.MODULE$.apply(currentMetadataVersion, Option.empty()),
+                originalQueryContext);
 
     try (ClosableIterator<CommitActions> commitsIter =
         // Always include CDC: the merger must stop on any file action

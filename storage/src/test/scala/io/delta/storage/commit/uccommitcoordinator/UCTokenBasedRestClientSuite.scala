@@ -258,6 +258,31 @@ class UCTokenBasedRestClientSuite
     }
   }
 
+  test("getCommits resolves published and staged commit file names to their directories") {
+    val responseJson =
+      """{"commits":[""" +
+      """{"version":1,"file_name":"00000000000000000001.json","file_size":100,""" +
+      """"timestamp":1000,"file_modification_timestamp":1001},""" +
+      """{"version":2,"file_name":"00000000000000000002.uuid.json","file_size":200,""" +
+      """"timestamp":2000,"file_modification_timestamp":2001}""" +
+      """],"latest_table_version":2}"""
+    commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_OK, responseJson)
+    withClient { client =>
+      val response = client.getCommits(
+        testTableId,
+        testTableUri,
+        /* tableIdentifier = */ null,
+        Optional.empty(),
+        Optional.empty())
+      val paths = (0 until response.getCommits.size()).map { i =>
+        response.getCommits.get(i).getFileStatus.getPath.toString
+      }
+      assert(paths === Seq(
+        "s3://bucket/path/to/table/_delta_log/00000000000000000001.json",
+        "s3://bucket/path/to/table/_delta_log/_staged_commits/00000000000000000002.uuid.json"))
+    }
+  }
+
   test("getCommits validates required parameters") {
     withClient { client =>
       intercept[NullPointerException] {
