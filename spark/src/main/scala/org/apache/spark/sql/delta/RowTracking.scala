@@ -146,19 +146,13 @@ object RowTracking {
         .exists(_.toBoolean)
   }
 
-  /** The keys of the table properties that row tracking enablement sets. */
+  /** The table properties that row tracking enablement sets. */
   private[delta] val enablementTablePropertyKeys: Set[String] = Set(
     DeltaConfigs.ROW_TRACKING_ENABLED.key,
     MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
     MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
 
-  /**
-   * Whether row tracking enablement can resolve the metadata update conflict between the current
-   * and winning transaction. All of these must be true:
-   *  - The current protocol supports row tracking.
-   *  - The winning commit is tagged as RowTrackingEnablementOnly and enables row tracking.
-   *  - The current transaction doesn't update metadata.
-   */
+  /** Whether the RowTrackingEnablementOnly pass can take the winning metadata update. */
   def canResolveMetadataUpdateConflict(
       currentTransactionInfo: CurrentTransactionInfo,
       winningCommitSummary: WinningCommitSummary): Boolean = {
