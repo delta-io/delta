@@ -618,9 +618,12 @@ private[catalog] class UCDeltaCatalogClientImpl(
             iceberg.getConvertedDeltaTimestamp
         )
       }.getOrElse(Map.empty[String, String])
+    // Capture UC's identity before a write. The Delta metadata id is a different UUID.
+    val ucTableIdProps = Map(UC_TABLE_ID_KEY -> info.getTableId.toString)
     val clientMaintenanceOperations = info.getClientMaintenanceOperations.asScala
     val mergedStorageProperties = {
-      val merged = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps
+      val merged = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps ++
+        ucTableIdProps
       // Only the catalog's list grants permission. A user-defined table property must not.
       if (clientMaintenanceOperations.isEmpty) {
         merged - ALLOWED_OPERATIONS_PROPERTY

@@ -956,8 +956,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           .as("is_managed_location must not be persisted in the Delta commit log")
           .doesNotContain(TableCatalog.PROP_IS_MANAGED_LOCATION);
     } else {
-      // Check for UC table ID
-      assertThat(tableProperties).doesNotContain(UC_TABLE_ID_KEY);
+      // The UC identity is a catalog storage option, not a Delta log property.
+      assertThat(tableProperties)
+          .contains("option." + UC_TABLE_ID_KEY + "=" + tableInfo.getTableId());
+      List<String> detailRow = sql("DESCRIBE DETAIL %s", fullTableName).get(0);
+      assertThat(String.join(",", detailRow)).doesNotContain(UC_TABLE_ID_KEY);
       // Check for catalogManaged feature
       assertThat(tableProperties).doesNotContain(DELTA_CATALOG_MANAGED_KEY);
     }

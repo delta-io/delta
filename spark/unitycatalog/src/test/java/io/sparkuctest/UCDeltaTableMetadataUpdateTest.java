@@ -18,9 +18,13 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.model.CreateTable;
+import io.unitycatalog.client.model.DataSourceFormat;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** Tests metadata-changing operations on Unity Catalog managed (CatalogOwned) tables. */
@@ -300,6 +304,36 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
     String[] parts = tableName.split("\\.", 3);
     return new DeltaTablesApi(unityCatalogInfo().createApiClient())
         .loadTable(parts[0], parts[1], parts[2]);
+  }
+
+  @Test
+  public void testLegacyExternalTableLoadsWithoutCachedMetadata() throws Exception {
+    withTempDir(
+        path -> {
+          String name = "external_legacy_metadata";
+          String table = fullTableName(name);
+          try {
+            sql(
+                "CREATE TABLE %s USING DELTA LOCATION '%s' AS SELECT id FROM range(2)",
+                table, path);
+            sql("DROP TABLE %s", table);
+            new TablesApi(unityCatalogInfo().createApiClient())
+                .createTable(
+                    new CreateTable()
+                        .catalogName(unityCatalogInfo().catalogName())
+                        .schemaName(unityCatalogInfo().schemaName())
+                        .name(name)
+                        .tableType(io.unitycatalog.client.model.TableType.EXTERNAL)
+                        .dataSourceFormat(DataSourceFormat.DELTA)
+                        .storageLocation(path.toString())
+                        .columns(List.of())
+                        .properties(Map.of()));
+            assertThat(loadTable(table).getMetadata().getColumns().getFields()).isEmpty();
+            check(table, List.of(row("0"), row("1")));
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", table);
+          }
+        });
   }
 
   /** UC's view of the table's clustering columns (the {@code clusteringColumns} table property). */
