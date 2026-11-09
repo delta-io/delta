@@ -25,9 +25,9 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.HashMap
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, LogSegment, OptimisticTransaction, RowId, Snapshot, VersionChecksum}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, OptimisticTransaction, RowId, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.WinningCommitSummary
-import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, HudiConverterHook, IcebergConverterHook, PostCommitHook}
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
@@ -40,6 +40,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import io.delta.kernel.{CommitActions => KernelCommitActions, DataWriteContext => KernelDataWriteContext, Operation => KernelOperation, PartitionKeyType => KernelPartitionKeyType, Snapshot => KernelSnapshot, Transaction => KernelTransaction}
 import io.delta.kernel.data.{Row => KernelRow}
 import io.delta.kernel.engine.{Engine => KernelEngine}
+import io.delta.kernel.exceptions.{ConcurrentTransactionException => KernelConcurrentTransactionException}
 import io.delta.kernel.expressions.{Literal => KernelLiteral}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 import io.delta.kernel.internal.commitrange.{CommitRangeImpl => KernelCommitRangeImpl}
@@ -82,6 +83,12 @@ private[v2] class DeltaV2OptimisticTransaction(
   override def dataPath: Path = deltaV2Snapshot.dataPath
 
   override def logPath: Path = deltaV2Snapshot.logPath
+
+  /** Reads the epoch from Kernel while retaining the application-id dependency for conflicts. */
+  override def txnVersion(id: String): Long = {
+    readTxn += id
+    deltaV2Snapshot.getLatestTransactionVersion(id).orElse(-1L)
+  }
 
   /** No V1 deltaLog to source a Hadoop conf from, so use the session Hadoop conf. */
   // scalastyle:off deltahadoopconfiguration
@@ -270,9 +277,16 @@ private[v2] class DeltaV2OptimisticTransaction(
       : (Option[VersionChecksum], Commit, CurrentTransactionInfo) = {
     val actions = currentTransactionInfo.finalActionsToCommit
     val addFiles = new ArrayBuffer[AddFile]()
+    var setTransaction: Option[SetTransaction] = None
     var rowTrackingHighWaterMark: Option[Long] = None
     actions.foreach {
       case a: AddFile => addFiles += a
+      case txn: SetTransaction =>
+        if (setTransaction.nonEmpty) {
+          throw new UnsupportedOperationException(
+            "DeltaV2 unsupported operation: cannot commit multiple SetTransaction actions")
+        }
+        setTransaction = Some(txn)
       case _: CommitInfo => // Kernel generates its own; V1 operation provenance is an JNR gap.
       case RowId.RowTrackingMetadataDomain(domain) =>
         rowTrackingHighWaterMark = Some(domain.rowIdHighWaterMark)
@@ -290,9 +304,21 @@ private[v2] class DeltaV2OptimisticTransaction(
           s"${kernelSnapshotForCommit.getVersion}; deferring to V1 conflict resolution")
     }
 
-    val kernelTxn = kernelSnapshotForCommit
-      .buildUpdateTableTransaction("DeltaV2OptimisticTransaction", KernelOperation.WRITE)
-      .build(kernelEngine)
+    val kernelOperation = currentTransactionInfo.op match {
+      case _: DeltaOperations.StreamingUpdate => KernelOperation.STREAMING_UPDATE
+      case _ => KernelOperation.WRITE
+    }
+    val kernelTxnBuilder = kernelSnapshotForCommit
+      .buildUpdateTableTransaction("DeltaV2OptimisticTransaction", kernelOperation)
+    val kernelConfiguredBuilder = setTransaction.map { txn =>
+      kernelTxnBuilder.withTransactionId(txn.appId, txn.version)
+    }.getOrElse(kernelTxnBuilder)
+    val kernelTxn = try {
+      kernelConfiguredBuilder.build(kernelEngine)
+    } catch {
+      case e: KernelConcurrentTransactionException =>
+        throw DeltaErrors.concurrentTransactionException(None).initCause(e)
+    }
     try {
       rowTrackingHighWaterMark.foreach { highWaterMark =>
         val domainMetadata = RowId.RowTrackingMetadataDomain(highWaterMark).toDomainMetadata
@@ -309,6 +335,9 @@ private[v2] class DeltaV2OptimisticTransaction(
       val fileStatus = fs.getFileStatus(deltaFile)
       (None, new Commit(committedVersion, fileStatus, fileStatus.getModificationTime),
         currentTransactionInfo)
+    } catch {
+      case e: KernelConcurrentTransactionException =>
+        throw DeltaErrors.concurrentTransactionException(None).initCause(e)
     } finally {
     }
   }
