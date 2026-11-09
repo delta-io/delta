@@ -584,14 +584,14 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
     builder.pushLimit(42);
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-    assertEquals(OptionalInt.of(42), scan.getPushedLimit());
+    assertEquals(Option.apply(42), scan.getPushedLimit());
   }
 
   @Test
   public void testPushLimit_absentByDefault(@TempDir File tempDir) {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-    assertEquals(OptionalInt.empty(), scan.getPushedLimit());
+    assertEquals(Option.empty(), scan.getPushedLimit());
   }
 
   @Test
@@ -601,7 +601,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushLimit(20);
     assertEquals(OptionalInt.of(20), builder.getPushedLimit());
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-    assertEquals(OptionalInt.of(20), scan.getPushedLimit());
+    assertEquals(Option.apply(20), scan.getPushedLimit());
   }
 
   @Test
@@ -621,7 +621,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushLimit(10);
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
     assertEquals(
-        OptionalInt.empty(),
+        Option.empty(),
         scan.getPushedLimit(),
         "Pushed limit must be cleared when data filters would leave a post-scan residual");
   }
@@ -636,7 +636,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushFilters(
         scala.jdk.javaapi.CollectionConverters.<Expression>asScala(java.util.List.of()).toList());
     assertTrue(builder.pushLimit(10));
-    assertEquals(OptionalInt.empty(), ((DeltaV2Scan) builder.build()).getPushedLimit());
+    assertEquals(Option.empty(), ((DeltaV2Scan) builder.build()).getPushedLimit());
   }
 
   @Test
@@ -650,7 +650,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushLimit(10);
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
     assertEquals(
-        OptionalInt.of(10),
+        Option.apply(10),
         scan.getPushedLimit(),
         "Pushed limit must be kept when a partition filter leaves no post-scan residual");
   }
