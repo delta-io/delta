@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
 
 /**

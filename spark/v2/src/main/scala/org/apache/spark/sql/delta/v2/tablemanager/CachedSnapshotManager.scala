@@ -39,6 +39,7 @@ import io.delta.kernel.internal.{
   DeltaHistoryManager => KernelDeltaHistoryManager
 }
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 

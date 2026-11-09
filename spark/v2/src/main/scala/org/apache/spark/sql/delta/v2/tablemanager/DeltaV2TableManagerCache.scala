@@ -30,6 +30,7 @@ import com.google.common.cache.{Cache, CacheBuilder, RemovalListener}
 import com.google.common.util.concurrent.{ExecutionError, UncheckedExecutionException}
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
