@@ -504,6 +504,7 @@ class DeltaTableFeatureSuite
 
   test("drop table feature works with catalog-managed commits") {
     val table = "tbl"
+    DeltaLog.clearCache()
     withTable(table) {
       CatalogOwnedCommitCoordinatorProvider.clearBuilders()
       try {
