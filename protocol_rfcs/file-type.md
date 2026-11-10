@@ -68,15 +68,15 @@ Whether a `uri` is absolute or relative is determined per [RFC 3986](https://dat
 
 ### Referenced-byte write location
 
-A writer writes the files of new references to the table's **write location**: by default the **`_files`** directory of the table root, referenced by relative `uri`s of the form `_files/...`.
+A writer writes the files of new references to the table's **write location**: by default the **`_files`** directory of the table root, referenced by relative `uri`s of the form `_files/...`. A `uri` may also reference an existing file at any location; the write location only says where a writer puts the files it writes.
 
-The write location can be set by a system-controlled domain, **`delta.fileType.writeLocation`**:
+The write location can be set by a table property, **`delta.fileType.writeLocation`**:
 
-- **System-controlled.** Like other `delta.`-prefixed domains, it is not user-settable. Writing it requires the [Domain Metadata](#domain-metadata) feature; a table that relies on the default placement needs nothing beyond `fileType`.
-- **Value.** A table-root-relative path under `_files` (for example `_files/<prefix>`) or an absolute URI outside the table root, where writers write the files of **new** references. Any other value is **invalid**: the domain **must not** be set to one, and a writer that finds one **must not** write files there. The system that sets the domain allocates the location, and the system that owns its storage, such as the catalog, is responsible for keeping the files stored there. Apart from the `VACUUM` rule for `_files` below, this protocol does not protect them. The domain is absent by default; when it is absent, writers write the files under `_files`.
+- **Internal.** `delta.fileType.writeLocation` is an internal table property that cannot be configured by users: writers must not let users set, change or remove it. Only the system that allocates the write location sets or changes it, for example a catalog when it creates the table. A table that relies on the default placement needs nothing beyond `fileType`.
+- **Value.** A table-root-relative path under `_files` (for example `_files/<prefix>`) or an absolute URI outside the table root, where writers write the files of **new** references. Any other value is **invalid**: the property **must not** be set to one, and a writer that finds one **must not** write files there. The system that sets the property allocates the location, and the system that owns its storage, such as the catalog, is responsible for keeping the files stored there. Apart from the `VACUUM` rule for `_files` below, this protocol does not protect them. The property is absent by default; when it is absent, the write location is `_files`.
 - **Write-time placement hint only.** It tells a writer where to write the files of **new** references. It is **never** consulted when resolving a `uri`. A `uri` records its own complete path: files under `_files` get relative `uri` values that include the prefix (for example `_files/abc.png`), and files at an absolute location get absolute `uri` values.
 
-**Resolution never depends on this domain.** A relative `uri` is always the **full table-root-relative path**, resolved against the table root per [URI Resolution](#uri-resolution) — never against `delta.fileType.writeLocation`. Changing the domain therefore affects only where subsequent files are written. `uri`s already written continue to resolve unchanged, because each records its own complete path, and a reader never needs the current, or any past, value of the domain. This is why a location change does not strand earlier references.
+**Resolution never depends on this property.** A relative `uri` is always the **full table-root-relative path**, resolved against the table root per [URI Resolution](#uri-resolution) — never against `delta.fileType.writeLocation`. Changing the property therefore affects only where subsequent files are written. `uri`s already written continue to resolve unchanged, because each records its own complete path, and a reader never needs the current, or any past, value of the property. This is why a location change does not strand earlier references.
 
 Delta does not treat referenced bytes as table data, except when a table reuses another table's data files:
 
@@ -87,7 +87,7 @@ Delta does not treat referenced bytes as table data, except when a table reuses 
   - The bytes are copied unchanged, so checksums of the bytes stay valid; an `ETAG`, which identifies the source object, may not match the copy.
   - Missing source bytes are not an error.
   - The writer **must not** overwrite a different file that already exists at that path in the target; it **must** fail the copy instead.
-  - The target keeps its own `delta.fileType.writeLocation`; a new table does not inherit an absolute one from the source.
+  - The target keeps its own `delta.fileType.writeLocation`: a writer that copies table properties from the source must not copy an absolute one.
 - **Referencing another table's data files in place.** A writer **must not** add another table's data file to a table without copying it if the data file contains relative `uri`s, because they would resolve against the target table's root rather than the root they were written for. A writer that cannot tell may refuse any such data file that has a `file` column.
 
 Delta does not otherwise manage the contents of the write location: creating, retaining, and reclaiming those bytes is the responsibility of the writer or an external system. (A higher layer may add managed semantics — for example lifecycle/garbage collection or access brokering — on top of this location, but that is out of scope for this protocol.)
