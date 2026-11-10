@@ -662,26 +662,22 @@ public class TransactionMetadataFactory {
                   "Cannot update schema for table when column mapping is disabled");
             }
 
-            // Clustering columns will be guaranteed to have physical names at this point
-            // Only the leaf part of the overall column needs to be taken since
-            // validation is performed on the leaf struct fields
-            // E.g. getClusteringColumns returns <physical_name_of_struct>.<physical_name_inner>,
-            // Only physical_name_inner is required for validation
+            // Clustering columns will be guaranteed to have physical names at this point.
+            // E.g. getClusteringColumns returns <physical_name_of_struct>.<physical_name_inner>.
+            // The full path is kept since physical names are only unique as full paths.
             Optional<List<Column>> effectiveClusteringCols =
                 physicalNewClusteringColumns.isPresent()
                     ? physicalNewClusteringColumns
                     : latestSnapshotOpt.get().getPhysicalClusteringColumns();
-            Set<String> clusteringColumnPhysicalNames =
-                effectiveClusteringCols.orElse(Collections.emptyList()).stream()
-                    .map(col -> col.getNames()[col.getNames().length - 1])
-                    .collect(toSet());
+            Set<Column> physicalClusteringColumns =
+                new HashSet<>(effectiveClusteringCols.orElse(Collections.emptyList()));
 
             Optional<StructType> schemaWithTypeWidening =
                 SchemaUtils.validateUpdatedSchemaAndGetUpdatedSchema(
                     oldMetadata,
                     getEffectiveMetadata(),
                     getEffectiveProtocol(),
-                    clusteringColumnPhysicalNames,
+                    physicalClusteringColumns,
                     false /* allowNewRequiredFields */);
 
             schemaWithTypeWidening.ifPresent(
