@@ -34,6 +34,7 @@ import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.catalyst.expressions.JoinedRow;
+import org.apache.spark.sql.catalyst.expressions.MetadataAttribute$;
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -304,9 +305,14 @@ class DeltaV2ChangelogBatch implements Batch {
   @Override
   public PartitionReaderFactory createReaderFactory() {
     StructType partitionSchema = new StructType();
+    // Changelog doesn't use Spark's file-source execution, so use the generic metadata marker.
+    // Mark readDataSchema because that's what the reader inspects, not the public changelog schema.
     StructType readDataSchema =
         endDataSchema.add(
-            DeltaV2Changelog.METADATA_COLUMN, DeltaV2Changelog.METADATA_STRUCT, false);
+            DeltaV2Changelog.METADATA_COLUMN,
+            DeltaV2Changelog.METADATA_STRUCT,
+            /* nullable */ false,
+            MetadataAttribute$.MODULE$.metadata(DeltaV2Changelog.METADATA_COLUMN));
     Filter[] dataFilters = new Filter[0];
     scala.collection.immutable.Map<String, String> scalaOptions =
         Map$.MODULE$.empty();
