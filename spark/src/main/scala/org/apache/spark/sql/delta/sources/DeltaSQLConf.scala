@@ -1755,6 +1755,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val INCREMENTAL_COMMIT_SKIP_CHECKSUM_ON_NEGATIVE_FIELD =
+    buildConf("incremental.commit.skipChecksumOnNegativeField.enabled")
+      .internal()
+      .doc("An incrementally computed checksum with a negative counter (file count, table " +
+        "size, DV metrics, or a histogram bin) always emits a usage log. If true, that " +
+        "checksum is also discarded, so it is never written or reused for later incremental " +
+        "commits. If false, the checksum is only logged and used as is.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_WRITE_SET_TRANSACTIONS_IN_CRC =
     buildConf("setTransactionsInCrc.writeOnCommit")
       .internal()
