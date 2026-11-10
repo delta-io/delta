@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 import org.apache.spark.sql.delta.{DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStoreProvider}
+import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.{
   DeltaV2QueryContext,
@@ -112,7 +113,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
               s"(attempt $attempt/$maxStartVersionAttempts). Skipping to earliest available " +
               s"version $earliestVersionToFetch because failOnDataLoss is false.")
         case _: CommitRangeNotFoundException =>
-          return new ClosableIterator.EmptyIterator[DeltaSingleCommit]
+          return new ClosableWrapper[DeltaSingleCommit](Iterator.empty).toClosable
       }
       attempt += 1
     }
