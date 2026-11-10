@@ -24,6 +24,7 @@ import java.util
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -129,6 +130,9 @@ private[delta] trait AbstractDeltaCatalogClient {
       lastCommitTimestampMs: Long,
       uniformMetadata: Option[UniformMetadata] = None,
       lastCommitVersion: Long = 0L): Unit
+
+  /** Syncs a committed external-table snapshot; failures are handled by the post-commit hook. */
+  def updateTableMetadata(table: CatalogTable, snapshot: Snapshot): Unit
 
   /**
    * Reports post-commit telemetry for the table to the catalog. Implementations build

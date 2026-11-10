@@ -47,7 +47,7 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, MaterializedRowCommitVersion, MaterializedRowId, TableFeature}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, MaterializedRowCommitVersion, MaterializedRowId, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata, Protocol, RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY
@@ -515,6 +515,17 @@ private[catalog] class UCDeltaCatalogClientImpl(
             log"${MDC(DeltaLogKeys.TABLE_NAME, ident)}", e)
       }
     }
+  }
+
+  override def updateTableMetadata(table: CatalogTable, snapshot: Snapshot): Unit = {
+    ucClient.updateTableMetadata(
+      table.storage.properties(UC_TABLE_ID_KEY),
+      toStorageTableIdent(identifierFromCatalogTable(table)),
+      removeReservedProperties(snapshot.metadata),
+      snapshot.protocol,
+      snapshot.domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
+      snapshot.version,
+      snapshot.timestamp)
   }
 
   private def removeReservedProperties(metadata: Metadata): Metadata = {

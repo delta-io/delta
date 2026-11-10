@@ -18,9 +18,14 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.model.CreateTable;
+import io.unitycatalog.client.model.DataSourceFormat;
 import java.util.List;
+import java.util.Map;
+import org.apache.spark.sql.delta.hooks.UpdateCatalog;
 import org.junit.jupiter.api.Test;
 
 /** Tests metadata-changing operations on Unity Catalog managed (CatalogOwned) tables. */
@@ -302,6 +307,11 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
         .loadTable(parts[0], parts[1], parts[2]);
   }
 
+  private DeltaLoadTableResponse loadSyncedTable(String tableName) throws Exception {
+    assertThat(UpdateCatalog.awaitCompletion(10000)).isTrue();
+    return loadTable(tableName);
+  }
+
   @Test
   public void testExternalCreateRegistersCommittedMetadata() throws Exception {
     withTempDir(
@@ -352,6 +362,105 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
             assertThat(response.getMetadata().getLastCommitVersion()).isEqualTo(1L);
             assertThat(response.getCommits()).isNullOrEmpty();
             check(table, List.of(row("0"), row("1")));
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", table);
+          }
+        });
+  }
+
+  @Test
+  public void testExternalMetadataSyncRepairsMissedUpdates() throws Exception {
+    withTempDir(
+        path -> {
+          String location = path.toString();
+          String table = fullTableName("external_missed_sync");
+          String uriKey = "spark.sql.catalog." + unityCatalogInfo().catalogName() + ".uri";
+          String originalUri = spark().conf().get(uriKey);
+          String apiKey =
+              "spark.sql.catalog." + unityCatalogInfo().catalogName() + ".deltaRestApi.enabled";
+          String originalApiEnabled = spark().conf().get(apiKey, "true");
+          try {
+            sql(
+                "CREATE TABLE %s USING DELTA LOCATION '%s' AS SELECT id FROM range(1)",
+                table, location);
+            sql("INSERT INTO %s VALUES (1)", table);
+            assertThat(loadSyncedTable(table).getMetadata().getLastCommitVersion()).isEqualTo(1L);
+            sql("ALTER TABLE %s SET TBLPROPERTIES ('remove.me'='old')", table);
+            assertThat(loadSyncedTable(table).getMetadata().getProperties())
+                .containsEntry("remove.me", "old");
+
+            spark().conf().set(apiKey, "false");
+            sql("ALTER TABLE %s UNSET TBLPROPERTIES ('remove.me')", table);
+            assertThat(loadSyncedTable(table).getMetadata().getProperties())
+                .containsEntry("remove.me", "old");
+            spark().conf().set(apiKey, originalApiEnabled);
+
+            // The catalog client used to load the table remains valid. Only the hook's per-write
+            // client uses this URL, so a failed sync must not fail or repeat the Delta commit.
+            spark().conf().set(uriKey, originalUri + "/missing");
+            sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", table);
+            assertThat(loadSyncedTable(table).getMetadata().getColumns().getFields())
+                .extracting(field -> field.getName())
+                .containsExactly("id");
+            spark().conf().set(uriKey, originalUri);
+
+            // A data-only write must also repair metadata that an earlier hook failed to sync.
+            sql("INSERT INTO %s (id) VALUES (2)", table);
+            DeltaLoadTableResponse response = loadSyncedTable(table);
+            assertThat(response.getMetadata().getColumns().getFields())
+                .extracting(field -> field.getName())
+                .containsExactly("id", "extra");
+            assertThat(response.getMetadata().getProperties()).doesNotContainKey("remove.me");
+            assertThat(response.getMetadata().getLastCommitVersion())
+                .isEqualTo(currentVersion(table));
+            assertThat(response.getCommits()).isNullOrEmpty();
+            check(table, List.of(row("0", "null"), row("1", "null"), row("2", "null")));
+
+            sql("ALTER TABLE %s CLUSTER BY (id)", table);
+            assertThat(loadSyncedTable(table).getMetadata().getProperties())
+                .containsEntry("delta.feature.clustering", "supported")
+                .containsEntry("clusteringColumns", "[[\"id\"]]");
+            sql("ALTER TABLE %s CLUSTER BY NONE", table);
+            assertThat(loadSyncedTable(table).getMetadata().getProperties())
+                .containsEntry("clusteringColumns", "[]");
+          } finally {
+            spark().conf().set(uriKey, originalUri);
+            spark().conf().set(apiKey, originalApiEnabled);
+            sql("DROP TABLE IF EXISTS %s", table);
+          }
+        });
+  }
+
+  @Test
+  public void testLegacyExternalTableLoadsWithoutCachedMetadata() throws Exception {
+    withTempDir(
+        path -> {
+          String name = "external_legacy_metadata";
+          String table = fullTableName(name);
+          try {
+            sql(
+                "CREATE TABLE %s USING DELTA LOCATION '%s' AS SELECT id FROM range(2)",
+                table, path);
+            sql("DROP TABLE %s", table);
+            new TablesApi(unityCatalogInfo().createApiClient())
+                .createTable(
+                    new CreateTable()
+                        .catalogName(unityCatalogInfo().catalogName())
+                        .schemaName(unityCatalogInfo().schemaName())
+                        .name(name)
+                        .tableType(io.unitycatalog.client.model.TableType.EXTERNAL)
+                        .dataSourceFormat(DataSourceFormat.DELTA)
+                        .storageLocation(path.toString())
+                        .columns(List.of())
+                        .properties(Map.of()));
+            assertThat(loadTable(table).getMetadata().getColumns().getFields()).isEmpty();
+            check(table, List.of(row("0"), row("1")));
+            sql("ALTER TABLE %s SET TBLPROPERTIES ('custom.key'='value')", table);
+            DeltaLoadTableResponse response = loadSyncedTable(table);
+            assertThat(response.getMetadata().getColumns().getFields())
+                .extracting(field -> field.getName())
+                .containsExactly("id");
+            assertThat(response.getMetadata().getProperties()).containsEntry("custom.key", "value");
           } finally {
             sql("DROP TABLE IF EXISTS %s", table);
           }
@@ -411,6 +520,9 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
                   check(
                       targetTable,
                       List.of(List.of("1", "initial", "null"), List.of("2", "new", "extra_value")));
+                  assertThat(loadSyncedTable(targetTable).getMetadata().getColumns().getFields())
+                      .extracting(field -> field.getName())
+                      .containsExactly("id", "name", "extra");
                 } finally {
                   sql("SET spark.databricks.delta.schema.autoMerge.enabled = false");
                 }

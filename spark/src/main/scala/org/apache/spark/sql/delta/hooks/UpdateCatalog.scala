@@ -24,10 +24,14 @@ import scala.concurrent.{ExecutionContext, Future, TimeoutException}
 import scala.util.Try
 import scala.util.control.NonFatal
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils
+
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaConfigs, DeltaTableIdentifier, Snapshot}
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.catalog.AbstractDeltaCatalogClient
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -38,10 +42,11 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.ThreadUtils
 
 /**
@@ -50,6 +55,18 @@ import org.apache.spark.util.ThreadUtils
  */
 object UpdateCatalogFactory {
   def getUpdateCatalogHook(table: CatalogTable, spark: SparkSession): UpdateCatalogBase = {
+    if (table.tableType == CatalogTableType.EXTERNAL &&
+        table.storage.properties.contains(UC_TABLE_ID_KEY) &&
+        table.identifier.catalog.isDefined &&
+        !DeltaTableIdentifier.isDeltaPath(spark, table.identifier)) {
+      val prefix = s"spark.sql.catalog.${table.identifier.catalog.get}."
+      val options = new CaseInsensitiveStringMap(spark.conf.getAll.collect {
+        case (key, value) if key.startsWith(prefix) => key.substring(prefix.length) -> value
+      }.asJava)
+      if (UCConfigUtils.isDeltaRestApiEnabled(options.asCaseSensitiveMap())) {
+        return UpdateCatalog(table, Some(options))
+      }
+    }
     UpdateCatalog(table)
   }
 }
@@ -208,9 +225,34 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
  * last commit timestamp and version for which we updated the catalog. This prevents us from
  * updating the MetaStore with potentially stale information.
  */
-case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
+case class UpdateCatalog(
+    table: CatalogTable,
+    private val ucCatalogOptions: Option[CaseInsensitiveStringMap] = None)
+  extends UpdateCatalogBase {
 
   override val name: String = "Update Catalog"
+
+  override protected def shouldRun(spark: SparkSession, snapshot: Snapshot): Boolean = {
+    if (ucCatalogOptions.isDefined) snapshot.version >= 0 else super.shouldRun(spark, snapshot)
+  }
+
+  override protected def execute(spark: SparkSession, snapshot: Snapshot): Unit = {
+    ucCatalogOptions match {
+      case Some(options) =>
+        try {
+          AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+            table.identifier.catalog.get, options,
+            _ => throw new UnsupportedOperationException(
+              "Metadata sync does not load Spark tables"))
+            .foreach(_.updateTableMetadata(table, snapshot))
+        } catch {
+          case NonFatal(e) =>
+            logWarning(log"Failed to sync external table metadata for " +
+              log"${MDC(DeltaLogKeys.TABLE_NAME, table.identifier)}", e)
+        }
+      case None => super.execute(spark, snapshot)
+    }
+  }
 
   override def executeOnWrite(
       spark: SparkSession,
@@ -256,7 +298,11 @@ case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
   }
 
   override def updateSchema(spark: SparkSession, snapshot: Snapshot): Unit = {
-    UpdateCatalog.replaceTable(spark, snapshot, table)
+    if (ucCatalogOptions.isDefined) {
+      execute(spark, snapshot)
+    } else {
+      UpdateCatalog.replaceTable(spark, snapshot, table)
+    }
   }
 
   override protected def updateProperties(spark: SparkSession, snapshot: Snapshot): Unit = {

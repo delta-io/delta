@@ -29,7 +29,12 @@ import org.junit.jupiter.api.Test;
 public class UCDeltaTableDDLTest extends UCDeltaTableIntegrationBaseTest {
 
   private static final Set<String> MUTABLE_CATALOG_PROPERTIES =
-      Set.of("delta.lastCommitTimestamp", "delta.lastUpdateVersion", "transient_lastDdlTime");
+      Set.of(
+          "delta.lastCommitTimestamp",
+          "delta.lastUpdateVersion",
+          "option.delta.lastCommitTimestamp",
+          "option.delta.lastUpdateVersion",
+          "transient_lastDdlTime");
 
   // -------------------------------------------------------------------------
   // TRUNCATE TABLE
