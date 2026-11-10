@@ -101,7 +101,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("CREATE TABLE with check constraint referencing non-existent column fails at create time") {
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
         ValidateCheckConstraintsMode.ASSERT.toString) {
       val tableName = "test_create_invalid_constraint"
       withTable(tableName) {
@@ -119,7 +119,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("CREATE TABLE with non-boolean check constraint fails at create time") {
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
         ValidateCheckConstraintsMode.ASSERT.toString) {
       val tableName = "test_create_non_boolean_constraint"
       withTable(tableName) {
@@ -139,7 +139,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("CREATE TABLE with valid check constraint succeeds") {
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
         ValidateCheckConstraintsMode.ASSERT.toString) {
       val tableName = "test_create_valid_constraint"
       withTable(tableName) {
@@ -288,7 +288,7 @@ class CheckConstraintsSuite extends QueryTest
       )
     }
 
-    withSQLConf((DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key, "false")) {
+    withConf((DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key, "false")) {
       withTestTable { table =>
         val e = intercept[SparkThrowable] {
           sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
@@ -313,7 +313,7 @@ class CheckConstraintsSuite extends QueryTest
       sql(s"ALTER TABLE $table DROP CONSTRAINT IF EXISTS myConstraint")
     }
 
-    withSQLConf((DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key, "true")) {
+    withConf((DeltaSQLConf.DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS.key, "true")) {
       withTestTable { table =>
         sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
       }
@@ -456,7 +456,7 @@ class CheckConstraintsSuite extends QueryTest
   testQuietly(s"constraint with analyzer-evaluated expressions. Expression: $expression") {
     // Explicitly block constraint validation since both functions are nondeterministic.
     val disabled = ValidateCheckConstraintsMode.OFF.toString
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key -> disabled) {
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key -> disabled) {
       withTestTable { table =>
         // We use current_timestamp()/current_date() as the most convenient
         // analyzer-evaluated expressions - of course in a realistic use case
@@ -657,7 +657,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("validate check constraints on table with char/varchar columns") {
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
         ValidateCheckConstraintsMode.ASSERT.toString,
       SQLConf.READ_SIDE_CHAR_PADDING.key -> "true") {
       withTable("charVarcharConstraintTest") {
@@ -692,7 +692,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("drop table feature") {
-    withSQLConf(
+    withConf(
         DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> false.toString) {
       withTable("table") {
         sql(createTableSQL("table", "a INT, b INT",
@@ -737,7 +737,7 @@ class CheckConstraintsSuite extends QueryTest
 
   for (expression <- Seq("startsWith", "endsWith", "contains")) {
     test(s"Creating constraints with expressions in the allowList should work for: $expression") {
-      withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+      withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
         ValidateCheckConstraintsMode.ASSERT.toString) {
         val testTable = "tbl"
         withTable(testTable) {
@@ -751,7 +751,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("check constraints with LIKE ANY/ALL and NOT LIKE ANY/ALL expressions") {
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val testTable = "like_any_all_test"
       withTable(testTable) {
@@ -777,7 +777,7 @@ class CheckConstraintsSuite extends QueryTest
     assume(
       DeltaTestUtils.sparkVersionBucket(spark) == "4.2+",
       "TimestampAddInterval is only allowlisted in Spark 4.2")
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val testTable = "time_add_test"
       withTable(testTable) {
@@ -794,7 +794,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("CREATE TABLE with a NULLIF check constraint succeeds") {
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val tableName = "test_create_nullif_constraint"
       withTable(tableName) {
@@ -808,7 +808,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("check constraints with array_size and array_compact expressions") {
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val testTable = "array_funcs_test"
       withTable(testTable) {
@@ -827,7 +827,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("check constraints with array_append, array_prepend, array_insert expressions") {
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val testTable = "array_modify_funcs_test"
       withTable(testTable) {
@@ -848,7 +848,7 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("Creating constraints with expressions not in the allowList should throw an error") {
-    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+    withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
       ValidateCheckConstraintsMode.ASSERT.toString) {
       val testTable = "tbl"
       withTable(testTable) {
@@ -868,7 +868,7 @@ class CheckConstraintsSuite extends QueryTest
 
   for (isEnabled <- Seq(ValidateCheckConstraintsMode.OFF, ValidateCheckConstraintsMode.ASSERT)) {
     test(s"Reject CHECK constraints with external UDF calls when validation is ${isEnabled}") {
-      withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key -> isEnabled.toString) {
+      withConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key -> isEnabled.toString) {
         val testTable = "check_external_udf_test"
         withTable(testTable) {
           withUserDefinedFunction("external_udf" -> true) {

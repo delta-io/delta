@@ -62,7 +62,7 @@ trait BaseAMTActionsProvider {
  */
 class BaseSnapshotActionsProvider(
     snapshot: Snapshot) extends BaseAMTActionsProvider {
-  require(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider],
+  require(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProviderBase],
     "A snapshot-backed AMT base must not already have an AMT checkpoint.")
   require(snapshot.numOfFiles == 0,
     "The snapshot-backed AMT actions provider currently requires an empty snapshot.")
@@ -93,7 +93,7 @@ class BaseAMTCheckpointActionsProvider(
       protocol = checkpoint.protocol,
       setTransactions = checkpoint.txns,
       domainMetadatas = checkpoint.domainMetadata,
-      fileActionsFromRoot = AMTCheckpointProvider.readLiveRootDataEntries(deltaLog, checkpoint),
+      fileActionsFromRoot = checkpointProvider.readLiveRootDataEntries(deltaLog),
       allLeafs = checkpointProvider.leaves,
       version = checkpoint.contentRoot.version,
       lastManifestCommitWithFullRewrite = checkpoint.contentRoot.lastManifestCommitWithFullRewrite)

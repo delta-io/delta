@@ -49,21 +49,21 @@ trait PersistentDVDisabled extends DeltaSQLCommandTest {
 }
 
 trait PersistentDVEnabled extends DeletionVectorsTestUtils {
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectorsInNewTables(spark.conf)
   }
 }
 
 trait PredicatePushdownDisabled extends DeltaSQLCommandTest {
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 }
 
 trait PredicatePushdownEnabled extends DeltaSQLCommandTest {
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
