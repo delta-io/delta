@@ -213,7 +213,19 @@ case class ClusteringStrategy(
     // Un-clustered files don't have a ZCUBE_ID, and are sorted before clustered files (None is
     // considered the smallest element). We also don't consider partitionValues because
     // clustered tables should always be unpartitioned.
-    applyMinZCube(inputFiles.sortBy(_.tag(AddFile.Tags.ZCUBE_ID)))
+    val sortedFiles = inputFiles.sortBy(_.tag(AddFile.Tags.ZCUBE_ID))
+    if (optimizeContext.reorg.nonEmpty) {
+      // REORG has already selected the files it must rewrite (e.g. the files with deletion vectors
+      // for PURGE), so rewrite all of them. applyMinZCube picks the files incremental clustering
+      // should re-cluster, and would drop files that belong to a single ZCube or to a large one.
+      sortedFiles.foreach { file =>
+        clusteringStatsCollector.inputStats.updateStats(file)
+        clusteringStatsCollector.outputStats.updateStats(file)
+      }
+      sortedFiles
+    } else {
+      applyMinZCube(sortedFiles)
+    }
   }
 
   // Upon a new ZCube, allocate a [[ZCubeInfo]] with a new ZCUBE ID.
