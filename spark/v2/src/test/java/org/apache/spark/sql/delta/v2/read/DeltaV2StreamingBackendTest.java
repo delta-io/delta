@@ -49,8 +49,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
     String path = createTable(tempDir, /* commits= */ 1);
     DeltaV2StreamingBackend backend =
         new DeltaV2StreamingBackend(
-            new PathBasedSnapshotManager(path, defaultKernelContext),
-            queryContext);
+            new PathBasedSnapshotManager(path, defaultKernelContext), queryContext);
     assertEquals(0L, backend.update().version());
 
     spark.range(1).write().format("delta").mode("append").save(path);
@@ -72,8 +71,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
     String path = createTable(tempDir, /* commits= */ 3);
     DeltaV2StreamingBackend backend =
         new DeltaV2StreamingBackend(
-            new PathBasedSnapshotManager(path, defaultKernelContext),
-            queryContext);
+            new PathBasedSnapshotManager(path, defaultKernelContext), queryContext);
 
     VersionNotFoundException e =
         assertThrows(
@@ -106,8 +104,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
                 + "\"]}}"));
     DeltaV2StreamingBackend backend =
         new DeltaV2StreamingBackend(
-            new PathBasedSnapshotManager(path, defaultKernelContext),
-            queryContext);
+            new PathBasedSnapshotManager(path, defaultKernelContext), queryContext);
 
     DeltaUnsupportedTableFeatureException e =
         assertThrows(

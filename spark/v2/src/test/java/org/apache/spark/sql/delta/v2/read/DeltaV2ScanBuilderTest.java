@@ -545,8 +545,9 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     Engine engine = DefaultEngine.create(spark.sessionState().newHadoopConf());
-    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
-        spark, path, Collections.emptyMap(), Option.empty());
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, path, Collections.emptyMap(), Option.empty());
     return DeltaV2ScanBuilder.create(
         tableName,
         snapshot,

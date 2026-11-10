@@ -1071,8 +1071,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     StructType tableSchema = seededSnapshot.metadata().schema();
     return new DeltaV2MicroBatchStream(
-        DeltaV2TableManagerCache$.MODULE$.forTable(
-            spark, tablePath, javaOptions, Option.empty()),
+        DeltaV2TableManagerCache$.MODULE$.forTable(spark, tablePath, javaOptions, Option.empty()),
         latestSnapshot,
         hadoopConf,
         spark,

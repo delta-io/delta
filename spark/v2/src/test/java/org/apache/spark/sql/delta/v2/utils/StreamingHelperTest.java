@@ -473,7 +473,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     ClosableIterator<DeltaSingleCommit> v1Commits =
         ScalaUtils.toClosableIterator(commits.map(DeltaV2SingleCommit$.MODULE$::apply));
     when(manager.getSingleCommitIterator(
-        7L, Option.apply((Object) 7L), queryContext.catalogTableOpt(), failOnDataLoss))
+            7L, Option.apply((Object) 7L), queryContext.catalogTableOpt(), failOnDataLoss))
         .thenReturn(v1Commits);
     return manager;
   }
@@ -482,12 +482,10 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   public void testProtocolCollector_closesEmptyCommitIterator() throws IOException {
     CloseableIterator<CommitActions> commits = mockIterator();
 
-    assertTrue(StreamingHelper.collectProtocolActions(
-        7L,
-        Optional.of(7L),
-        mockTableManager(commits, true),
-        queryContext,
-        true).isEmpty());
+    assertTrue(
+        StreamingHelper.collectProtocolActions(
+                7L, Optional.of(7L), mockTableManager(commits, true), queryContext, true)
+            .isEmpty());
 
     verify(commits).close();
   }
@@ -505,10 +503,12 @@ public class StreamingHelperTest extends DeltaV2TestBase {
             });
     doThrow(closeFailure).when(commits).close();
 
-    RuntimeException error = assertThrows(
-        RuntimeException.class,
-        () -> StreamingHelper.collectProtocolActions(
-            7L, Optional.of(7L), mockTableManager(commits, true), queryContext, true));
+    RuntimeException error =
+        assertThrows(
+            RuntimeException.class,
+            () ->
+                StreamingHelper.collectProtocolActions(
+                    7L, Optional.of(7L), mockTableManager(commits, true), queryContext, true));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
@@ -579,8 +579,9 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_metadata_" + scenario;
     setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
-    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
-        spark, testTablePath, Collections.emptyMap(), Option.empty());
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, testTablePath, Collections.emptyMap(), Option.empty());
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActions(
@@ -595,8 +596,9 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_metadata_content";
     setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
-    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
-        spark, testTablePath, Collections.emptyMap(), Option.empty());
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, testTablePath, Collections.emptyMap(), Option.empty());
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActions(
@@ -651,8 +653,9 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_protocol_" + scenario;
     setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
-    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
-        spark, testTablePath, Collections.emptyMap(), Option.empty());
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, testTablePath, Collections.emptyMap(), Option.empty());
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActions(
@@ -667,8 +670,9 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_protocol_content";
     setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
-    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
-        spark, testTablePath, Collections.emptyMap(), Option.empty());
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, testTablePath, Collections.emptyMap(), Option.empty());
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActions(

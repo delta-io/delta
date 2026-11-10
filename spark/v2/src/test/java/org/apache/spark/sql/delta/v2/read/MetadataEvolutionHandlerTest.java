@@ -160,11 +160,12 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     return new MetadataEvolutionHandler(
         spark,
         "test-table-id",
-        new DeltaV2StreamingBackend(
-            THROWING_SNAPSHOT_MANAGER, EMPTY_QUERY_CONTEXT),
-        mock(DeltaV2TableManager.class, invocation -> {
-          throw new UnsupportedOperationException("not expected in this test");
-        }),
+        new DeltaV2StreamingBackend(THROWING_SNAPSHOT_MANAGER, EMPTY_QUERY_CONTEXT),
+        mock(
+            DeltaV2TableManager.class,
+            invocation -> {
+              throw new UnsupportedOperationException("not expected in this test");
+            }),
         EMPTY_QUERY_CONTEXT,
         emptyDeltaOptions(),
         readOptions,
@@ -1121,12 +1122,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(tablePath, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-        spark,
-        snapshot,
-        options,
-        snapshotManager,
-        defaultEngine,
-        EMPTY_QUERY_CONTEXT);
+        spark, snapshot, options, snapshotManager, defaultEngine, EMPTY_QUERY_CONTEXT);
   }
 
   /** Schema-tracking set but the log has no entry → empty. */
@@ -1410,11 +1406,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current,
-            snapshotManager,
-            defaultEngine,
-            tablePath,
-            EMPTY_QUERY_CONTEXT);
+            current, snapshotManager, defaultEngine, tablePath, EMPTY_QUERY_CONTEXT);
 
     if (expectedMergedVersion == EXPECTED_NO_MERGE) {
       assertTrue(result.isEmpty());
@@ -1477,11 +1469,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current,
-            snapshotManager,
-            defaultEngine,
-            tablePath,
-            EMPTY_QUERY_CONTEXT);
+            current, snapshotManager, defaultEngine, tablePath, EMPTY_QUERY_CONTEXT);
 
     // v3 is metadata-only → merge advances to v3. v4 has file actions → stop.
     assertTrue(result.isDefined());
