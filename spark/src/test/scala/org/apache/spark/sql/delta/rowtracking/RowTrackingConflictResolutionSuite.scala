@@ -188,8 +188,9 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       f3,
       f4,
       Action.supportedProtocolVersion(
-        // AdaptiveMetadataTableFeature is WIP; don't enable it by default in test tables.
-        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))
+        // The AMT features are WIP; don't enable them by default in test tables.
+        featuresToExclude =
+          Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features)
         .withFeature(RowTrackingFeature)
     )
 

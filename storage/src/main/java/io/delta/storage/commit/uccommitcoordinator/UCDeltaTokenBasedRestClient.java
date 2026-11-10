@@ -48,6 +48,7 @@ import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.DeltaCreateTableRequest;
 import io.unitycatalog.client.delta.model.DeltaDomainMetadataUpdates;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.model.DeltaMaintenanceOperation;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.DeltaRemoveDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.DeltaRemovePropertiesUpdate;
@@ -88,6 +89,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -340,8 +342,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
               actualTableId));
     }
 
-    Path basePath = CoordinatedCommitsUtils.commitDirPath(
-        CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
+    Path logPath = CoordinatedCommitsUtils.logDirPath(new Path(tableUri));
     List<Commit> commits = new ArrayList<>();
     if (response.getCommits() != null) {
       for (DeltaCommit deltaCommit : response.getCommits()) {
@@ -352,7 +353,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         if (endVersion.isPresent() && version > endVersion.get()) {
           continue;
         }
-        commits.add(fromDeltaCommit(deltaCommit, basePath));
+        commits.add(fromDeltaCommit(deltaCommit, logPath));
       }
     }
 
@@ -362,15 +363,19 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return new UCDeltaGetCommitsResponse(commits, latestTableVersion, storageUniform);
   }
 
-  /** Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. */
-  private Commit fromDeltaCommit(DeltaCommit deltaCommit, Path basePath) {
+  /**
+   * Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. The commit may be staged or
+   * already published.
+   */
+  private Commit fromDeltaCommit(DeltaCommit deltaCommit, Path logPath) {
     FileStatus fileStatus = new FileStatus(
         deltaCommit.getFileSize(),
         false /* isdir */,
         0 /* block_replication */,
         0 /* blocksize */,
         deltaCommit.getFileModificationTimestamp(),
-        new Path(basePath, deltaCommit.getFileName()));
+        CoordinatedCommitsUtils.catalogCommitPath(
+            logPath, deltaCommit.getVersion(), deltaCommit.getFileName()));
     return new Commit(deltaCommit.getVersion(), fileStatus, deltaCommit.getTimestamp());
   }
 
@@ -617,9 +622,23 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
+    List<DeltaMaintenanceOperation> responseMaintenanceOperations =
+        response.getAllowedMaintenanceOperations();
+    List<String> clientMaintenanceOperations =
+        responseMaintenanceOperations == null
+            ? Collections.emptyList()
+            : responseMaintenanceOperations.stream()
+                .map(DeltaMaintenanceOperation::getValue)
+                .collect(Collectors.toList());
     if (!credentialVendingEnabled) {
       return new TableInfo(
-          ucTableId, tableType, location, adapted, Collections.emptyMap(), uniformMetadata);
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
     }
     Map<String, String> storageProps;
     try {
@@ -629,13 +648,26 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)
       // so the caller can still build a CatalogTable.
       TableInfo withoutCreds = new TableInfo(
-          ucTableId, tableType, location, adapted, Collections.emptyMap(), uniformMetadata);
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
           e, withoutCreds);
     }
-    return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
+    return new TableInfo(
+        ucTableId,
+        tableType,
+        location,
+        adapted,
+        storageProps,
+        clientMaintenanceOperations,
+        uniformMetadata);
   }
 
   private static Optional<UniformMetadata> toStorageUniformMetadata(

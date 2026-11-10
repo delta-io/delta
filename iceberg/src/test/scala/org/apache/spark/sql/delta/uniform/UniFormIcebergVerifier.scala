@@ -265,7 +265,8 @@ class UniFormIcebergVerifier(
           .flatMap { manifest =>
             manifest.content() match {
               case ManifestContent.DATA =>
-                ManifestFiles.read(manifest, icebergTable.io()).asScala.toSeq
+                ManifestFiles.read(manifest, icebergTable.io(), icebergTable.specs())
+                  .asScala.toSeq
               case _ => Seq.empty
             }
           }
@@ -293,7 +294,8 @@ class UniFormIcebergVerifier(
         .map(
           _.deleteManifests(icebergTable.io())
             .asScala
-            .flatMap(ManifestFiles.readDeleteManifest(_, icebergTable.io(), null).asScala.toSeq)
+            .flatMap(ManifestFiles.readDeleteManifest(
+              _, icebergTable.io(), icebergTable.specs()).asScala.toSeq)
             .map(df => (df.referencedDataFile, df.path))
             .toMap)
         .getOrElse(Map.empty)

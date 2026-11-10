@@ -122,6 +122,11 @@ class DelegatingLogStoreSuite
         scheme,
         expClassName = DelegatingLogStore.defaultGCSLogStoreClassName)
     }
+    for (scheme <- DelegatingLogStore.gfsSchemes) {
+      testDefaultSchemeResolution(
+        scheme,
+        expClassName = DelegatingLogStore.defaultGooseFSLogStoreClassName)
+    }
     testDefaultSchemeResolution(
       scheme = fakeSchemeWithNoDefault,
       expClassName = DelegatingLogStore.defaultHDFSLogStoreClassName)

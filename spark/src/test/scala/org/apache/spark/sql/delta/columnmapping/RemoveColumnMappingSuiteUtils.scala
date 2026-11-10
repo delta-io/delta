@@ -64,10 +64,6 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
   protected val testTableName: String = "test_table_" + this.getClass.getSimpleName
   protected def deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
 
-  // Hook for subclasses to route DDL/DML through a specific connector mode (e.g. V1 for V2 suites
-  // that require DDL to go through the V1 connector). Defaults to `sql`.
-  protected def executeDml(sqlText: String): Unit = sql(sqlText)
-
   import testImplicits._
 
   protected def testRemovingColumnMapping(unsetTableProperty: Boolean = false): Any = {

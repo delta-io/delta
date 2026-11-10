@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 

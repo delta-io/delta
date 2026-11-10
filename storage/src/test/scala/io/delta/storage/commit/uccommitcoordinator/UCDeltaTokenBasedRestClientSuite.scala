@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.jdk.CollectionConverters._
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
@@ -228,6 +229,27 @@ class UCDeltaTokenBasedRestClientSuite
       assert(parsed.get("fields").size() === 2)
       assert(parsed.get("fields").get(0).get("name").asText() === "date")
       assert(parsed.get("fields").get(1).get("type").asText() === "integer")
+      assert(info.getClientMaintenanceOperations.isEmpty)
+      assert(!info.getStorageProperties.containsKey("delta.clientMaintenanceOperations"))
+    }
+  }
+
+  test("loadTable returns recognized client maintenance operations") {
+    val response = objectMapper.readTree(loadTableJson()).asInstanceOf[ObjectNode]
+    response.putArray("allowed-maintenance-operations")
+      .add("DATA_REORGANIZATION")
+      .add("DATA_CLEANUP")
+      .add("METADATA_CLEANUP")
+    deltaHandler = (exchange, _) => sendJson(
+      exchange,
+      HttpStatus.SC_OK,
+      objectMapper.writeValueAsString(response))
+
+    withClient { c =>
+      val info = c.loadTable(testIdentifier)
+      assert(info.getClientMaintenanceOperations.asScala.toSeq === Seq(
+        "DATA_REORGANIZATION", "DATA_CLEANUP", "METADATA_CLEANUP"))
+      assert(!info.getStorageProperties.containsKey("delta.clientMaintenanceOperations"))
     }
   }
 
@@ -829,6 +851,48 @@ class UCDeltaTokenBasedRestClientSuite
       assert(commit.getFileStatus.getModificationTime === 2001L)
       assert(commit.getFileStatus.getPath.toString ===
         "s3://b/t/_delta_log/_staged_commits/00000000000000000002.uuid.json")
+    }
+  }
+
+  test("getCommits resolves published and staged commit file names to their directories") {
+    val commitsJson = Seq(
+      deltaCommitJson(1L, "00000000000000000001.json", 100L, 1000L, 1001L),
+      deltaCommitJson(2L, "00000000000000000002.uuid.json", 200L, 2000L, 2001L)
+    ).mkString("[", ",", "]")
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK,
+        loadTableJson(commitsJson = commitsJson, latestTableVersion = 2L))
+
+    withClient { c =>
+      val response = c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.empty(), Optional.empty())
+
+      assert(response.getCommits.asScala.map(_.getFileStatus.getPath.toString).toSeq === Seq(
+        "s3://b/t/_delta_log/00000000000000000001.json",
+        "s3://b/t/_delta_log/_staged_commits/00000000000000000002.uuid.json"))
+    }
+  }
+
+  test("getCommits rejects a commit whose file name does not match its version") {
+    val commitsJson = Seq(
+      deltaCommitJson(1L, "00000000000000000001.json", 100L, 1000L, 1001L),
+      deltaCommitJson(2L, "00000000000000000003.uuid.json", 200L, 2000L, 2001L)
+    ).mkString("[", ",", "]")
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK,
+        loadTableJson(commitsJson = commitsJson, latestTableVersion = 2L))
+
+    withClient { c =>
+      intercept[IllegalArgumentException] {
+        c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+
+      // Commits outside the requested range are filtered out before their paths are resolved.
+      val response = c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(java.lang.Long.valueOf(1L)), Optional.of(java.lang.Long.valueOf(1L)))
+      assert(response.getCommits.asScala.map(_.getFileStatus.getPath.toString).toSeq ===
+        Seq("s3://b/t/_delta_log/00000000000000000001.json"))
     }
   }
 
