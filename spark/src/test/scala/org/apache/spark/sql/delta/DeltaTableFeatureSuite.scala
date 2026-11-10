@@ -535,6 +535,16 @@ class DeltaTableFeatureSuite
         assert(tableFeature.historyContainsFeature(
           spark, DeltaTableV2(spark, TableIdentifier(table), "DROP FEATURE"), log.update()))
 
+        // The test catalog must permit metadata cleanup for this CCv2 drop.
+        val catalog = spark.sessionState.catalog
+        val identifier = TableIdentifier(table)
+        val catalogTable = catalog.getTableMetadata(identifier)
+        catalog.alterTable(catalogTable.copy(storage = catalogTable.storage.copy(
+          properties = catalogTable.storage.properties +
+            (CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY ->
+              CatalogManagedTableMaintenanceOperation.METADATA_CLEANUP))))
+        catalog.invalidateCachedTable(identifier)
+
         // Dropping feature should fail because the feature still has traces in deltas.
         val e = intercept[DeltaTableFeatureException] {
           sql(s"ALTER TABLE $table DROP FEATURE $featureName")
@@ -544,7 +554,11 @@ class DeltaTableFeatureSuite
         // Add in a checkpoint and cleanUp up older logs containing feature traces
         log.startTransaction().commitManually()
         log.checkpoint()
-        log.cleanUpExpiredLogs(log.update(), deltaRetentionMillisOpt = Some(-1000000000000L))
+        log.cleanUpExpiredLogs(
+          log.update(),
+          catalogTableOpt =
+            DeltaTableV2(spark, TableIdentifier(table), "DROP FEATURE").catalogTable,
+          deltaRetentionMillisOpt = Some(-1000000000000L))
         sql(s"ALTER TABLE $table DROP FEATURE $featureName")
         assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
       } finally {
