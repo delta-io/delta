@@ -29,12 +29,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.delta.kernel.CommitActions;
-import io.delta.kernel.CommitRange;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
@@ -49,19 +47,23 @@ import java.util.Set;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -72,6 +74,12 @@ import scala.Option;
 public class StreamingHelperTest extends DeltaV2TestBase {
 
   private PathBasedSnapshotManager snapshotManager;
+  private final DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.empty();
+
+  @AfterEach
+  void clearTableManagerCache() {
+    DeltaV2TableManagerCache$.MODULE$.clearCache();
+  }
 
   @Test
   public void testGetAddFileWithDataChange() {
@@ -459,15 +467,14 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     return mock(CloseableIterator.class, CALLS_REAL_METHODS);
   }
 
-  private DeltaV2SnapshotManager mockSnapshotManager(CloseableIterator<CommitActions> commits) {
-    DeltaV2SnapshotManager manager = mock(DeltaV2SnapshotManager.class);
-    CommitRange range = mock(CommitRange.class);
-    DeltaV2QueryContext emptyContext = DeltaV2QueryContext$.MODULE$.apply(Optional.empty());
-    when(manager.getTableChanges(
-            defaultEngine, GetTableChangesParam$.MODULE$.apply(7L, Option.apply(7L)), emptyContext))
-        .thenReturn(range);
-    when(range.getCommitActions(defaultEngine, Set.of(DeltaLogActionUtils.DeltaAction.PROTOCOL)))
-        .thenReturn(commits);
+  private DeltaV2TableManager mockTableManager(
+      CloseableIterator<CommitActions> commits, boolean failOnDataLoss) {
+    DeltaV2TableManager manager = mock(DeltaV2TableManager.class);
+    ClosableIterator<DeltaSingleCommit> v1Commits =
+        ScalaUtils.toClosableIterator(commits.map(DeltaV2SingleCommit$.MODULE$::apply));
+    when(manager.getSingleCommitIterator(
+        7L, Option.apply((Object) 7L), queryContext.catalogTableOpt(), failOnDataLoss))
+        .thenReturn(v1Commits);
     return manager;
   }
 
@@ -475,14 +482,12 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   public void testProtocolCollector_closesEmptyCommitIterator() throws IOException {
     CloseableIterator<CommitActions> commits = mockIterator();
 
-    assertTrue(
-        StreamingHelper.collectProtocolActions(
-                7L,
-                Optional.of(7L),
-                mockSnapshotManager(commits),
-                defaultEngine,
-                DeltaV2QueryContext$.MODULE$.empty())
-            .isEmpty());
+    assertTrue(StreamingHelper.collectProtocolActions(
+        7L,
+        Optional.of(7L),
+        mockTableManager(commits, true),
+        queryContext,
+        true).isEmpty());
 
     verify(commits).close();
   }
@@ -500,16 +505,10 @@ public class StreamingHelperTest extends DeltaV2TestBase {
             });
     doThrow(closeFailure).when(commits).close();
 
-    RuntimeException error =
-        assertThrows(
-            RuntimeException.class,
-            () ->
-                StreamingHelper.collectProtocolActions(
-                    7L,
-                    Optional.of(7L),
-                    mockSnapshotManager(commits),
-                    defaultEngine,
-                    DeltaV2QueryContext$.MODULE$.empty()));
+    RuntimeException error = assertThrows(
+        RuntimeException.class,
+        () -> StreamingHelper.collectProtocolActions(
+            7L, Optional.of(7L), mockTableManager(commits, true), queryContext, true));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
@@ -536,11 +535,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
             RuntimeException.class,
             () ->
                 StreamingHelper.collectProtocolActions(
-                    7L,
-                    Optional.of(7L),
-                    mockSnapshotManager(commits),
-                    defaultEngine,
-                    DeltaV2QueryContext$.MODULE$.empty()));
+                    7L, Optional.of(7L), mockTableManager(commits, true), queryContext, true));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
@@ -584,15 +579,12 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_metadata_" + scenario;
     setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
+    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
+        spark, testTablePath, Collections.emptyMap(), Option.empty());
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActions(
-            startVersion,
-            endVersionOpt,
-            snapshotManager,
-            defaultEngine,
-            DeltaV2QueryContext$.MODULE$.empty());
+            startVersion, endVersionOpt, tableManager, queryContext, true);
 
     assertArrayEquals(expectedVersions.stream().sorted().toArray(), result.keySet().toArray());
   }
@@ -603,15 +595,12 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_metadata_content";
     setupTableWithMetadataChangeAtV2(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
+    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
+        spark, testTablePath, Collections.emptyMap(), Option.empty());
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActions(
-            0L,
-            Optional.of(2L),
-            snapshotManager,
-            defaultEngine,
-            DeltaV2QueryContext$.MODULE$.empty());
+            0L, Optional.of(2L), tableManager, queryContext, true);
 
     StructType expectedV0Schema =
         new StructType().add("id", DataTypes.IntegerType).add("name", DataTypes.StringType);
@@ -662,15 +651,12 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_protocol_" + scenario;
     setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
+    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
+        spark, testTablePath, Collections.emptyMap(), Option.empty());
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActions(
-            startVersion,
-            endVersionOpt,
-            snapshotManager,
-            defaultEngine,
-            DeltaV2QueryContext$.MODULE$.empty());
+            startVersion, endVersionOpt, tableManager, queryContext, true);
 
     assertArrayEquals(expectedVersions.stream().sorted().toArray(), result.keySet().toArray());
   }
@@ -681,15 +667,12 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_collect_protocol_content";
     setupTableWithProtocolUpgradeAtV2(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
+    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
+        spark, testTablePath, Collections.emptyMap(), Option.empty());
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActions(
-            0L,
-            Optional.of(2L),
-            snapshotManager,
-            defaultEngine,
-            DeltaV2QueryContext$.MODULE$.empty());
+            0L, Optional.of(2L), tableManager, queryContext, true);
 
     // v0 default: reader=1, writer=2; v2 upgraded: reader=3, writer=7
     assertEquals(1, result.get(0L).minReaderVersion());

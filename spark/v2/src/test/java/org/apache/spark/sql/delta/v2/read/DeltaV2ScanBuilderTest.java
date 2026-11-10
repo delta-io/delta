@@ -25,6 +25,7 @@ import io.delta.kernel.engine.Engine;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.OptionalInt;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.connector.read.Scan;
@@ -32,6 +33,8 @@ import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
@@ -542,12 +545,14 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     Engine engine = DefaultEngine.create(spark.sessionState().newHadoopConf());
-    return new DeltaV2ScanBuilder(
+    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
+        spark, path, Collections.emptyMap(), Option.empty());
+    return DeltaV2ScanBuilder.create(
         tableName,
         snapshot,
         engine,
         Option.empty(),
-        snapshotManager,
+        tableManager,
         dataSchema,
         partitionSchema,
         tableSchema,
