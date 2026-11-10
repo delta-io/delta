@@ -135,7 +135,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
             () -> write.commit(new WriterCommitMessage[] {addFileMessage, unsupportedMessage}));
 
     assertEquals(
-        "Delta V2 append does not support '" + actionName + "' actions", error.getMessage());
+        "Delta V2 writers do not support '" + actionName + "' actions", error.getMessage());
     assertEquals(0L, spark.read().format("delta").load(path).count());
     assertEquals(versionsBefore, spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count());
   }

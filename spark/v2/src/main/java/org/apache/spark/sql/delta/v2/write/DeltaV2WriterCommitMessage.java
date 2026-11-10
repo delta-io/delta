@@ -64,7 +64,7 @@ class DeltaV2WriterCommitMessage implements WriterCommitMessage {
           Action action = rowActions.get(0);
           if (!(action instanceof AddFile)) {
             throw new UnsupportedOperationException(
-                "Delta V2 append does not support '"
+                "Delta V2 writers do not support '"
                     + action.getClass().getSimpleName()
                     + "' actions");
           }
