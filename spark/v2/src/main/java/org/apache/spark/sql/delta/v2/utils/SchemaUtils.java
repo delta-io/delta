@@ -202,17 +202,8 @@ public class SchemaUtils {
       org.apache.spark.sql.types.StructType endSchema) {
     requireNonNull(existingSchema, "existingSchema is null");
     requireNonNull(endSchema, "endSchema is null");
-    org.apache.spark.sql.delta.schema.SchemaUtils$ delta =
-        org.apache.spark.sql.delta.schema.SchemaUtils$.MODULE$;
-    return delta.isReadCompatible(
-        existingSchema,
-        endSchema,
-        /* forbidTightenNullability */ true,
-        delta.isReadCompatible$default$4(),
-        delta.isReadCompatible$default$5(),
-        delta.isReadCompatible$default$6(),
-        delta.isReadCompatible$default$7(),
-        delta.isReadCompatible$default$8());
+    return org.apache.spark.sql.delta.schema.SchemaUtils$.MODULE$.isReadCompatible(
+        existingSchema, endSchema, /* forbidTightenNullability */ true);
   }
 
   //////////////////////
