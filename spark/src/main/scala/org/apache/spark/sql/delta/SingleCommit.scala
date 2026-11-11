@@ -23,6 +23,8 @@ import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.FileStatus
 
+import org.apache.spark.sql.SparkSession
+
 /**
  * A handle to a single commit in the Delta log, standing in for the raw commit log file that
  * [[DeltaLog.getChangeLogFiles]] used to expose as a [[FileStatus]] -- now hidden so the log's
@@ -136,7 +138,7 @@ class SingleCommit private (
         throw new IllegalStateException(
           s"Commit $version is an inline manifest commit but has no in-commit timestamp.")
       }
-      AMTCheckpointProvider.fromCheckpoint(deltaLog, amtCheckpoint, version)
+      AMTCheckpointProvider.fromCheckpoint(SparkSession.active, deltaLog, amtCheckpoint, version)
         .reconstructFileActions(deltaLog, dataChange, commitTimestamp)
     }
   }

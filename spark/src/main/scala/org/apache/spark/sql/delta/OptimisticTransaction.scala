@@ -2900,6 +2900,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val committedKeys =
       committedFileActions.map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     val provider = AMTCheckpointProvider(
+      spark = spark,
       manifestCommitVersion = attemptVersion,
       checkpointAction = result.checkpoint,
       leaves = result.leaves,
@@ -3283,7 +3284,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If this commit writes an AMT, it becomes the latest AMT for the table.
     // Otherwise, use the latest AMT identified before commit, including conflict checking.
     val amtCheckpointProviderForPostCommitSnapshot = amtWriteResultOpt
-      .map(AMTCheckpointProvider.fromWriteResult(deltaLog, _, attemptVersion))
+      .map(AMTCheckpointProvider.fromWriteResult(spark, deltaLog, _, attemptVersion))
       .orElse(amtWriterManager.preCommitLatestAMTCheckpointProviderOpt)
     PrepareCommitResult(
       commitVersion = attemptVersion,
