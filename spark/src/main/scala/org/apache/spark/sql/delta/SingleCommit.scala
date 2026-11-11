@@ -138,8 +138,9 @@ class SingleCommit private (
         throw new IllegalStateException(
           s"Commit $version is an inline manifest commit but has no in-commit timestamp.")
       }
-      AMTCheckpointProvider.fromCheckpoint(SparkSession.active, deltaLog, amtCheckpoint, version)
-        .reconstructFileActions(deltaLog, dataChange, commitTimestamp)
+      val spark = SparkSession.active
+      AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, amtCheckpoint, version)
+        .reconstructFileActions(spark, deltaLog, dataChange, commitTimestamp)
     }
   }
 

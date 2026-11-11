@@ -216,9 +216,11 @@ final class PerRowAMTCheckpointProvider(
     toAddSingleActions(entries, dataEntryResolverProvider(parentLeaves = Seq.empty))
   }
 
-  override protected def leafLiveAddSingleActions(deltaLog: DeltaLog): Dataset[SingleAction] =
+  override protected def leafLiveAddSingleActions(
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction] =
     toAddSingleActions(
-      loadLeafDataEntriesWithRowIdPrefix(deltaLog, liveLeavesWithManifestFilters),
+      loadLeafDataEntriesWithRowIdPrefix(spark, deltaLog, liveLeavesWithManifestFilters),
       dataEntryResolverProvider(parentLeaves = liveLeaves))
 
   override private[amt] def readLiveRootDataEntries(
@@ -256,9 +258,11 @@ final class ColumnarAMTCheckpointProvider(
       baseRowId = col("tracking.first_row_id"))
   }
 
-  override protected def leafLiveAddSingleActions(deltaLog: DeltaLog): Dataset[SingleAction] =
+  override protected def leafLiveAddSingleActions(
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction] =
     toAddSingleActions(
-      leafEntriesWithRowIdPrefix(deltaLog, liveLeavesWithManifestFilters),
+      leafEntriesWithRowIdPrefix(spark, deltaLog, liveLeavesWithManifestFilters),
       baseRowId = inheritedBaseRowId)
 
   /** Reuses prefetched root for incremental writes as well as snapshot state reconstruction. */
@@ -271,10 +275,11 @@ final class ColumnarAMTCheckpointProvider(
    * with their entry context (see [[withLeafEntryContext]]), rather than decoded ones.
    */
   private def leafEntriesWithRowIdPrefix(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
       : DataFrame = {
-    val index = leafFileIndex(leavesWithRowIndexFilters)
+    val index = leafFileIndex(spark, leavesWithRowIndexFilters)
     val withPrefix =
       dataEntries(loadPersistedEntries(deltaLog, index, includeRowIndexFilterMarker = true))
         .withColumn(PRECEDING_RECORDS_COLUMN, precedingNullRowIdRecords())
@@ -594,9 +599,10 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * Reconstructs the live-file AddFile actions from the AMT as a [[Dataset]].
    */
   private def liveAddSingleActions(
-      spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction] = {
     val root = rootLiveAddSingleActions(spark, deltaLog)
-    if (liveLeaves.isEmpty) root else root.union(leafLiveAddSingleActions(deltaLog))
+    if (liveLeaves.isEmpty) root else root.union(leafLiveAddSingleActions(spark, deltaLog))
   }
 
   /**
@@ -606,7 +612,9 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction]
 
   /** Reconstructs the AddFiles of every live leaf, taking care of inheritance. */
-  protected def leafLiveAddSingleActions(deltaLog: DeltaLog): Dataset[SingleAction]
+  protected def leafLiveAddSingleActions(
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction]
 
   /** The live AddFiles that the root holds, for the incremental writer. */
   private[amt] def readLiveRootDataEntries(
@@ -627,10 +635,11 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * leaf without a filter is read unfiltered. The returned entries retain the computed prefix.
    */
   protected def loadLeafDataEntriesWithRowIdPrefix(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
       : Dataset[AMTDataEntryExtended] = {
-    val index = leafFileIndex(leavesWithRowIndexFilters)
+    val index = leafFileIndex(spark, leavesWithRowIndexFilters)
     val withPrefix = loadEntriesWithExtendedMetadata(
         deltaLog, index, checkpointAction.metaData, checkpointAction.protocol,
         includeRowIndexFilterMarker = true)
@@ -654,6 +663,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
 
   /** Builds an index over the given leaves that applies each leaf's row-index filter, if any. */
   protected def leafFileIndex(
+      spark: SparkSession,
       leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
       : DeltaLogFileIndex = {
     val files =
@@ -743,10 +753,11 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * RemoveFile's `deletionTimestamp`. The actions come in no particular order.
    */
   private[delta] def reconstructFileActions(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       dataChange: Boolean,
       commitTimestamp: Long): Seq[FileAction] =
-    mdvDerivedChangeActions(deltaLog, dataChange, commitTimestamp)
+    mdvDerivedChangeActions(spark, deltaLog, dataChange, commitTimestamp)
       .foldLeft(trackingDerivedChangeActions(deltaLog, dataChange, commitTimestamp))(_ union _)
       .collect().toSeq
       .map(_.unwrap.asInstanceOf[FileAction])
@@ -801,6 +812,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * `dataChange` and `commitTimestamp` (see [[reconstructFileActions]]).
    */
   private def mdvDerivedChangeActions(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       dataChange: Boolean,
       commitTimestamp: Long): Option[Dataset[SingleAction]] = {
@@ -816,7 +828,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
         leaf.changedPositionsBitmaps, tableRoot, inverse = true))
     }
     val resolverProvider = dataEntryResolverProvider(touchedLeaves)
-    Some(loadLeafDataEntriesWithRowIdPrefix(deltaLog, leavesWithFilters)
+    Some(loadLeafDataEntriesWithRowIdPrefix(spark, deltaLog, leavesWithFilters)
       .mapPartitions { entries =>
         val resolver = resolverProvider.createResolver()
         entries.map { entryWithLoc =>

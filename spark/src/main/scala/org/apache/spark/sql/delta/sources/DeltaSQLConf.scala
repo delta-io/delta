@@ -679,6 +679,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+
   val AMT_ROOT_CACHE_MAX_NUM_ENTRIES =
     buildConf("amt.rootCache.maxNumEntries")
       .internal()
