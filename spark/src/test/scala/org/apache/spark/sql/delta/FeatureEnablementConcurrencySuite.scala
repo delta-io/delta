@@ -707,48 +707,27 @@ class FeatureEnablementConcurrencySuite
     assert(spark.table(testTableName).where("idCol = -1").count() === 1)
   }
 
-  for (featureEnablementConflictResolution <- BOOLEAN_DOMAIN)
-  test("Metadata conflict resolution - unchanged metadata update, feature enablement conflict " +
-      s"resolution: $featureEnablementConflictResolution") {
-    withSQLConf(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key ->
-        featureEnablementConflictResolution.toString) {
-      val (deltaLog, catalogTable) = createTestTable()
+  for (afterCommentChange <- BOOLEAN_DOMAIN)
+  test("Unchanged metadata update conflicts with feature enablement conflict resolution " +
+      s"disabled, after a comment change: $afterCommentChange") {
+    withSQLConf(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key -> "false") {
+      val (deltaLog, catalogTable) = createTestTableWithNestedColumns()
       val ctx = new TestContext(deltaLog)
+      val losingTxn = Update(rows = Seq(90L), setValue = -1L)
+      losingTxn.start(ctx)
 
-      Update(rows = Seq(90L), setValue = -1L).interleave(ctx) {
-        val txn = deltaLog.startTransaction(Some(catalogTable))
-        txn.updateMetadata(txn.metadata)
-        txn.commit(Nil, DeltaOperations.ManualUpdate)
+      if (afterCommentChange) {
+        // Then the losing transaction compares with the metadata it took from this commit, not
+        // with its read snapshot.
+        MetadataStatement(nestedFieldComment.setCommentSql("ids")).execute(ctx)
       }
+      val txn = deltaLog.startTransaction(Some(catalogTable))
+      val unchangedMetadata = txn.metadata
+      txn.updateMetadata(unchangedMetadata)
+      txn.commit(Nil, DeltaOperations.ManualUpdate)
+      assert(deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata === unchangedMetadata)
+      assertMetadataChangedOnCommit(losingTxn, ctx)
     }
-    assert(spark.table(testTableName).where("idCol = -1").count() === 1)
-  }
-
-  test("Metadata conflict resolution - winning commit that serializes the same schema " +
-      "differently") {
-    val (deltaLog, catalogTable) = createTestTable()
-    // Another writer can serialize the schema differently.
-    val txn = deltaLog.startTransaction(Some(catalogTable))
-    val metadata = txn.metadata
-    val prettySchemaString = metadata.schema.prettyJson
-    txn.commit(
-      Seq(metadata.copy(schemaString = prettySchemaString)), DeltaOperations.ManualUpdate)
-    assert(
-      deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata.schemaString ===
-        prettySchemaString)
-    val ctx = new TestContext(deltaLog)
-    val dvEnablementTxn = AlterTableProperty(
-      property = DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, value = "true")
-
-    Delete(rows = Seq(90L)).interleave(ctx) {
-      dvEnablementTxn.execute(ctx)
-    }
-
-    assert(spark.table(testTableName).where("idCol = 90").count() === 0)
-    // ALTER TABLE writes the schema back as compact JSON, so the two schema strings differ.
-    val latestMetadata = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata
-    assert(latestMetadata.schemaString != prettySchemaString)
-    assert(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(latestMetadata))
   }
 
   for (commentFirst <- BOOLEAN_DOMAIN)
@@ -773,42 +752,6 @@ class FeatureEnablementConcurrencySuite
     val metadata = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata
     assert(metadata.columnMappingMode === NameMapping)
     assert(idColComment.readComment(metadata) === Some("ids"))
-  }
-
-  test("Comment change conflict resolution - table comment set while enabling column mapping") {
-    val (deltaLog, catalogTable) = createTestTable()
-    val ctx = new TestContext(deltaLog)
-
-    Update(rows = Seq(90L), setValue = -1L).interleave(ctx) {
-      MetadataStatement("ALTER TABLE <table> SET TBLPROPERTIES " +
-        s"('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${NameMapping.name}', 'comment' = 'ids')")
-        .execute(ctx)
-    }
-
-    assert(spark.table(testTableName).where("idCol = -1").count() === 1)
-    val metadata = deltaLog.update(catalogTableOpt = Some(catalogTable)).metadata
-    assert(metadata.columnMappingMode === NameMapping)
-    assert(tableComment.readComment(metadata) === Some("ids"))
-  }
-
-  for (featureEnablementConflictResolution <- BOOLEAN_DOMAIN)
-  test("Comment change conflict resolution - table comment set with a protocol upgrade, " +
-      s"feature enablement conflict resolution: $featureEnablementConflictResolution") {
-    withSQLConf(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key ->
-        featureEnablementConflictResolution.toString) {
-      val (deltaLog, catalogTable) = createTestTable()
-      val ctx = new TestContext(deltaLog)
-
-      Update(rows = Seq(90L), setValue = -1L).interleave(ctx) {
-        MetadataStatement("ALTER TABLE <table> SET TBLPROPERTIES " +
-          "('comment' = 'ids', 'delta.feature.timestampNtz' = 'supported')").execute(ctx)
-      }
-
-      val snapshot = deltaLog.update(catalogTableOpt = Some(catalogTable))
-      assert(snapshot.protocol.isFeatureSupported(TimestampNTZTableFeature))
-      assert(tableComment.readComment(snapshot.metadata) === Some("ids"))
-    }
-    assert(spark.table(testTableName).where("idCol = -1").count() === 1)
   }
 
   test("Comment change conflict resolution - removed table comment") {
@@ -866,6 +809,9 @@ class FeatureEnablementConcurrencySuite
       "ALTER TABLE <table> ALTER COLUMN idCol COMMENT 'ids', nested FIRST"),
     ChangeBeyondComments("table comment and another property",
       "ALTER TABLE <table> SET TBLPROPERTIES ('comment' = 'ids', 'team' = 'dml')"),
+    ChangeBeyondComments("table comment and a protocol upgrade",
+      "ALTER TABLE <table> SET TBLPROPERTIES " +
+        "('comment' = 'ids', 'delta.feature.timestampNtz' = 'supported')"),
     ChangeBeyondComments("column default",
       "ALTER TABLE <table> ALTER COLUMN idCol SET DEFAULT 5",
       Seq("'delta.feature.allowColumnDefaults' = 'supported'")),
@@ -910,6 +856,20 @@ class FeatureEnablementConcurrencySuite
     txn.updateMetadata(txn.metadata.copy(schemaString = changedSchema.json))
     txn.commit(Nil, DeltaOperations.ManualUpdate)
 
+    assertMetadataChangedOnCommit(losingTxn, ctx)
+  }
+
+  test("Metadata change beyond comments conflicts - table comment while enabling column mapping") {
+    // Each change resolves only in a commit of its own. This table has no nested columns, so
+    // enabling column mapping alone resolves.
+    val (deltaLog, _) = createTestTable()
+    val ctx = new TestContext(deltaLog)
+    val losingTxn = Update(rows = Seq(90L), setValue = -1L)
+
+    losingTxn.start(ctx)
+    MetadataStatement("ALTER TABLE <table> SET TBLPROPERTIES " +
+      s"('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '${NameMapping.name}', 'comment' = 'ids')")
+      .execute(ctx)
     assertMetadataChangedOnCommit(losingTxn, ctx)
   }
 

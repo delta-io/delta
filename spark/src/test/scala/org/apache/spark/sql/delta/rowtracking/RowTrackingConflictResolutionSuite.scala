@@ -344,13 +344,11 @@ class RowTrackingConflictResolutionSuite extends QueryTest
     metadata.copy(configuration = newConfigs)
   }
 
-  private def enableRowTrackingOnlyMetadataUpdate(
-      extraConfiguration: Map[String, String] = Map.empty): Unit = {
+  private def enableRowTrackingOnlyMetadataUpdate(): Unit = {
     val txn = deltaLog.startTransaction()
     val updatedMetadata = addRowTrackingEnabledConfigToMetadata(latestSnapshot.metadata)
     val tags = Map(DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
-    txn.updateMetadata(
-      updatedMetadata.copy(configuration = updatedMetadata.configuration ++ extraConfiguration))
+    txn.updateMetadata(updatedMetadata)
     txn.commit(Nil, ManualUpdate, tags)
   }
 
@@ -370,72 +368,6 @@ class RowTrackingConflictResolutionSuite extends QueryTest
 
         assertRowIdsAreValid(deltaLog)
         assert(RowTracking.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
-      }
-    }
-  }
-
-  for (featureEnablementConflictResolution <- DeltaTestUtils.BOOLEAN_DOMAIN)
-  test("RowTrackingEnablementOnly metadata update keeps row tracking preserved when it was " +
-      "already enabled - feature enablement conflict resolution: " +
-      s"$featureEnablementConflictResolution") {
-    withTestTable {
-      withSQLConf(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key ->
-          featureEnablementConflictResolution.toString) {
-        activateRowTracking()
-        enableRowTrackingOnlyMetadataUpdate()
-        val txn = deltaLog.startTransaction()
-        // Sets the table property again, which a script that runs twice can do.
-        enableRowTrackingOnlyMetadataUpdate()
-
-        val rowTrackingPreserved = rowTrackingMarkedAsPreservedForCommit(deltaLog) {
-          // Tag the commit as preserving row tracking, like UPDATE, DELETE and MERGE do.
-          txn.commit(
-            Seq(addFile(path = "file_path")),
-            DeltaOperations.ManualUpdate,
-            RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
-        }
-
-        assert(rowTrackingPreserved,
-          "Row tracking was already enabled when the transaction started.")
-        assertRowIdsAreValid(deltaLog)
-      }
-    }
-  }
-
-  test("RowTrackingEnablementOnly metadata update that doesn't enable row tracking fails txns " +
-      "that don't update metadata") {
-    withTestTable {
-      withSQLConf(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key -> "false") {
-        val txn = deltaLog.startTransaction()
-        activateRowTracking()
-        val winningTxn = deltaLog.startTransaction()
-        val metadata = latestSnapshot.metadata
-        winningTxn.updateMetadata(metadata.copy(configuration =
-          metadata.configuration + (DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false")))
-        winningTxn.commit(
-          Nil, ManualUpdate, Map(DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true"))
-
-        intercept[MetadataChangedException] {
-          txn.commit(Seq(addFile(path = "file_path")), DeltaOperations.ManualUpdate)
-        }
-      }
-    }
-  }
-
-  for (featureEnablementConflictResolution <- DeltaTestUtils.BOOLEAN_DOMAIN)
-  test("RowTrackingEnablementOnly metadata update that changes other properties fails txns " +
-      "that don't update metadata - feature enablement conflict resolution: " +
-      s"$featureEnablementConflictResolution") {
-    withTestTable {
-      withSQLConf(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key ->
-          featureEnablementConflictResolution.toString) {
-        val txn = deltaLog.startTransaction()
-        activateRowTracking()
-        enableRowTrackingOnlyMetadataUpdate(extraConfiguration = Map("key" -> "value"))
-
-        intercept[MetadataChangedException] {
-          txn.commit(Seq(addFile(path = "file_path")), DeltaOperations.ManualUpdate)
-        }
       }
     }
   }

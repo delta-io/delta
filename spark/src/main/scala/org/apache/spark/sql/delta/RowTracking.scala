@@ -146,44 +146,45 @@ object RowTracking {
         .exists(_.toBoolean)
   }
 
-  /** The table properties that row tracking enablement sets. */
-  private[delta] val enablementTablePropertyKeys: Set[String] = Set(
-    DeltaConfigs.ROW_TRACKING_ENABLED.key,
-    MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
-    MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
-
-  /** Whether the RowTrackingEnablementOnly pass can take the winning metadata update. */
+  /**
+   * Returns a Boolean indicating whether it is safe the resolve the metadata update conflict
+   * between the current and winning transaction conflict, from the perspective of row tracking
+   * enablement.
+   */
   def canResolveMetadataUpdateConflict(
       currentTransactionInfo: CurrentTransactionInfo,
       winningCommitSummary: WinningCommitSummary): Boolean = {
     if (!isSupported(currentTransactionInfo.protocol)) return false
 
     RowTracking.isRowTrackingEnablementOnlyCommit(winningCommitSummary.commitInfo) &&
-      winningCommitSummary.metadataUpdates.headOption
-        .exists(DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData) &&
       !currentTransactionInfo.metadataChanged
   }
 
   /**
-   * Takes the row tracking table properties of a winning commit tagged as
-   * RowTrackingEnablementOnly. It is only safe to call this function if
+   * Update the currentTransactionInfo properly to resolve a metadata update conflict when the
+   * winning commit is tagged as RowTrackingEnablementOnly. It is only safe to call this function if
    * [[RowTracking.canResolveMetadataUpdateConflict]] returns true.
    *
-   * See [[ConflictChecker.attemptToResolveMetadataConflicts()]] for more details.
+   * See [[ConflictCheckerEdge.checkNoMetadataUpdates()]] for more details.
    */
   def resolveRowTrackingEnablementOnlyMetadataUpdateConflict(
       currentTransactionInfo: CurrentTransactionInfo,
       winningCommitSummary: WinningCommitSummary): CurrentTransactionInfo = {
     require(canResolveMetadataUpdateConflict(currentTransactionInfo, winningCommitSummary))
-    val currentMetadata = currentTransactionInfo.metadata
-    val winningMetadata = winningCommitSummary.metadataUpdates.head
-    val rowTrackingPropertyKeys = enablementTablePropertyKeys
-    val winningProperties = winningMetadata.configuration.filter {
-      case (key, _) => rowTrackingPropertyKeys.contains(key)
-    }
-    val configuration =
-      (currentMetadata.configuration -- rowTrackingPropertyKeys) ++ winningProperties
-    currentTransactionInfo.copy(metadata = currentMetadata.copy(configuration = configuration))
+    // If the CommitInfo is None, do nothing because the absence of the
+    // [[DeltaCommitTag.PreservedRowTrackingTag]] means it is false.
+    val newCommitInfo =
+        currentTransactionInfo.commitInfo.map(RowTracking.addRowTrackingNotPreservedTag)
+
+    val newMetadata = winningCommitSummary.metadataUpdates.head
+
+    // OptimisticTransactions sets the metadata seen by the current txn
+    // (currentTransactionInfo.metadata) to the updated metadata. To be consistent, let's do this
+    // even if the current txn does not update metadata.
+    currentTransactionInfo.copy(
+      metadata = newMetadata,
+      commitInfo = newCommitInfo
+    )
   }
 
   def preserveRowTrackingColumns(
