@@ -47,7 +47,6 @@ final class KernelContext(
   }
 
 
-
   // The snapshot facade lives in a separate internal package in the standalone connector.
   def getDefaultEngine(): KernelEngine = {
     createDefaultEngine()
