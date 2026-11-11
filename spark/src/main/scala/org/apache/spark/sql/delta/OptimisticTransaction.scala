@@ -2908,7 +2908,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // Only file identities are compared, so the deletion timestamp stamped on the reconstructed
     // RemoveFiles does not matter.
     val treeKeys =
-        provider.reconstructFileActions(deltaLog, dataChange, commitTimestamp = 0L)
+        provider.reconstructFileActions(spark, deltaLog, dataChange, commitTimestamp = 0L)
         .map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     if (treeKeys != committedKeys) {
       val onlyInTree = treeKeys -- committedKeys

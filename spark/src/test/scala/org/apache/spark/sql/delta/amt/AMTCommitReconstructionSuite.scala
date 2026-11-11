@@ -58,7 +58,7 @@ class AMTCommitReconstructionSuite extends AMTIncrementalWriteTestBase {
     assert(checkpoint.contentRoot.version == version,
       s"the tree of v$version must describe v$version, got ${checkpoint.contentRoot.version}")
     val provider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint, version)
-    (version, provider.reconstructFileActions(deltaLog, dataChange, commitTimestamp))
+    (version, provider.reconstructFileActions(spark, deltaLog, dataChange, commitTimestamp))
   }
 
   /**
