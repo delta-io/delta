@@ -42,9 +42,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import org.apache.spark.sql.catalyst.util.CollationFactory;
 import org.apache.spark.sql.errors.QueryCompilationErrors;
-import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
-import org.apache.spark.sql.types.MetadataBuilder;
 import org.apache.spark.unsafe.Platform;
 import scala.jdk.CollectionConverters;
 
@@ -64,93 +62,6 @@ public class SchemaUtils {
     requireNonNull(metadata);
     return (org.apache.spark.sql.types.StructType)
         org.apache.spark.sql.types.DataType.fromJson(metadata.getSchemaString());
-  }
-
-  /**
-   * Converts a Delta Kernel schema to a Spark schema. String collations are not supported and fail
-   * the conversion, so use {@link #convertKernelMetadataToSparkSchema} for table schemas.
-   */
-  public static org.apache.spark.sql.types.StructType convertKernelSchemaToSparkSchema(
-      StructType kernelSchema) {
-    requireNonNull(kernelSchema);
-    List<org.apache.spark.sql.types.StructField> fields = new ArrayList<>();
-
-    for (StructField field : kernelSchema.fields()) {
-      // Kernel records the collation of every non-UTF8_BINARY string in or under a field here.
-      if (field.getMetadata().contains(StructField.COLLATIONS_METADATA_KEY)) {
-        throw collationsNotSupported(field.getName());
-      }
-      fields.add(
-          new org.apache.spark.sql.types.StructField(
-              field.getName(),
-              convertKernelDataTypeToSparkDataType(field.getDataType()),
-              field.isNullable(),
-              convertKernelFieldMetadataToSparkMetadata(field.getMetadata())));
-    }
-
-    return new org.apache.spark.sql.types.StructType(
-        fields.toArray(new org.apache.spark.sql.types.StructField[0]));
-  }
-
-  private static IllegalArgumentException collationsNotSupported(String collated) {
-    return new IllegalArgumentException(
-        "Collated strings are not supported by this conversion: "
-            + collated
-            + ". Use convertKernelMetadataToSparkSchema to convert a table schema.");
-  }
-
-  /** Converts a Delta Kernel data type to a Spark data type. Collated strings are rejected. */
-  public static org.apache.spark.sql.types.DataType convertKernelDataTypeToSparkDataType(
-      DataType kernelDataType) {
-    requireNonNull(kernelDataType);
-    if (kernelDataType instanceof StringType) {
-      if (!((StringType) kernelDataType).isUTF8BinaryCollated()) {
-        throw collationsNotSupported(kernelDataType.toString());
-      }
-      return DataTypes.StringType;
-    } else if (kernelDataType instanceof BooleanType) {
-      return DataTypes.BooleanType;
-    } else if (kernelDataType instanceof IntegerType) {
-      return DataTypes.IntegerType;
-    } else if (kernelDataType instanceof LongType) {
-      return DataTypes.LongType;
-    } else if (kernelDataType instanceof BinaryType) {
-      return DataTypes.BinaryType;
-    } else if (kernelDataType instanceof ByteType) {
-      return DataTypes.ByteType;
-    } else if (kernelDataType instanceof DateType) {
-      return DataTypes.DateType;
-    } else if (kernelDataType instanceof DecimalType) {
-      DecimalType kernelDecimal = (DecimalType) kernelDataType;
-      return DataTypes.createDecimalType(kernelDecimal.getPrecision(), kernelDecimal.getScale());
-    } else if (kernelDataType instanceof DoubleType) {
-      return DataTypes.DoubleType;
-    } else if (kernelDataType instanceof FloatType) {
-      return DataTypes.FloatType;
-    } else if (kernelDataType instanceof ShortType) {
-      return DataTypes.ShortType;
-    } else if (kernelDataType instanceof TimestampType) {
-      return DataTypes.TimestampType;
-    } else if (kernelDataType instanceof TimestampNTZType) {
-      return DataTypes.TimestampNTZType;
-    } else if (kernelDataType instanceof ArrayType) {
-      ArrayType kernelArray = (ArrayType) kernelDataType;
-      return DataTypes.createArrayType(
-          convertKernelDataTypeToSparkDataType(kernelArray.getElementType()),
-          kernelArray.containsNull());
-    } else if (kernelDataType instanceof MapType) {
-      MapType kernelMap = (MapType) kernelDataType;
-      return DataTypes.createMapType(
-          convertKernelDataTypeToSparkDataType(kernelMap.getKeyType()),
-          convertKernelDataTypeToSparkDataType(kernelMap.getValueType()),
-          kernelMap.isValueContainsNull());
-    } else if (kernelDataType instanceof StructType) {
-      return convertKernelSchemaToSparkSchema((StructType) kernelDataType);
-    } else if (kernelDataType instanceof VariantType) {
-      return DataTypes.VariantType;
-    } else {
-      throw new IllegalArgumentException("unsupported data type " + kernelDataType);
-    }
   }
 
   /**
@@ -311,62 +222,6 @@ public class SchemaUtils {
   ///////////////////////////////
 
   /**
-   * Converts Kernel FieldMetadata to Spark Metadata.
-   *
-   * @param kernelMetadata the Kernel FieldMetadata to convert
-   * @return the equivalent Spark Metadata
-   */
-  public static Metadata convertKernelFieldMetadataToSparkMetadata(
-      io.delta.kernel.types.FieldMetadata kernelMetadata) {
-    requireNonNull(kernelMetadata);
-    if (kernelMetadata.getEntries().isEmpty()) {
-      return Metadata.empty();
-    }
-    MetadataBuilder builder = new MetadataBuilder();
-    kernelMetadata
-        .getEntries()
-        .forEach(
-            (key, value) -> {
-              if (value instanceof Long) {
-                builder.putLong(key, (Long) value);
-              } else if (value instanceof Double) {
-                builder.putDouble(key, (Double) value);
-              } else if (value instanceof Boolean) {
-                builder.putBoolean(key, (Boolean) value);
-              } else if (value instanceof String) {
-                builder.putString(key, (String) value);
-              } else if (value instanceof io.delta.kernel.types.FieldMetadata) {
-                builder.putMetadata(
-                    key,
-                    convertKernelFieldMetadataToSparkMetadata(
-                        (io.delta.kernel.types.FieldMetadata) value));
-              } else if (value instanceof Long[]) {
-                builder.putLongArray(key, unboxLongArray((Long[]) value, key));
-              } else if (value instanceof Double[]) {
-                builder.putDoubleArray(key, unboxDoubleArray((Double[]) value, key));
-              } else if (value instanceof Boolean[]) {
-                builder.putBooleanArray(key, unboxBooleanArray((Boolean[]) value, key));
-              } else if (value instanceof String[]) {
-                builder.putStringArray(key, (String[]) value);
-              } else if (value instanceof io.delta.kernel.types.FieldMetadata[]) {
-                io.delta.kernel.types.FieldMetadata[] kernelMetadatas =
-                    (io.delta.kernel.types.FieldMetadata[]) value;
-                Metadata[] sparkMetadatas =
-                    Arrays.stream(kernelMetadatas)
-                        .map(SchemaUtils::convertKernelFieldMetadataToSparkMetadata)
-                        .toArray(Metadata[]::new);
-                builder.putMetadataArray(key, sparkMetadatas);
-              } else if (value == null) {
-                builder.putNull(key);
-              } else {
-                throw new UnsupportedOperationException(
-                    "Unsupported metadata value type: " + value.getClass().getName());
-              }
-            });
-    return builder.build();
-  }
-
-  /**
    * Converts Spark Metadata to Kernel FieldMetadata.
    *
    * @param sparkMetadata the Spark Metadata to convert
@@ -426,53 +281,5 @@ public class SchemaUtils {
               }
             });
     return builder.build();
-  }
-
-  /**
-   * Unboxes a Long[] to long[], checking for nulls.
-   *
-   * @throws NullPointerException if any element is null
-   */
-  private static long[] unboxLongArray(Long[] boxedArray, String key) {
-    long[] primitiveArray = new long[boxedArray.length];
-    for (int i = 0; i < boxedArray.length; i++) {
-      requireNonNull(
-          boxedArray[i],
-          String.format("Null element at index %s in Long array for key '%s'", i, key));
-      primitiveArray[i] = boxedArray[i];
-    }
-    return primitiveArray;
-  }
-
-  /**
-   * Unboxes a Double[] to double[], checking for nulls.
-   *
-   * @throws NullPointerException if any element is null
-   */
-  private static double[] unboxDoubleArray(Double[] boxedArray, String key) {
-    double[] primitiveArray = new double[boxedArray.length];
-    for (int i = 0; i < boxedArray.length; i++) {
-      requireNonNull(
-          boxedArray[i],
-          String.format("Null element at index %s in Double array for key '%s'", i, key));
-      primitiveArray[i] = boxedArray[i];
-    }
-    return primitiveArray;
-  }
-
-  /**
-   * Unboxes a Boolean[] to boolean[], checking for nulls.
-   *
-   * @throws NullPointerException if any element is null
-   */
-  private static boolean[] unboxBooleanArray(Boolean[] boxedArray, String key) {
-    boolean[] primitiveArray = new boolean[boxedArray.length];
-    for (int i = 0; i < boxedArray.length; i++) {
-      requireNonNull(
-          boxedArray[i],
-          String.format("Null element at index %s in Boolean array for key '%s'", i, key));
-      primitiveArray[i] = boxedArray[i];
-    }
-    return primitiveArray;
   }
 }
