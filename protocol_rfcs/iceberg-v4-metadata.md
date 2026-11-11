@@ -786,9 +786,10 @@ Before a writer removes `adaptiveMetadata` from the protocol, a writer must prod
 
 The writer that removes `adaptiveMetadata` from the protocol must also do one of these:
 - Truncate the history so that no retained version contains a `contentRoot` action.
+OR
 - In the same commit, add `checkpointProtection` to the protocol and set `delta.requireCheckpointProtectionBeforeVersion` to the version of that commit (see [Checkpoint Protection](checkpoint-protection.md)).
 
-While a retained version contains a `contentRoot` action, cleanup follows [Metadata Cleanup](#metadata-cleanup).
+Manifest files that are no longer referenced in history may be cleaned up.
 
 ## Compatibility Notes
 
