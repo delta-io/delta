@@ -96,6 +96,7 @@ trait AMTCheckpointTestBase
       txns = Nil,
       sidecars = Nil)
     AMTCheckpointProvider(
+      spark = spark,
       manifestCommitVersion = cpVersion,
       checkpointAction = checkpoint,
       leaves = Nil,

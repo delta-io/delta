@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, SetTransaction}
 
+import org.apache.spark.sql.SparkSession
+
 /**
  * The previous-AMT state that an incremental write builds the next manifest tree on top of.
  *
@@ -84,6 +86,7 @@ class BaseSnapshotActionsProvider(
 
 /** A [[BaseAMTActionsProvider]] backed by an already-resolved [[AMTCheckpointProvider]]. */
 class BaseAMTCheckpointActionsProvider(
+    spark: SparkSession,
     deltaLog: DeltaLog,
     checkpointProvider: AMTCheckpointProvider) extends BaseAMTActionsProvider {
   override def load(): BaseAMTActionsResult = {
@@ -93,7 +96,7 @@ class BaseAMTCheckpointActionsProvider(
       protocol = checkpoint.protocol,
       setTransactions = checkpoint.txns,
       domainMetadatas = checkpoint.domainMetadata,
-      fileActionsFromRoot = checkpointProvider.readLiveRootDataEntries(deltaLog),
+      fileActionsFromRoot = checkpointProvider.readLiveRootDataEntries(spark, deltaLog),
       allLeafs = checkpointProvider.leaves,
       version = checkpoint.contentRoot.version,
       lastManifestCommitWithFullRewrite = checkpoint.contentRoot.lastManifestCommitWithFullRewrite)
