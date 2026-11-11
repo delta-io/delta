@@ -63,6 +63,7 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChan
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory
 import org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamUtils._
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils
 import org.apache.spark.sql.delta.v2.utils.PartitionValueCaster
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils
@@ -97,7 +98,7 @@ import org.apache.spark.sql.types.StructType
  * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
  */
 private[read] class DeltaV2MicroBatchStream(
-      snapshotManager: DeltaV2SnapshotManager,
+      tableManager: DeltaV2TableManager,
       snapshotAtSourceInit: Snapshot,
       hadoopConf: Configuration,
       spark: SparkSession,
@@ -111,7 +112,7 @@ private[read] class DeltaV2MicroBatchStream(
       scalaOptions: scala.collection.immutable.Map[String, String],
       metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog],
       metadataPath: String,
-      originalQueryContext: DeltaV2QueryContext)
+      originalStreamingQueryContext: DeltaV2QueryContext)
     extends MicroBatchStream
         with SupportsAdmissionControl
         with SupportsTriggerAvailableNow {
@@ -159,11 +160,15 @@ private[read] class DeltaV2MicroBatchStream(
   private var initialSnapshot: DeltaSourceSnapshot = null
   private var initialSnapshotVersion: Long = -1L
 
-  Objects.requireNonNull(snapshotManager, "snapshotManager is null")
-  Objects.requireNonNull(originalQueryContext, "originalQueryContext is null")
+  Objects.requireNonNull(tableManager, "tableManager is null")
+  Objects.requireNonNull(originalStreamingQueryContext, "originalStreamingQueryContext is null")
+  private val snapshotManager: DeltaV2SnapshotManager =
+      Objects.requireNonNull(
+          tableManager.snapshotManager(originalStreamingQueryContext.catalogTableOpt),
+          "snapshotManager is null")
   /** The Delta log operations that compute offsets. */
   private val streamingBackend: DeltaStreamingBackend =
-      new DeltaV2StreamingBackend(snapshotManager, originalQueryContext)
+      new DeltaV2StreamingBackend(snapshotManager, originalStreamingQueryContext)
   Objects.requireNonNull(hadoopConf, "hadoopConf is null")
   Objects.requireNonNull(spark, "spark is null")
   private val engine: Engine = KernelEngineFactory.createDefaultEngine(hadoopConf)
@@ -254,16 +259,15 @@ private[read] class DeltaV2MicroBatchStream(
       new MetadataEvolutionHandler(
           spark,
           tableId,
-          snapshotManager,
           streamingBackend,
-          engine,
+          tableManager,
+          originalStreamingQueryContext,
           options,
           schemaReadOptions,
           metadataTrackingLog,
           readSnapshotDescriptor.metadata,
           readSnapshotDescriptor.protocol,
-          metadataPath,
-          originalQueryContext)
+          metadataPath)
   locally {
     val shouldValidateSchemaOnRestart: Boolean =
         spark
@@ -936,9 +940,7 @@ private[read] class DeltaV2MicroBatchStream(
       startVersion: Long,
       endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
     val commits: ClosableIterator[DeltaSingleCommit] =
-        new IteratorCloseOps(getCommitsFromRange(startVersion, endOffset, ACTION_SET))
-            // TODO: Remove once the table manager returns DeltaSingleCommit.
-            .withClose(iterator => iterator.map(commit => DeltaV2SingleCommit.apply(commit)))
+        getCommitsFromRange(startVersion, endOffset)
     val files: ClosableIterator[IndexedFile] =
         new IteratorFlatMapCloseOp(commits)
             .flatMapWithClose(
@@ -984,6 +986,56 @@ private[read] class DeltaV2MicroBatchStream(
                         lastProcessedVersion,
                         lastProcessedIndex))
     wrapIteratorWithCommitIteratorClose(files, commits)
+  }
+
+  /** Returns commits from delta logs within the requested offset range. */
+  private def getCommitsFromRange(
+      startVersion: Long,
+      endOffset: Optional[DeltaSourceOffset]): ClosableIterator[DeltaSingleCommit] = {
+    // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
+    Preconditions.checkArgument(
+        options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+        "Using schema from schema tracking log cannot tolerate missing commit files.")
+
+    var endVersionOpt: Optional[java.lang.Long] =
+        if (endOffset.isPresent()) {
+          Optional.of(java.lang.Long.valueOf(endOffset.get().reservoirVersion))
+        } else Optional.empty()
+
+    if (endVersionOpt.isPresent()) {
+      // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
+      // endVersion to be an actual existing version or empty.
+      val latestVersion: Long = snapshotAtSourceInit.version
+      if (endVersionOpt.get() > latestVersion) {
+        // This could happen because:
+        // 1. data could be added after snapshotAtSourceInit was captured.
+        // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
+        // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
+        // TODO(#5318): kernel should ideally relax this constraint.
+        endVersionOpt = Optional.of(java.lang.Long.valueOf(streamingBackend.update().version))
+      }
+
+      // After capping, check if startVersion is beyond the endVersion.
+      // This can happen when all files in the batch come from the initial snapshot
+      // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
+      if (startVersion > endVersionOpt.get()) {
+        return new ClosableWrapper[DeltaSingleCommit](Iterator.empty).toClosable
+      }
+    } else {
+      // When endOffset is empty (offset discovery), check if startVersion exceeds the current
+      // latest version. We must load the current latest (not snapshotAtSourceInit) because new
+      // commits may have arrived since stream initialization.
+      val currentLatestVersion: Long = streamingBackend.update().version
+      if (startVersion > currentLatestVersion) {
+        return new ClosableWrapper[DeltaSingleCommit](Iterator.empty).toClosable
+      }
+    }
+
+    tableManager.getSingleCommitIterator(
+        startVersion,
+        ScalaUtils.toScalaOption(endVersionOpt).map(Long.unbox),
+        originalStreamingQueryContext.catalogTableOpt,
+        options.failOnDataLoss)
   }
 
   /** Resolves the version range and returns commit actions from delta logs. */
@@ -1040,7 +1092,7 @@ private[read] class DeltaV2MicroBatchStream(
             snapshotManager.getTableChanges(
                 engine,
                 GetTableChangesParam.apply(earliestVersionToFetch, endVersionOpt),
-                originalQueryContext)
+                originalStreamingQueryContext)
         fetched = true
       } catch {
       case e: io.delta.kernel.exceptions.StartVersionNotFoundException =>
@@ -1489,9 +1541,9 @@ private[read] class DeltaV2MicroBatchStream(
               CollectionConverters.asScala(StreamingHelper.collectMetadataActions(
                       batchStartVersion,
                       Optional.of(Long.box(batchEndVersion.get)),
-                      snapshotManager,
-                      engine,
-                      originalQueryContext)
+                      tableManager,
+                      originalStreamingQueryContext,
+                      options.failOnDataLoss)
                   .entrySet())) {
             val version: Long = entry.getKey()
             val metadata: Metadata = entry.getValue()

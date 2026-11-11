@@ -24,7 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, InMemoryCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider, InMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -502,42 +502,48 @@ class DeltaTableFeatureSuite
     }
   }
 
-  test("drop table feature works with coordinated commits") {
+  test("drop table feature works with catalog-managed commits") {
     val table = "tbl"
+    DeltaLog.clearCache()
     withTable(table) {
-      spark.range(0).write.format("delta").saveAsTable(table)
-      val log = DeltaLog.forTable(spark, TableIdentifier(table))
-      val featureName = TestRemovableReaderWriterFeature.name
-      assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
-
-      // Add coordinated commits table feature to the table
-      CommitCoordinatorProvider.clearNonDefaultBuilders()
+      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
       try {
-        CommitCoordinatorProvider.registerBuilder(
-          InMemoryCommitCoordinatorBuilder(batchSize = 100))
-        val tblProperties1 =
-          Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'",
-            s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}'")
-        sql(buildTablePropertyModifyingCommand(
-          "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
+        CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+          "spark_catalog", InMemoryCommitCoordinatorBuilder(batchSize = 100))
+        spark.range(0).write.format("delta")
+          .option(propertyKey(CatalogOwnedTableFeature), "supported")
+          .saveAsTable(table)
+        val log = DeltaLog.forTable(spark, TableIdentifier(table))
+        val featureName = TestRemovableReaderWriterFeature.name
+        assert(log.update().isCatalogOwned)
+        assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
 
         // Add TestRemovableReaderWriterFeature to the table in unbackfilled delta files
-        val tblProperties2 = Seq(s"'$FEATURE_PROP_PREFIX$featureName' = 'supported', " +
-          s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION, " +
+        val tblProperties1 = Seq(s"'$FEATURE_PROP_PREFIX$featureName' = 'supported', " +
           s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'true'")
         sql(buildTablePropertyModifyingCommand(
-          "ALTER", targetTableName = table, sourceTableName = table, tblProperties2))
+          "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
         assert(log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
 
         // Disable feature on the latest snapshot
-        val tblProperties3 = Seq(s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'false'")
+        val tblProperties2 = Seq(s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'false'")
         sql(buildTablePropertyModifyingCommand(
-          "ALTER", targetTableName = table, sourceTableName = table, tblProperties3))
+          "ALTER", targetTableName = table, sourceTableName = table, tblProperties2))
 
         val tableFeature =
           TableFeature.featureNameToFeature(featureName).get.asInstanceOf[RemovableFeature]
         assert(tableFeature.historyContainsFeature(
-          spark, DeltaTableV2(spark, log.dataPath), log.update()))
+          spark, DeltaTableV2(spark, TableIdentifier(table), "DROP FEATURE"), log.update()))
+
+        // The test catalog must permit metadata cleanup for this CCv2 drop.
+        val catalog = spark.sessionState.catalog
+        val identifier = TableIdentifier(table)
+        val catalogTable = catalog.getTableMetadata(identifier)
+        catalog.alterTable(catalogTable.copy(storage = catalogTable.storage.copy(
+          properties = catalogTable.storage.properties +
+            (CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY ->
+              CatalogManagedTableMaintenanceOperation.METADATA_CLEANUP))))
+        catalog.invalidateCachedTable(identifier)
 
         // Dropping feature should fail because the feature still has traces in deltas.
         val e = intercept[DeltaTableFeatureException] {
@@ -548,11 +554,15 @@ class DeltaTableFeatureSuite
         // Add in a checkpoint and cleanUp up older logs containing feature traces
         log.startTransaction().commitManually()
         log.checkpoint()
-        log.cleanUpExpiredLogs(log.update(), deltaRetentionMillisOpt = Some(-1000000000000L))
+        log.cleanUpExpiredLogs(
+          log.update(),
+          catalogTableOpt =
+            DeltaTableV2(spark, TableIdentifier(table), "DROP FEATURE").catalogTable,
+          deltaRetentionMillisOpt = Some(-1000000000000L))
         sql(s"ALTER TABLE $table DROP FEATURE $featureName")
         assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
       } finally {
-        CommitCoordinatorProvider.clearNonDefaultBuilders()
+        CatalogOwnedCommitCoordinatorProvider.clearBuilders()
       }
     }
   }

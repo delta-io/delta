@@ -23,7 +23,8 @@ import scala.jdk.CollectionConverters._
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaSingleCommit, Snapshot, VersionNotFoundException}
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend
 import org.apache.spark.sql.delta.v2.exception.{VersionNotFoundException => V2VersionNotFoundException}
-import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SnapshotManager}
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException
 
 
