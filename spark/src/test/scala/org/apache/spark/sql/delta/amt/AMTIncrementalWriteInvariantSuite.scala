@@ -53,7 +53,8 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         // hole -> the Step-0 coverage assert must fire.
         intercept[AssertionError] {
           new IncrementalAMTWriter(spark, amtDeltaLog).writeIncremental(
-            oldAMTActionsProvider = new BaseAMTCheckpointActionsProvider(amtDeltaLog, provider),
+            oldAMTActionsProvider =
+              new BaseAMTCheckpointActionsProvider(spark, amtDeltaLog, provider),
             intermediateLogCommits = intermediateLogCommits,
             attemptVersion = snapshot.version + 5,
             actionsToCommit = Seq.empty,
@@ -83,7 +84,8 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         // writer directly.
         val ex = intercept[IllegalStateException] {
           new IncrementalAMTWriter(spark, amtDeltaLog).writeIncremental(
-            oldAMTActionsProvider = new BaseAMTCheckpointActionsProvider(amtDeltaLog, provider),
+            oldAMTActionsProvider =
+              new BaseAMTCheckpointActionsProvider(spark, amtDeltaLog, provider),
             intermediateLogCommits = intermediateLogCommits,
             attemptVersion = snapshot.version + 1,
             actionsToCommit = Seq(staleRemove),
