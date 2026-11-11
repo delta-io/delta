@@ -181,20 +181,22 @@ class AMTBinaryJsonCodecFormatVersion1Suite extends QueryTest with SharedSparkSe
     assertDecoded(encodedStr, originalBytes)
   }
 
-  gridTest("raw round trip preserves trailing zeros at every alignment")(1 to 8) { length =>
-    // Before Z85: [version][length][payload    ][padding ]
-    // length 1:   [01     ][00 01 ][7f         ][        ]
-    // length 2:   [01     ][00 02 ][7f 00      ][00 00 00]
-    // length 3:   [01     ][00 03 ][7f 00 00   ][00 00   ]
-    // length 4:   [01     ][00 04 ][7f 00 00 00][00      ]
-    // Lengths 5-8 repeat these alignments. Decode must preserve payload zeros and discard padding.
-    val originalBytes = Array.tabulate[Byte](length)(i => if (i == 0) 0x7f.toByte else 0.toByte)
-    val encodedStr = encodeBytes(originalBytes, DISABLED)
-    assert(encodedStr == envelope(length, originalBytes))
-    val padding = Base85Codec.decodeAlignedBytes(encodedStr).drop(TOTAL_HEADER_SIZE + length)
-    assert(padding.length == (4 - (TOTAL_HEADER_SIZE + length) % 4) % 4)
-    assert(padding.forall(_ == 0))
-    assertDecoded(encodedStr, originalBytes)
+  for (length <- 1 to 8) {
+    test(s"raw round trip preserves trailing zeros at every alignment (length=$length)") {
+      // Before Z85: [version][length][payload    ][padding ]
+      // length 1:   [01     ][00 01 ][7f         ][        ]
+      // length 2:   [01     ][00 02 ][7f 00      ][00 00 00]
+      // length 3:   [01     ][00 03 ][7f 00 00   ][00 00   ]
+      // length 4:   [01     ][00 04 ][7f 00 00 00][00      ]
+      // Lengths 5-8 repeat these alignments. Preserve payload zeros and discard padding.
+      val originalBytes = Array.tabulate[Byte](length)(i => if (i == 0) 0x7f.toByte else 0.toByte)
+      val encodedStr = encodeBytes(originalBytes, DISABLED)
+      assert(encodedStr == envelope(length, originalBytes))
+      val padding = Base85Codec.decodeAlignedBytes(encodedStr).drop(TOTAL_HEADER_SIZE + length)
+      assert(padding.length == (4 - (TOTAL_HEADER_SIZE + length) % 4) % 4)
+      assert(padding.forall(_ == 0))
+      assertDecoded(encodedStr, originalBytes)
+    }
   }
 
   testAllPolicies("round trip supports every byte value with trailing zeros") { policy =>
@@ -287,10 +289,12 @@ class AMTBinaryJsonCodecFormatVersion1Suite extends QueryTest with SharedSparkSe
     assertDecoded(encodedStr, originalBytes)
   }
 
-  gridTest("compressed decoder strips padding but preserves trailing zeros")(256 to 259) { length =>
-    val originalBytes = randomBytes(length - 3) ++ Array[Byte](0, 0, 0)
-    val frame = wrapInZstdFrameWithFixedOverhead(originalBytes)
-    assertDecoded(envelope(-frame.length, frame), originalBytes)
+  for (length <- 256 to 259) {
+    test(s"compressed decoder strips padding but preserves trailing zeros (length=$length)") {
+      val originalBytes = randomBytes(length - 3) ++ Array[Byte](0, 0, 0)
+      val frame = wrapInZstdFrameWithFixedOverhead(originalBytes)
+      assertDecoded(envelope(-frame.length, frame), originalBytes)
+    }
   }
 
   test("decoder accepts a compressed payload at the shared payload limit") {
