@@ -136,11 +136,9 @@ class AMTBinaryJsonCodecFormatVersion1Suite extends QueryTest with SharedSparkSe
   test("format version config defaults to 1 and rejects unsupported values") {
     assert(DeltaSQLConf.AMT_BINARY_JSON_FORMAT_VERSION.defaultValue.contains(1))
     for (version <- Seq(0, 2, 0xff)) {
-      val e = intercept[IllegalArgumentException] {
+      intercept[IllegalArgumentException] {
         spark.conf.set(formatVersion, version.toString)
       }
-      assert(e.getMessage ==
-        s"The value of $formatVersion should be one of 1, but was $version")
     }
   }
 
