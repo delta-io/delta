@@ -17,9 +17,15 @@ package org.apache.spark.sql.delta.v2.write;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 import java.io.File;
 import java.util.List;
@@ -38,7 +44,11 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.shims.VariantShreddingShims;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.InternalRowTestUtils;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -49,6 +59,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Unit tests for {@link DeltaV2StreamingWrite}; the streaming counterpart of DeltaV2BatchWriteTest.
@@ -117,6 +128,42 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
     assertEquals("Bob", rows.get(1).getString(1));
     assertEquals("Carol", rows.get(2).getString(1));
     assertEquals("Dave", rows.get(3).getString(1));
+  }
+
+  @Test
+  public void testCommit_loadsLatestSnapshotWithQueryContext(@TempDir File tempDir)
+      throws Exception {
+    String path = createTable(tempDir, "streaming_query_context");
+    DeltaV2TableManager tableManager = spy(WriteTestUtils.tableManager(spark, path));
+    DeltaV2SnapshotManager snapshotManager =
+        spy(tableManager.snapshotManager(ScalaUtils.toScalaOption(Optional.empty())));
+    doReturn(snapshotManager).when(tableManager).snapshotManager(any());
+    Snapshot snapshot = WriteTestUtils.latestSnapshot(tableManager);
+    DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.empty();
+    LogicalWriteInfo info =
+        WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
+    DeltaV2StreamingWrite write =
+        (DeltaV2StreamingWrite)
+            new DeltaV2Write(
+                    defaultEngine,
+                    spark.sessionState().newHadoopConf(),
+                    path,
+                    snapshot,
+                    Optional.empty(),
+                    tableManager,
+                    TABLE_SCHEMA,
+                    new StructType(),
+                    info,
+                    false,
+                    queryContext)
+                .toStreaming();
+
+    write.commit(0L, new WriterCommitMessage[] {writeEpoch(write, 0L, 1, "Alice")});
+
+    ArgumentCaptor<DeltaV2QueryContext> observedContext =
+        ArgumentCaptor.forClass(DeltaV2QueryContext.class);
+    verify(snapshotManager, atLeastOnce()).loadLatestSnapshot(observedContext.capture());
+    assertSame(queryContext, observedContext.getValue());
   }
 
   /**
@@ -608,7 +655,8 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             TABLE_SCHEMA,
             new StructType(),
             info,
-            variantShreddingEnabled);
+            variantShreddingEnabled,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
     return (DeltaV2StreamingWrite) write.toStreaming();
   }
 
@@ -672,7 +720,8 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             VARIANT_TABLE_SCHEMA,
             new StructType(),
             info,
-            variantShreddingEnabled);
+            variantShreddingEnabled,
+            DeltaV2QueryContext$.MODULE$.empty());
     return (DeltaV2StreamingWrite) write.toStreaming();
   }
 
@@ -714,7 +763,8 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
             PARTITIONED_DATA_SCHEMA,
             PARTITIONED_PART_SCHEMA,
             info,
-            /* variantShreddingEnabled */ false);
+            /* variantShreddingEnabled */ false,
+            DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
     return (DeltaV2StreamingWrite) write.toStreaming();
   }
 

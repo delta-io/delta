@@ -348,17 +348,16 @@ class DeltaV2TableManagerImplSuite
           UTF_8)
 
         forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-          val snapshotManager = manager.snapshotManager(catalogTableOpt)
           val kernelEngine = manager.kernelContext.getDefaultEngine()
           val error = intercept[IllegalArgumentException] {
             if (actionName == "metaData") {
               StreamingHelper.collectMetadataActions(
-                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine,
-                DeltaV2QueryContext.empty)
+                1L, Optional.of(Long.box(1L)), manager, kernelEngine,
+                DeltaV2QueryContext(catalogTableOpt))
             } else {
               StreamingHelper.collectProtocolActions(
-                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine,
-                DeltaV2QueryContext.empty)
+                1L, Optional.of(Long.box(1L)), manager, kernelEngine,
+                DeltaV2QueryContext(catalogTableOpt))
             }
           }
           assert(error.getMessage ===

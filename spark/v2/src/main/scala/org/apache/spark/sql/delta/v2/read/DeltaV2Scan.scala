@@ -27,10 +27,11 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog
 import org.apache.spark.sql.delta.stats.{DataSize, DeltaScan}
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
-import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapshot, DeltaV2SnapshotManager}
+import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapshot}
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext
 import org.apache.spark.sql.delta.v2.read.deletionvector.DeletionVectorSchemaContext
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.utils.{PartitionUtils, PartitionValueCaster, ScalaUtils}
 import org.apache.spark.sql.delta.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils
@@ -71,7 +72,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * public connector interfaces instead of coupling to Delta's internal V2 implementation.
  */
 private[read] class DeltaV2Scan(
-    private val snapshotManager: DeltaV2SnapshotManager,
+    private val tableManager: DeltaV2TableManager,
     private val initialSnapshot: Snapshot,
     tableSchema: StructType,
     private val dataSchema: StructType,
@@ -93,7 +94,7 @@ private[read] class DeltaV2Scan(
     {
   import DeltaV2Scan._
 
-  Objects.requireNonNull(snapshotManager, "snapshotManager is null")
+  Objects.requireNonNull(tableManager, "tableManager is null")
   Objects.requireNonNull(originalQueryContext, "originalQueryContext is null")
   Objects.requireNonNull(initialSnapshot, "initialSnapshot is null")
   Objects.requireNonNull(dataSchema, "dataSchema is null")
@@ -233,7 +234,7 @@ private[read] class DeltaV2Scan(
     // checks. DeltaV2Scan's initialSnapshot is from analysis time and may be stale by stream
     // start/restart.
     // Matches V1's DeltaDataSource.createSource() behavior.
-    val latestSnapshot = snapshotManager.loadLatestSnapshot(originalQueryContext)
+    val latestSnapshot = tableManager.loadLatestSnapshot(originalQueryContext)
     val spark = SparkSession.active
     // Create metadata tracking log for non-additive schema evolution support.
     // Mirrors V1's DeltaDataSource.getMetadataTrackingLogForDeltaSource(). At execution time the
@@ -243,14 +244,14 @@ private[read] class DeltaV2Scan(
         spark,
         latestSnapshot,
         options,
-        snapshotManager,
+        tableManager,
         KernelEngineFactory.createDefaultEngine(hadoopConf),
         Option(checkpointLocation),
         /* mergeConsecutiveSchemaChanges= */ false,
         originalQueryContext
       )
     new DeltaV2MicroBatchStream(
-      snapshotManager,
+      tableManager,
       latestSnapshot,
       hadoopConf,
       spark,

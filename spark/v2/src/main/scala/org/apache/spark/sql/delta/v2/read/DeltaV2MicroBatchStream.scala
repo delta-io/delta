@@ -58,11 +58,11 @@ import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseO
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory
 import org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamUtils._
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils
 import org.apache.spark.sql.delta.v2.utils.PartitionValueCaster
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils
@@ -97,7 +97,7 @@ import org.apache.spark.sql.types.StructType
  * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
  */
 private[read] class DeltaV2MicroBatchStream(
-      snapshotManager: DeltaV2SnapshotManager,
+      tableManager: DeltaV2TableManager,
       snapshotAtSourceInit: Snapshot,
       hadoopConf: Configuration,
       spark: SparkSession,
@@ -159,11 +159,11 @@ private[read] class DeltaV2MicroBatchStream(
   private var initialSnapshot: DeltaSourceSnapshot = null
   private var initialSnapshotVersion: Long = -1L
 
-  Objects.requireNonNull(snapshotManager, "snapshotManager is null")
+  Objects.requireNonNull(tableManager, "tableManager is null")
   Objects.requireNonNull(originalQueryContext, "originalQueryContext is null")
   /** The Delta log operations that compute offsets. */
   private val streamingBackend: DeltaStreamingBackend =
-      new DeltaV2StreamingBackend(snapshotManager, originalQueryContext)
+      new DeltaV2StreamingBackend(tableManager, originalQueryContext)
   Objects.requireNonNull(hadoopConf, "hadoopConf is null")
   Objects.requireNonNull(spark, "spark is null")
   private val engine: Engine = KernelEngineFactory.createDefaultEngine(hadoopConf)
@@ -254,7 +254,7 @@ private[read] class DeltaV2MicroBatchStream(
       new MetadataEvolutionHandler(
           spark,
           tableId,
-          snapshotManager,
+          tableManager,
           streamingBackend,
           engine,
           options,
@@ -1037,7 +1037,7 @@ private[read] class DeltaV2MicroBatchStream(
     while (!fetched && attempt <= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS) {
       try {
         commitRange =
-            snapshotManager.getTableChanges(
+            tableManager.getTableChanges(
                 engine,
                 GetTableChangesParam.apply(
                     earliestVersionToFetch,
@@ -1490,7 +1490,7 @@ private[read] class DeltaV2MicroBatchStream(
               CollectionConverters.asScala(StreamingHelper.collectMetadataActions(
                       batchStartVersion,
                       Optional.of(batchEndVersion),
-                      snapshotManager,
+                      tableManager,
                       engine,
                       originalQueryContext)
                   .entrySet())) {

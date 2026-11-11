@@ -32,6 +32,7 @@ import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.TableManagerTestAdapter;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
@@ -547,7 +548,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
         snapshot,
         engine,
         Option.empty(),
-        snapshotManager,
+        TableManagerTestAdapter.apply(snapshotManager),
         dataSchema,
         partitionSchema,
         tableSchema,

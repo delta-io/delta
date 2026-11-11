@@ -60,6 +60,8 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.tablemanager.TableManagerTestAdapter;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
@@ -459,7 +461,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     return mock(CloseableIterator.class, CALLS_REAL_METHODS);
   }
 
-  private DeltaV2SnapshotManager mockSnapshotManager(CloseableIterator<CommitActions> commits) {
+  private DeltaV2TableManager mockTableManager(CloseableIterator<CommitActions> commits) {
     DeltaV2SnapshotManager manager = mock(DeltaV2SnapshotManager.class);
     CommitRange range = mock(CommitRange.class);
     DeltaV2QueryContext emptyContext = DeltaV2QueryContext$.MODULE$.apply(Optional.empty());
@@ -468,7 +470,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
         .thenReturn(range);
     when(range.getCommitActions(defaultEngine, Set.of(DeltaLogActionUtils.DeltaAction.PROTOCOL)))
         .thenReturn(commits);
-    return manager;
+    return TableManagerTestAdapter.apply(manager);
   }
 
   @Test
@@ -479,7 +481,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
         StreamingHelper.collectProtocolActions(
                 7L,
                 Optional.of(7L),
-                mockSnapshotManager(commits),
+                mockTableManager(commits),
                 defaultEngine,
                 DeltaV2QueryContext$.MODULE$.empty())
             .isEmpty());
@@ -507,7 +509,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
                 StreamingHelper.collectProtocolActions(
                     7L,
                     Optional.of(7L),
-                    mockSnapshotManager(commits),
+                    mockTableManager(commits),
                     defaultEngine,
                     DeltaV2QueryContext$.MODULE$.empty()));
 
@@ -538,7 +540,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
                 StreamingHelper.collectProtocolActions(
                     7L,
                     Optional.of(7L),
-                    mockSnapshotManager(commits),
+                    mockTableManager(commits),
                     defaultEngine,
                     DeltaV2QueryContext$.MODULE$.empty()));
 
@@ -590,7 +592,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
         StreamingHelper.collectMetadataActions(
             startVersion,
             endVersionOpt,
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             defaultEngine,
             DeltaV2QueryContext$.MODULE$.empty());
 
@@ -609,7 +611,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
         StreamingHelper.collectMetadataActions(
             0L,
             Optional.of(2L),
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             defaultEngine,
             DeltaV2QueryContext$.MODULE$.empty());
 
@@ -668,7 +670,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
         StreamingHelper.collectProtocolActions(
             startVersion,
             endVersionOpt,
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             defaultEngine,
             DeltaV2QueryContext$.MODULE$.empty());
 
@@ -687,7 +689,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
         StreamingHelper.collectProtocolActions(
             0L,
             Optional.of(2L),
-            snapshotManager,
+            TableManagerTestAdapter.apply(snapshotManager),
             defaultEngine,
             DeltaV2QueryContext$.MODULE$.empty());
 
