@@ -49,8 +49,7 @@ private[v2] trait DeltaV2TableManager {
    * @param endVersion last commit version to include, or empty to read through the
    *   latest available commit.
    * @param catalogTableOpt catalog metadata is used to read the table's commit range.
-   * @param failOnDataLoss whether to fail when commits in the range are missing. Only false is
-   *   currently supported.
+   * @param failOnDataLoss whether to fail when commits in the range are missing.
    */
   private[v2] def getSingleCommitIterator(
       startVersion: Long,

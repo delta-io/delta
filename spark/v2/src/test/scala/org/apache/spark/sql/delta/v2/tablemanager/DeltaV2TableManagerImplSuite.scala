@@ -239,7 +239,8 @@ class DeltaV2TableManagerImplSuite
             (1L, Some(1L), List(1L)),
             (1L, None, List(1L, 2L)))
           ranges.foreach { case (startVersion, endVersion, expectedVersions) =>
-            val changes = manager.getSingleCommitIterator(startVersion, endVersion, catalogTableOpt)
+            val changes =
+              manager.getSingleCommitIterator(startVersion, endVersion, catalogTableOpt)
             try {
               val versions = changes.map { commit =>
                 try {
@@ -315,20 +316,6 @@ class DeltaV2TableManagerImplSuite
       }
   }
 
-  test("getSingleCommitIterator rejects failOnDataLoss = true before reading the table") {
-    withTempDir { dir =>
-      forPathAndCatalogManagers(dir.getCanonicalPath) { (manager, catalogTableOpt) =>
-        Seq(None, Some(1L)).foreach { endVersion =>
-          val error = intercept[AssertionError] {
-            manager.getSingleCommitIterator(0L, endVersion, catalogTableOpt, failOnDataLoss = true)
-          }
-          assert(error.getMessage ===
-            "getSingleCommitIterator does not support failOnDataLoss = true")
-        }
-      }
-    }
-  }
-
   test("metadata and protocol collectors reject duplicate actions") {
     Seq("metaData", "protocol").foreach { actionName =>
       withTempDir { dir =>
@@ -348,17 +335,14 @@ class DeltaV2TableManagerImplSuite
           UTF_8)
 
         forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-          val snapshotManager = manager.snapshotManager(catalogTableOpt)
-          val kernelEngine = manager.kernelContext.getDefaultEngine()
+          val queryContext = DeltaV2QueryContext(catalogTableOpt)
           val error = intercept[IllegalArgumentException] {
             if (actionName == "metaData") {
               StreamingHelper.collectMetadataActions(
-                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine,
-                DeltaV2QueryContext.empty)
+                1L, Optional.of(Long.box(1L)), manager, queryContext, true)
             } else {
               StreamingHelper.collectProtocolActions(
-                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine,
-                DeltaV2QueryContext.empty)
+                1L, Optional.of(Long.box(1L)), manager, queryContext, true)
             }
           }
           assert(error.getMessage ===

@@ -58,6 +58,7 @@ import org.apache.spark.sql.delta.util.JsonUtils;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import org.apache.spark.sql.types.DataTypes;
@@ -2100,7 +2101,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     DeltaV2MicroBatchStream stream =
         new DeltaV2MicroBatchStream(
-            snapshotManager,
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, testTablePath, Collections.emptyMap(), Option.empty()),
             snapshotManager.loadLatestSnapshot(),
             spark.sessionState().newHadoopConf(),
             spark,
@@ -2286,7 +2288,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
     DeltaV2MicroBatchStream stream =
         new DeltaV2MicroBatchStream(
-            snapshotManager,
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, testTablePath, Collections.emptyMap(), Option.empty()),
             snapshotManager.loadLatestSnapshot(),
             spark.sessionState().newHadoopConf(),
             spark,
@@ -4348,7 +4351,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
                 .filter(field -> !partitionColNames.contains(field.name()))
                 .toArray(StructField[]::new));
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, tablePath, Collections.emptyMap(), Option.empty()),
         snapshot,
         hadoopConf,
         spark,
@@ -4375,7 +4379,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       String metadataPath) {
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, tablePath, Collections.emptyMap(), Option.empty()),
         snapshot,
         hadoopConf,
         spark,
