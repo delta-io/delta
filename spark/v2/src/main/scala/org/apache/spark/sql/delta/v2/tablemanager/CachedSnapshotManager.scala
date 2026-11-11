@@ -256,11 +256,13 @@ private[tablemanager] class CachedSnapshotManager(
       return upperBound
     }
     // Historical snapshots are returned to the caller but never replace the cached latest snapshot.
-    logDebug(log"Loading historical Delta V2 snapshot for " +
+    val historicalSnapshot =
+      withUncachedSnapshotManager(catalogTableOpt)(_.loadSnapshotAt(version))
+    logDebug(log"Loaded historical Delta V2 snapshot for " +
       log"${MDC(DeltaLogKeys.PATH, tablePath)} at version " +
       log"${MDC(DeltaLogKeys.VERSION, version)}; cached latest version is " +
       log"${MDC(DeltaLogKeys.VERSION2, upperBound.version)}")
-    withUncachedSnapshotManager(catalogTableOpt)(_.loadSnapshotAt(version))
+    historicalSnapshot
   }
 
   // === Uncached loading =====================================================
