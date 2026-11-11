@@ -780,9 +780,15 @@ When `adaptiveMetadata` is added to `readerFeatures` and `writerFeatures`, the r
 
 ## Feature Removal
 
-To remove `adaptiveMetadata`, a writer first sets `delta.enableAdaptiveMetadata` to `false`. From that commit on, writers write no manifest commits, no standalone checkpoints and no `backReference`, but they can write classic or V2 checkpoints. Each commit still carries `lastManifestCommit` forward until the commit that removes the feature from the protocol. Readers take the latest checkpoint across manifest commits, standalone checkpoints, `_last_checkpoint`, and classic or V2 checkpoints.
+To remove `adaptiveMetadata`, a writer first sets `delta.enableAdaptiveMetadata` to `false`. From that commit on, writers write no `contentRoot` action (so no manifest commits and no standalone checkpoints) and no `backReference`. They can write classic or V2 checkpoints that contain no `contentRoot` action. Each commit still carries `lastManifestCommit` forward until the commit that removes the feature from the protocol. Readers take the latest checkpoint across manifest commits, standalone checkpoints, `_last_checkpoint`, and classic or V2 checkpoints.
 
-Before a writer removes `adaptiveMetadata` from the protocol, a writer must produce classic or V2 checkpoints from the current metadata tree state, so that clients without `adaptiveMetadata` support can read the table. Manifest files that are no longer referenced may be cleaned up.
+Before a writer removes `adaptiveMetadata` from the protocol, a writer must produce classic or V2 checkpoints from the current metadata tree state, so that clients without `adaptiveMetadata` support can read the table.
+
+The writer that removes `adaptiveMetadata` from the protocol must also do one of these:
+- Truncate the history so that no retained version contains a `contentRoot` action.
+- In the same commit, add `checkpointProtection` to the protocol and set `delta.requireCheckpointProtectionBeforeVersion` to the version of that commit (see [Checkpoint Protection](checkpoint-protection.md)).
+
+While a retained version contains a `contentRoot` action, cleanup follows [Metadata Cleanup](#metadata-cleanup).
 
 ## Compatibility Notes
 
