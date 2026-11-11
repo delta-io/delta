@@ -47,6 +47,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tablePropertiesAddedOpt = Optional.empty();
   private Optional<Set<String>> tablePropertiesRemovedOpt = Optional.empty();
+  private Optional<String> descriptionOpt = Optional.empty();
   private Optional<StructType> updatedSchemaOpt = Optional.empty();
   private Optional<List<Column>> inputLogicalClusteringColumnsOpt = Optional.empty();
   private Optional<Integer> userProvidedMaxRetries = Optional.empty();
@@ -87,6 +88,12 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         "Unsetting 'delta.' table properties is currently unsupported");
     this.tablePropertiesRemovedOpt = Optional.of(propertyKeys);
     validateTablePropertiesAddedRemovedNoOverlap();
+    return this;
+  }
+
+  @Override
+  public UpdateTableTransactionBuilder withDescription(String description) {
+    this.descriptionOpt = Optional.of(requireNonNull(description, "description cannot be null"));
     return this;
   }
 
@@ -150,6 +157,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
             snapshot,
             tablePropertiesAddedOpt,
             tablePropertiesRemovedOpt,
+            descriptionOpt,
             updatedSchemaOpt,
             inputLogicalClusteringColumnsOpt);
 

@@ -94,6 +94,7 @@ public class TransactionMetadataFactory {
       String tablePath,
       StructType schema,
       Map<String, String> userInputTableProperties,
+      Optional<String> description,
       Optional<List<String>> partitionColumns,
       Optional<List<Column>> clusteringColumns,
       Optional<Committer> committerOpt) {
@@ -121,7 +122,10 @@ public class TransactionMetadataFactory {
                 Optional.empty() /* readSnapshot */,
                 Optional.of(
                     getInitialMetadata(
-                        schema, allCreateTableProperties, partitionColumns.orElse(emptyList()))),
+                        schema,
+                        allCreateTableProperties,
+                        description,
+                        partitionColumns.orElse(emptyList()))),
                 Optional.of(getInitialProtocol()),
                 userInputTableProperties /* originalUserInputProperties */,
                 true /* isCreateOrReplace */,
@@ -140,6 +144,7 @@ public class TransactionMetadataFactory {
       SnapshotImpl readSnapshot,
       StructType schema,
       Map<String, String> userInputTableProperties,
+      Optional<String> description,
       Optional<List<String>> partitionColumns,
       Optional<List<Column>> clusteringColumns) {
     checkArgument(
@@ -174,7 +179,10 @@ public class TransactionMetadataFactory {
                 Optional.of(readSnapshot),
                 Optional.of(
                     getInitialMetadata(
-                        schema, allReplaceTableProperties, partitionColumns.orElse(emptyList()))),
+                        schema,
+                        allReplaceTableProperties,
+                        description,
+                        partitionColumns.orElse(emptyList()))),
                 Optional.of(readSnapshot.getProtocol()),
                 userInputTableProperties,
                 true /* isCreateOrReplace */,
@@ -204,6 +212,7 @@ public class TransactionMetadataFactory {
       SnapshotImpl readSnapshot,
       Optional<Map<String, String>> propertiesAdded,
       Optional<Set<String>> propertyKeysRemoved,
+      Optional<String> newDescription,
       Optional<StructType> newSchema,
       Optional<List<Column>> clusteringColumns) {
     if (propertiesAdded.isPresent() && propertyKeysRemoved.isPresent()) {
@@ -233,6 +242,13 @@ public class TransactionMetadataFactory {
               newMetadata
                   .orElse(readSnapshot.getMetadata())
                   .withConfigurationKeysUnset(propertyKeysRemoved.get()));
+    }
+
+    if (newDescription.isPresent()
+        && !newDescription.equals(readSnapshot.getMetadata().getDescription())) {
+      newMetadata =
+          Optional.of(
+              newMetadata.orElse(readSnapshot.getMetadata()).withDescription(newDescription.get()));
     }
 
     if (newSchema.isPresent()) {
@@ -778,11 +794,14 @@ public class TransactionMetadataFactory {
   }
 
   private static Metadata getInitialMetadata(
-      StructType schema, Map<String, String> tableProperties, List<String> partitionColumns) {
+      StructType schema,
+      Map<String, String> tableProperties,
+      Optional<String> description,
+      List<String> partitionColumns) {
     return new Metadata(
         java.util.UUID.randomUUID().toString(), /* id */
         Optional.empty(), /* name */
-        Optional.empty(), /* description */
+        description,
         new Format(), /* format */
         schema.toJson(), /* schemaString */
         schema, /* schema */

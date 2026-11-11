@@ -39,6 +39,14 @@ public interface ReplaceTableTransactionBuilder {
   ReplaceTableTransactionBuilder withTableProperties(Map<String, String> properties);
 
   /**
+   * Set the description of the new table definition. The description of the table being replaced is
+   * not carried over, so if this is not set, the new table has no description.
+   *
+   * @param description The table description. Cannot be null.
+   */
+  ReplaceTableTransactionBuilder withDescription(String description);
+
+  /**
    * Set the data layout specification for the new table definition.
    *
    * @param spec The data layout specification.

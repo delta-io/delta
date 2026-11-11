@@ -45,6 +45,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   private final String engineInfo;
 
   private Optional<Map<String, String>> tableProperties = Optional.empty();
+  private Optional<String> description = Optional.empty();
   private Optional<DataLayoutSpec> dataLayoutSpec = Optional.empty();
   private Optional<Integer> userProvidedMaxRetries = Optional.empty();
   private Optional<Committer> userProvidedCommitter = Optional.empty();
@@ -87,6 +88,12 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
     mergedProperties.putAll(normalizedNewProperties);
     this.tableProperties = Optional.of(Collections.unmodifiableMap(mergedProperties));
 
+    return this;
+  }
+
+  @Override
+  public CreateTableTransactionBuilder withDescription(String description) {
+    this.description = Optional.of(requireNonNull(description, "description cannot be null"));
     return this;
   }
 
@@ -137,6 +144,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
             resolvedPath,
             schema,
             tableProperties.orElse(emptyMap()),
+            description,
             partitionColumns,
             clusteringColumns,
             userProvidedCommitter);
