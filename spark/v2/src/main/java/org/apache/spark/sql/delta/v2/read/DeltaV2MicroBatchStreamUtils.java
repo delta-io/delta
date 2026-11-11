@@ -283,17 +283,6 @@ final class DeltaV2MicroBatchStreamUtils {
         .toSeq();
   }
 
-  static boolean isCDFEnabled(Metadata metadata) {
-    // Fall back to the deprecated delta.enableChangeDataCapture key when
-    // delta.enableChangeDataFeed is not set.
-    Map<String, String> config = CollectionConverters.asJava(metadata.configuration());
-    String value = config.get("delta.enableChangeDataFeed");
-    if (value == null) {
-      value = config.get("delta.enableChangeDataCapture");
-    }
-    return value != null && value.equalsIgnoreCase("true");
-  }
-
   /** Checks if the endOffset is at BASE_INDEX for the given version (early exit condition). */
   static boolean isEndOffsetAtBaseIndex(Optional<DeltaSourceOffset> endOffsetOpt, long version) {
     return endOffsetOpt.isPresent()
