@@ -616,13 +616,18 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
    * the commit's version and its file actions.
    */
   private def commitAcrossRootAndLeaves(amtDeltaLog: DeltaLog): (Long, Seq[Action]) = {
-    setupAmt(amtDeltaLog, entriesPerLeaf = 10, initialIdRangeInLeaf = 1 to 30)
-    withInline { commitAmt(amtDeltaLog, Seq(fakeAdd(31))) }
+    setupAmt(
+      amtDeltaLog,
+      entriesPerLeaf = entriesPerLeaf,
+      initialIdRangeInLeaf = 1 to leafPackedFiles)
+    val rootFileId = leafPackedFiles + 1
+    withInline { commitAmt(amtDeltaLog, Seq(fakeAdd(rootFileId))) }
     val leaves = leafToAddFileMap(amtDeltaLog).values.toSeq
     assert(leaves.size >= 2, "scenario needs at least two leaves.")
     val version = amtDeltaLog.update().version + 1
     val changes =
-      Seq[Action](leaves(0).head.remove, leaves(1).head.remove, removeOf(amtDeltaLog, 31)) ++
+      Seq[Action](
+        leaves(0).head.remove, leaves(1).head.remove, removeOf(amtDeltaLog, rootFileId)) ++
         removeAndReAddWithDV(amtDeltaLog, Right(leaves(0)(1))) ++
         Seq(fakeAdd(101), fakeAdd(100))
     withInline { commitAmt(amtDeltaLog, changes) }
@@ -637,7 +642,7 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
   }
 
   test("getChanges orders a manifest commit's reconstructed file actions by manifest position") {
-    withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+    withSQLConf(leafPackingConfs: _*) {
       withAmtTable { amtDeltaLog =>
         val (version, changes) = commitAcrossRootAndLeaves(amtDeltaLog)
         def fileActions(): Seq[FileAction] = amtDeltaLog.getChanges(version).next()._2
