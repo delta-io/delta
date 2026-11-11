@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * Tests for DeltaSingleCommit handling with log and manifest commits.
@@ -596,7 +597,7 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
           case _ => true
         } === retainedInlineActions)
         // Re-reading the commit reconstructs exactly the same actions.
-        assert(amtDeltaLog.getChanges(version).next()._2.toSet === actions.toSet)
+        assert(amtDeltaLog.getChanges(version).next()._2 === actions)
         // The commit changed data, so skipping file actions that change no data keeps them all,
         // including the AddCDCFile, whose dataChange is always false.
         assert(amtDeltaLog.getChanges(
@@ -604,7 +605,67 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
           version,
           catalogTableOpt = None,
           failOnDataLoss = false,
-          skipNoDataChangeFileActions = true).next()._2.toSet === actions.toSet)
+          skipNoDataChangeFileActions = true).next()._2 === actions)
+      }
+    }
+  }
+
+  /**
+   * Commits leaf deletes, a leaf DV update (an add and a remove of one path), a root delete and
+   * inserts out of path order, so the commit's changes span the root and several leaves. Returns
+   * the commit's version and its file actions.
+   */
+  private def commitAcrossRootAndLeaves(amtDeltaLog: DeltaLog): (Long, Seq[Action]) = {
+    setupAmt(amtDeltaLog, entriesPerLeaf = 10, initialIdRangeInLeaf = 1 to 30)
+    withInline { commitAmt(amtDeltaLog, Seq(fakeAdd(31))) }
+    val leaves = leafToAddFileMap(amtDeltaLog).values.toSeq
+    assert(leaves.size >= 2, "scenario needs at least two leaves.")
+    val version = amtDeltaLog.update().version + 1
+    val changes =
+      Seq[Action](leaves(0).head.remove, leaves(1).head.remove, removeOf(amtDeltaLog, 31)) ++
+        removeAndReAddWithDV(amtDeltaLog, Right(leaves(0)(1))) ++
+        Seq(fakeAdd(101), fakeAdd(100))
+    withInline { commitAmt(amtDeltaLog, changes) }
+    (version, changes)
+  }
+
+  /** The provider of the tree the inline manifest commit at `version` wrote. */
+  private def providerAt(deltaLog: DeltaLog, version: Long): AMTCheckpointProvider = {
+    val checkpoint = checkpointAt(deltaLog, version)
+      .getOrElse(fail(s"expected a manifest commit at v$version"))
+    AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint, version)
+  }
+
+  test("getChanges orders a manifest commit's reconstructed file actions by manifest position") {
+    withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+      withAmtTable { amtDeltaLog =>
+        val (version, changes) = commitAcrossRootAndLeaves(amtDeltaLog)
+        def fileActions(): Seq[FileAction] = amtDeltaLog.getChanges(version).next()._2
+          .collect { case action: FileAction => action }
+
+        val ordered = fileActions()
+        assert(ordered.size === changes.size)
+        // The actions follow the manifest path, then the position, of the entries recording them.
+        val provider = providerAt(amtDeltaLog, version)
+        val byManifestPosition = provider.reconstructChangeFiles(amtDeltaLog)
+          .select("leafPath", "pos", "add.path", provider.REMOVED_COLUMN)
+          .collect()
+          .sortBy(row => (row.getString(0), row.getLong(1)))
+          .map(row => (row.getString(2), row.getBoolean(3)))
+          .toSeq
+        assert(ordered.map {
+          case add: AddFile => (add.path, false)
+          case remove: RemoveFile => (remove.path, true)
+          case action => fail(s"unexpected file action $action")
+        } === byManifestPosition)
+        // Re-reading lists them in the same order, however many partitions the sort uses.
+        Seq("1", "7").foreach { numShufflePartitions =>
+          withSQLConf(
+              SQLConf.SHUFFLE_PARTITIONS.key -> numShufflePartitions,
+              SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
+            assert(fileActions() === ordered)
+          }
+        }
       }
     }
   }
