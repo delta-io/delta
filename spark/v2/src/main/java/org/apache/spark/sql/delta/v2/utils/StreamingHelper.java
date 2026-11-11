@@ -30,6 +30,7 @@ import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import java.util.*;
+import java.util.function.BiFunction;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.actions.Action;
@@ -61,6 +62,17 @@ public class StreamingHelper {
     checkArgument(
         index >= 0, "Field '%s' not found in schema: %s", fieldName, columnarBatch.getSchema());
     return index;
+  }
+
+  private static <T> Optional<T> getAction(
+      ColumnarBatch columnarBatch,
+      int rowId,
+      DeltaLogActionUtils.DeltaAction deltaAction,
+      BiFunction<ColumnVector, Integer, T> actionFactory) {
+    int actionIdx = getFieldIndex(columnarBatch, deltaAction.colName);
+    ColumnVector actionVector = columnarBatch.getColumnVector(actionIdx);
+    T action = actionFactory.apply(actionVector, rowId);
+    return Optional.ofNullable(action);
   }
 
   /**
@@ -118,24 +130,21 @@ public class StreamingHelper {
   /** Get Metadata action from a batch at the specified row, if present. */
   public static Optional<io.delta.kernel.internal.actions.Metadata> getMetadata(
       ColumnarBatch columnarBatch, int rowId) {
-    int metadataIdx =
-        getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.METADATA.colName);
-    ColumnVector metadataVector = columnarBatch.getColumnVector(metadataIdx);
-    io.delta.kernel.internal.actions.Metadata metadata =
-        io.delta.kernel.internal.actions.Metadata.fromColumnVector(metadataVector, rowId);
-
-    return Optional.ofNullable(metadata);
+    return getAction(
+        columnarBatch,
+        rowId,
+        DeltaLogActionUtils.DeltaAction.METADATA,
+        io.delta.kernel.internal.actions.Metadata::fromColumnVector);
   }
 
   /** Get Protocol action from a batch at the specified row, if present. */
   public static Optional<io.delta.kernel.internal.actions.Protocol> getProtocol(
       ColumnarBatch batch, int rowId) {
-    int protocolIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.PROTOCOL.colName);
-    ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-    io.delta.kernel.internal.actions.Protocol protocol =
-        io.delta.kernel.internal.actions.Protocol.fromColumnVector(protocolVector, rowId);
-
-    return Optional.ofNullable(protocol);
+    return getAction(
+        batch,
+        rowId,
+        DeltaLogActionUtils.DeltaAction.PROTOCOL,
+        io.delta.kernel.internal.actions.Protocol::fromColumnVector);
   }
 
   /** Get CommitInfo action from a batch at the specified row, if present. */
