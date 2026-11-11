@@ -437,7 +437,7 @@ abstract class CloneTableBase(
         !sourceTable.isInstanceOf[CloneIcebergSource] &&
         sourceTable.metadata.columnMappingMode != IdMapping &&
         (AMTUtils.amtRequested(metadata.configuration) ||
-          AMTUtils.amtEnabled(metadata, targetSnapshot.protocol))) {
+          AMTUtils.amtSupported(targetSnapshot.protocol))) {
       throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
         AdaptiveMetadataTableFeature.name, sourceTable.metadata.columnMappingMode.name)
     }
