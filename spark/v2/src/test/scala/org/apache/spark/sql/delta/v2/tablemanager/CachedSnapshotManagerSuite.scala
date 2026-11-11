@@ -35,6 +35,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.wrongOrderInGroup
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.interop.{
   DeltaV2QueryContext,
   DeltaV2SnapshotManager
@@ -183,7 +184,7 @@ class CachedSnapshotManagerSuite
           () => manager.loadSnapshotAt(0L),
           () => manager.getActiveCommitAtTime(0L, false, false, false),
           () => manager.checkVersionExists(0L, false, false),
-          () => manager.getTableChanges(kernelEngine, 0L, Optional.empty()))
+          () => manager.getTableChanges(kernelEngine, GetTableChangesParam(0L, None)))
         legacyOperations.foreach(operation =>
           assertRoutesWith(Some(legacyCatalogTable))(operation()))
 
@@ -192,7 +193,8 @@ class CachedSnapshotManagerSuite
           () => tableManager.loadSnapshotAt(0L, context),
           () => tableManager.getActiveCommitAtTime(0L, false, false, false, context),
           () => tableManager.checkVersionExists(0L, false, false, context),
-          () => tableManager.getTableChanges(kernelEngine, 0L, Optional.empty(), context))
+          () => tableManager.getTableChanges(
+            kernelEngine, GetTableChangesParam(0L, None), context))
 
         contextualOperations(queryContext).foreach(operation =>
           assertRoutesWith(Some(queryCatalogTable))(operation()))
@@ -752,7 +754,7 @@ class CachedSnapshotManagerSuite
         val kernelEngine =
           KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
         // scalastyle:on deltahadoopconfiguration
-        val changes = mgr.getTableChanges(kernelEngine, 0L, Optional.empty())
+        val changes = mgr.getTableChanges(kernelEngine, GetTableChangesParam(0L, None))
         assert(changes != null)
       } finally {
         mgr.retire()

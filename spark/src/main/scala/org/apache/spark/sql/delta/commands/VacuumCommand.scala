@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperat
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import io.delta.exceptions.MetadataChangedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.broadcast.Broadcast
@@ -548,16 +549,18 @@ trait VacuumCommandImpl extends DeltaCommand {
     if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val checkEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
-      val txn = table.startTransaction()
+      // Count before starting the transaction. The count runs a Spark job that can take a long
+      // time on large tables, and a metadata change committed while the transaction is open makes
+      // this empty commit fail with a MetadataChangedException.
+      val numFilesToDelete = diff.count()
       val metrics = Map[String, SQLMetric](
         "numFilesToDelete" -> createMetric(spark.sparkContext, "number of files to deleted"),
         "sizeOfDataToDelete" -> createMetric(spark.sparkContext,
           "The total amount of data to be deleted in bytes")
       )
-      metrics("numFilesToDelete").set(diff.count())
+      metrics("numFilesToDelete").set(numFilesToDelete)
       metrics("sizeOfDataToDelete").set(sizeOfDataToDelete)
-      txn.registerSQLMetrics(spark, metrics)
-      val version = txn.commit(actions = Seq(), DeltaOperations.VacuumStart(
+      val version = commitWithRetries(spark, table, metrics, DeltaOperations.VacuumStart(
         checkEnabled,
         specifiedRetentionMillis,
         defaultRetentionMillis
@@ -584,9 +587,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       dirCounts: Option[Long] = None): Unit = {
     val deltaLog = table.deltaLog
     if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
-      val txn = table.startTransaction()
       val status = if (filesDeleted.isEmpty && dirCounts.isEmpty) { "FAILED" } else { "COMPLETED" }
-      if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
+      val endMetrics = if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
         // Populate top level metrics.
         commandMetrics.get("numDeletedFiles").foreach(_.set(filesDeleted.get))
         commandMetrics.get("numVacuumedDirectories").foreach(_.set(dirCounts.get))
@@ -599,9 +601,11 @@ trait VacuumCommandImpl extends DeltaCommand {
         )
         metrics("numDeletedFiles").set(filesDeleted.get)
         metrics("numVacuumedDirectories").set(dirCounts.get)
-        txn.registerSQLMetrics(spark, metrics)
+        metrics
+      } else {
+        Map.empty[String, SQLMetric]
       }
-      val version = txn.commit(actions = Seq(), DeltaOperations.VacuumEnd(
+      val version = commitWithRetries(spark, table, endMetrics, DeltaOperations.VacuumEnd(
         status
       ))
       setCommitClock(deltaLog, version)
@@ -612,6 +616,36 @@ trait VacuumCommandImpl extends DeltaCommand {
         s"of ${dirCounts.get} directories.")
     }
   }
+
+  /**
+   * Commits the empty VACUUM START or VACUUM END commit. These commits only record the VACUUM in
+   * the table history. If the commit fails with a [[MetadataChangedException]], commit again, at
+   * most [[DeltaSQLConf.DELTA_VACUUM_COMMIT_MAX_RETRIES]] times. Each attempt starts a new
+   * transaction, so a retry reads the latest snapshot, which includes the concurrent change.
+   *
+   * @return the committed version
+   */
+  private def commitWithRetries(
+      spark: SparkSession,
+      table: DeltaTableV2,
+      metrics: Map[String, SQLMetric],
+      operation: DeltaOperations.Operation): Long = {
+    def commit(retriesRemaining: Int): Long = {
+      val txn = table.startTransaction()
+      txn.registerSQLMetrics(spark, metrics)
+      try {
+        txn.commit(actions = Seq(), operation)
+      } catch {
+        case _: MetadataChangedException if retriesRemaining > 0 =>
+          logInfo(log"Retrying the ${MDC(DeltaLogKeys.OP_NAME, operation.name)} commit on " +
+            log"${MDC(DeltaLogKeys.PATH, table.deltaLog.dataPath)} after a concurrent change " +
+            log"to the table metadata.")
+          commit(retriesRemaining - 1)
+      }
+    }
+    commit(spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_COMMIT_MAX_RETRIES))
+  }
+
   protected def setCommitClock(deltaLog: DeltaLog, version: Long) = {
     // This is done to make sure that the commit timestamp reflects the one provided by the clock
     // object.
@@ -682,7 +716,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       fs: FileSystem,
       basePath: Path,
       relativizeIgnoreError: Boolean): Option[String] = {
-    getRelativePath(action.path, fs, basePath, relativizeIgnoreError)
+    getRelativePath(action.path, fs, basePath,
+      relativizeIgnoreError = relativizeIgnoreError)
   }
   /** Returns the relative path of a file or None if the file lives outside of the table. */
   protected def getRelativePath(
@@ -717,7 +752,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       relativizeIgnoreError: Boolean,
       dvDiscoveryDisabled: Boolean
   ): Seq[String] = {
-    val paths = getActionRelativePath(action, fs, basePath, relativizeIgnoreError)
+    val paths = getActionRelativePath(action, fs, basePath,
+        relativizeIgnoreError = relativizeIgnoreError)
       .map {
         relativePath =>
         Seq(relativePath) ++ getAllSubdirs("/", relativePath, fs)
@@ -847,7 +883,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       iter.flatMap { f =>
         // if file path is outside of the table base path, those files are not considered as they
         // are not part of this table. Shallow clone is one example where this happens.
-        getRelativePath(f.path, fs, tableBasePath, relativizeIgnoreErrorValue)
+        getRelativePath(f.path, fs, tableBasePath,
+            relativizeIgnoreError = relativizeIgnoreErrorValue)
           .map(SerializableFileStatus(_, f.length, f.isDir, f.modificationTime))
       }
     }

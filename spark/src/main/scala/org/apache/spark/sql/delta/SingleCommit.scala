@@ -16,10 +16,14 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint, CommitInfo}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.FileStatus
+
+import org.apache.spark.sql.SparkSession
 
 /**
  * A handle to a single commit in the Delta log, standing in for the raw commit log file that
@@ -70,6 +74,72 @@ class SingleCommit private (
       }
       override def close(): Unit = underlying.close()
       override def rewind(): Unit = underlying.rewind()
+    }
+  }
+
+  /**
+   * Get this commit's logical actions. For a manifest commit, actions are reconstructed from tree.
+   * AMT does not record a metadata-only re-add of an already-live file (e.g. a stats backfill),
+   * so such AddFiles in an inline AMT commit are omitted.
+   *
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions with
+   *                                    `dataChange = false`. See [[DeltaLog.getChanges]].
+   */
+  def getActions(skipNoDataChangeFileActions: Boolean = false): Seq[Action] = {
+    val actions = getActionsIterator().processAndClose(_.toList)
+    val commitInfoOpt = actions.collectFirst { case commitInfo: CommitInfo => commitInfo }
+    // Use AMT reconstruction only when inline AMT checkpoint exists.
+    val amtCheckpointOpt = actions.collectFirst {
+      case checkpoint: Checkpoint if checkpoint.contentRoot.version == version => checkpoint
+    }
+    amtCheckpointOpt match {
+      // Always take tree actions when present.
+      case Some(amtCheckpoint) =>
+        val commitInfo = commitInfoOpt.getOrElse {
+          throw new IllegalStateException(
+            s"Commit $version is an inline manifest commit but does not have a CommitInfo.")
+        }
+        actions.filter {
+          case _: AddFile | _: RemoveFile => false
+          case _ => true
+        } ++ reconstructAMTFileActions(amtCheckpoint, commitInfo, skipNoDataChangeFileActions)
+      // Trim no data change actions when skipNoDataChangeFileActions is set.
+      // AMT tree may be present in this commit, but it is never read.
+      case None if skipNoDataChangeFileActions =>
+        actions.filter {
+          case add: AddFile => add.dataChange
+          case remove: RemoveFile => remove.dataChange
+          case _ => true
+        }
+      // No AMT tree is present. Return all actions.
+      case None => actions
+    }
+  }
+
+  /**
+   * Reconstructs the AddFile and RemoveFile actions of this commit from the AMT that its inline
+   * `amtCheckpoint` describes, as of this version.
+   *
+   * @param commitInfo the commit's [[CommitInfo]], which records its `dataChange` and timestamp.
+   */
+  private def reconstructAMTFileActions(
+      amtCheckpoint: Checkpoint,
+      commitInfo: CommitInfo,
+      skipNoDataChangeFileActions: Boolean): Seq[FileAction] = {
+    val dataChange = commitInfo.dataChange.getOrElse {
+      throw new IllegalStateException(
+        s"Commit $version is an inline manifest commit but does not have a dataChange flag.")
+    }
+    if (skipNoDataChangeFileActions && !dataChange) {
+      // A commit that changed no data has no data-changing file actions, so skip its tree.
+      Seq.empty
+    } else {
+      val commitTimestamp = commitInfo.inCommitTimestamp.getOrElse {
+        throw new IllegalStateException(
+          s"Commit $version is an inline manifest commit but has no in-commit timestamp.")
+      }
+      AMTCheckpointProvider.fromCheckpoint(SparkSession.active, deltaLog, amtCheckpoint, version)
+        .reconstructFileActions(deltaLog, dataChange, commitTimestamp)
     }
   }
 
@@ -131,5 +201,30 @@ object SingleCommit {
         delegatedIterator = createClosableIterator()
       }
     }
+  }
+}
+
+/**
+ * A commit reader paired with the inclusive version range its actions cover.
+ *
+ * Compacted files omit CommitInfo, so `commit.timestamp` is the compacted file's modification
+ * time, not the timestamp of any individual source commit. The reader is used only for actions;
+ * `commit.version` identifies the end of the range.
+ */
+private[delta] class RangedSingleCommit private (
+  val commit: DeltaSingleCommit,
+  val startVersion: Long,
+  val endVersion: Long)
+
+private[delta] object RangedSingleCommit {
+  def apply(deltaLog: DeltaLog, file: FileStatus): RangedSingleCommit = {
+    val (startVersion, endVersion) = file match {
+      case FileNames.CompactedDeltaFile(_, start, end) => (start, end)
+      case _ =>
+        val version = FileNames.deltaVersion(file)
+        (version, version)
+    }
+    val commit = SingleCommit(deltaLog, endVersion, file)
+    new RangedSingleCommit(commit, startVersion, endVersion)
   }
 }

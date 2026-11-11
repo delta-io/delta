@@ -15,28 +15,32 @@
  */
 package org.apache.spark.sql.delta.v2.interop
 
+import java.io.Closeable
+
 import org.apache.spark.sql.delta.DeltaSingleCommit
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
 import io.delta.kernel.{CommitActions => KernelCommitActions}
+import io.delta.kernel.internal.util.{Utils => KernelUtils}
 
+// TODO: Once interop supports commit caching, restore private[interop]
+// and remove with Closeable.
 /**
  * Kernel-backed [[DeltaSingleCommit]].
  *
  * @param singleKernelCommit the single Kernel commit.
  */
-private[interop] class DeltaV2SingleCommit(
+private[v2] class DeltaV2SingleCommit(
     private val singleKernelCommit: KernelCommitActions
-) extends DeltaSingleCommit {
+) extends DeltaSingleCommit with Closeable {
 
-  private val (commitVersion, commitTimestamp, actions): (Long, Long, Seq[Action]) = try {
-    val version = singleKernelCommit.getVersion()
-    val timestamp = singleKernelCommit.getTimestamp()
-    val actions = KernelActionUtils.readActions(singleKernelCommit).processAndClose(_.toVector)
-    (version, timestamp, actions)
-  } finally {
-    singleKernelCommit.close()
+  private val (commitVersion, commitTimestamp): (Long, Long) = try {
+    (singleKernelCommit.getVersion(), singleKernelCommit.getTimestamp())
+  } catch {
+    case error: Throwable =>
+      KernelUtils.closeCloseables(singleKernelCommit)
+      throw error
   }
 
   override val version: Long = commitVersion
@@ -45,15 +49,24 @@ private[interop] class DeltaV2SingleCommit(
 
   override def getActionsIterator(
       maxInMemoryFileSizeBytes: Long): ClosableIterator[Action] with SupportsRewinding[Action] = {
-    // Actions are already materialized, so the file-size threshold does not affect rewinds.
+    // Kernel does not expose the commit's file size, so always use the zero-cache path.
     new ClosableIterator[Action] with SupportsRewinding[Action] {
-      private var delegatedIterator = actions.iterator
-      override def hasNext: Boolean = delegatedIterator.hasNext
-      override def next(): Action = delegatedIterator.next()
-      override def close(): Unit = ()
-      override def rewind(): Unit = delegatedIterator = actions.iterator
+      private var delegatedIterator =
+        KernelActionUtils.readActions(singleKernelCommit)
+      override def hasNext: Boolean =
+        delegatedIterator.hasNext
+      override def next(): Action =
+        delegatedIterator.next()
+      override def close(): Unit = delegatedIterator.close()
+      override def rewind(): Unit = {
+        close()
+        delegatedIterator =
+          KernelActionUtils.readActions(singleKernelCommit)
+      }
     }
   }
+
+  override def close(): Unit = KernelUtils.closeCloseables(singleKernelCommit)
 }
 
 object DeltaV2SingleCommit {

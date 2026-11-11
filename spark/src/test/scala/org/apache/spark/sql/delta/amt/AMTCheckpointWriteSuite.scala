@@ -311,7 +311,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
     val name = context.tableName
     DeltaLog.clearCache()
     val snapshot = deltaLogForName(name).update()
-    assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProvider],
+    assert(snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProviderBase],
       s"${context.scenario.name}: expected the table to be read from an AMT checkpoint")
     val rowCount = spark.table(name).count()
     assert(rowCount > 0)
@@ -500,7 +500,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert(leafLoc.contains("leaf with space.parquet") && !leafLoc.contains("%20"))
 
       val provider = AMTCheckpointProvider.fromCheckpoint(
-        deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
+        spark, deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
       // The provider resolves the spaced pointers to absolute, raw paths under the table root.
       assert(provider.liveLeafManifestAbsolutePaths.forall(p =>
         p.isAbsolute && p.toString.contains("leaf with space.parquet") &&

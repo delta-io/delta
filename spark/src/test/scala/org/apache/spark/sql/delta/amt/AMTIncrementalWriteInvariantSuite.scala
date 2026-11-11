@@ -53,13 +53,48 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         // hole -> the Step-0 coverage assert must fire.
         intercept[AssertionError] {
           new IncrementalAMTWriter(spark, amtDeltaLog).writeIncremental(
-            oldAMTActionsProvider = new BaseAMTCheckpointActionsProvider(amtDeltaLog, provider),
+            oldAMTActionsProvider =
+              new BaseAMTCheckpointActionsProvider(spark, amtDeltaLog, provider),
             intermediateLogCommits = intermediateLogCommits,
             attemptVersion = snapshot.version + 5,
             actionsToCommit = Seq.empty,
             snapshotId = 1L,
             trigger = AMTTriggerMode.CheckpointIntervalIncremental.name)
         }
+      }
+    }
+  }
+
+  test("writeIncremental rejects a back reference to a leaf manifest not in the base tree") {
+    withSQLConf(leafPackingConfs: _*) {
+      withAmtTable { amtDeltaLog =>
+        commitAmt(amtDeltaLog, (1 to leafPackedFiles).map(fakeAdd))
+        commitCheckpoint(amtDeltaLog, incremental = false)
+        val (staleLeaf, staleLeafFiles) = leafToAddFileMap(amtDeltaLog).toSeq.sortBy(_._1).head
+        val staleRemove = staleLeafFiles.head.remove
+        // A full rewrite writes new leaf manifests, so the new base tree does not hold `staleLeaf`.
+        commitCheckpoint(amtDeltaLog, incremental = false)
+        val snapshot = amtDeltaLog.update()
+        val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
+        assert(!provider.leaves.exists(_.location == staleLeaf))
+        val oldAMTVersion = provider.checkpointAction.contentRoot.version
+        val intermediateLogCommits = snapshot.logSegment.deltas
+          .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
+        // `verifyAmtBackReferences` rejects `staleRemove` at commit time, so the test calls the
+        // writer directly.
+        val ex = intercept[IllegalStateException] {
+          new IncrementalAMTWriter(spark, amtDeltaLog).writeIncremental(
+            oldAMTActionsProvider =
+              new BaseAMTCheckpointActionsProvider(spark, amtDeltaLog, provider),
+            intermediateLogCommits = intermediateLogCommits,
+            attemptVersion = snapshot.version + 1,
+            actionsToCommit = Seq(staleRemove),
+            snapshotId = 1L,
+            trigger = AMTTriggerMode.InlineWithLargeCommitIncremental.name)
+        }
+        assert(ex.getMessage.contains("not live leaves of the base tree") &&
+          ex.getMessage.contains(staleLeaf),
+          s"expected the base tree back reference invariant; got: ${ex.getMessage}")
       }
     }
   }

@@ -40,10 +40,15 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.types.VariantType;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Stream;
+import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.MetadataBuilder;
+import org.apache.spark.sql.types.StringType$;
 import org.apache.spark.sql.types.StructField;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -69,6 +74,67 @@ public class SchemaUtilsTest {
     checkConversion(DataTypes.TimestampType, TimestampType.TIMESTAMP);
     checkConversion(DataTypes.TimestampNTZType, TimestampNTZType.TIMESTAMP_NTZ);
     checkConversion(DataTypes.VariantType, VariantType.VARIANT);
+  }
+
+  static Stream<Arguments> collations() {
+    return Stream.of(
+        Arguments.of("UTF8_BINARY", "SPARK.UTF8_BINARY"),
+        Arguments.of("UTF8_LCASE", "SPARK.UTF8_LCASE"),
+        Arguments.of("UTF8_BINARY_RTRIM", "SPARK.UTF8_BINARY_RTRIM"),
+        Arguments.of("UNICODE_CI", "ICU.UNICODE_CI"),
+        Arguments.of("UNICODE_CI_AI", "ICU.UNICODE_CI_AI"),
+        Arguments.of("tr_CI", "ICU.TR_CI"));
+  }
+
+  @ParameterizedTest
+  @MethodSource("collations")
+  public void testCollatedStringToKernel(String sparkCollation, String kernelCollation) {
+    assertEquals(
+        new StringType(kernelCollation),
+        SchemaUtils.convertSparkDataTypeToKernelDataType(
+            StringType$.MODULE$.apply(sparkCollation)));
+  }
+
+  @ParameterizedTest
+  @MethodSource("collations")
+  public void testNestedCollatedStringsToKernel(String sparkCollation, String kernelCollation) {
+    org.apache.spark.sql.types.StringType sparkString = StringType$.MODULE$.apply(sparkCollation);
+    StringType kernelString = new StringType(kernelCollation);
+    Metadata sparkMetadata = new MetadataBuilder().putString("comment", "collated value").build();
+    FieldMetadata kernelMetadata =
+        FieldMetadata.builder().putString("comment", "collated value").build();
+    org.apache.spark.sql.types.StructType sparkSchema =
+        new org.apache.spark.sql.types.StructType()
+            .add("value", sparkString, false, sparkMetadata)
+            .add("array", DataTypes.createArrayType(sparkString, false), true)
+            .add("map", DataTypes.createMapType(DataTypes.StringType, sparkString, false), false);
+    StructType kernelSchema =
+        new StructType()
+            .add("value", kernelString, false, kernelMetadata)
+            .add("array", new ArrayType(kernelString, false), true)
+            .add("map", new MapType(StringType.STRING, kernelString, false), false);
+
+    assertEquals(kernelSchema, SchemaUtils.convertSparkDataTypeToKernelDataType(sparkSchema));
+    assertEquals(
+        new StructType().add("nested", kernelSchema, false),
+        SchemaUtils.convertSparkDataTypeToKernelDataType(
+            new org.apache.spark.sql.types.StructType().add("nested", sparkSchema, false)));
+  }
+
+  @ParameterizedTest
+  @MethodSource("collations")
+  public void testCollatedMapKeys(String sparkCollation, String kernelCollation) {
+    org.apache.spark.sql.types.DataType sparkMap =
+        DataTypes.createMapType(StringType$.MODULE$.apply(sparkCollation), DataTypes.IntegerType);
+    if (sparkCollation.equals("UTF8_BINARY")) {
+      checkConversion(sparkMap, new MapType(StringType.STRING, IntegerType.INTEGER, true));
+    } else {
+      AnalysisException error =
+          assertThrows(
+              AnalysisException.class,
+              () -> SchemaUtils.convertSparkDataTypeToKernelDataType(sparkMap));
+      assertEquals("UNSUPPORTED_FEATURE.COLLATIONS_IN_MAP_KEYS", error.getCondition());
+    }
   }
 
   @Test
@@ -169,6 +235,46 @@ public class SchemaUtilsTest {
     org.apache.spark.sql.types.StructType actualSparkSchema =
         SchemaUtils.convertKernelSchemaToSparkSchema(kernelSchema);
     assertEquals(expectedSparkSchema, actualSparkSchema);
+  }
+
+  @ParameterizedTest
+  @MethodSource("collations")
+  public void testCollatedStringsToSparkAreRejected(String sparkCollation, String kernelCollation) {
+    StringType kernelString = new StringType(kernelCollation);
+    List<StructType> kernelSchemas = new ArrayList<>();
+    kernelSchemas.add(new StructType().add("s", kernelString));
+    kernelSchemas.add(new StructType().add("a", new ArrayType(kernelString, true)));
+    kernelSchemas.add(new StructType().add("outer", new StructType().add("s", kernelString)));
+    List<DataType> kernelTypes =
+        Arrays.asList(kernelString, new MapType(StringType.STRING, kernelString, true));
+    if (sparkCollation.equals("UTF8_BINARY")) {
+      kernelSchemas.forEach(SchemaUtils::convertKernelSchemaToSparkSchema);
+      kernelTypes.forEach(SchemaUtils::convertKernelDataTypeToSparkDataType);
+      return;
+    }
+    // A schema can also record a collation only in field metadata, on a binary string.
+    kernelSchemas.add(
+        new StructType()
+            .add(
+                "s",
+                StringType.STRING,
+                FieldMetadata.builder()
+                    .putFieldMetadata(
+                        "__COLLATIONS",
+                        FieldMetadata.builder().putString("s", kernelCollation).build())
+                    .build()));
+    for (StructType kernelSchema : kernelSchemas) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SchemaUtils.convertKernelSchemaToSparkSchema(kernelSchema),
+          kernelSchema.toString());
+    }
+    for (DataType kernelType : kernelTypes) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SchemaUtils.convertKernelDataTypeToSparkDataType(kernelType),
+          kernelType.toString());
+    }
   }
 
   static Stream<Arguments> nullInPrimitiveArraysProvider() {

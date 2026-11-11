@@ -9,6 +9,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
@@ -33,6 +34,7 @@ import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.catalyst.expressions.JoinedRow;
+import org.apache.spark.sql.catalyst.expressions.MetadataAttribute$;
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -176,7 +178,8 @@ class DeltaV2ChangelogBatch implements Batch {
 
     // Pre-check catches schema drift between start and end. The per-commit loop below catches
     // in-range Metadata commits.
-    StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    StructType startSchema =
+        SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata());
     requireReadCompatible(startSchema, ((CommitRangeImpl) commitRange).getStartVersion());
 
     // TODO: Remove StreamingHelper usage. The helper is generic, only the class name is
@@ -251,8 +254,7 @@ class DeltaV2ChangelogBatch implements Batch {
               Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
               if (metadataOpt.isPresent()) {
                 Metadata md = metadataOpt.get();
-                StructType commitSchema =
-                    SchemaUtils.convertKernelSchemaToSparkSchema(md.getSchema());
+                StructType commitSchema = SchemaUtils.convertKernelMetadataToSparkSchema(md);
                 requireReadCompatible(commitSchema, commit.getVersion());
                 // A new Metadata action fully replaces the prior configuration, so an absent
                 // row-tracking key means the table default (disabled), not an inherited value.
@@ -303,9 +305,14 @@ class DeltaV2ChangelogBatch implements Batch {
   @Override
   public PartitionReaderFactory createReaderFactory() {
     StructType partitionSchema = new StructType();
+    // Changelog doesn't use Spark's file-source execution, so use the generic metadata marker.
+    // Mark readDataSchema because that's what the reader inspects, not the public changelog schema.
     StructType readDataSchema =
         endDataSchema.add(
-            DeltaV2Changelog.METADATA_COLUMN, DeltaV2Changelog.METADATA_STRUCT, false);
+            DeltaV2Changelog.METADATA_COLUMN,
+            DeltaV2Changelog.METADATA_STRUCT,
+            /* nullable */ false,
+            MetadataAttribute$.MODULE$.metadata(DeltaV2Changelog.METADATA_COLUMN));
     Filter[] dataFilters = new Filter[0];
     scala.collection.immutable.Map<String, String> scalaOptions =
         Map$.MODULE$.empty();

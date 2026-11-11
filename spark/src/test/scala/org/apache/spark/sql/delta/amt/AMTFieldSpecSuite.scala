@@ -87,7 +87,8 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
    */
   private def reconstructAddFiles(
       provider: AMTCheckpointProvider, deltaLog: DeltaLog, metadata: Metadata): DataFrame =
-    new AMTCheckpointProvider(
+    AMTCheckpointProvider(
+        spark = spark,
         manifestCommitVersion = provider.manifestCommitVersion,
         checkpointAction = updateCheckpointActions(provider.checkpointAction) {
           case _: Metadata => metadata
@@ -171,10 +172,10 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       def statsIds(columnId: Int, name: String, withBounds: Boolean): Seq[(String, Int)] = {
         val base = 10000 + 200 * columnId
         val field = s"${name}_$columnId" // sub-struct field name: logical name + field id
-        // Iceberg V4 offsets: lower_bound=1, upper_bound=2, null_value_count=5.
+        // Iceberg V4 offsets: lower_bound=1, upper_bound=2, null_value_count=4.
         Seq(
           s"content_stats.$field" -> base,
-          s"content_stats.$field.null_value_count" -> (base + 5)) ++
+          s"content_stats.$field.null_value_count" -> (base + 4)) ++
           (if (!withBounds) Nil
            else Seq(
              s"content_stats.$field.lower_bound" -> (base + 1),
@@ -510,7 +511,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
               sizeInBytes = rewrittenFile.length())
           }
           val rewrittenProvider = AMTCheckpointProvider.fromCheckpoint(
-            deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
+            spark, deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
           assertLeavesEqual(rewrittenProvider.leaves, provider.leaves)
 
           // Field-id read is what makes this work: with it off, the read falls back to
@@ -521,7 +522,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
           withSQLConf(SQLConf.PARQUET_FIELD_ID_READ_ENABLED.key -> "false") {
             val error = intercept[SparkRuntimeException] {
               AMTCheckpointProvider.fromCheckpoint(
-                deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
+                spark, deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
             }
             assert(error.getCondition == "EXPRESSION_DECODING_FAILED",
               s"Expected an EXPRESSION_DECODING_FAILED error, got ${error.getCondition}.")

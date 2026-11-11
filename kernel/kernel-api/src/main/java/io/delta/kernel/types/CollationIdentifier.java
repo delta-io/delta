@@ -102,6 +102,11 @@ public class CollationIdentifier {
         && this.version.equals(other.version);
   }
 
+  @Override
+  public int hashCode() {
+    return Objects.hash(provider, name, version);
+  }
+
   /** @return collation identifier in form of {@code PROVIDER.COLLATION_NAME}. */
   public String toStringWithoutVersion() {
     return String.format("%s.%s", provider, name);

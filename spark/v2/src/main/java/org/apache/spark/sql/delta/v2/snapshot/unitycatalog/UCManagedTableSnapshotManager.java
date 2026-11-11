@@ -23,6 +23,7 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.kernel.unitycatalog.UCLoadCommitRangeOptions;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import java.util.List;
 import java.util.Optional;
@@ -30,7 +31,9 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
+import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 
 /**
  * Snapshot manager for Unity Catalog managed tables.
@@ -180,20 +183,23 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
    * Gets a range of table changes (commits) between start and end versions.
    *
    * @param engine the engine implementation for executing operations
-   * @param startVersion the starting version (inclusive)
-   * @param endVersion optional ending version (inclusive); if not provided, extends to latest
+   * @param params the inclusive version range and validation behavior
    * @return a CommitRange representing the specified range of commits
    */
   @Override
-  public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
+  public CommitRange getTableChanges(Engine engine, GetTableChangesParam params) {
     return ucCatalogManagedClient.loadCommitRange(
         engine,
         tableId,
         tablePath,
         tableIdentifier,
-        Optional.of(startVersion) /* startVersionOpt */,
-        Optional.empty() /* startTimestampOpt */,
-        endVersion /* endVersionOpt */,
-        Optional.empty() /* endTimestampOpt */);
+        new UCLoadCommitRangeOptions(
+            Optional.of(params.startVersion()) /* startVersionOpt */,
+            Optional.empty() /* startTimestampOpt */,
+            ScalaUtils.toJavaOptional(params.endVersion())
+                .map(value -> (Long) value) /* endVersionOpt */,
+            Optional.empty() /* endTimestampOpt */,
+            Optional.of(params.commitRangeValidation()),
+            Optional.of(params.failOnDataLoss())));
   }
 }

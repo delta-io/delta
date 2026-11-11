@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaS
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, OffsetSeqLog}
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.StreamingExecutionRelation
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -44,6 +45,7 @@ import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
+import org.apache.spark.sql.execution.datasources.v2.StreamingDataSourceV2ScanRelation
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.internal.SQLConf
@@ -276,6 +278,39 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
                   CheckAnswer(expectedRows: _*))
               }
             }
+          }
+        }
+      }
+    }
+  }
+
+  test("malformed partition values in commits read as null") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      Seq((1, 1, 1.toByte, true), (2, 2, 2.toByte, false))
+        .toDF("id", "p_int", "p_byte", "p_bool")
+        .write.format("delta").partitionBy("p_int", "p_byte", "p_bool").save(path)
+      // Re-add one file with partition values that do not parse as the column types, as a log
+      // written by another writer may contain.
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val file = deltaLog.update().allFiles.collect().find(_.partitionValues("p_int") == "1").get
+      deltaLog.startTransaction().commit(
+        Seq(file.copy(
+          partitionValues = Map("p_int" -> "abc", "p_byte" -> "300", "p_bool" -> "yes"),
+          dataChange = true)),
+        DeltaOperations.ManualUpdate)
+
+      for (ansiEnabled <- Seq("true", "false")) {
+        withSQLConf(SQLConf.ANSI_ENABLED.key -> ansiEnabled) {
+          withClue(s"ansi=$ansiEnabled: ") {
+            // Starting at version 0 reads every file from the commits instead of a snapshot.
+            val stream = loadStreamWithOptions(path, Map("startingVersion" -> "0"))
+            testStream(stream)(
+              ProcessAllAvailable(),
+              CheckAnswer(
+                Row(1, 1, 1.toByte, true),
+                Row(2, 2, 2.toByte, false),
+                Row(1, null, null, true)))
           }
         }
       }
@@ -2799,12 +2834,23 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTable("self_union_delta") {
       spark.range(10).write.format("delta").saveAsTable("self_union_delta")
       val df = spark.readStream.format("delta").table("self_union_delta")
-      val q = df.union(df).writeStream.format("noop").start()
-      try {
-        q.processAllAvailable()
-      } finally {
-        q.stop()
-      }
+      testStream(df.union(df))(
+        StartStream(),
+        ProcessAllAvailable(),
+        AssertOnQuery { q =>
+          val sources = q.logicalPlan.collect {
+            case relation: StreamingExecutionRelation => relation.source
+            case relation: StreamingDataSourceV2ScanRelation => relation.stream
+          }
+          assert(sources.size == 2, s"expected two Delta source references, got ${sources.size}")
+          val expectedSourceName = if (useDsv2) "DeltaV2MicroBatchStream" else "DeltaSource"
+          assert(
+            sources.forall(_.getClass.getSimpleName == expectedSourceName),
+            s"expected $expectedSourceName sources, got ${sources.map(_.getClass.getName)}")
+          true
+        },
+        CheckAnswer((0L until 10L).flatMap(id => Seq(id, id)): _*)
+      )
     }
   }
 
@@ -2945,13 +2991,17 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             .start()
           try q.processAllAvailable() finally q.stop()
         }
-        // V1 fails with an internal batch schema assertion ("Invalid batch"),
-        // V2 fails with DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART.
-        assert(
-          e.getMessage.contains("Invalid batch") ||
-            e.getMessage.contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
-          s"Expected schema mismatch error but got: ${e.getMessage}"
-        )
+        if (useDsv2) {
+          checkError(
+            e.getCause.asInstanceOf[DeltaIllegalStateException],
+            "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME.SCHEMA_CHANGED",
+            "KD007",
+            Map(
+              "querySchema" -> DeltaErrors.formatSchema(df.schema),
+              "tableSchema" -> DeltaErrors.formatSchema(deltaLog.update().metadata.schema)))
+        } else {
+          assert(e.getMessage.contains("Invalid batch"))
+        }
       }
     }
   }

@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import scala.collection.mutable
 
-import io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClientBuilder
 import io.delta.storage.commit.CommitCoordinatorClient
 
 import org.apache.spark.sql.SparkSession
@@ -111,8 +110,7 @@ object CommitCoordinatorProvider {
   }
 
   private val initialCommitCoordinatorBuilders = Seq[CommitCoordinatorBuilder](
-    UCCommitCoordinatorBuilder,
-    new DynamoDBCommitCoordinatorClientBuilder()
+    UCCommitCoordinatorBuilder
   )
   initialCommitCoordinatorBuilders.foreach(registerBuilder)
 }
