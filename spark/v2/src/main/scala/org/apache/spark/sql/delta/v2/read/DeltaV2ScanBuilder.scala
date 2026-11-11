@@ -182,8 +182,6 @@ private[read] class DeltaV2ScanBuilder(
       // DeltaScan.scanned.rows there.
       val sqlConf = SQLConf.get
       val keepNumRecords = sqlConf.cboEnabled || sqlConf.planStatsEnabled
-      val partitionFiltersForScan = partitionCatalystFilters.toIndexedSeq
-      val catalystFilters = partitionFiltersForScan ++ dataCatalystFilters
 
       // Spark's V2ScanRelationPushDown only pushes a limit when no post-scan residual remains (it
       // matches PhysicalOperation(_, Nil, sHolder)), so an effective limit implies only exact
@@ -191,48 +189,60 @@ private[read] class DeltaV2ScanBuilder(
       // invoke the ScanBuilder methods in a different order.
       val effectiveLimit = if (hasPostScanResidualFilters) OptionalInt.empty() else pushedLimit
 
-      val originalQueryContext = DeltaV2QueryContext(catalogTable)
-      val deltaScanSupplier = () => {
-        val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
-
-        // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
-        // requires partition-only filters (guaranteed above) and prunes files by accumulating
-        // record counts until the limit is satisfied.
-        def selectFiles(): DeltaScan =
-          if (effectiveLimit.isPresent) {
-            recordFrameProfile("filesForScan.limitAndFilters") {
-              snapshot.filesForScan(
-                effectiveLimit.getAsInt.toLong,
-                partitionFiltersForScan)
-            }
-          } else {
-            recordFrameProfile("filesForScan.filters") {
-              snapshot.filesForScan(catalystFilters, keepNumRecords)
-            }
-          }
-
-        // Select files inline on this path.
-        selectFiles()
-      }
-
-      val scan = new DeltaV2Scan(
-        snapshotManager = snapshotManager,
-        tableManager = tableManager,
-        initialSnapshot = initialSnapshot,
-        tableSchema = tableSchema,
-        dataSchema = dataSchema,
-        partitionSchema = partitionSchema,
-        readDataSchema = requiredDataSchema,
-        scanSupplier = deltaScanSupplier,
-        dataFiltersArg = dataCatalystFilters,
-        partitionFiltersArg = partitionCatalystFilters,
-        catalogStats = catalogStats,
-        options = options,
-        pushedLimit = effectiveLimit.toScala,
-        originalQueryContext = originalQueryContext)
-      scan
+      createDeltaV2Scan(
+        partitionCatalystFilters,
+        dataCatalystFilters,
+        keepNumRecords,
+        effectiveLimit)
     }
 
+  private def createDeltaV2Scan(
+      partitionFilters: Array[Expression],
+      dataFilters: Array[Expression],
+      keepNumRecords: Boolean,
+      effectiveLimit: OptionalInt): DeltaV2Scan = {
+    val originalQueryContext = DeltaV2QueryContext(catalogTable)
+    val partitionFiltersForScan = partitionFilters.toIndexedSeq
+    val catalystFilters = partitionFiltersForScan ++ dataFilters
+    val deltaScanSupplier = () => {
+      val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
+
+      // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
+      // requires partition-only filters and prunes files by accumulating record counts until the
+      // limit is satisfied.
+      def selectFiles(): DeltaScan =
+        if (effectiveLimit.isPresent) {
+          recordFrameProfile("filesForScan.limitAndFilters") {
+            snapshot.filesForScan(
+              effectiveLimit.getAsInt.toLong,
+              partitionFiltersForScan)
+          }
+        } else {
+          recordFrameProfile("filesForScan.filters") {
+            snapshot.filesForScan(catalystFilters, keepNumRecords)
+          }
+        }
+
+      // Select files inline on this path.
+      selectFiles()
+    }
+
+    new DeltaV2Scan(
+      snapshotManager = snapshotManager,
+      tableManager = tableManager,
+      initialSnapshot = initialSnapshot,
+      tableSchema = tableSchema,
+      dataSchema = dataSchema,
+      partitionSchema = partitionSchema,
+      readDataSchema = requiredDataSchema,
+      scanSupplier = deltaScanSupplier,
+      dataFiltersArg = dataFilters,
+      partitionFiltersArg = partitionFilters,
+      catalogStats = catalogStats,
+      options = options,
+      pushedLimit = effectiveLimit.toScala,
+      originalQueryContext = originalQueryContext)
+  }
 
   private[read] def getOptions: CaseInsensitiveStringMap = options
 
