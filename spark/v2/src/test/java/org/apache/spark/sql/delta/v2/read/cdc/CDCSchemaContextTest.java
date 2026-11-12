@@ -155,24 +155,29 @@ public class CDCSchemaContextTest {
 
   @Test
   void testAppendCDCColumns() {
-    StructType augmented = CDCSchemaContext.appendCDCColumns(DATA_SCHEMA);
-    assertEquals(5, augmented.fields().length);
-    assertEquals("id", augmented.fields()[0].name());
-    assertEquals("name", augmented.fields()[1].name());
-    assertEquals(CDCSchemaContext.CDC_TYPE_COLUMN, augmented.fields()[2].name());
-    assertEquals(CDCSchemaContext.CDC_COMMIT_VERSION, augmented.fields()[3].name());
-    assertEquals(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, augmented.fields()[4].name());
-    assertTrue(augmented.fields()[2].nullable());
-    assertTrue(augmented.fields()[3].nullable());
-    assertTrue(augmented.fields()[4].nullable());
+    StructType expected =
+        DATA_SCHEMA
+            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType, true)
+            .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType, true)
+            .add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, true);
+    assertEquals(expected, CDCSchemaContext.appendCDCColumns(DATA_SCHEMA));
   }
 
   @Test
-  void testNonNullableCDCOutputSchema() {
-    StructType output = CDCSchemaContext.cdcOutputSchema(DATA_SCHEMA, false);
-    assertFalse(output.fields()[2].nullable());
-    assertFalse(output.fields()[3].nullable());
-    assertFalse(output.fields()[4].nullable());
+  void testCDCOutputSchemaNullability() {
+    StructType nullable =
+        DATA_SCHEMA
+            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType, true)
+            .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType, true)
+            .add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, true);
+    StructType nonNullable =
+        DATA_SCHEMA
+            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType, false)
+            .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType, false)
+            .add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, false);
+
+    assertEquals(nullable, CDCSchemaContext.cdcOutputSchema(DATA_SCHEMA, true));
+    assertEquals(nonNullable, CDCSchemaContext.cdcOutputSchema(DATA_SCHEMA, false));
   }
 
   private static List<Integer> toJavaList(Seq<Object> seq) {

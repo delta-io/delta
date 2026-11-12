@@ -39,15 +39,6 @@ public class CDCSchemaContext implements Serializable {
   public static final String CDC_COMMIT_VERSION = CDCReader.CDC_COMMIT_VERSION();
   public static final String CDC_COMMIT_TIMESTAMP = CDCReader.CDC_COMMIT_TIMESTAMP();
 
-  // V1 CDCReader exposes nullable fields for Parquet schema evolution in write-time/streaming
-  // reads. The changelog API injects every CDC value and therefore exposes non-null fields.
-  public static StructType cdcOutputSchema(StructType endSchema, boolean nullable) {
-    return endSchema
-        .add(CDC_TYPE_COLUMN, DataTypes.StringType, nullable)
-        .add(CDC_COMMIT_VERSION, DataTypes.LongType, nullable)
-        .add(CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, nullable);
-  }
-
   public static final int CHANGE_TYPE_IDX = 0;
   public static final int COMMIT_VERSION_IDX = 1;
   public static final int COMMIT_TIMESTAMP_IDX = 2;
@@ -108,6 +99,19 @@ public class CDCSchemaContext implements Serializable {
     return CDC_FIELDS.clone();
   }
 
+  /**
+   * Appends CDC columns with the requested nullability. They are nullable for the Parquet read
+   * path, where schema evolution null-fills missing columns before {@link CDCReadFunction} fills
+   * them, matching V1 {@link CDCReader#cdcReadSchema}. The changelog reader sets all three values
+   * for every file, so it exposes them as non-null.
+   */
+  public static StructType cdcOutputSchema(StructType schema, boolean nullable) {
+    return schema
+        .add(CDC_TYPE_COLUMN, DataTypes.StringType, nullable)
+        .add(CDC_COMMIT_VERSION, DataTypes.LongType, nullable)
+        .add(CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, nullable);
+  }
+
   /** Returns true if the given field name is a CDC column. */
   public static boolean isCDCColumn(String name) {
     return CDC_TYPE_COLUMN.equalsIgnoreCase(name)
@@ -115,7 +119,7 @@ public class CDCSchemaContext implements Serializable {
         || CDC_COMMIT_TIMESTAMP.equalsIgnoreCase(name);
   }
 
-  /** Appends the three CDC columns to the given schema. */
+  /** Appends nullable CDC columns; see {@link #cdcOutputSchema(StructType, boolean)}. */
   public static StructType appendCDCColumns(StructType schema) {
     return cdcOutputSchema(schema, true);
   }
