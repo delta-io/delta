@@ -4085,6 +4085,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  /** Valid values of [[V2_ENABLE_MODE]]. */
+  val V2_ENABLE_MODE_NONE: String = "NONE"
+  val V2_ENABLE_MODE_AUTO: String = "AUTO"
+  val V2_ENABLE_MODE_STRICT: String = "STRICT"
+
   /**
    * Controls which connector implementation to use for Delta table operations.
    *
@@ -4104,10 +4109,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
    * See [[org.apache.spark.sql.delta.DeltaV2Mode]] for the centralized logic that interprets
    * this configuration.
    */
-  val V2_ENABLE_MODE_NONE: String = "NONE"
-  val V2_ENABLE_MODE_AUTO: String = "AUTO"
-  val V2_ENABLE_MODE_STRICT: String = "STRICT"
-
   val V2_ENABLE_MODE =
     buildConf("v2.enableMode")
       .doc(
