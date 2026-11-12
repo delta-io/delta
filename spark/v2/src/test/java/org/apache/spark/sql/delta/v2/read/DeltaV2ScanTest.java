@@ -6,7 +6,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
@@ -46,8 +46,6 @@ import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.kernel.KernelContext;
-import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.execution.datasources.FilePartition;
@@ -58,6 +56,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import scala.Function0;
 import scala.Option;
 
@@ -1032,57 +1031,37 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     DeltaV2QueryContext expectedContext = (DeltaV2QueryContext) queryContextField.get(scan);
     assertEquals(expectCatalogTable, expectedContext.catalogTableOpt().isDefined());
 
-    RecordingPathBasedSnapshotManager manager =
-        new RecordingPathBasedSnapshotManager(
-            tablePath, createKernelContext(spark.sessionState().newHadoopConf()));
-    DeltaV2TableManager tableManager = setSnapshotManager(scan, manager);
+    DeltaV2TableManager tableManager = spyTableManager(scan);
     DeltaV2MicroBatchStream stream =
         (DeltaV2MicroBatchStream) scan.toMicroBatchStream(checkpointLocation);
     try {
-      // Discard the scan's pre-construction snapshot load, then exercise snapshot-manager and
-      // table-manager calls from the constructed stream with the original query context.
-      manager.latestQueryContext = null;
+      // Verify table-manager calls made by the constructed stream, excluding initialization.
+      clearInvocations(tableManager);
       Offset initialOffset = stream.initialOffset();
       stream.latestOffset(initialOffset, ReadLimit.allAvailable());
-      assertSame(expectedContext, manager.latestQueryContext);
-      verify(tableManager).snapshotManager(same(expectedContext.catalogTableOpt()));
+      ArgumentCaptor<DeltaV2QueryContext> contextCaptor =
+          ArgumentCaptor.forClass(DeltaV2QueryContext.class);
+      verify(tableManager, atLeastOnce()).loadLatestSnapshot(contextCaptor.capture());
+      for (DeltaV2QueryContext actualContext : contextCaptor.getAllValues()) {
+        assertSame(expectedContext, actualContext);
+      }
       verify(tableManager, atLeastOnce())
           .getSingleCommitIterator(
-              anyLong(), any(), same(manager.latestQueryContext), anyBoolean());
+              anyLong(), any(), same(expectedContext), anyBoolean());
     } finally {
       stream.stop();
     }
   }
 
-  private static DeltaV2TableManager setSnapshotManager(
-      DeltaV2Scan scan, PathBasedSnapshotManager snapshotManager) throws Exception {
-    Field snapshotManagerField = DeltaV2Scan.class.getDeclaredField("snapshotManager");
-    snapshotManagerField.setAccessible(true);
-    snapshotManagerField.set(scan, snapshotManager);
-
-    // The stream resolves its snapshot manager through the table manager.
+  private static DeltaV2TableManager spyTableManager(DeltaV2Scan scan) throws Exception {
     Field tableManagerField = DeltaV2Scan.class.getDeclaredField("tableManager");
     tableManagerField.setAccessible(true);
     DeltaV2TableManager tableManager =
         spy((DeltaV2TableManager) ((Option<?>) tableManagerField.get(scan)).get());
-    doReturn(snapshotManager).when(tableManager).snapshotManager(any());
     tableManagerField.set(scan, Option.apply(tableManager));
     return tableManager;
   }
 
-  private static final class RecordingPathBasedSnapshotManager extends PathBasedSnapshotManager {
-    private DeltaV2QueryContext latestQueryContext;
-
-    private RecordingPathBasedSnapshotManager(String tablePath, KernelContext kernelContext) {
-      super(tablePath, kernelContext);
-    }
-
-    @Override
-    public Snapshot loadLatestSnapshot(DeltaV2QueryContext queryContext) {
-      latestQueryContext = queryContext;
-      return super.loadLatestSnapshot(queryContext);
-    }
-  }
 
   @Test
   public void testEqualsWithSameFilters() {
