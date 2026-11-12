@@ -1048,7 +1048,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
       verify(tableManager).snapshotManager(same(expectedContext.catalogTableOpt()));
       verify(tableManager, atLeastOnce())
           .getSingleCommitIterator(
-              anyLong(), any(), same(expectedContext.catalogTableOpt()), anyBoolean());
+              anyLong(), any(), same(manager.latestQueryContext), anyBoolean());
     } finally {
       stream.stop();
     }

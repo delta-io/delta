@@ -1031,7 +1031,7 @@ private[read] class DeltaV2MicroBatchStream(
     tableManager.getSingleCommitIterator(
         startVersion,
         ScalaUtils.toScalaOption(endVersionOpt).map(Long.unbox),
-        originalStreamingQueryContext.catalogTableOpt,
+        originalStreamingQueryContext,
         options.failOnDataLoss)
   }
 

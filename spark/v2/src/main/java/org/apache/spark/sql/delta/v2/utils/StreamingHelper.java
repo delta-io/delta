@@ -270,7 +270,7 @@ public class StreamingHelper {
         tableManager.getSingleCommitIterator(
             startVersion,
             ScalaUtils.toScalaOption(endVersionOpt),
-            originalQueryContext.catalogTableOpt(),
+            originalQueryContext,
             failOnDataLoss)) {
       while (commitsIter.hasNext()) {
         DeltaSingleCommit commit = commitsIter.next();
