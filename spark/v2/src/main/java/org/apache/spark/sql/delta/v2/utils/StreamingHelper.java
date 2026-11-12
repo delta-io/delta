@@ -30,7 +30,6 @@ import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import java.util.*;
-import java.util.function.BiFunction;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.actions.Action;
@@ -53,6 +52,11 @@ import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 @Experimental
 public class StreamingHelper {
 
+  @FunctionalInterface
+  private interface ActionFactory<T> {
+    T apply(ColumnVector actionVector, int rowId);
+  }
+
   /**
    * Returns the index of the field with the given name in the schema of the batch. Throws an {@link
    * IllegalArgumentException} if the field is not found.
@@ -64,11 +68,16 @@ public class StreamingHelper {
     return index;
   }
 
+  /**
+   * Extracts an action from the requested field and row using the given action factory.
+   *
+   * <p>Field lookup and vector retrieval happen before the action factory is invoked.
+   */
   private static <T> Optional<T> getAction(
       ColumnarBatch columnarBatch,
       int rowId,
       DeltaLogActionUtils.DeltaAction deltaAction,
-      BiFunction<ColumnVector, Integer, T> actionFactory) {
+      ActionFactory<T> actionFactory) {
     int actionIdx = getFieldIndex(columnarBatch, deltaAction.colName);
     ColumnVector actionVector = columnarBatch.getColumnVector(actionIdx);
     T action = actionFactory.apply(actionVector, rowId);
