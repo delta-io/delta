@@ -809,24 +809,25 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       assertThat(tableInfo.getStorageLocation()).isEqualTo(externalTableLocation);
     }
 
+    // Delta sent the schema of both managed and external tables to server
     List<ColumnInfo> columns = tableInfo.getColumns();
     assertThat(columns).isNotNull();
+    assertThat(columns).isNotEmpty();
+    List<String> columnNamesFromServer =
+        columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
+    assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
+    if (partitionColumn.isPresent()) {
+      List<ColumnInfo> matchingColumns =
+          columns.stream()
+              .filter(c -> c.getName().equals(partitionColumn.get()))
+              .collect(Collectors.toList());
+      assertThat(matchingColumns).hasSize(1);
+      assertThat(matchingColumns.get(0).getPartitionIndex()).isEqualTo(0);
+    } else {
+      assertThat(columns.stream().anyMatch(c -> c.getPartitionIndex() != null)).isFalse();
+    }
 
     if (tableType == TableType.MANAGED) {
-      assertThat(columns).isNotEmpty();
-      List<String> columnNamesFromServer =
-          columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
-      assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
-      if (partitionColumn.isPresent()) {
-        List<ColumnInfo> matchingColumns =
-            columns.stream()
-                .filter(c -> c.getName().equals(partitionColumn.get()))
-                .collect(Collectors.toList());
-        assertThat(matchingColumns).hasSize(1);
-        assertThat(matchingColumns.get(0).getPartitionIndex()).isEqualTo(0);
-      } else {
-        assertThat(columns.stream().anyMatch(c -> c.getPartitionIndex() != null)).isFalse();
-      }
       // Delta sent properties of managed tables to server
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
@@ -912,7 +913,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
       assertThat(unexpectedTablePropertiesFromServer).isEmpty();
     } else {
-      assertThat(columns).isEmpty();
+      // Delta sent the protocol and properties of external tables to server
+      assertThat(tableInfo.getProperties())
+          .containsEntry("delta.lastUpdateVersion", expectedLastUpdateVersion)
+          .containsKeys("delta.minReaderVersion", "delta.minWriterVersion")
+          .containsAllEntriesOf(customizedProps);
     }
 
     // Also verify table using DESC EXTENDED

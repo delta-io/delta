@@ -481,33 +481,57 @@ private[catalog] class UCDeltaCatalogClientImpl(
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
       uniformMetadata: Option[StorageUniformMetadata] = None): Unit = {
-    if (table.tableType != CatalogTableType.MANAGED) {
-      throw new IllegalArgumentException(
-        s"UCDeltaClient createTable only supports MANAGED tables; " +
-          s"got ${table.tableType} for ${fullQualifiedTableName(ident)}.")
-    }
     val locationUri = table.storage.locationUri.getOrElse(throw new IllegalArgumentException(
       s"createTable requires a storage location on the CatalogTable for " +
         s"${fullQualifiedTableName(ident)}"))
-    // Strip V2-only catalog keys (location, owner, ...) before sending the configuration
-    // to UC; they don't belong in table properties.
-    val cleanedConfiguration =
-      metadata.configuration.view
-        .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
-        .toMap
     ucClient.createTable(
       locationUri,
       toStorageTableIdent(ident),
       toUcTableType(table.tableType),
       metadata.copy(
         description = table.comment.orNull,
-        configuration = cleanedConfiguration),
+        configuration = withoutReservedProperties(metadata.configuration)),
       protocol,
       domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
       lastCommitTimestampMs,
+      lastCommitVersion,
       uniformMetadata.toJava)
   }
+
+  // -------------------------------------------------------------------------
+  // DeltaCatalogClient: updateTableMetadata
+  // -------------------------------------------------------------------------
+
+  override def updateTableMetadata(
+      ct: CatalogTable,
+      tableLocation: URI,
+      oldMetadata: Metadata,
+      newMetadata: Metadata,
+      newProtocol: Protocol,
+      domainMetadata: Seq[DomainMetadata],
+      commitVersion: Long,
+      commitTimestampMs: Long): Boolean = {
+    ucClient.updateTableMetadata(
+      tableLocation,
+      toStorageTableIdent(identifierFromCatalogTable(ct)),
+      oldMetadata.copy(configuration = withoutReservedProperties(oldMetadata.configuration)),
+      newMetadata.copy(configuration = withoutReservedProperties(newMetadata.configuration)),
+      newProtocol,
+      domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
+      commitVersion,
+      commitTimestampMs)
+  }
+
+  /**
+   * Strips V2-only catalog keys (location, owner, ...) from a configuration before sending it
+   * to UC; they don't belong in table properties.
+   */
+  private def withoutReservedProperties(configuration: Map[String, String]): Map[String, String] =
+    configuration.view
+      .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
+      .toMap
 
   // -------------------------------------------------------------------------
   // DeltaCatalogClient: reportMetrics

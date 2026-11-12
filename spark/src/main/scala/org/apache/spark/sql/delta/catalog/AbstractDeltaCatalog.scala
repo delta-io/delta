@@ -408,11 +408,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         (params: CreateTableFuncParams) => {
           val v1Table = params.v1Table
           val snapshot = params.snapshot
-          // Route to the deltaCatalogClient only for MANAGED Delta creates when this client is
-          // wired in. EXTERNAL Delta and the no-client case stay on the legacy `super.createTable`
-          // path so existing behavior is preserved.
+          // Route MANAGED and EXTERNAL Delta creates to the deltaCatalogClient when this client is
+          // wired in. The no-client case stays on the legacy `super.createTable` path so existing
+          // behavior is preserved.
           deltaCatalogClient match {
-            case Some(client) if v1Table.tableType == CatalogTableType.MANAGED =>
+            case Some(client) =>
               client.createTable(
                 ident,
                 v1Table,
@@ -420,6 +420,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
                 snapshot.domainMetadata,
                 snapshot.protocol,
                 snapshot.timestamp,
+                snapshot.version,
                 params.uniformMetadata)
             case _ =>
               val t = V1Table(v1Table)

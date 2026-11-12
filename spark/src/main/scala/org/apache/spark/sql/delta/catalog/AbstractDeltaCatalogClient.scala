@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.catalog
 import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils
 import io.delta.storage.commit.uniform.UniformMetadata
 
+import java.net.URI
 import java.util
 
 import org.apache.spark.internal.Logging
@@ -115,6 +116,9 @@ private[delta] trait AbstractDeltaCatalogClient {
    *                              `metadata` / `protocol`, used by the catalog as the
    *                              authoritative "last updated" timestamp on the registered
    *                              entry.
+   * @param lastCommitVersion     version of the snapshot being registered. It is 0 for a new
+   *                              table and can be higher when an EXTERNAL table is registered
+   *                              over an existing Delta log.
    * @param uniformMetadata       UniForm Iceberg metadata generated atomically with the initial
    *                              snapshot;
    *                              [[None]] when the table was not created with UniForm enabled.
@@ -126,7 +130,37 @@ private[delta] trait AbstractDeltaCatalogClient {
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
       uniformMetadata: Option[UniformMetadata] = None): Unit
+
+  /**
+   * Updates the catalog entry of an EXTERNAL table to match a committed snapshot, without a
+   * commit. Used by the post-commit hook after a commit that changes the table's metadata.
+   *
+   * Exceptions bubble out; implementations must not swallow failures internally.
+   *
+   * @param ct                catalog metadata for the committed table.
+   * @param tableLocation     storage location of the committed Delta table. The update is
+   *                          skipped when the catalog entry no longer points at it.
+   * @param oldMetadata       Delta [[Metadata]] before the commit.
+   * @param newMetadata       Delta [[Metadata]] after the commit.
+   * @param newProtocol       Delta [[Protocol]] after the commit.
+   * @param domainMetadata    the post-commit snapshot's [[DomainMetadata]] plus the commit's
+   *                          removals.
+   * @param commitVersion     the committed version.
+   * @param commitTimestampMs the committed version's timestamp.
+   * @return `true` if the entry was updated; `false` if the update was skipped because the
+   *         table is gone, now points elsewhere, or already records this or a later version.
+   */
+  def updateTableMetadata(
+      ct: CatalogTable,
+      tableLocation: URI,
+      oldMetadata: Metadata,
+      newMetadata: Metadata,
+      newProtocol: Protocol,
+      domainMetadata: Seq[DomainMetadata],
+      commitVersion: Long,
+      commitTimestampMs: Long): Boolean
 
   /**
    * Reports post-commit telemetry for the table to the catalog. Implementations build
@@ -160,8 +194,8 @@ private[catalog] trait AbstractDeltaCatalogClientFactory {
 /**
  * Factory entry point for [[AbstractDeltaCatalogClient]] instances. Used both by
  * `AbstractDeltaCatalog.initialize` (to wire the catalog's own client at construction
- * time) and by the post-commit metrics hook (to build a fresh per-commit client without
- * caching state across commits).
+ * time) and by the post-commit metrics and metadata hooks (to build a fresh per-commit client
+ * without caching state across commits).
  */
 private[delta] object AbstractDeltaCatalogClient extends Logging {
 

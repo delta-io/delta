@@ -20,7 +20,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.model.DeltaStructField;
+import io.unitycatalog.client.delta.model.DeltaTableMetadata;
 import java.util.List;
+import java.util.stream.Collectors;
+import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.delta.hooks.UpdateExternalTableMetadataHook;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.junit.jupiter.api.Test;
 
 /** Tests metadata-changing operations on Unity Catalog managed (CatalogOwned) tables. */
@@ -359,6 +365,129 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
                   sql("SET spark.databricks.delta.schema.autoMerge.enabled = false");
                 }
               });
+        });
+  }
+
+  /** UC's view of the table once the async metadata updates of earlier commits have finished. */
+  private DeltaTableMetadata syncedMetadata(String tableName) throws Exception {
+    assertThat(UpdateExternalTableMetadataHook.awaitCompletionForTesting(30000)).isTrue();
+    return loadTable(tableName).getMetadata();
+  }
+
+  private static List<String> columnNames(DeltaTableMetadata metadata) {
+    return metadata.getColumns().getFields().stream()
+        .map(DeltaStructField::getName)
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Commits that change an EXTERNAL table's schema, properties, or clustering update its UC entry
+   * without a commit, recording the commit's version. Data-only commits leave the entry alone.
+   */
+  @Test
+  public void testExternalTableMetadataChangesPropagateToUc() throws Exception {
+    withNewTable(
+        "external_metadata_sync",
+        "id INT",
+        TableType.EXTERNAL,
+        tableName -> {
+          sql("ALTER TABLE %s ADD COLUMNS (name STRING)", tableName);
+          DeltaTableMetadata metadata = syncedMetadata(tableName);
+          assertThat(columnNames(metadata)).containsExactly("id", "name");
+          assertThat(metadata.getLastCommitVersion()).isEqualTo(currentVersion(tableName));
+
+          sql("ALTER TABLE %s SET TBLPROPERTIES ('k' = 'v')", tableName);
+          assertThat(syncedMetadata(tableName).getProperties()).containsEntry("k", "v");
+
+          sql("ALTER TABLE %s UNSET TBLPROPERTIES ('k')", tableName);
+          assertThat(syncedMetadata(tableName).getProperties()).doesNotContainKey("k");
+
+          sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
+          metadata = syncedMetadata(tableName);
+          assertThat(metadata.getProperties())
+              .containsEntry("delta.feature.clustering", "supported")
+              .containsEntry("clusteringColumns", "[[\"id\"]]");
+          long metadataVersion = currentVersion(tableName);
+          assertThat(metadata.getLastCommitVersion()).isEqualTo(metadataVersion);
+
+          sql("INSERT INTO %s VALUES (1, 'a')", tableName);
+          assertThat(syncedMetadata(tableName).getLastCommitVersion()).isEqualTo(metadataVersion);
+
+          spark()
+              .sql("SELECT 2 AS id, 'b' AS name, 'x' AS extra")
+              .write()
+              .format("delta")
+              .mode("append")
+              .option("mergeSchema", "true")
+              .saveAsTable(tableName);
+          assertThat(columnNames(syncedMetadata(tableName))).containsExactly("id", "name", "extra");
+        });
+  }
+
+  /**
+   * Re-creating a dropped EXTERNAL table over its existing log writes no new commit, so UC must
+   * record the log's current version rather than 0.
+   */
+  @Test
+  public void testExternalTableRecreatedOverExistingLogRecordsItsVersion() throws Exception {
+    withTempDir(
+        (Path dir) -> {
+          String tableName = fullTableName("external_recreate");
+          String location = new Path(dir, "external_recreate").toString();
+          sql("CREATE TABLE %s (id INT) USING DELTA LOCATION '%s'", tableName, location);
+          try {
+            sql("ALTER TABLE %s ADD COLUMNS (name STRING)", tableName);
+            syncedMetadata(tableName);
+            sql("DROP TABLE %s", tableName);
+
+            sql("CREATE TABLE %s USING DELTA LOCATION '%s'", tableName, location);
+            assertThat(currentVersion(tableName)).isEqualTo(1L);
+            DeltaTableMetadata metadata = loadTable(tableName).getMetadata();
+            assertThat(columnNames(metadata)).containsExactly("id", "name");
+            assertThat(metadata.getLastCommitVersion()).isEqualTo(1L);
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", tableName);
+          }
+        });
+  }
+
+  /**
+   * RESTORE commits through {@code commitLarge}, which runs no hooks, yet can change the schema.
+   */
+  @Test
+  public void testExternalTableRestoreSyncsSchemaToUc() throws Exception {
+    withNewTable(
+        "external_restore",
+        "id INT",
+        TableType.EXTERNAL,
+        tableName -> {
+          sql("ALTER TABLE %s ADD COLUMNS (name STRING)", tableName);
+          assertThat(columnNames(syncedMetadata(tableName))).containsExactly("id", "name");
+
+          sql("RESTORE TABLE %s TO VERSION AS OF 0", tableName);
+          DeltaTableMetadata metadata = syncedMetadata(tableName);
+          assertThat(columnNames(metadata)).containsExactly("id");
+          assertThat(metadata.getLastCommitVersion()).isEqualTo(currentVersion(tableName));
+        });
+  }
+
+  @Test
+  public void testExternalTableMetadataSyncCanBeDisabled() throws Exception {
+    String syncEnabled = DeltaSQLConf.DELTA_UC_EXTERNAL_TABLE_METADATA_SYNC_ENABLED().key();
+    withNewTable(
+        "external_metadata_sync_disabled",
+        "id INT",
+        TableType.EXTERNAL,
+        tableName -> {
+          sql("SET %s = false", syncEnabled);
+          try {
+            sql("ALTER TABLE %s ADD COLUMNS (name STRING)", tableName);
+            DeltaTableMetadata metadata = syncedMetadata(tableName);
+            assertThat(columnNames(metadata)).containsExactly("id");
+            assertThat(metadata.getLastCommitVersion()).isEqualTo(0L);
+          } finally {
+            sql("SET %s = true", syncEnabled);
+          }
         });
   }
 }

@@ -45,7 +45,7 @@ import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory, UpdateExternalTableMetadataHook}
 import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
 import org.apache.spark.sql.delta.util.CatalogTableUtils
 import org.apache.spark.sql.delta.implicits.addFileEncoder
@@ -70,7 +70,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.SparkException
 import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SaveMode, SparkSession}
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -571,6 +571,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     registerPostCommitHook(UpdateCatalogFactory.getUpdateCatalogHook(ct, spark))
     if (CatalogTableUtils.isUnityCatalogManagedTable(ct)) {
       registerPostCommitHook(UpdateMetricsHook(Some(ct)))
+    } else if (ct.tableType == CatalogTableType.EXTERNAL) {
+      registerPostCommitHook(UpdateExternalTableMetadataHook(ct))
     }
   }
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
@@ -2429,6 +2431,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
       )
 
       executionObserver.transactionCommitted()
+      // commitLarge runs no post-commit hooks, but the catalog entry of an EXTERNAL table must
+      // still learn the metadata it commits (e.g. RESTORE changing the schema).
+      committed.foreach { c =>
+        val committedActions: Seq[Action] = Seq(metadata) ++ newProtocol ++
+          capturedDomainMetadata.collect { case d: DomainMetadata => d }
+        c.postCommitHooks.collect { case h: UpdateExternalTableMetadataHook => h }
+          .foreach(runPostCommitHook(_, c.copy(committedActions = committedActions)))
+      }
       (attemptVersion, postCommitSnapshot)
     } catch {
       case e: Throwable =>

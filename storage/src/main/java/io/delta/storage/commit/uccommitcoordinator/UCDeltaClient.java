@@ -57,7 +57,8 @@ public interface UCDeltaClient extends UCClient {
   StagingTableInfo createStagingTable(TableIdentifier tableIdentifier) throws IOException;
 
   /**
-   * Finalizes a previously staged Delta table, making it visible in the catalog. Mirrors the
+   * Finalizes a previously staged Delta table, or registers an EXTERNAL Delta table, making it
+   * visible in the catalog. Mirrors the
    * shape of {@link UCClient#commit}: the catalog-level identity is conveyed by
    * {@code tableId} / {@code tableUri} / {@code tableIdentifier}; the Delta-log shape is
    * conveyed by an {@link AbstractMetadata} (description, schemaString, partitionColumns,
@@ -75,6 +76,11 @@ public interface UCDeltaClient extends UCClient {
    *                               row-tracking); pass an empty list when none are set
    * @param lastCommitTimestampMs  Delta-log timestamp of the initial commit; UC stores this on
    *                               the catalog entry
+   * @param lastCommitVersion      Delta-log version of the registered snapshot. It is 0 for a
+   *                               new table and can be higher when an EXTERNAL table is
+   *                               registered over an existing Delta log. Recording a version
+   *                               above 0 is best effort: the table can be created with UC
+   *                               still at version 0
    * @param uniformMetadata        UniForm Iceberg metadata generated for the initial snapshot;
    *                               empty when the table was not created with UniForm enabled
    * @return the newly created table's {@link TableInfo}
@@ -88,7 +94,44 @@ public interface UCDeltaClient extends UCClient {
       AbstractProtocol protocol,
       List<AbstractDomainMetadata> domainMetadata,
       long lastCommitTimestampMs,
+      long lastCommitVersion,
       Optional<UniformMetadata> uniformMetadata) throws IOException;
+
+  /**
+   * Updates the catalog entry of an EXTERNAL table to match a committed Delta snapshot, without
+   * a commit. The update replaces the entry's columns, partition columns, comment, properties,
+   * protocol and UC-modeled domain metadata, removes the properties that the commit removed, and
+   * records {@code commitVersion} and {@code commitTimestampMs}.
+   *
+   * <p>The update is skipped when the table no longer exists, when the catalog entry's location
+   * is not {@code tableUri} (the name now refers to another table), or when the entry already
+   * records {@code commitVersion} or a later version (a newer commit already updated it). The update is conditional on the entry's
+   * etag; on an etag conflict the entry is reloaded and the update retried once.
+   *
+   * @param tableUri          storage location of the committed Delta table
+   * @param tableIdentifier   catalog + schema namespace and table name
+   * @param oldMetadata       the Delta metadata before the commit; only its {@code
+   *                          configuration} is consumed, to find removed properties
+   * @param newMetadata       the Delta metadata after the commit; {@code description}, {@code
+   *                          schemaString}, {@code partitionColumns}, and {@code configuration}
+   *                          are consumed
+   * @param newProtocol       the Delta protocol after the commit
+   * @param domainMetadata    the snapshot's domain-metadata entries plus the commit's removals;
+   *                          entries for domains UC does not model are ignored
+   * @param commitVersion     the committed Delta version
+   * @param commitTimestampMs the committed Delta version's timestamp, in epoch milliseconds
+   * @return {@code true} if the entry was updated, {@code false} if the update was skipped
+   * @throws IOException on network or API errors, including a second etag conflict
+   */
+  boolean updateTableMetadata(
+      URI tableUri,
+      TableIdentifier tableIdentifier,
+      AbstractMetadata oldMetadata,
+      AbstractMetadata newMetadata,
+      AbstractProtocol newProtocol,
+      List<AbstractDomainMetadata> domainMetadata,
+      long commitVersion,
+      long commitTimestampMs) throws IOException;
 
   /**
    * Reports post-commit telemetry for a table (file/row counts, byte counts, file-size

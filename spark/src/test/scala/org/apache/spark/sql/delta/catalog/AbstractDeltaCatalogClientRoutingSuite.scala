@@ -30,11 +30,14 @@ import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFa
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.catalyst.catalog.CatalogTableType
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, V1Table}
 import org.apache.spark.sql.delta.{CatalogManagedTableMaintenanceOperation, IcebergConstants}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -892,6 +895,55 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
   private def tableExistsClient(loadResult: => TableInfo): UCDeltaCatalogClientImpl =
     new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = new StubUCDeltaClient(loadResult))
 
+  private def externalCatalogTable: CatalogTable = CatalogTable(
+    identifier = TableIdentifier("tbl", Some("sch"), Some("main")),
+    tableType = CatalogTableType.EXTERNAL,
+    storage = CatalogStorageFormat.empty.copy(locationUri = Some(new URI("s3://bucket/table"))),
+    schema = new StructType().add("id", "int"))
+
+  // TableCatalog.PROP_LOCATION is a V2-only key that must not reach UC table properties.
+  private val configWithReservedKey =
+    Map("k" -> "v", TableCatalog.PROP_LOCATION -> "s3://bucket/table")
+
+  test("createTable registers an EXTERNAL table with its snapshot version") {
+    val ucClient = new RecordingCreateUpdateUCDeltaClient
+    new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = ucClient).createTable(
+      Identifier.of(Array("sch"), "tbl"),
+      externalCatalogTable,
+      Metadata(configuration = configWithReservedKey),
+      Seq.empty,
+      Protocol(1, 2),
+      lastCommitTimestampMs = 2000L,
+      lastCommitVersion = 3L)
+
+    val (tableType, metadata, version) = ucClient.created.get
+    assert(tableType === UcTableType.EXTERNAL)
+    assert(metadata.getConfiguration.asScala === Map("k" -> "v"))
+    assert(version === 3L)
+  }
+
+  test("updateTableMetadata forwards the commit without reserved properties") {
+    val ucClient = new RecordingCreateUpdateUCDeltaClient
+    val updated = new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = ucClient)
+      .updateTableMetadata(
+        externalCatalogTable,
+        new URI("s3://bucket/table"),
+        Metadata(configuration = configWithReservedKey),
+        Metadata(configuration = configWithReservedKey + ("k2" -> "v2")),
+        Protocol(1, 2),
+        Seq.empty,
+        commitVersion = 5L,
+        commitTimestampMs = 6000L)
+
+    assert(updated)
+    val (tableUri, ident, oldMetadata, newMetadata, version) = ucClient.updated.get
+    assert(tableUri === new URI("s3://bucket/table"))
+    assert(ident.getNamespace.toSeq === Seq("main", "sch") && ident.getName === "tbl")
+    assert(oldMetadata.getConfiguration.asScala === Map("k" -> "v"))
+    assert(newMetadata.getConfiguration.asScala === Map("k" -> "v", "k2" -> "v2"))
+    assert(version === 5L)
+  }
+
   test("tableExists: returns true when UC returns table info") {
     val client = tableExistsClient(existingDeltaTableInfo())
     assert(client.tableExists(Identifier.of(Array("sch"), "tbl")))
@@ -972,7 +1024,18 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       protocol: AbstractProtocol,
       domainMetadata: util.List[AbstractDomainMetadata],
       lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
       uniformMetadata: Optional[UniformMetadata]): TableInfo =
+    throw new UnsupportedOperationException
+  override def updateTableMetadata(
+      tableUri: URI,
+      tableIdentifier: StorageTableIdentifier,
+      oldMetadata: AbstractMetadata,
+      newMetadata: AbstractMetadata,
+      newProtocol: AbstractProtocol,
+      domainMetadata: util.List[AbstractDomainMetadata],
+      commitVersion: Long,
+      commitTimestampMs: Long): Boolean =
     throw new UnsupportedOperationException
   // scalastyle:off argcount
   override def commit(
@@ -1026,6 +1089,38 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
  * {@link TableInfo} reference is rebound (cheap). For tests that need to vary the result
  * across calls, replace this with a {@code Supplier}-shaped constructor.
  */
+/** Records the arguments of {@code createTable} and {@code updateTableMetadata}. */
+private class RecordingCreateUpdateUCDeltaClient extends ThrowingUCDeltaClient {
+  var created: Option[(UcTableType, AbstractMetadata, Long)] = None
+  var updated: Option[(URI, StorageTableIdentifier, AbstractMetadata, AbstractMetadata, Long)] =
+    None
+  override def createTable(
+      tableUri: URI,
+      tableIdentifier: StorageTableIdentifier,
+      tableType: UcTableType,
+      metadata: AbstractMetadata,
+      protocol: AbstractProtocol,
+      domainMetadata: util.List[AbstractDomainMetadata],
+      lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
+      uniformMetadata: Optional[UniformMetadata]): TableInfo = {
+    created = Some((tableType, metadata, lastCommitVersion))
+    null
+  }
+  override def updateTableMetadata(
+      tableUri: URI,
+      tableIdentifier: StorageTableIdentifier,
+      oldMetadata: AbstractMetadata,
+      newMetadata: AbstractMetadata,
+      newProtocol: AbstractProtocol,
+      domainMetadata: util.List[AbstractDomainMetadata],
+      commitVersion: Long,
+      commitTimestampMs: Long): Boolean = {
+    updated = Some((tableUri, tableIdentifier, oldMetadata, newMetadata, commitVersion))
+    true
+  }
+}
+
 private class StubUCDeltaClient(loadTableResult: => TableInfo) extends ThrowingUCDeltaClient {
   override def loadTable(tableIdentifier: StorageTableIdentifier): TableInfo = loadTableResult
 }
