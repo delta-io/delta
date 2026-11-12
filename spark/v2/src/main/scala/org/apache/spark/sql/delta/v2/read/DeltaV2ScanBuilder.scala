@@ -266,30 +266,6 @@ private[read] object DeltaV2ScanBuilder {
     case a: AttributeReference => a.withExprId(ExprId(0L)).withQualifier(Nil)
   }
 
-  def create(
-      tableName: String,
-      initialSnapshot: Snapshot,
-      kernelEngine: Engine,
-      catalogTable: Option[CatalogTable],
-      tableManager: DeltaV2TableManager,
-      dataSchema: StructType,
-      partitionSchema: StructType,
-      tableSchema: StructType,
-      catalogStats: Option[Statistics],
-      options: CaseInsensitiveStringMap): DeltaV2ScanBuilder =
-    new DeltaV2ScanBuilder(
-      tableName = tableName,
-      initialSnapshot = initialSnapshot,
-      kernelEngine = kernelEngine,
-      catalogTable = catalogTable,
-      snapshotManager = tableManager.snapshotManager(catalogTable),
-      tableManager = Some(tableManager),
-      dataSchema = dataSchema,
-      partitionSchema = partitionSchema,
-      tableSchema = tableSchema,
-      catalogStats = catalogStats,
-      options = options)
-
   /**
    * Adapter for callers that hold a Kernel snapshot but push no filters -- currently Delta Sharing
    * DSv2, whose batch scan builds a full-table read (filter pushdown is a follow-up milestone).

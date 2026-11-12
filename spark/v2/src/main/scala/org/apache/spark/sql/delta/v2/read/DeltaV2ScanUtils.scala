@@ -46,17 +46,17 @@ object DeltaV2ScanUtils {
       tableSchema: StructType,
       catalogStats: Option[Statistics],
       options: CaseInsensitiveStringMap): ScanBuilder = {
-    DeltaV2ScanBuilder.create(
+    new DeltaV2ScanBuilder(
       tableName = tableName,
       initialSnapshot = initialSnapshot,
       kernelEngine = kernelEngine,
       catalogTable = catalogTable,
-      tableManager = tableManager,
+      snapshotManager = tableManager.snapshotManager(catalogTable),
+      tableManager = Some(tableManager),
       dataSchema = dataSchema,
       partitionSchema = partitionSchema,
       tableSchema = tableSchema,
       catalogStats = catalogStats,
-      options = options
-    )
+      options = options)
   }
 }
