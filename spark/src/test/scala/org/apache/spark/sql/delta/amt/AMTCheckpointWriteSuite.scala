@@ -500,7 +500,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       assert(leafLoc.contains("leaf with space.parquet") && !leafLoc.contains("%20"))
 
       val provider = AMTCheckpointProvider.fromCheckpoint(
-        deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
+        spark, deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
       // The provider resolves the spaced pointers to absolute, raw paths under the table root.
       assert(provider.liveLeafManifestAbsolutePaths.forall(p =>
         p.isAbsolute && p.toString.contains("leaf with space.parquet") &&

@@ -88,6 +88,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
   private def reconstructAddFiles(
       provider: AMTCheckpointProvider, deltaLog: DeltaLog, metadata: Metadata): DataFrame =
     AMTCheckpointProvider(
+        spark = spark,
         manifestCommitVersion = provider.manifestCommitVersion,
         checkpointAction = updateCheckpointActions(provider.checkpointAction) {
           case _: Metadata => metadata
@@ -510,7 +511,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
               sizeInBytes = rewrittenFile.length())
           }
           val rewrittenProvider = AMTCheckpointProvider.fromCheckpoint(
-            deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
+            spark, deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
           assertLeavesEqual(rewrittenProvider.leaves, provider.leaves)
 
           // Field-id read is what makes this work: with it off, the read falls back to
@@ -521,7 +522,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
           withSQLConf(SQLConf.PARQUET_FIELD_ID_READ_ENABLED.key -> "false") {
             val error = intercept[SparkRuntimeException] {
               AMTCheckpointProvider.fromCheckpoint(
-                deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
+                spark, deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
             }
             assert(error.getCondition == "EXPRESSION_DECODING_FAILED",
               s"Expected an EXPRESSION_DECODING_FAILED error, got ${error.getCondition}.")

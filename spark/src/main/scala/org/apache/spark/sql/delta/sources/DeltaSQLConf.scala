@@ -679,6 +679,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val AMT_ROOT_CACHE_MAX_NUM_ENTRIES =
+    buildConf("amt.rootCache.maxNumEntries")
+      .internal()
+      .doc("Cache the persisted AMT root rows only when the entry count from the Parquet " +
+        "footer, including DATA and DATA_MANIFEST entries, is less than this threshold. " +
+        "Otherwise collect only leaf pointers during discovery and read the root again for " +
+        "reconstruction. Set to 0 to disable root row caching and skip the footer count check.")
+      .intConf
+      .checkValue(_ >= 0, "amt.rootCache.maxNumEntries must be non-negative.")
+      .createWithDefault(12000)
+
   val AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT =
     buildConf("amt.largeCommitActionsCountThresholdForInlineManifestCommit")
       .internal()

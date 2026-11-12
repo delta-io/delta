@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SingleCommit}
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper
+import io.delta.kernel.exceptions.{InvalidTableException => KernelInvalidTableException}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
 import org.apache.spark.SparkConf
@@ -161,6 +162,66 @@ class DeltaV2TableManagerImplSuite
     }
   }
 
+  Seq((true, true), (true, false), (false, true), (false, false)).foreach {
+    case (commitRangeValidation, failOnDataLoss) =>
+      test("getTableChanges applies commit range flags " +
+          s"(commitRangeValidation=$commitRangeValidation, failOnDataLoss=$failOnDataLoss)") {
+        withSQLConf(
+            DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
+            DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false") {
+          withTempDir { dir =>
+            val path = dir.getCanonicalPath
+            spark.range(0, 1, 1, 1).write.format("delta").save(path)
+            spark.range(1, 2, 1, 1).write.format("delta").mode("append").save(path)
+            spark.range(2, 3, 1, 1).write.format("delta").mode("append").save(path)
+            Files.delete(new File(dir, "_delta_log/00000000000000000001.json").toPath)
+
+            forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
+              val kernelEngine = manager.kernelContext.getDefaultEngine()
+              val queryContext = DeltaV2QueryContext(catalogTableOpt)
+              Seq(None, Some(2L)).foreach { endVersion =>
+                val params = GetTableChangesParam(
+                  0L, endVersion, commitRangeValidation, failOnDataLoss)
+                if (commitRangeValidation) {
+                  val error = intercept[KernelInvalidTableException] {
+                    manager.getTableChanges(kernelEngine, params, queryContext)
+                  }
+                  assert(error.getMessage.contains("versions are not contiguous"))
+                } else {
+                  val kernelCommitRange =
+                    manager.getTableChanges(kernelEngine, params, queryContext)
+                  try {
+                    val kernelCommitFiles = kernelCommitRange.getCommitFiles()
+                    try {
+                      assert(kernelCommitFiles.hasNext)
+                      assert(kernelCommitFiles.next().getVersion === 0L)
+                      if (failOnDataLoss) {
+                        val error = intercept[KernelInvalidTableException] {
+                          kernelCommitFiles.hasNext
+                        }
+                        assert(error.getMessage.contains(path))
+                      } else {
+                        assert(kernelCommitFiles.hasNext)
+                        assert(kernelCommitFiles.next().getVersion === 2L)
+                        assert(!kernelCommitFiles.hasNext)
+                      }
+                    } finally {
+                      kernelCommitFiles.close()
+                    }
+                  } finally {
+                    kernelCommitRange match {
+                      case closeable: AutoCloseable => closeable.close()
+                      case _ =>
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+  }
+
   test("getSingleCommitIterator yields one DeltaSingleCommit per version in range") {
     withSQLConf(
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
@@ -178,7 +239,8 @@ class DeltaV2TableManagerImplSuite
             (1L, Some(1L), List(1L)),
             (1L, None, List(1L, 2L)))
           ranges.foreach { case (startVersion, endVersion, expectedVersions) =>
-            val changes = manager.getSingleCommitIterator(startVersion, endVersion, catalogTableOpt)
+            val changes =
+              manager.getSingleCommitIterator(startVersion, endVersion, catalogTableOpt)
             try {
               val versions = changes.map { commit =>
                 try {
@@ -254,20 +316,6 @@ class DeltaV2TableManagerImplSuite
       }
   }
 
-  test("getSingleCommitIterator rejects failOnDataLoss = true before reading the table") {
-    withTempDir { dir =>
-      forPathAndCatalogManagers(dir.getCanonicalPath) { (manager, catalogTableOpt) =>
-        Seq(None, Some(1L)).foreach { endVersion =>
-          val error = intercept[AssertionError] {
-            manager.getSingleCommitIterator(0L, endVersion, catalogTableOpt, failOnDataLoss = true)
-          }
-          assert(error.getMessage ===
-            "getSingleCommitIterator does not support failOnDataLoss = true")
-        }
-      }
-    }
-  }
-
   test("metadata and protocol collectors reject duplicate actions") {
     Seq("metaData", "protocol").foreach { actionName =>
       withTempDir { dir =>
@@ -287,17 +335,14 @@ class DeltaV2TableManagerImplSuite
           UTF_8)
 
         forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-          val snapshotManager = manager.snapshotManager(catalogTableOpt)
-          val kernelEngine = manager.kernelContext.getDefaultEngine()
+          val queryContext = DeltaV2QueryContext(catalogTableOpt)
           val error = intercept[IllegalArgumentException] {
             if (actionName == "metaData") {
               StreamingHelper.collectMetadataActions(
-                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine,
-                DeltaV2QueryContext.empty)
+                1L, Optional.of(Long.box(1L)), manager, queryContext, true)
             } else {
               StreamingHelper.collectProtocolActions(
-                1L, Optional.of(Long.box(1L)), snapshotManager, kernelEngine,
-                DeltaV2QueryContext.empty)
+                1L, Optional.of(Long.box(1L)), manager, queryContext, true)
             }
           }
           assert(error.getMessage ===

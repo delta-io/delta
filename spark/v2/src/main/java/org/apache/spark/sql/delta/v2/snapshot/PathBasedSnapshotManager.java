@@ -156,6 +156,9 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
               CommitRangeBuilder.CommitBoundary.atVersion((Long) params.endVersion().get()));
     }
 
-    return builder.build(engine);
+    return builder
+        .withCommitRangeValidation(params.commitRangeValidation())
+        .withFailOnDataLoss(params.failOnDataLoss())
+        .build(engine);
   }
 }
