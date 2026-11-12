@@ -768,4 +768,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
     // Client need to clean up snapshot cache if any
     cacheManager.invalidate(getTablePath().toString());
   }
+
+  /** Drops the cached snapshot so the next access reads the table from storage. */
+  public void invalidateCachedSnapshot() {
+    reloadSnapshot();
+  }
 }
