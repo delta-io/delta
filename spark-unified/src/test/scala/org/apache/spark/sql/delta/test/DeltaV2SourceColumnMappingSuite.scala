@@ -16,17 +16,19 @@
 
 package org.apache.spark.sql.delta.test
 
-import org.apache.spark.sql.delta.ColumnMappingStreamingBlockedWorkflowSuiteBase
-import org.apache.spark.sql.delta.DeltaSourceIdColumnMappingSuite
-import org.apache.spark.sql.delta.DeltaSourceNameColumnMappingSuite
-import org.apache.spark.sql.delta.DeltaSourceSuite
+import org.apache.spark.sql.delta.{
+  ColumnMappingStreamingBlockedWorkflowSuiteBase,
+  DeltaSourceIdColumnMappingSuite,
+  DeltaSourceNameColumnMappingSuite,
+  DeltaSourceSuite
+}
 
 /**
  * Test suite that runs DeltaSourceColumnMappingSuite using the V2 connector
  * (V2_ENABLE_MODE=STRICT).
  *
- * SparkTable (V2) is read-only and does not support DDL, so DDL/DML operations are routed
- * through the V1 connector via `executeDml`. Only streaming reads use the V2 connector.
+ * This suite routes DDL/DML through V1 via `executeDml`. Only streaming reads use
+ * the V2 connector.
  *
  * The pass/fail sets compose [[DeltaV2SourceSuite.PassingTests]] and
  * [[DeltaV2SourceSuite.FailingTests]] with the column-mapping-specific tests added to the

@@ -47,14 +47,12 @@ import io.unitycatalog.client.model.CreateTable;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
 import io.unitycatalog.client.model.TableType;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.*;
-import java.util.function.Supplier;
 
 /**
  * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit
@@ -130,22 +128,6 @@ public class UCTokenBasedRestClient implements UCClient {
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
-  }
-
-  /**
-   * 6-arg constructor for symmetry with {@link UCDeltaTokenBasedRestClient}. The
-   * {@code credentialRenewalEnabled}, {@code credentialScopedFsEnabled}, and
-   * {@code hadoopConfSupplier} parameters are not used by this client and are accepted only so
-   * that callers can construct either client uniformly by reflection.
-   */
-  public UCTokenBasedRestClient(
-      String baseUri,
-      TokenProvider tokenProvider,
-      Map<String, String> appVersions,
-      boolean credentialRenewalEnabled,
-      boolean credentialScopedFsEnabled,
-      Supplier<Configuration> hadoopConfSupplier) {
-    this(baseUri, tokenProvider, appVersions);
   }
 
   /**
@@ -340,12 +322,11 @@ public class UCTokenBasedRestClient implements UCClient {
    * @return The converted GetCommitsResponse
    */
   private GetCommitsResponse toGetCommitsResponse(DeltaGetCommitsResponse response, URI tableUri) {
-    Path basePath = CoordinatedCommitsUtils.commitDirPath(
-        CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
+    Path logPath = CoordinatedCommitsUtils.logDirPath(new Path(tableUri));
 
     List<Commit> commits = new ArrayList<>();
     for (DeltaCommitInfo commitInfo : response.getCommits()) {
-      commits.add(fromDeltaCommitInfo(commitInfo, basePath));
+      commits.add(fromDeltaCommitInfo(commitInfo, logPath));
     }
 
     return new GetCommitsResponse(commits, response.getLatestTableVersion());
@@ -355,17 +336,18 @@ public class UCTokenBasedRestClient implements UCClient {
    * Converts a Unity Catalog SDK {@link DeltaCommitInfo} to a Delta {@link Commit}.
    *
    * @param commitInfo The SDK commit info to convert
-   * @param basePath   The base path for constructing file paths
+   * @param logPath    The table's delta log path; the commit may be staged or already published
    * @return The converted Commit
    */
-  private Commit fromDeltaCommitInfo(DeltaCommitInfo commitInfo, Path basePath) {
+  private Commit fromDeltaCommitInfo(DeltaCommitInfo commitInfo, Path logPath) {
     FileStatus fileStatus = new FileStatus(
         commitInfo.getFileSize(),
         false /* isdir */,
         0 /* block_replication */,
         0 /* blocksize */,
         commitInfo.getFileModificationTimestamp(),
-        new Path(basePath, commitInfo.getFileName()));
+        CoordinatedCommitsUtils.catalogCommitPath(
+            logPath, commitInfo.getVersion(), commitInfo.getFileName()));
 
     return new Commit(commitInfo.getVersion(), fileStatus, commitInfo.getTimestamp());
   }
@@ -381,13 +363,17 @@ public class UCTokenBasedRestClient implements UCClient {
       String schemaName,
       String storageLocation,
       List<UCClient.ColumnDef> columns,
-      Map<String, String> properties) throws CommitFailedException {
+      AbstractProtocol protocol,
+      Map<String, String> properties,
+      long lastCommitTimestampMs,
+      List<AbstractDomainMetadata> domainMetadata) throws CommitFailedException {
     ensureOpen();
     Objects.requireNonNull(tableName, "tableName must not be null.");
     Objects.requireNonNull(catalogName, "catalogName must not be null.");
     Objects.requireNonNull(schemaName, "schemaName must not be null.");
     Objects.requireNonNull(storageLocation, "storageLocation must not be null.");
     Objects.requireNonNull(columns, "columns must not be null.");
+    Objects.requireNonNull(protocol, "protocol must not be null.");
     Objects.requireNonNull(properties, "properties must not be null.");
 
     List<ColumnInfo> ucColumns = columns.stream()

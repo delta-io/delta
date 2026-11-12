@@ -235,6 +235,7 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
     // changes either.
     case (fromType: AtomicType, toType: AtomicType) if isStringTypeChange(fromType, toType) =>
       Seq.empty
+    case (_: NullType, _) => Seq.empty
     // Don't recurse inside structs, `collectTypeChanges` should be called directly on each struct
     // fields instead to only collect type changes inside these fields.
     case (_: StructType, _: StructType) => Seq.empty

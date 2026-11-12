@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.actions.{
   AddFile,
   DeletionVectorDescriptor,
   Metadata,
+  Protocol,
   RemoveFile
 }
 import org.apache.spark.sql.delta.deletionvectors.{
@@ -83,7 +84,9 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       deletionVector: DeletionVectorDescriptor): (DeletionVectorDescriptor, String) = {
     if (deletionVector != null) {
       if (deletionVector.storageType == DeletionVectorDescriptor.INLINE_DV_MARKER) {
-        (deletionVector, Hashing.sha256().hashString(deletionVector.uniqueId, UTF_8).toString)
+        val responseId =
+          Hashing.sha256().hashString(deletionVector.legacyUniqueId, UTF_8).toString
+        (deletionVector, responseId)
       } else {
         val dvPath = deletionVector.absolutePath(new Path("not-used"))
         (
@@ -92,7 +95,7 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
               SparkPath.fromPathString(dvPath.getName).urlEncoded),
             storageType = DeletionVectorDescriptor.PATH_DV_MARKER
           ),
-          Hashing.sha256().hashString(deletionVector.uniqueId, UTF_8).toString
+          Hashing.sha256().hashString(deletionVector.legacyUniqueId, UTF_8).toString
         )
       }
     } else {
@@ -359,12 +362,17 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       inlineDvFormat: Option[RoaringBitmapArrayFormat.Value] = None,
       assertMultipleDvsInOneFile: Boolean = false,
       reverseFileOrder: Boolean = false,
-      limitHint: Option[Long] = None): Unit = {
+      limitHint: Option[Long] = None,
+      snapshotVersion: Option[Long] = None): Unit = {
     val lines = Seq.newBuilder[String]
     var totalSize = 0L
 
-    // To prepare faked delta sharing responses with needed files for DeltaSharingClient.
-    val snapshotToUse = getSnapshotToUse(deltaTable, versionAsOf)
+    // To prepare faked delta sharing responses with needed files for DeltaSharingClient. The block
+    // is keyed by versionAsOf/timestampAsOf, but the snapshot whose data it serves can be pinned
+    // independently via snapshotVersion -- so a timestampAsOf-keyed block can serve an older
+    // version's snapshot (the server returns that version's files/metadata at the timestamp),
+    // which versionAsOf alone cannot express since getSnapshotToUse maps a timestamp to latest.
+    val snapshotToUse = getSnapshotToUse(deltaTable, snapshotVersion.orElse(versionAsOf))
     val fileActionsArrayBuffer = ArrayBuffer[model.DeltaSharingFileAction]()
     val dvPathToCount = scala.collection.mutable.Map[String, Int]()
     var numRecords = 0L
@@ -478,7 +486,12 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
 
     val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(deltaTable))
     val startingSnapshot = deltaLog.getSnapshotAt(startingVersion)
-    actionLines += DeltaSharingProtocol(deltaProtocol = startingSnapshot.protocol).json
+    // The head protocol is stamped with startingVersion, matching the head metadata, mirroring how
+    // the server stamps the head Protocol for historical-protocol responses.
+    actionLines += DeltaSharingProtocol(
+      deltaProtocol = startingSnapshot.protocol,
+      version = startingVersion
+    ).json
     actionLines += DeltaSharingMetadata(
       deltaMetadata = startingSnapshot.metadata,
       version = startingVersion
@@ -492,13 +505,20 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
         val version = FileNames.getFileVersion(new Path(f.getName))
         if (version >= startingVersion && version <= endingVersion) {
           // protocol/metadata are processed from startingSnapshot, only process versions greater
-          // than startingVersion for real actions and possible metadata changes.
+          // than startingVersion for real actions and possible metadata/protocol changes.
           maxVersion = maxVersion.max(version)
           val timestamp = f.lastModified
 
           FileUtils.readLines(f).asScala.foreach { l =>
             val action = Action.fromJson(l)
             action match {
+              case p: Protocol if version > startingVersion =>
+                // A protocol change committed inside the range (e.g. enabling deletionVectors)
+                // is streamed as its own versioned Protocol, mirroring historical metadata.
+                actionLines += DeltaSharingProtocol(
+                  deltaProtocol = p,
+                  version = version
+                ).json
               case m: Metadata =>
                 actionLines += DeltaSharingMetadata(
                   deltaMetadata = m,
@@ -613,6 +633,14 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
           val versionHasCdc = versionActions.exists(_.isInstanceOf[AddCDCFile])
           versionActions.foreach { action =>
             action match {
+              case p: Protocol if version > startingVersion && !parquetFormat =>
+                // A protocol change committed inside the range (e.g. enabling deletionVectors) is
+                // streamed as its own versioned Protocol for delta-format responses, mirroring
+                // historical metadata. Parquet responses never emit historical protocols.
+                actionLines += DeltaSharingProtocol(
+                  deltaProtocol = p,
+                  version = version
+                ).json
               case m: Metadata =>
                 if (parquetFormat) {
                   actionLines += JsonUtils.toJson(getClientMetadataForParquet(m).wrap)
@@ -742,7 +770,12 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       )
     } else {
       Seq(
-        DeltaSharingProtocol(deltaProtocol = startingSnapshot.protocol).json,
+        // The head protocol is stamped with startingVersion, matching the head metadata, mirroring
+        // how the server stamps the head Protocol for historical-protocol responses.
+        DeltaSharingProtocol(
+          deltaProtocol = startingSnapshot.protocol,
+          version = startingVersion
+        ).json,
         DeltaSharingMetadata(
           deltaMetadata = startingSnapshot.metadata,
           version = startingVersion

@@ -19,7 +19,9 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
@@ -46,6 +48,20 @@ public class LogReplayUtils {
             .map(DeletionVectorDescriptor::getUniqueId);
 
     return new UniqueFileActionTuple(pathAsUri, dvId);
+  }
+
+  /** Builds the unique file-action key for a materialized {@link AddFile}. */
+  public static UniqueFileActionTuple getUniqueFileAction(AddFile addFile) {
+    return new UniqueFileActionTuple(
+        pathToUri(addFile.getPath()),
+        addFile.getDeletionVector().map(DeletionVectorDescriptor::getUniqueId));
+  }
+
+  /** Builds the unique file-action key for a materialized {@link RemoveFile}. */
+  public static UniqueFileActionTuple getUniqueFileAction(RemoveFile removeFile) {
+    return new UniqueFileActionTuple(
+        pathToUri(removeFile.getPath()),
+        removeFile.getDeletionVector().map(DeletionVectorDescriptor::getUniqueId));
   }
 
   static boolean[] prepareSelectionVectorBuffer(boolean[] currentSelectionVector, int newSize) {

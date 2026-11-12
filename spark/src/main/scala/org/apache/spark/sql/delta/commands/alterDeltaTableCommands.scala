@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -154,9 +154,6 @@ case class AlterTableSetPropertiesDeltaCommand(
           true
       }.toMap
 
-      // For Coordinated Commits table validation
-      CoordinatedCommitsUtils.validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
-        existingConfs = metadata.configuration, propertyOverrides = filteredConfs)
       // For Catalog Owned table validation
       CatalogOwnedTableUtils.validatePropertiesForAlterTableSetPropertiesDeltaCommand(
         txn.snapshot, propertyOverrides = filteredConfs)
@@ -239,8 +236,6 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       }
 
       if (!fromDropFeatureCommand) {
-        CoordinatedCommitsUtils.validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
-          existingConfs = metadata.configuration, propKeysToUnset = normalizedKeys)
         CatalogOwnedTableUtils.validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
           txn.snapshot, propKeysToUnset = normalizedKeys)
       }
@@ -1061,8 +1056,9 @@ case class AlterTableChangeColumnDeltaCommand(
       case a: ArrayType if a != newColumn.dataType =>
         val fieldName = UnresolvedAttribute(columnPath :+ columnName).name
         throw DeltaErrors.cannotUpdateArrayField(table.name(), fieldName)
-      case _: AtomicType =>
+      case _: AtomicType => ()
       // update is okay
+      case _: NullType => ()
       case o =>
         throw DeltaErrors.cannotUpdateOtherField(table.name(), o)
     }

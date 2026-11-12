@@ -15,13 +15,14 @@
  */
 package io.delta.kernel.internal.checksum
 
+import java.lang.{Boolean => JBoolean, Long => JLong}
 import java.util
 import java.util.{Collections, Optional}
 
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, Row}
-import io.delta.kernel.internal.actions.{DomainMetadata, Format, Metadata, Protocol}
+import io.delta.kernel.internal.actions.{AddFile, DomainMetadata, Format, Metadata, Protocol, SetTransaction}
 import io.delta.kernel.internal.checksum.CRCInfo.{CRC_FILE_READ_SCHEMA, CRC_FILE_SCHEMA}
 import io.delta.kernel.internal.data.GenericColumnVector
 import io.delta.kernel.internal.stats.FileSizeHistogram
@@ -54,6 +55,22 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
     stringStringMapValue(new util.HashMap[String, String]() {
       put("delta.appendOnly", "true")
     }))
+
+  /** Builds a minimal AddFile row for allFiles tests. */
+  private def testAddFileRow(path: String, size: Long): Row =
+    AddFile.createAddFileRow(
+      null, // statistics
+      path,
+      stringStringMapValue(Collections.emptyMap[String, String]()),
+      size.asInstanceOf[JLong],
+      20L.asInstanceOf[JLong], // modificationTime
+      true.asInstanceOf[JBoolean], // dataChange
+      Optional.empty(), // deletionVector
+      Optional.empty(), // tags
+      Optional.empty(), // baseRowId
+      Optional.empty(), // defaultRowCommitVersion
+      Optional.empty() // stats
+    )
 
   /** Creates a simple histogram with distinct values for identification in tests. */
   private def createTestHistogram(fileCount: Long): FileSizeHistogram = {
@@ -108,6 +125,15 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
           case "txnId" => stringVector(Seq(null))
           case "domainMetadata" => nullColumnVector(
               CRC_FILE_SCHEMA.get("domainMetadata").getDataType)
+          case "inCommitTimestampOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("inCommitTimestampOpt").getDataType)
+          case "setTransactions" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("setTransactions").getDataType)
+          case "numDeletedRecordsOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
+          case "numDeletionVectorsOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
+          case "allFiles" => nullColumnVector(CRC_FILE_SCHEMA.get("allFiles").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(fileSizeHistogram)
           case "histogramOpt" => histogramColumnVector(histogramOpt)
           case _ =>
@@ -205,6 +231,15 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
           case "txnId" => stringVector(Seq(null))
           case "domainMetadata" => nullColumnVector(
               CRC_FILE_SCHEMA.get("domainMetadata").getDataType)
+          case "inCommitTimestampOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("inCommitTimestampOpt").getDataType)
+          case "setTransactions" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("setTransactions").getDataType)
+          case "numDeletedRecordsOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
+          case "numDeletionVectorsOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
+          case "allFiles" => nullColumnVector(CRC_FILE_SCHEMA.get("allFiles").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ =>
             throw new IllegalArgumentException(s"Unknown field: $fieldName")
@@ -215,5 +250,296 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
     val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
     assert(crcInfo.isPresent)
     assert(!crcInfo.get().getFileSizeHistogram.isPresent)
+  }
+
+  test("reads inCommitTimestamp when present") {
+    val batch = new ColumnarBatch {
+      override def getSchema: StructType = CRC_FILE_SCHEMA
+      override def getSize: Int = 1
+      override def getColumnVector(ordinal: Int): ColumnVector = {
+        val fieldName = CRC_FILE_SCHEMA.at(ordinal).getName
+        fieldName match {
+          case "tableSizeBytes" => longVector(Seq(1000L))
+          case "numFiles" => longVector(Seq(10L))
+          case "numMetadata" => longVector(Seq(1L))
+          case "numProtocol" => longVector(Seq(1L))
+          case "metadata" =>
+            new GenericColumnVector(util.Arrays.asList(testMetadata.toRow()), Metadata.FULL_SCHEMA)
+          case "protocol" =>
+            new GenericColumnVector(util.Arrays.asList(testProtocol.toRow()), Protocol.FULL_SCHEMA)
+          case "txnId" => stringVector(Seq(null))
+          case "domainMetadata" =>
+            nullColumnVector(CRC_FILE_SCHEMA.get("domainMetadata").getDataType)
+          case "inCommitTimestampOpt" => longVector(Seq(1749830855993L))
+          case "setTransactions" =>
+            nullColumnVector(CRC_FILE_SCHEMA.get("setTransactions").getDataType)
+          case "numDeletedRecordsOpt" =>
+            nullColumnVector(CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
+          case "numDeletionVectorsOpt" =>
+            nullColumnVector(CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
+          case "allFiles" => nullColumnVector(CRC_FILE_SCHEMA.get("allFiles").getDataType)
+          case "fileSizeHistogram" => histogramColumnVector(None)
+          case _ => throw new IllegalArgumentException(s"Unknown field: $fieldName")
+        }
+      }
+    }
+
+    val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
+    assert(crcInfo.isPresent)
+    assert(
+      crcInfo.get().getInCommitTimestamp === Optional.of(java.lang.Long.valueOf(1749830855993L)))
+  }
+
+  test("inCommitTimestamp is empty when the column is null (older .crc files)") {
+    val batch = buildBatch(CRC_FILE_READ_SCHEMA, fileSizeHistogram = None, histogramOpt = None)
+    val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
+    assert(crcInfo.isPresent)
+    assert(!crcInfo.get().getInCommitTimestamp.isPresent)
+  }
+
+  test("toRow serializes inCommitTimestamp into the CRC_FILE_SCHEMA column") {
+    val original = new CRCInfo(
+      7L,
+      testMetadata,
+      testProtocol,
+      2000L,
+      20L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      /* inCommitTimestamp */ Optional.of(java.lang.Long.valueOf(1749830871085L)),
+      /* setTransactions */ Optional.empty(),
+      /* numDeletedRecords */ Optional.empty(),
+      /* numDeletionVectors */ Optional.empty(),
+      /* allFiles */ Optional.empty())
+    val row = original.toRow()
+    val ictIdx = CRC_FILE_SCHEMA.indexOf("inCommitTimestampOpt")
+    assert(!row.isNullAt(ictIdx))
+    assert(row.getLong(ictIdx) === 1749830871085L)
+  }
+
+  test("toRow leaves inCommitTimestamp column null when absent") {
+    val original = new CRCInfo(
+      8L,
+      testMetadata,
+      testProtocol,
+      2100L,
+      21L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+    val row = original.toRow()
+    assert(row.isNullAt(CRC_FILE_SCHEMA.indexOf("inCommitTimestampOpt")))
+  }
+
+  test("withInCommitTimestamp stamps the ICT onto an existing CRCInfo") {
+    val base = new CRCInfo(
+      9L,
+      testMetadata,
+      testProtocol,
+      3000L,
+      30L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+    assert(!base.getInCommitTimestamp.isPresent)
+    val stamped = base.withInCommitTimestamp(Optional.of(java.lang.Long.valueOf(1700000000000L)))
+    assert(stamped.getInCommitTimestamp === Optional.of(java.lang.Long.valueOf(1700000000000L)))
+    assert(stamped.getVersion === base.getVersion)
+    assert(stamped.getTableSizeBytes === base.getTableSizeBytes)
+    assert(stamped.getNumFiles === base.getNumFiles)
+  }
+
+  test("setTransactions is empty when the column is null (older .crc / large txn set)") {
+    val batch = buildBatch(CRC_FILE_READ_SCHEMA, fileSizeHistogram = None, histogramOpt = None)
+    val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
+    assert(crcInfo.isPresent)
+    assert(!crcInfo.get().getSetTransactions.isPresent)
+  }
+
+  test("toRow serializes setTransactions into the setTransactions array column") {
+    val txns = java.util.Arrays.asList(
+      new SetTransaction("app1", 5L, Optional.of(java.lang.Long.valueOf(100L))),
+      new SetTransaction("app2", 9L, Optional.empty()))
+    val original = new CRCInfo(
+      3L,
+      testMetadata,
+      testProtocol,
+      1000L,
+      10L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      /* inCommitTimestamp */ Optional.empty(),
+      /* setTransactions */ Optional.of(txns),
+      /* numDeletedRecords */ Optional.empty(),
+      /* numDeletionVectors */ Optional.empty(),
+      /* allFiles */ Optional.empty())
+    val row = original.toRow()
+    val idx = CRC_FILE_SCHEMA.indexOf("setTransactions")
+    assert(!row.isNullAt(idx))
+    assert(row.getArray(idx).getSize === 2)
+  }
+
+  test("toRow leaves setTransactions column null when absent") {
+    val original = new CRCInfo(
+      4L,
+      testMetadata,
+      testProtocol,
+      1000L,
+      10L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+    assert(original.toRow().isNullAt(CRC_FILE_SCHEMA.indexOf("setTransactions")))
+  }
+
+  test("constructor rejects setTransactions with a duplicate appId") {
+    val dupes = java.util.Arrays.asList(
+      new SetTransaction("app1", 5L, Optional.empty()),
+      new SetTransaction("app1", 6L, Optional.empty()))
+    val ex = intercept[IllegalArgumentException] {
+      new CRCInfo(
+        5L,
+        testMetadata,
+        testProtocol,
+        1000L,
+        10L,
+        Optional.empty(),
+        Optional.empty(),
+        Optional.empty(),
+        /* inCommitTimestamp */ Optional.empty(),
+        /* setTransactions */ Optional.of(dupes),
+        /* numDeletedRecords */ Optional.empty(),
+        /* numDeletionVectors */ Optional.empty(),
+        /* allFiles */ Optional.empty())
+    }
+    assert(ex.getMessage.contains("unique per appId"))
+  }
+
+  test("DV metrics are empty when the columns are null (older .crc / non-DV table)") {
+    val batch = buildBatch(CRC_FILE_READ_SCHEMA, fileSizeHistogram = None, histogramOpt = None)
+    val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
+    assert(crcInfo.isPresent)
+    assert(!crcInfo.get().getNumDeletedRecords.isPresent)
+    assert(!crcInfo.get().getNumDeletionVectors.isPresent)
+  }
+
+  test("toRow serializes DV metrics when present and leaves them null when absent") {
+    val withDv = new CRCInfo(
+      3L,
+      testMetadata,
+      testProtocol,
+      1000L,
+      10L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      /* inCommitTimestamp */ Optional.empty(),
+      /* setTransactions */ Optional.empty(),
+      /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(42L)),
+      /* numDeletionVectors */ Optional.of(java.lang.Long.valueOf(3L)),
+      /* allFiles */ Optional.empty())
+    val row = withDv.toRow()
+    assert(row.getLong(CRC_FILE_SCHEMA.indexOf("numDeletedRecordsOpt")) === 42L)
+    assert(row.getLong(CRC_FILE_SCHEMA.indexOf("numDeletionVectorsOpt")) === 3L)
+
+    val withoutDv = new CRCInfo(
+      4L,
+      testMetadata,
+      testProtocol,
+      1000L,
+      10L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+    val row2 = withoutDv.toRow()
+    assert(row2.isNullAt(CRC_FILE_SCHEMA.indexOf("numDeletedRecordsOpt")))
+    assert(row2.isNullAt(CRC_FILE_SCHEMA.indexOf("numDeletionVectorsOpt")))
+  }
+
+  test("constructor rejects DV metrics that are not both-present-or-both-absent") {
+    val ex = intercept[IllegalArgumentException] {
+      new CRCInfo(
+        5L,
+        testMetadata,
+        testProtocol,
+        1000L,
+        10L,
+        Optional.empty(),
+        Optional.empty(),
+        Optional.empty(),
+        /* inCommitTimestamp */ Optional.empty(),
+        /* setTransactions */ Optional.empty(),
+        /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(1L)),
+        /* numDeletionVectors */ Optional.empty(),
+        /* allFiles */ Optional.empty())
+    }
+    assert(ex.getMessage.contains("both be present or both absent"))
+  }
+
+  test("allFiles is empty when the column is null (older .crc / large table)") {
+    val batch = buildBatch(CRC_FILE_READ_SCHEMA, fileSizeHistogram = None, histogramOpt = None)
+    val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
+    assert(crcInfo.isPresent)
+    assert(!crcInfo.get().getAllFiles.isPresent)
+  }
+
+  test("toRow serializes allFiles into the allFiles array column") {
+    val addFiles = java.util.Arrays.asList(
+      new AddFile(testAddFileRow("f1", 100L)),
+      new AddFile(testAddFileRow("f2", 200L)))
+    val original = new CRCInfo(
+      3L,
+      testMetadata,
+      testProtocol,
+      /* tableSizeBytes */ 300L,
+      /* numFiles */ 2L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      /* inCommitTimestamp */ Optional.empty(),
+      /* setTransactions */ Optional.empty(),
+      /* numDeletedRecords */ Optional.empty(),
+      /* numDeletionVectors */ Optional.empty(),
+      /* allFiles */ Optional.of(addFiles))
+    val row = original.toRow()
+    val allFilesIdx = CRC_FILE_SCHEMA.indexOf("allFiles")
+    assert(!row.isNullAt(allFilesIdx))
+    assert(row.getArray(allFilesIdx).getSize === 2)
+  }
+
+  test("toRow leaves allFiles column null when absent") {
+    val original = new CRCInfo(
+      4L,
+      testMetadata,
+      testProtocol,
+      1000L,
+      10L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+    assert(original.toRow().isNullAt(CRC_FILE_SCHEMA.indexOf("allFiles")))
+  }
+
+  test("constructor rejects allFiles whose size disagrees with numFiles") {
+    val oneFile = java.util.Collections.singletonList(new AddFile(testAddFileRow("f1", 100L)))
+    val ex = intercept[IllegalArgumentException] {
+      new CRCInfo(
+        5L,
+        testMetadata,
+        testProtocol,
+        100L,
+        /* numFiles */ 2L, // disagrees with allFiles.size == 1
+        Optional.empty(),
+        Optional.empty(),
+        Optional.empty(),
+        /* inCommitTimestamp */ Optional.empty(),
+        /* setTransactions */ Optional.empty(),
+        /* numDeletedRecords */ Optional.empty(),
+        /* numDeletionVectors */ Optional.empty(),
+        Optional.of(oneFile))
+    }
+    assert(ex.getMessage.contains("allFiles size"))
   }
 }

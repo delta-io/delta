@@ -114,7 +114,11 @@ case class DeltaSink(
     val txn = deltaLog.startTransaction(catalogTable)
     assert(queryId != null)
 
-    if (SchemaUtils.nullTypeExistsRecursively(data.schema)) {
+    // Reject streaming writes if the query output schema contains void (NullType), or if the
+    // target table has a generated void column. Stored (non-generated) void columns are allowed.
+    if (SchemaUtils.nullTypeExistsRecursively(data.schema) ||
+      GeneratedColumn.hasGeneratedNullTypeColumn(
+        txn.protocol, txn.snapshot.schema)) {
       throw DeltaErrors.streamWriteNullTypeException
     }
 

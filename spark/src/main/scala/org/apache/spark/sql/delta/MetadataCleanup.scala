@@ -24,6 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, MINUTE, TruncationGranularity}
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -67,8 +68,30 @@ trait MetadataCleanup extends DeltaLogging {
       snapshotToCleanup: Snapshot,
       catalogTableOpt: Option[CatalogTable]): Unit = {
     if (enableExpiredLogCleanup(unsafeVolatileSnapshot.metadata)) {
+      try {
+        DeltaErrors.checkCatalogManagedTableOperationAllowed(
+          CatalogManagedTableMaintenanceOperation.METADATA_CLEANUP,
+          snapshotToCleanup,
+          catalogTableOpt)
+      } catch {
+        case _: DeltaUnsupportedOperationException => return
+      }
       cleanUpExpiredLogs(snapshotToCleanup, catalogTableOpt)
     }
+  }
+
+  /**
+   * Returns whether metadata cleanup must be skipped because `snapshotToCleanup` belongs to an AMT
+   * table. Metadata cleanup only knows classic and V2 checkpoints, so on an AMT table it can pick
+   * a cleanup boundary that no AMT checkpoint backs and try to write a non-AMT checkpoint there.
+   */
+  protected def shouldSkipMetadataCleanupForAMT(snapshotToCleanup: Snapshot): Boolean = {
+    val skip = AMTUtils.amtSupported(snapshotToCleanup.protocol)
+    if (skip) {
+      logInfo(log"Skipping metadata cleanup for AMT table " +
+        log"${MDC(DeltaLogKeys.PATH, dataPath)}")
+    }
+    skip
   }
 
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
@@ -77,6 +100,12 @@ trait MetadataCleanup extends DeltaLogging {
       catalogTableOpt: Option[CatalogTable] = None,
       deltaRetentionMillisOpt: Option[Long] = None,
       cutoffTruncationGranularity: TruncationGranularity = DAY): Unit = {
+    if (shouldSkipMetadataCleanupForAMT(snapshotToCleanup)) return
+    DeltaErrors.checkCatalogManagedTableOperationAllowed(
+      CatalogManagedTableMaintenanceOperation.METADATA_CLEANUP,
+      snapshotToCleanup,
+      catalogTableOpt)
+
     recordDeltaOperation(this, "delta.log.cleanup") {
       val retentionMillis =
         deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(unsafeVolatileSnapshot.metadata))
@@ -333,18 +362,18 @@ trait MetadataCleanup extends DeltaLogging {
       metrics: V2CompatCheckpointMetrics): Unit = {
     // Do nothing if this table does not use V2 Checkpoints, or has no checkpoints at all.
     if (!CheckpointProvider.isV2CheckpointEnabled(snapshotToCleanup)) return
-    if (snapshotToCleanup.checkpointProvider.isEmpty) return
+    val checkpointProvider = snapshotToCleanup.checkpointProvider
+    if (checkpointProvider.isEmpty) return
 
     val startTimeMs = System.currentTimeMillis()
     val hadoopConf = newDeltaHadoopConf()
-    val checkpointInstance =
-      CheckpointInstance(snapshotToCleanup.checkpointProvider.topLevelFiles.head.getPath)
+    val checkpointInstance = CheckpointInstance(checkpointProvider.topLevelFiles.head.getPath)
     // The current checkpoint provider is already using a checkpoint with the naming
     // scheme of classic checkpoints. There is no need to create a compatibility checkpoint
     // in this case.
     if (checkpointInstance.format != CheckpointInstance.Format.V2) return
 
-    val checkpointVersion = snapshotToCleanup.checkpointProvider.version
+    val checkpointVersion = checkpointProvider.version
     val checkpoints = listFrom(checkpointVersion)
       .takeWhile(file => FileNames.getFileVersionOpt(file.getPath).exists(_ <= checkpointVersion))
       .collect {
@@ -359,17 +388,8 @@ trait MetadataCleanup extends DeltaLogging {
       return
     }
 
-    // topLevelFileIndex must be non-empty when topLevelFiles are present
-    val shallowCopyDf =
-      loadIndex(snapshotToCleanup.checkpointProvider.topLevelFileIndex.get, Action.logSchema)
-    val finalPath =
-      FileNames.checkpointFileSingular(snapshotToCleanup.logPath, checkpointVersion)
-    Checkpoints.createCheckpointV2ParquetFile(
-      spark,
-      shallowCopyDf,
-      finalPath,
-      hadoopConf,
-      useRename = false)
+    checkpointProvider.createCompatibilityCheckpoint(
+      spark, self, snapshotToCleanup.logPath, hadoopConf)
     metrics.v2CheckpointCompatLogicTimeTakenMs = System.currentTimeMillis() - startTimeMs
     metrics.checkpointVersion = checkpointVersion
   }

@@ -23,12 +23,21 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.hadoop.fs.Path
+import org.apache.parquet.bytes.{BytesInput, BytesUtils}
+import org.apache.parquet.column.Encoding
+import org.apache.parquet.column.statistics.Statistics
+import org.apache.parquet.format.Util
+import org.apache.parquet.hadoop.ParquetFileWriter
+import org.apache.parquet.hadoop.metadata.CompressionCodecName
+import org.apache.parquet.schema.{MessageType, Types}
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -144,6 +153,125 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
             .as("stats")).select("stats.*")
         assert(statsDf.filter($"numRecords".isNotNull).count == 0)
       }
+    }
+  }
+
+  test("CONVERT TO DELTA keeps float/double stats for parquet-mr sources") {
+    // Spark writes via parquet-mr, which orders NaN greatest, so its finite float/double footer
+    // stats are trustworthy and must survive CONVERT. Only NaN-excluding writers get dropped, which
+    // Spark cannot produce here; that drop path is covered by StatsCollectionUtilsSuite. Auto
+    // compact would recompute via the native path, so pin it off to exercise the footer-copy path.
+    withSQLConf(
+        "spark.databricks.delta.autoCompact.enabled" -> "false",
+        DeltaSQLConf.DELTA_COLLECT_STATS_SKIP_FLOATING_POINT_FROM_FOOTER.key -> "true") {
+      withTempDir { dir =>
+        val tempDir = dir.getCanonicalPath
+        writeFiles(tempDir, spark.range(5).selectExpr(
+          "cast(id as int) as intCol",
+          "cast(id as double) + 0.5 as doubleCol",
+          "cast(id as float) + 0.25 as floatCol"))
+        convertToDelta(s"parquet.`$tempDir`", collectStats = true)
+        val snapshot = DeltaLog.forTable(spark, tempDir).update()
+        val stats = snapshot.allFiles
+          .select(from_json($"stats", snapshot.statsSchema).as("s")).select("s.*")
+        assert(stats.filter($"numRecords".isNull).count == 0)
+        assert(stats.filter($"maxValues.doubleCol".isNotNull).count > 0)
+        assert(stats.filter($"maxValues.floatCol".isNotNull).count > 0)
+        assert(stats.filter($"maxValues.intCol".isNotNull).count > 0)
+      }
+    }
+  }
+
+  // Writes a Parquet file with one DOUBLE column "c" containing a NaN row but a FINITE footer max -
+  // what writers such as parquet-cpp/Arrow/pyarrow produce by excluding NaN. parquet-mr cannot (it
+  // records max = NaN), so we write finite Statistics via the low-level writer, then patch the
+  // footer's created_by to a foreign writer so the writer-aware drop applies. Only the trailing
+  // footer is re-serialized; the data region (and its offsets) is untouched.
+  protected def writeNaNExcludedDoubleParquet(
+      dir: String,
+      values: Seq[Double],
+      finiteMin: Double,
+      finiteMax: Double,
+      createdBy: String = "parquet-cpp-arrow version 18.0.0"): Unit = {
+    val schema: MessageType = Types.buildMessage()
+      .required(PrimitiveTypeName.DOUBLE).named("c")
+      .named("spark_schema")
+    val path = new Path(dir, "nan-excluded.parquet")
+    // scalastyle:off deltahadoopconfiguration
+    val conf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
+
+    val writer = new ParquetFileWriter(conf, schema, path)
+    writer.start()
+    val buf = java.nio.ByteBuffer
+      .allocate(values.size * 8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    values.foreach(buf.putDouble)
+    val data = BytesInput.from(buf.array())
+    val stats = Statistics.getBuilderForReading(schema.getColumns.get(0).getPrimitiveType)
+      .withMin(BytesUtils.longToBytes(java.lang.Double.doubleToLongBits(finiteMin)))
+      .withMax(BytesUtils.longToBytes(java.lang.Double.doubleToLongBits(finiteMax)))
+      .withNumNulls(0L)
+      .build()
+    writer.startBlock(values.size.toLong)
+    writer.startColumn(
+      schema.getColumns.get(0), values.size.toLong, CompressionCodecName.UNCOMPRESSED)
+    writer.writeDataPage(
+      values.size,
+      data.size().toInt,
+      data,
+      stats,
+      values.size.toLong,
+      Encoding.BIT_PACKED,
+      Encoding.BIT_PACKED,
+      Encoding.PLAIN)
+    writer.endColumn()
+    writer.endBlock()
+    writer.end(new java.util.HashMap[String, String]())
+
+    // Patch the footer's created_by. Layout: [data][footer thrift][4-byte LE footer len][PAR1].
+    val fs = path.getFileSystem(conf)
+    val fileLen = fs.getFileStatus(path).getLen.toInt
+    val bytes = new Array[Byte](fileLen)
+    val in = fs.open(path)
+    try in.readFully(bytes) finally in.close()
+    val footerLen = java.nio.ByteBuffer
+      .wrap(bytes, fileLen - 8, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt
+    val footerStart = fileLen - 8 - footerLen
+    val fmd = Util.readFileMetaData(new java.io.ByteArrayInputStream(bytes, footerStart, footerLen))
+    fmd.setCreated_by(createdBy)
+    val footerOut = new java.io.ByteArrayOutputStream()
+    Util.writeFileMetaData(fmd, footerOut)
+    val newFooter = footerOut.toByteArray
+    val out = fs.create(path, true) // overwrite
+    try {
+      out.write(bytes, 0, footerStart)
+      out.write(newFooter)
+      out.write(java.nio.ByteBuffer
+        .allocate(4).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(newFooter.length).array())
+      out.write("PAR1".getBytes(java.nio.charset.StandardCharsets.US_ASCII))
+    } finally out.close()
+  }
+
+  test("CONVERT keeps NaN rows for finite-threshold predicate (NaN-excluding writer)") {
+    // Disable Parquet pushdown so only Delta file skipping is exercised, not row-group filtering.
+    withSQLConf(
+        SQLConf.PARQUET_FILTER_PUSHDOWN_ENABLED.key -> "false",
+        "spark.databricks.delta.autoCompact.enabled" -> "false") {
+      // NaN >= 100.0 is true in Spark, so the NaN row must be returned.
+      val values = Seq(1.0, 2.0, 3.0, Double.NaN)
+
+      // Flag on: the foreign writer's float/double max is dropped, so the file is kept.
+      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS_SKIP_FLOATING_POINT_FROM_FOOTER.key -> "true") {
+        withTempDir { dir =>
+          val tempDir = dir.getCanonicalPath
+          writeNaNExcludedDoubleParquet(tempDir, values, finiteMin = 1.0, finiteMax = 3.0)
+          convertToDelta(s"parquet.`$tempDir`", collectStats = true)
+          val kept = spark.read.format("delta").load(tempDir).where("c >= 100.0")
+          assert(kept.count() == 1)
+          assert(kept.head().getDouble(0).isNaN)
+        }
+      }
+
     }
   }
 
@@ -551,7 +679,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
 
       assert(files.length == 1)
       fs.rename(
-        files.head, new Path(files.head.getParent.getName, "some-data-id=1.snappy.parquet"))
+        files.head, new Path(files.head.getParent.toString, "some-data-id=1.snappy.parquet"))
 
       convertToDelta(s"parquet.`$tempDir`", Some("part string"))
       checkAnswer(spark.read.format("delta").load(tempDir), Row(1, "1"))

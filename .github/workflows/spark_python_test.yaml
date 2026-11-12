@@ -12,8 +12,8 @@ on:
       - '**.txt'
 env:
   # SECURITY: Temporal lockdown — refuse any package version published after this date.
-  # This date is a pre-attack baseline (before the active PyPI supply chain attack).
-  UV_EXCLUDE_NEWER: "2026-03-10T00:00:00Z"
+  # Keep this after the pyspark 4.3.0 upload time so Spark 4.3 Python tests can install it.
+  UV_EXCLUDE_NEWER: "2026-10-30T16:00:00Z"
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This workflow tests against released versions only (no snapshots)
@@ -50,6 +50,7 @@ jobs:
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       SPARK_VERSION: ${{ matrix.spark_version }}
+      SPARK_PYTHON_VERSION: ${{ matrix.spark_version == '4.3' && '3.11' || '3.10' }}
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: Get Spark version details
@@ -84,14 +85,11 @@ jobs:
         run: bash project/scripts/install-buf.sh
       - name: Install Python and dependencies
         run: |
-          uv python install 3.10
-          uv venv .venv --python 3.10
-          # Install hash-verified locked dependencies (see .github/ci-requirements/spark-python/)
-          if [[ "${{ matrix.spark_version }}" == "4.0" ]]; then
-            uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.0.lock
-          else
-            uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.1.lock
-          fi
+          uv python install "$SPARK_PYTHON_VERSION"
+          uv venv .venv --python "$SPARK_PYTHON_VERSION"
+          # Install hash-verified locked dependencies, one lock file per Spark version
+          # (see .github/ci-requirements/spark-python/).
+          uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark${{ matrix.spark_version }}.lock
           # pyspark installed with --no-deps: its only transitive dep (py4j) is in the lock file
           uv pip install --python .venv/bin/python --no-deps pyspark==${{ steps.spark-details.outputs.spark_full_version }}
       - name: Run Python tests

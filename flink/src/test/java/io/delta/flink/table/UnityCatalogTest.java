@@ -16,6 +16,9 @@
 
 package io.delta.flink.table;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -24,10 +27,44 @@ import io.delta.flink.TestHelper;
 import io.delta.kernel.types.*;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import java.net.URI;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /** JUnit 6 test suite for UnityCatalog. */
 class UnityCatalogTest extends TestHelper {
+
+  @Test
+  void testCatalogBrowsingSetsIncludeBrowseFalse() {
+    String schemasPath = "/api/2.1/unity-catalog/schemas";
+    String tablesPath = "/api/2.1/unity-catalog/tables";
+    String schemaPath = schemasPath + "/main.default";
+    String tablePath = tablesPath + "/main.default.tbl";
+    MockHttp.withMock(
+        new MockHttp(
+            Map.of(
+                schemasPath, "{\"schemas\":[{\"name\":\"default\"}]}",
+                schemaPath, "{\"name\":\"default\"}",
+                tablesPath, "{\"tables\":[{\"name\":\"tbl\"}]}",
+                tablePath, "{\"name\":\"tbl\"}"),
+            Map.of()),
+        mock -> {
+          UnityCatalog catalog = new UnityCatalog("main", mock.uri(), "");
+          catalog.open();
+
+          assertEquals(List.of("default"), catalog.listSchemas());
+          assertEquals("default", catalog.getSchema("default").getName());
+          assertEquals(List.of("tbl"), catalog.listTables("default"));
+          assertEquals("tbl", catalog.getTableDetail("main.default.tbl").getName());
+
+          for (String path : List.of(schemasPath, schemaPath, tablesPath, tablePath)) {
+            mock.verify(
+                getRequestedFor(urlPathEqualTo(path))
+                    .withQueryParam("include_browse", equalTo("false")));
+          }
+        });
+  }
 
   @Test
   void testToUcTableIdentifier() {
@@ -56,17 +93,77 @@ class UnityCatalogTest extends TestHelper {
   @Test
   void testGetTable() {
     withTempDir(
-        dir ->
-            MockHttp.withMock(
-                MockHttp.forExistingUCTable(dir.getAbsolutePath()),
-                mockHttp -> {
-                  UnityCatalog uc = new UnityCatalog("main", mockHttp.uri(), "");
-                  uc.open();
+        dir -> {
+          String tableId = UUID.randomUUID().toString();
+          MockHttp.withMock(
+              MockHttp.forExistingUCTable(tableId, dir.getAbsolutePath()),
+              mockHttp -> {
+                UnityCatalog uc =
+                    new UnityCatalog(
+                        "main", mockHttp.uri(), "", /* credentialVendingEnabled = */ false);
+                uc.open();
 
-                  DeltaCatalog.TableDescriptor tableDescriptor = uc.getTable("dummy");
-                  assertEquals(
-                      AbstractKernelTable.normalize(URI.create(dir.getAbsolutePath())),
-                      tableDescriptor.tablePath);
-                }));
+                DeltaCatalog.TableDescriptor tableDescriptor = uc.getTable("main.default.dummy");
+                assertEquals(tableId, tableDescriptor.uuid);
+                assertEquals(
+                    AbstractKernelTable.normalize(URI.create(dir.getAbsolutePath())),
+                    tableDescriptor.tablePath);
+                mockHttp.verifyCredentialRequests(0);
+              });
+        });
+  }
+
+  @Test
+  void testGetCredentials() {
+    String tableId = UUID.randomUUID().toString();
+    String credentialsResponse =
+        "{\"storage-credentials\":[{\"prefix\":\"s3://bucket/table\","
+            + "\"operation\":\"READ_WRITE\",\"expiration-time-ms\":4102444800000,"
+            + "\"config\":{\"s3.access-key-id\":\"ak\","
+            + "\"s3.secret-access-key\":\"sk\",\"s3.session-token\":\"st\"}}]}";
+
+    MockHttp.withMock(
+        MockHttp.forExistingUCTable(tableId, "s3://bucket/table", credentialsResponse),
+        mockHttp -> {
+          UnityCatalog uc = new UnityCatalog("main", mockHttp.uri(), "");
+          uc.open();
+
+          DeltaCatalog.TableDescriptor table = uc.getTable("main.default.dummy");
+          assertEquals("ak", table.getStorageProperties().get("fs.s3a.init.access.key"));
+          mockHttp.verifyCredentialRequests(1);
+
+          Map<String, String> credentials = uc.getCredentials("main.default.dummy");
+
+          assertEquals("ak", credentials.get("fs.s3a.init.access.key"));
+          mockHttp.verifyCredentialRequests(1);
+        });
+  }
+
+  @Test
+  void testCreateTableDescriptorIncludesStagingProperties() {
+    withTempDir(
+        dir -> {
+          String tableName = "main.default.tbl";
+          String uuid = UUID.randomUUID().toString();
+          MockHttp.withMock(
+              MockHttp.forNewUCTable(uuid, dir.getAbsolutePath()),
+              mockHttp -> {
+                UnityCatalog uc = new UnityCatalog("main", mockHttp.uri(), "");
+                uc.open();
+
+                uc.createTable(
+                    tableName,
+                    new StructType().add("id", IntegerType.INTEGER),
+                    List.of(),
+                    Map.of(),
+                    descriptor -> {
+                      assertEquals(uuid, descriptor.getUuid());
+                      assertEquals(Map.of(), descriptor.getStorageProperties());
+                      assertEquals(
+                          "true",
+                          descriptor.getRequiredProperties().get("delta.enableDeletionVectors"));
+                    });
+              });
+        });
   }
 }

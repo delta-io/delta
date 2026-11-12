@@ -348,6 +348,11 @@ class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSui
     classOf[io.delta.storage.AzureLogStore].getName
 }
 
+class PublicGooseFSLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.GooseFSLogStore].getName
+}
+
 class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.LocalLogStore].getName

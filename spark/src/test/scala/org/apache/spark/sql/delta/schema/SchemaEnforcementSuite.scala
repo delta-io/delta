@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.schema
 import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -106,6 +106,7 @@ trait AppendSaveModeNullTests extends BatchWriterTest {
   }
 
   equivalenceTest("JSON ETL workflow, schema merging NullTypes") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     enableAutoMigration {
       val row1 = """{"key":"abc","id":null,"extra":1}"""
       val row2 = """{"key":"def","id":2,"extra":null}"""
@@ -117,11 +118,19 @@ trait AppendSaveModeNullTests extends BatchWriterTest {
           .add("key", StringType).add("id", IntegerType).add("extra", NullType)
         spark.read.schema(schema1).json(Seq(row1).toDS()).write.append(dir)
 
-        // NullType will be removed during the read
-        checkAnswer(
-          spark.read.format("delta").load(dir.getAbsolutePath),
-          Row("abc", 1) :: Nil
-        )
+        // NullType removal during the read depends on the flag value
+        for (dropNullColumns <- Seq(false, true)) {
+          withSQLConf(
+            DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> dropNullColumns.toString
+          ) {
+            val expected = if (dropNullColumns) {
+              Row("abc", 1) :: Nil
+            } else {
+              Row("abc", null, 1) :: Nil
+            }
+            checkAnswer(spark.read.format("delta").load(dir.getAbsolutePath), expected)
+          }
+        }
 
         spark.read.schema(schema2).json(Seq(row2).toDS()).write.append(dir)
         spark.read.schema(schema1).json(Seq(row3).toDS()).write.append(dir)
@@ -135,6 +144,7 @@ trait AppendSaveModeNullTests extends BatchWriterTest {
   }
 
   equivalenceTest("JSON ETL workflow, schema merging NullTypes - nested struct") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     enableAutoMigration {
       val row1 = """{"key":"abc","top":{"id":null,"extra":1}}"""
       val row2 = """{"key":"def","top":{"id":2,"extra":null}}"""
@@ -147,11 +157,13 @@ trait AppendSaveModeNullTests extends BatchWriterTest {
         val mergedSchema = new StructType().add("key", StringType)
           .add("top", new StructType().add("id", IntegerType).add("extra", IntegerType))
         spark.read.schema(schema1).json(Seq(row1).toDS()).write.append(dir)
-        // NullType will be removed during the read
-        checkAnswer(
-          spark.read.format("delta").load(dir.getAbsolutePath),
-          Row("abc", Row(1)) :: Nil
-        )
+        // NullType will not be removed during the read
+        withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+          checkAnswer(
+            spark.read.format("delta").load(dir.getAbsolutePath),
+            Row("abc", Row(null, 1)) :: Nil
+          )
+        }
 
         spark.read.schema(schema2).json(Seq(row2).toDS()).write.append(dir)
         assert(spark.read.format("delta").load(dir.getAbsolutePath).schema === mergedSchema)
@@ -177,11 +189,17 @@ trait AppendSaveModeNullTests extends BatchWriterTest {
         val e1 = intercept[AnalysisException] {
           spark.read.schema(schema1).json(Seq(row1).toDS()).write.append(dir)
         }
-        assert(e1.getMessage.contains("NullType"))
+        checkError(e1, "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE", parameters = Map(
+          "columName" -> "top",
+          "dataType" -> "ArrayType"
+        ))
         val e2 = intercept[AnalysisException] {
           spark.read.schema(schema2).json(Seq(row2).toDS()).write.append(dir)
         }
-        assert(e2.getMessage.contains("NullType"))
+        checkError(e2, "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE", parameters = Map(
+          "columName" -> "top",
+          "dataType" -> "ArrayType"
+        ))
       }
     }
   }

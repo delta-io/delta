@@ -37,6 +37,10 @@ import io.delta.sharing.client.model.{
   Table,
   TemporaryCredentials
 }
+import io.delta.sharing.spark.model.{
+  DeltaSharingProtocol,
+  DeltaSharingSingleAction
+}
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.storage.BlockId
@@ -114,7 +118,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    if (table.name.contains("shared_parquet_table") &&
+    if ((table.name.contains("shared_parquet_table") ||
+        isParquetPinnedVersion(table, versionAsOf)) &&
       responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
       val lines = linesBuilder.result()
       val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
@@ -188,7 +193,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    if (table.name.contains("shared_parquet_table") &&
+    if ((table.name.contains("shared_parquet_table") ||
+        isParquetPinnedVersion(table, versionAsOf)) &&
       responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
       val lines = linesBuilder.result()
       val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
@@ -222,7 +228,8 @@ private[spark] class TestClientForDeltaFormatSharing(
       table: Table,
       startingVersion: Long,
       endingVersion: Option[Long],
-      fileIdHash: Option[String]
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
   ): DeltaTableFiles = {
     assert(
       endingVersion.isDefined,
@@ -256,7 +263,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     }
     DeltaTableFiles(
       version = getTableVersion(table),
-      lines = linesBuilder.result(),
+      lines = TestClientForDeltaFormatSharing.maybeDropHistoricalProtocols(
+        linesBuilder.result(), includeHistoricalProtocol),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )
   }
@@ -265,7 +273,8 @@ private[spark] class TestClientForDeltaFormatSharing(
       table: Table,
       cdfOptions: Map[String, String],
       includeHistoricalMetadata: Boolean,
-      fileIdHash: Option[String]
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
   ): DeltaTableFiles = {
     val suffix = cdfOptions
       .get(DeltaSharingOptions.CDF_START_VERSION)
@@ -324,7 +333,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     } else {
       DeltaTableFiles(
         version = getTableVersion(table),
-        lines = linesBuilder.result(),
+        lines = TestClientForDeltaFormatSharing.maybeDropHistoricalProtocols(
+          linesBuilder.result(), includeHistoricalProtocol),
         respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
       )
     }
@@ -342,6 +352,38 @@ private[spark] class TestClientForDeltaFormatSharing(
 }
 
 object TestClientForDeltaFormatSharing {
+  // Mimics a delta-sharing server's handling of includeHistoricalProtocol on a delta-format
+  // response. When the client opts in, the server streams a Protocol for each protocol change in
+  // the range (the mocked lines already contain them). When the client does NOT opt in (or the
+  // server doesn't support it), only the head protocol is returned: this drops every historical
+  // Protocol line except the one at the smallest protocol version, so tests can exercise the
+  // legacy stale-head-protocol behavior.
+  private[spark] def maybeDropHistoricalProtocols(
+      lines: Seq[String],
+      includeHistoricalProtocol: Boolean): Seq[String] = {
+    if (includeHistoricalProtocol) {
+      return lines
+    }
+    val protocolVersions = lines.flatMap { line =>
+      JsonUtils.fromJson[DeltaSharingSingleAction](line).unwrap match {
+        case p: DeltaSharingProtocol if p.version != null => Some(p.version.longValue())
+        case _ => None
+      }
+    }
+    if (protocolVersions.isEmpty) {
+      return lines
+    }
+    val headProtocolVersion = protocolVersions.min
+    lines.filter { line =>
+      JsonUtils.fromJson[DeltaSharingSingleAction](line).unwrap match {
+        // Keep the head protocol and any unversioned protocol; drop later protocol changes.
+        case p: DeltaSharingProtocol =>
+          p.version == null || p.version.longValue() == headProtocolVersion
+        case _ => true
+      }
+    }
+  }
+
   def getBlockId(
       sharedTableName: String,
       queryType: String,
@@ -367,6 +409,20 @@ object TestClientForDeltaFormatSharing {
   val requestedFormat = scala.collection.mutable.Map[String, String]()
   val jsonPredicateHints = scala.collection.mutable.Map[String, String]()
   @volatile var lastCallerOrg: String = ""
+
+  // Tables (by name) whose format is parquet only AT a specific versionAsOf, delta otherwise.
+  // Lets a test model a share that is delta at latest but parquet at a pinned version -- which the
+  // name-based parquet detection cannot express on its own. Empty by default (no effect).
+  val parquetOnlyAtVersion = scala.collection.mutable.Map[String, Long]()
+
+  def clearParquetOnlyAtVersion(): Unit = parquetOnlyAtVersion.clear()
+
+  /** True if `table` responds parquet for this `versionAsOf`, per [[parquetOnlyAtVersion]]. */
+  private def isParquetPinnedVersion(table: Table, versionAsOf: Option[Long]): Boolean =
+    (parquetOnlyAtVersion.get(table.name), versionAsOf) match {
+      case (Some(pinned), Some(requested)) => pinned == requested
+      case _ => false
+    }
 
   // Captures (tableName, queryType, fileIdHash) for each getFiles call.
   val fileIdHashHistory = scala.collection.mutable.ArrayBuffer[(String, String, Option[String])]()

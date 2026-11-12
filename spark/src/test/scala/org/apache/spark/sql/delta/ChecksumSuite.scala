@@ -19,8 +19,9 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.TimeZone
 
-import com.databricks.spark.util.Log4jUsageLogger
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils._
+import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, LastManifestCommit, Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -30,6 +31,7 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
@@ -40,6 +42,7 @@ class ChecksumSuite
   with DeltaTestUtilsBase
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
+  with DeltaTableProvider
   with CatalogOwnedTestBaseSuite {
 
   override def sparkConf: SparkConf = super.sparkConf
@@ -360,6 +363,384 @@ class ChecksumSuite
               .startTransaction()
           }
         }
+      }
+    }
+  }
+
+  test("VersionChecksum round-trips lastManifestCommit and omits it when None") {
+    val lmc = LastManifestCommit(contentRootVersion = 41, version = 43)
+    val base = VersionChecksum(
+      txnId = None,
+      tableSizeBytes = 100,
+      numFiles = 1,
+      numDeletedRecordsOpt = None,
+      numDeletionVectorsOpt = None,
+      numMetadata = 1,
+      numProtocol = 1,
+      inCommitTimestampOpt = None,
+      setTransactions = None,
+      domainMetadata = None,
+      metadata = Metadata(),
+      protocol = Protocol(),
+      fileSizeHistogram = None,
+      deletedRecordCountsHistogramOpt = None,
+      allFiles = None,
+      lastManifestCommit = Some(lmc))
+
+    val json = JsonUtils.toJson(base)
+    assert(JsonUtils.fromJson[VersionChecksum](json).lastManifestCommit.contains(lmc))
+
+    // None serializes as absent (mapper uses Include.NON_ABSENT), so existing CRCs stay unchanged.
+    val jsonWithoutLmc = JsonUtils.toJson(base.copy(lastManifestCommit = None))
+    assert(!jsonWithoutLmc.contains("lastManifestCommit"))
+    // A CRC written before this field existed deserializes to None.
+    assert(JsonUtils.fromJson[VersionChecksum](jsonWithoutLmc).lastManifestCommit.isEmpty)
+  }
+
+  /** Loads a fresh snapshot of `tableName`, bypassing any cached DeltaLog/Snapshot. */
+  private def freshSnapshot(tableName: String): Snapshot = {
+    DeltaLog.clearCache()
+    DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+  }
+
+  private def withCrcTable(f: String => Unit): Unit = {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true"
+    ) {
+      withTempTable(createTable = false)(f)
+    }
+  }
+
+  test("Snapshot state fields are served from the CRC without state reconstruction") {
+    withCrcTable { tableName =>
+      spark.range(10).withColumn("id2", col("id") % 2)
+        .write.format("delta").partitionBy("id").saveAsTable(tableName)
+      sql(s"INSERT INTO $tableName SELECT *, 1 FROM range(10, 20)")
+
+      val s = freshSnapshot(tableName)
+      val crc = s.checksumOpt.getOrElse(fail("test setup should have produced a CRC file"))
+
+      // Fields the CRC carries are served from it, so no state reconstruction is triggered.
+      assert(s.sizeInBytes == crc.tableSizeBytes)
+      assert(s.numOfFiles == crc.numFiles)
+      assert(s.numOfMetadata == crc.numMetadata)
+      assert(s.numOfProtocol == crc.numProtocol)
+      assert(s.setTransactions.toSet == crc.setTransactions.getOrElse(Nil).toSet)
+      assert(s.numOfSetTransactions == crc.setTransactions.getOrElse(Nil).length)
+      assert(s.domainMetadata.toSet == crc.domainMetadata.getOrElse(Nil).toSet)
+      assert(!s.stateReconstructionTriggered,
+        "fields available in the CRC must not trigger state reconstruction")
+
+      // numOfRemoves is not tracked by the CRC and still needs the state reconstruction.
+      assert(s.numOfRemoves == 0L)
+      assert(s.stateReconstructionTriggered,
+        "numOfRemoves should fall back to state reconstruction")
+    }
+  }
+
+  test("disabling fastQueryPath.enabled bypasses the CRC-backed snapshot state") {
+    withSQLConf(DeltaSQLConf.FAST_QUERY_PATH_ENABLED.key -> "false") {
+      withCrcTable { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        val s = freshSnapshot(tableName)
+        assert(s.checksumOpt.isDefined, "test setup should have produced a CRC file")
+        // With the fast query path off, checksumOptForState is empty, so a CRC-backed field
+        // falls back to a full state reconstruction instead of being served from the checksum.
+        assert(s.sizeInBytes == s.checksumOpt.get.tableSizeBytes)
+        assert(s.stateReconstructionTriggered,
+          "disabling fastQueryPath.enabled must bypass the CRC and reconstruct state")
+      }
+    }
+  }
+
+  test("Snapshot state falls back per field when the CRC lacks setTransactions") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      // Produce a CRC that does not carry setTransactions.
+      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "false"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(5).write.format("delta").saveAsTable(tableName)
+        val s = freshSnapshot(tableName)
+        assert(s.checksumOpt.isDefined)
+        assert(s.checksumOpt.get.setTransactions.isEmpty,
+          "test setup should produce a CRC without setTransactions")
+
+        // Fields the CRC does carry are still served from it.
+        assert(s.numOfFiles == s.checksumOpt.get.numFiles)
+        assert(s.sizeInBytes == s.checksumOpt.get.tableSizeBytes)
+        assert(!s.stateReconstructionTriggered,
+          "a CRC missing one field must not disable the fast path for the other fields")
+
+        // Only the missing field falls back.
+        assert(s.setTransactions.isEmpty)
+        assert(s.stateReconstructionTriggered,
+          "setTransactions should fall back to state reconstruction")
+      }
+    }
+  }
+
+  test("setTransactions are dropped from the CRC once a retention period is configured") {
+    withCrcTable { tableName =>
+      spark.range(5).write.format("delta").saveAsTable(tableName)
+      sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+        s"('delta.setTransactionRetentionDuration' = '30 days')")
+
+      val s = freshSnapshot(tableName)
+      assert(s.minSetTransactionRetentionTimestamp.isDefined)
+
+      // The write path stops recording setTransactions in the CRC as soon as a retention
+      // period is configured, so a CRC can never hand out entries that state reconstruction
+      // would have filtered out and no extra guard is needed when reading.
+      assert(s.checksumOpt.get.setTransactions.isEmpty,
+        "the CRC must not carry setTransactions once a retention period is configured")
+
+      // Other fields are still served from the CRC.
+      assert(s.numOfFiles == s.checksumOpt.get.numFiles)
+      assert(!s.stateReconstructionTriggered)
+
+      // setTransactions therefore falls back to state reconstruction.
+      assert(s.setTransactions.isEmpty)
+      assert(s.stateReconstructionTriggered,
+        "setTransactions should fall back when the CRC does not carry them")
+    }
+  }
+
+  test("DV metrics are served from the CRC when deletion vectors are readable") {
+    withCrcTable { tableName =>
+      // Table with deletion vectors enabled, so the CRC carries the DV metrics.
+      sql(s"CREATE TABLE $tableName (id LONG) USING delta " +
+        s"TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+      sql(s"INSERT INTO $tableName SELECT * FROM range(10)")
+      sql(s"DELETE FROM $tableName WHERE id = 1")
+
+      val s = freshSnapshot(tableName)
+      assert(s.checksumOpt.flatMap(_.numDeletedRecordsOpt).contains(1L),
+        "test setup should produce a CRC carrying the DV metrics")
+      assert(s.numDeletedRecordsOpt.contains(1L))
+      assert(s.numDeletionVectorsOpt.contains(1L))
+      assert(!s.stateReconstructionTriggered,
+        "DV metrics present in the CRC must not trigger state reconstruction")
+    }
+  }
+
+  test("validateChecksum still compares the CRC against state reconstruction") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(5).write.format("delta").saveAsTable(tableName)
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val version = log.update().version
+        val checksum = log.readChecksum(version).get
+        // Corrupt only the aggregate fields, leaving protocol/metadata intact.
+        log.store.write(
+          FileNames.checksumFile(log.logPath, version),
+          Iterator(JsonUtils.toJson(checksum.copy(
+            tableSizeBytes = checksum.tableSizeBytes + 1,
+            numFiles = checksum.numFiles + 1))),
+          overwrite = true)
+
+        val s = freshSnapshot(tableName)
+        // Even though the accessors are now served from the (corrupted) CRC, validation must
+        // still compare it against an independently computed state and detect the mismatch.
+        assert(s.numOfFiles == checksum.numFiles + 1)
+        val usageLogs = Log4jUsageLogger.track {
+          assert(!s.validateChecksum(), "validation should have failed for a corrupted CRC")
+        }
+        val mismatches = filterUsageRecords(usageLogs, "delta.checksum.invalid")
+        assert(mismatches.size == 1)
+        val blob = JsonUtils.fromJson[Map[String, Any]](mismatches.head.blob)
+        val fields = blob("mismatchingFields").asInstanceOf[Seq[String]].toSet
+        assert(fields == Set("tableSizeBytes", "numFiles"))
+      }
+    }
+  }
+
+  private val negativeChecksumFieldOpType = "delta.checksum.compute.negativeField"
+
+  private def withIncrementalCrcNoVerify(
+      skipChecksumOnNegativeField: Boolean = true)(f: => Unit): Unit = {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key -> "false",
+      DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_SKIP_CHECKSUM_ON_NEGATIVE_FIELD.key ->
+        skipChecksumOnNegativeField.toString
+    )(f)
+  }
+
+  private def negativeFieldsFromUsageLog(blob: String): Map[String, Any] = {
+    val parsedBlob = JsonUtils.fromJson[Map[String, Any]](blob)
+    parsedBlob("negativeFields").asInstanceOf[Map[String, Any]]
+  }
+
+  test("incremental checksum with negative numFiles and tableSizeBytes is not written") {
+    withIncrementalCrcNoVerify() {
+      withTempTable(createTable = true) { tableName =>
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(log.update().numOfFiles == 0)
+        // Removing a file that is not live drives the incremental counters below zero.
+        val notLiveRemove = createTestAddFile(encodedPath = "notLive", size = 100L)
+          .removeWithTimestamp()
+        val usageLogs = Log4jUsageLogger.track {
+          log.startTransaction().commit(Seq(notLiveRemove), DeltaOperations.Truncate())
+        }
+        val version = log.update().version
+
+        val negativeFieldLogs = filterUsageRecords(usageLogs, negativeChecksumFieldOpType)
+        assert(negativeFieldLogs.nonEmpty)
+        val blob = JsonUtils.fromJson[Map[String, Any]](negativeFieldLogs.head.blob)
+        assert(blob("attemptVersion").toString.toLong == version)
+        assert(blob("skippedChecksumWrite") == true)
+        val negativeFields = negativeFieldsFromUsageLog(negativeFieldLogs.head.blob)
+        assert(negativeFields("numFiles").toString.toLong == -1L)
+        assert(negativeFields("tableSizeBytes").toString.toLong == -100L)
+
+        // The post-commit hook falls back to state reconstruction, so the CRC carries the true
+        // (empty) state rather than the negative incremental one.
+        val crc = log.readChecksum(version)
+        assert(crc.isDefined)
+        assert(crc.get.numFiles == 0L)
+        assert(crc.get.tableSizeBytes == 0L)
+
+        // The next incremental checksum builds on the reconstructed CRC, not the drifted one.
+        val nextFile = createTestAddFile(encodedPath = "next", size = 7L)
+        log.startTransaction().commit(Seq(nextFile), DeltaOperations.Write(SaveMode.Append))
+        val nextCrc = log.readChecksum(log.update().version)
+        assert(nextCrc.isDefined)
+        assert(nextCrc.get.numFiles == 1L)
+        assert(nextCrc.get.tableSizeBytes == 7L)
+      }
+    }
+  }
+
+  /** Derives the checksum for removing a non-live file from an empty table, tracking logs. */
+  private def deriveChecksumForNotLiveRemove(
+      tableName: String): (Either[String, VersionChecksum], Seq[UsageRecord]) = {
+    val testDeltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    val oldVersion = testDeltaLog.update().version
+    val oldCrc = testDeltaLog.readChecksum(oldVersion)
+    assert(oldCrc.exists(_.numFiles == 0L))
+    val notLiveRemove = createTestAddFile(encodedPath = "notLive", size = 100L)
+      .removeWithTimestamp()
+    val testSpark = spark
+    var result: Either[String, VersionChecksum] = null
+    val usageLogs = Log4jUsageLogger.track {
+      result = new RecordChecksum {
+        override val deltaLog: DeltaLog = testDeltaLog
+        override protected def spark: SparkSession = testSpark
+      }.incrementallyDeriveChecksum(
+        testSpark,
+        testDeltaLog,
+        versionToCompute = oldVersion + 1,
+        actions = Seq(notLiveRemove),
+        metadataOpt = None,
+        protocolOpt = None,
+        operationName = DeltaOperations.Truncate().name,
+        txnIdOpt = None,
+        previousVersionState = Right(oldCrc.get),
+        mustIncludeFileSizeHistogram = false,
+        includeAddFilesInCrc = false)
+    }
+    (result, filterUsageRecords(usageLogs, negativeChecksumFieldOpType))
+  }
+
+  test("incrementallyDeriveChecksum returns NEGATIVE_CHECKSUM_FIELD for negative fields") {
+    withIncrementalCrcNoVerify() {
+      withTempTable(createTable = true) { tableName =>
+        val (result, negativeFieldLogs) = deriveChecksumForNotLiveRemove(tableName)
+        assert(result == Left("NEGATIVE_CHECKSUM_FIELD"))
+        assert(negativeFieldLogs.size == 1)
+        val blob = JsonUtils.fromJson[Map[String, Any]](negativeFieldLogs.head.blob)
+        assert(blob("skippedChecksumWrite") == true)
+      }
+    }
+  }
+
+  test("negative incremental checksum is only logged when skipping the write is disabled") {
+    withIncrementalCrcNoVerify(skipChecksumOnNegativeField = false) {
+      withTempTable(createTable = true) { tableName =>
+        val (result, negativeFieldLogs) = deriveChecksumForNotLiveRemove(tableName)
+        assert(result.isRight)
+        assert(result.toOption.get.numFiles == -1L)
+        assert(result.toOption.get.tableSizeBytes == -100L)
+        assert(negativeFieldLogs.size == 1)
+        val blob = JsonUtils.fromJson[Map[String, Any]](negativeFieldLogs.head.blob)
+        assert(blob("skippedChecksumWrite") == false)
+        val negativeFields = negativeFieldsFromUsageLog(negativeFieldLogs.head.blob)
+        assert(negativeFields("numFiles").toString.toLong == -1L)
+        assert(negativeFields("tableSizeBytes").toString.toLong == -100L)
+      }
+    }
+  }
+
+  test("incremental checksum with negative deletion vector metrics is not written") {
+    withIncrementalCrcNoVerify() {
+      withSQLConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED.key -> "true") {
+        withTempTable(createTable = false) { tableName =>
+          sql(s"CREATE TABLE $tableName (id LONG) USING $tableProvider " +
+            s"TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val addFile = createTestAddFile(encodedPath = "file1", size = 10L)
+          log.startTransaction().commit(Seq(addFile), DeltaOperations.Write(SaveMode.Append))
+          assert(log.update().checksumOpt.flatMap(_.numDeletedRecordsOpt).contains(0L))
+
+          // The file is live but never had a DV, so subtracting this DV underflows DV metrics
+          // while numFiles and tableSizeBytes stay non-negative.
+          val removeWithUnknownDv = addFile
+            .copy(deletionVector = DeletionVectorDescriptor.inlineInLog(Array[Byte](1, 2), 3L))
+            .removeWithTimestamp()
+          val usageLogs = Log4jUsageLogger.track {
+            log.startTransaction()
+              .commit(Seq(removeWithUnknownDv), DeltaOperations.Truncate())
+          }
+          val version = log.update().version
+
+          val negativeFieldLogs = filterUsageRecords(usageLogs, negativeChecksumFieldOpType)
+          assert(negativeFieldLogs.nonEmpty)
+          val negativeFields = negativeFieldsFromUsageLog(negativeFieldLogs.head.blob)
+          assert(negativeFields("numDeletedRecords").toString.toLong == -3L)
+          assert(negativeFields("numDeletionVectors").toString.toLong == -1L)
+          assert(!negativeFields.contains("numFiles"))
+          assert(!negativeFields.contains("tableSizeBytes"))
+
+          // Files are keyed by (path, DV id), so the remove does not match the live file and
+          // reconstruction still sees it. The CRC reflects that true state.
+          val crc = log.readChecksum(version)
+          assert(crc.isDefined)
+          assert(crc.get.numFiles == 1L)
+          assert(crc.get.tableSizeBytes == 10L)
+          assert(crc.get.numDeletedRecordsOpt.forall(_ == 0L))
+          assert(crc.get.numDeletionVectorsOpt.forall(_ == 0L))
+        }
+      }
+    }
+  }
+
+  test("valid incremental checksum does not report negative fields") {
+    withIncrementalCrcNoVerify() {
+      withTempTable(createTable = true) { tableName =>
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val files = (1 to 3).map(i => createTestAddFile(encodedPath = i.toString, size = 10L))
+        log.startTransaction().commit(files, DeltaOperations.Write(SaveMode.Append))
+        val usageLogs = Log4jUsageLogger.track {
+          log.startTransaction()
+            .commit(files.map(_.removeWithTimestamp()), DeltaOperations.Truncate())
+        }
+        val version = log.update().version
+
+        assert(filterUsageRecords(usageLogs, negativeChecksumFieldOpType).isEmpty)
+        val crc = log.readChecksum(version)
+        assert(crc.isDefined)
+        assert(crc.get.numFiles == 0L)
+        assert(crc.get.tableSizeBytes == 0L)
       }
     }
   }

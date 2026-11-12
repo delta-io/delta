@@ -29,12 +29,41 @@ import org.apache.spark.sql.test.SharedSparkSession
  */
 trait DeltaSQLCommandTest extends SharedSparkSession {
 
+  /** Executes DDL and DML; connector-specific suites can override the execution mode. */
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
+
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
         classOf[DeltaSparkSessionExtension].getName)
       .set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
         classOf[DeltaCatalog].getName)
+  }
+
+  /**
+   * Sets all configurations specified in `pairs`, calls `f`, and then restores all configurations.
+   *
+   * Use this instead of `withSQLConf` as [[internal.SQLConf SQLConf]] is not part of Spark's public
+   * API.
+   */
+  protected def withConf[T](pairs: (String, String)*)(f: => T): T = {
+    val (keys, values) = pairs.unzip
+    val currentValues = keys.map { key =>
+      if (spark.conf.contains(key)) {
+        Some(spark.conf.get(key))
+      } else {
+        None
+      }
+    }
+    keys.lazyZip(values).foreach { (k, v) =>
+      spark.conf.set(k, v)
+    }
+    try f finally {
+      keys.zip(currentValues).foreach {
+        case (key, Some(value)) => spark.conf.set(key, value)
+        case (key, None) => spark.conf.unset(key)
+      }
+    }
   }
 
   /**

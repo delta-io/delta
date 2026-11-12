@@ -141,7 +141,7 @@ object RowId {
    */
   private[delta] def extractHighWatermark(snapshot: Snapshot): Option[Long] =
     if (isSupported(snapshot.protocol)) {
-      RowTrackingMetadataDomain.fromSnapshot(snapshot).map(_.rowIdHighWaterMark)
+      snapshot.getRowTrackingHighWaterMark()
     } else {
       None
     }
@@ -341,7 +341,7 @@ object RowId {
     }
 
     val materializedColumnName = MaterializedRowId.getMaterializedColumnNameOrThrow(
-      snapshot.protocol, snapshot.metadata, snapshot.deltaLog.unsafeVolatileTableId)
+      snapshot.protocol, snapshot.metadata, snapshot.metadata.id)
 
     val rowIdColumn = DeltaTableUtils.getFileMetadataColumn(dataFrame).getField(ROW_ID)
     val shouldSetIcebergReservedFieldId = IcebergCompat.isGeqEnabled(snapshot.metadata, 3)

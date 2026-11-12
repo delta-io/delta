@@ -18,12 +18,14 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.actions.{CheckpointMetadata, SidecarFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Checkpoint, CheckpointMetadata, SidecarFile, SingleAction}
+import org.apache.spark.sql.delta.amt.DataManifestEntry
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames.{checkpointVersion, numCheckpointParts}
 import org.apache.spark.sql.delta.util.JsonUtils
-import com.fasterxml.jackson.annotation.{JsonIgnore, JsonIgnoreProperties, JsonPropertyOrder}
-import com.fasterxml.jackson.databind.{DeserializationFeature, JsonNode}
+import com.fasterxml.jackson.annotation.{JsonIgnore, JsonPropertyOrder, JsonValue}
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.databind.{DeserializationContext, DeserializationFeature, JsonDeserializer, JsonNode}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.commons.codec.digest.DigestUtils
@@ -31,6 +33,12 @@ import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.StructType
+
+/** Information about the AMT checkpoint in the LAST_CHECKPOINT file. */
+case class LastAMTCheckpoint(
+    manifestCommitVersion: Long,
+    checkpoint: Option[Checkpoint],
+    leaves: Option[Seq[DataManifestEntry]])
 
 /**
  * Information about the V2 Checkpoint in the LAST_CHECKPOINT file
@@ -89,13 +97,16 @@ object LastCheckpointV2 {
  * from one read request. For this reason, we use `JsonPropertyOrder` to force them in the beginning
  * together.
  *
- * @param version the version of this checkpoint
- * @param size the number of actions in the checkpoint, -1 if the information is unavailable.
- * @param parts the number of parts when the checkpoint has multiple parts. None if this is a
- *              singular checkpoint
+ * @param version the version of this checkpoint. Represents the content root version if this is an
+ *                AMT checkpoint.
+ * @param size the number of actions in the checkpoint. -1 if this is an AMT checkpoint or the
+ *             information is unavailable.
+ * @param parts the number of parts when the checkpoint has multiple parts. Represents the number of
+ *              leaves if this is an AMT checkpoint. None if this is a singular checkpoint.
  * @param sizeInBytes the number of bytes of the checkpoint
- * @param numOfAddFiles the number of AddFile actions in the checkpoint
+ * @param numOfAddFiles the number of AddFile actions in the checkpoint. None for AMT checkpoints.
  * @param checkpointSchema the schema of the underlying checkpoint files
+ * @param amtCheckpoint information about the AMT checkpoint, present only for AMT tables
  * @param checksum the checksum of the [[LastCheckpointInfo]].
  */
 @JsonPropertyOrder(Array("version", "size", "parts"))
@@ -108,11 +119,20 @@ case class LastCheckpointInfo(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     numOfAddFiles: Option[Long],
     checkpointSchema: Option[StructType],
+    @JsonDeserialize(contentUsing = classOf[LastCheckpointInfo.CheckpointTypeDeserializer])
+    checkpointType: Option[LastCheckpointInfo.CheckpointType] = None,
+    amtCheckpoint: Option[LastAMTCheckpoint] = None,
     v2Checkpoint: Option[LastCheckpointV2] = None,
     checksum: Option[String] = None) {
 
+  // Format-specific fields are mutually exclusive.
+  require(!(amtCheckpoint.nonEmpty && v2Checkpoint.nonEmpty))
+  require(Seq(LastCheckpointInfo.CheckpointType.AMT, LastCheckpointInfo.CheckpointType.UNKNOWN)
+    .exists(checkpointType.contains) == amtCheckpoint.nonEmpty)
+
   @JsonIgnore
   def getFormatEnum(): CheckpointInstance.Format = parts match {
+    case _ if amtCheckpoint.nonEmpty => CheckpointInstance.Format.AMT
     case _ if v2Checkpoint.nonEmpty => CheckpointInstance.Format.V2
     case Some(_) => CheckpointInstance.Format.WITH_PARTS
     case None => CheckpointInstance.Format.SINGLE
@@ -125,6 +145,30 @@ case class LastCheckpointInfo(
 }
 
 object LastCheckpointInfo {
+  /** The checkpoint type described by a [[LastCheckpointInfo]]. */
+  sealed abstract class CheckpointType(val name: String) {
+    @JsonValue
+    override def toString: String = name
+  }
+
+  /** Reads a [[CheckpointType]] back from its bare `name` string. */
+  class CheckpointTypeDeserializer extends JsonDeserializer[CheckpointType] {
+    override def deserialize(p: JsonParser, ctxt: DeserializationContext): CheckpointType =
+      CheckpointType.fromName(p.readValueAs(classOf[String]))
+  }
+
+  object CheckpointType {
+    object AMT extends CheckpointType("AdaptiveMetadataTree")
+    object UNKNOWN extends CheckpointType("Unknown")
+
+    /** All known checkpoint types. Extend this when adding a new [[CheckpointType]]. */
+    val ALL: Seq[CheckpointType] = Seq(AMT)
+
+    def unapply(name: String): Option[CheckpointType] = ALL.find(_.name == name)
+
+    /** Used for deserialization. */
+    def fromName(name: String): CheckpointType = unapply(name).getOrElse(UNKNOWN)
+  }
 
   val STORED_CHECKSUM_KEY = "checksum"
 
@@ -150,6 +194,8 @@ object LastCheckpointInfo {
           lastCheckpointInfo.parts,
           sizeInBytes = None,
           numOfAddFiles = None,
+          checkpointType = None,
+          amtCheckpoint = None,
           v2Checkpoint = None,
           checkpointSchema = None))
     }

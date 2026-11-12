@@ -449,10 +449,11 @@ class SchemaUtilsSuite extends QueryTest
    *                 "Specified schema has additional field(s): x, y", we cannot predict
    *                 the order of x and y.
    */
-  def testReportDifferences(testName: String)
+  def testReportDifferences(testName: String, checkFieldOrder: Boolean = false)
     (existing: StructType, specified: StructType, expected: String*): Unit = {
     test(testName) {
-      val differences = SchemaUtils.reportDifferences(existing, specified)
+      val differences = SchemaUtils.reportDifferences(
+        existing, specified, checkFieldOrder = checkFieldOrder)
       // make sure every expected difference is reported
       expected foreach ((exp: String) =>
         assert(differences.exists(message => exp.r.findFirstMatchIn(message).isDefined),
@@ -837,6 +838,131 @@ class SchemaUtilsSuite extends QueryTest
     "type for h\\[value\\] is different"
   )
 
+  private def structWithMapValue(fields: String*): StructType = new StructType()
+    .add("a", IntegerType)
+    .add("m", MapType(StringType,
+      StructType(fields.map(name => StructField(name, IntegerType)))))
+
+  private def structWithMapKey(fields: String*): StructType = new StructType()
+    .add("m", MapType(
+      StructType(fields.map(name => StructField(name, IntegerType))),
+      IntegerType))
+
+  private def structWithArrayElem(fields: String*): StructType = new StructType()
+    .add("arr", ArrayType(StructType(fields.map(name => StructField(name, IntegerType)))))
+
+  testReportDifferences("map value field order is ignored by default")(
+    existing = structWithMapValue("x", "y"),
+    specified = structWithMapValue("y", "x")
+  )
+
+  testReportDifferences(
+    "map value field order is reported when checkFieldOrder is set",
+    checkFieldOrder = true)(
+    existing = structWithMapValue("x", "y"),
+    specified = structWithMapValue("y", "x"),
+    "Specified order of fields of m\\[value\\] is different from existing schema" +
+      "[\\s\\S]*Specified: y, x[\\s\\S]*Existing:  x, y"
+  )
+
+  testReportDifferences(
+    "top-level field order is reported when checkFieldOrder is set",
+    checkFieldOrder = true)(
+    existing = structWithMapValue("x", "y"),
+    specified = StructType(structWithMapValue("x", "y").fields.reverse),
+    "Specified order of top-level fields is different from existing schema"
+  )
+
+  testReportDifferences("array element field order is ignored by default")(
+    existing = structWithArrayElem("k", "v"),
+    specified = structWithArrayElem("v", "k")
+  )
+
+  testReportDifferences(
+    "array element field order is reported when checkFieldOrder is set",
+    checkFieldOrder = true)(
+    existing = structWithArrayElem("k", "v"),
+    specified = structWithArrayElem("v", "k"),
+    "Specified order of fields of arr\\[\\] is different from existing schema"
+  )
+
+  testReportDifferences(
+    "nested struct field order is reported when checkFieldOrder is set",
+    checkFieldOrder = true)(
+    existing = new StructType()
+      .add("addr", new StructType().add("city", StringType).add("country", StringType)),
+    specified = new StructType()
+      .add("addr", new StructType().add("country", StringType).add("city", StringType)),
+    "Specified order of fields of addr is different from existing schema"
+  )
+
+  testReportDifferences(
+    "map key field order is reported when checkFieldOrder is set",
+    checkFieldOrder = true)(
+    existing = structWithMapKey("x", "y"),
+    specified = structWithMapKey("y", "x"),
+    "Specified order of fields of m\\[key\\] is different from existing schema"
+  )
+
+  testReportDifferences(
+    "missing field and order of remaining names are both reported",
+    checkFieldOrder = true)(
+    existing = new StructType()
+      .add("a", IntegerType)
+      .add("b", IntegerType)
+      .add("c", IntegerType),
+    specified = new StructType()
+      .add("c", IntegerType)
+      .add("a", IntegerType),
+    "missing field[(]s[)]: b",
+    "Specified order of top-level fields is different from existing schema"
+  )
+
+  testReportDifferences(
+    "extra field does not report order when common names keep their order",
+    checkFieldOrder = true)(
+    existing = new StructType()
+      .add("a", IntegerType)
+      .add("b", IntegerType),
+    specified = new StructType()
+      .add("a", IntegerType)
+      .add("b", IntegerType)
+      .add("c", IntegerType),
+    "additional field[(]s[)]: c"
+  )
+
+  testReportDifferences(
+    "nullability and field order are both reported when checkFieldOrder is set",
+    checkFieldOrder = true)(
+    existing = new StructType()
+      .add("a", IntegerType, nullable = false)
+      .add("b", IntegerType),
+    specified = new StructType()
+      .add("b", IntegerType)
+      .add("a", IntegerType),
+    "Field a is nullable in specified schema but non-nullable",
+    "Specified order of top-level fields is different from existing schema"
+  )
+
+  test("reportDifferencesByCategory keeps field order separate from other diffs") {
+    val existing = new StructType()
+      .add("a", IntegerType, nullable = false)
+      .add("b", IntegerType)
+    val specified = new StructType()
+      .add("b", IntegerType)
+      .add("a", IntegerType)
+    val report = SchemaUtils.reportDifferencesByCategory(existing, specified)
+    assert(report.nonOrder.exists(_.contains("nullable")))
+    assert(report.fieldOrder.exists(_.contains("Specified order of top-level fields")))
+    assert(!report.nonOrder.exists(_.contains("Specified order of")))
+    assert(report.all === report.nonOrder ++ report.fieldOrder)
+    assert(report.fieldOrderMismatches === Seq(
+      FieldOrderMismatch(commonFieldCount = 2, firstDivergingIndex = 0)))
+    val skipped = SchemaUtils.reportDifferencesByCategory(
+      existing, specified, collectFieldOrder = false)
+    assert(skipped.fieldOrder.isEmpty)
+    assert(skipped.fieldOrderMismatches.isEmpty)
+  }
   ////////////////////////////
   // findColumnPosition
   ////////////////////////////

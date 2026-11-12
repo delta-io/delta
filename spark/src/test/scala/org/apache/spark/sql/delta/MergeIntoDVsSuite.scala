@@ -26,7 +26,7 @@ import org.apache.spark.sql.functions.col
 
 trait MergeIntoDVsMixin extends MergeIntoSQLMixin with DeletionVectorsTestUtils {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, merge = true)
   }

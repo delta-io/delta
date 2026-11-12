@@ -34,7 +34,7 @@ import org.apache.spark.sql.{DataFrame, Row}
 
 /**
  * Verifies that a single stream's schema tracking log is interchangeable between the V1 (legacy
- * DeltaSource) and V2 (Kernel-based SparkMicroBatchStream) connectors. Each test alternates the
+ * DeltaSource) and V2 (Kernel-based DeltaV2MicroBatchStream) connectors. Each test alternates the
  * connector across stream restarts that share the same checkpoint and schema location, exercising
  * schema log initialization, non-additive evolution, and additive-then-non-additive sequences.
  */
@@ -46,7 +46,7 @@ trait V1V2SourceSchemaLogCompatibilitySuiteBase
   override protected def isCdcTest: Boolean = false
 
   override protected def runOnlyTests: Seq[String] = Seq(
-    // Scenario tests — multi-step flows where each connector picks up what the other left.
+    // Scenario tests - multi-step flows where each connector picks up what the other left.
     "alternating connectors with no schema evolution leaves the schema log untouched",
     "V1-initialized schema log can be read by V2",
     "V2-initialized schema log can be read by V1",
@@ -59,7 +59,7 @@ trait V1V2SourceSchemaLogCompatibilitySuiteBase
     "alternating connectors (V2-V1-V2-V1) across additive then non-additive evolution (rename)",
     "alternating connectors (V2-V1-V2-V1) across additive then non-additive evolution (drop)",
 
-    // Equivalence tests — V1 and V2 produce/consume byte-identical log files for the same input.
+    // Equivalence tests - V1 and V2 produce/consume byte-identical log files for the same input.
     "V1 and V2 write equivalent schema tracking log entries (rename)",
     "V1 and V2 write equivalent schema tracking log entries (drop)",
     "V1 and V2 mergers produce equivalent merged schema log entries",
@@ -78,7 +78,7 @@ trait V1V2SourceSchemaLogCompatibilitySuiteBase
   protected def withV1[T](f: => T): T = withConnector(useV2 = false)(f)
   protected def withV2[T](f: => T): T = withConnector(useV2 = true)(f)
 
-  // SparkTable (V2) is read-only; route DDL/DML through V1 regardless of the active reader.
+  // Route DDL/DML through V1 regardless of the active reader.
   override protected def executeDml(sqlText: String): Unit = {
     withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
       sql(sqlText)

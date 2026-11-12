@@ -19,6 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.MaxCatalogVersionException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
@@ -95,8 +96,9 @@ public interface SnapshotBuilder {
    * Provides parsed log data to optimize table resolution.
    *
    * <p>When log data is provided, Kernel can avoid reading from the filesystem for information that
-   * is already available in the parsed data, improving performance. Currently, only ratified staged
-   * commits are supported.
+   * is already available in the parsed data, improving performance. Currently, only file-based
+   * ratified catalog commits are supported, sorted and contiguous by version. Each commit may be
+   * staged or already published.
    *
    * @param logData the parsed log data to use for optimization
    * @return a new builder instance with the provided log data
@@ -125,8 +127,8 @@ public interface SnapshotBuilder {
    * respect the catalog's view of the table state.
    *
    * <p>Important: This method is required for catalog-managed tables and must not be used for
-   * file-system managed tables. An {@link IllegalArgumentException} will be thrown at build time if
-   * this constraint is violated.
+   * file-system managed tables. A {@link MaxCatalogVersionException} will be thrown at build time
+   * if this constraint is violated.
    *
    * <p>When specified, the following additional constraints are enforced:
    *
@@ -156,6 +158,8 @@ public interface SnapshotBuilder {
    *
    * @param engine the engine to use for filesystem operations
    * @return the resolved snapshot instance
+   * @throws MaxCatalogVersionException if a catalog-managed snapshot is loaded without a maximum
+   *     catalog version, or a filesystem-managed snapshot is loaded with one
    */
   Snapshot build(Engine engine);
 }

@@ -42,10 +42,12 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
    * for a particular version.
    * @param fileActionsItr - Iterator of IndexedFiles for a particular commit.
    * @param isInitialSnapshot - Indicates whether the commit version is the initial snapshot or not.
+   * @param isInlineManifestCommit - Whether the commit is an inline AMT manifest commit.
    */
   class IndexedChangeFileSeq(
       fileActionsItr: Iterator[IndexedFile],
-      isInitialSnapshot: Boolean) {
+      isInitialSnapshot: Boolean,
+      isInlineManifestCommit: Boolean = false) {
 
     private def moreThanFrom(
         indexedFile: IndexedFile, fromVersion: Long, fromIndex: Long): Boolean = {
@@ -145,7 +147,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           // This is to avoid returning `update_preimage` and `update_postimage` in separate
           // batches.
           if (admissionControl.admit(filteredFiles)) {
-            filteredFiles.toIterator
+            // Emit the BEGIN/END index markers with the CDC files (as the AddFile/RemoveFile
+            // branch does) so buildOffsetFromIndexedFile rolls the offset to (version + 1,
+            // BASE_INDEX); an AddCDCFile window-top would otherwise park and stall the stream.
+            fileActions
+              .filter(f => f.cdc != null || hasNoFileActionAndStartOrEndIndex(f))
+              .filter(isValidIndexedFile(_, fromVersion, fromIndex, endOffset))
+              .toIterator
           } else {
             Iterator()
           }
@@ -164,9 +172,10 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
             case remove: RemoveFile => remove.deletionVector != null
             case _ => false
           }
-          if (hasDeletionVectors) {
+          if (hasDeletionVectors || isInlineManifestCommit) {
             // We cannot split up add/remove pairs with Deletion Vectors, because we will get the
-            // wrong result.
+            // wrong result. Same goes for an inline AMT manifest commit, as CDF actions may not
+            // in the same order before and after single commit read enablement.
             // So in this case we behave as above with CDC files and either admit all or none.
             if (admissionControl.admit(filteredFiles)) {
               filteredFiles.toIterator
@@ -203,8 +212,23 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     val changes = getFileChangesForCDC(
       startVersion, startIndex, isInitialSnapshot, limits = None, Some(endOffset))
 
+    // Versions before startVersion have already been processed, so we treat
+    // startVersion - 1 as already "seen".
+    var maxVersionSeen = startVersion - 1
+    // The last commit version we expect the iterator to cover.
+    // If endOffset.index < 0, we don't need to read any file from
+    // endOffset.reservoirVersion, so the last version we must see is one before it.
+    // Similarly if start >= end (no data to read from that version), subtract 1.
+    val lastExpectedVersion = if (endOffset.index >= 0 &&
+      (startVersion < endOffset.reservoirVersion || startIndex < endOffset.index)) {
+      endOffset.reservoirVersion
+    } else {
+      endOffset.reservoirVersion - 1
+    }
+    // iterator will be materialized during CDCReader.changesToDF
     val groupedFileAndCommitInfoActions =
       changes.map { case (v, indexFiles, commitInfoOpt) =>
+        maxVersionSeen = v
         (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq ++ commitInfoOpt)
       }
 
@@ -228,8 +252,16 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           throw DeltaErrors.logFileNotFoundExceptionForStreamingSource(e)
       }
     }
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION) &&
+        maxVersionSeen < lastExpectedVersion) {
+      recordTrailingCommitMissingEvent(
+        startVersion, startIndex, isInitialSnapshot, endOffset,
+        lastExpectedVersion, maxVersionSeen, isStreamingCDC = true)
+      throw DeltaErrors.streamingTrailingCommitMissing(
+        lastExpectedVersion, maxVersionSeen)
+    }
     logInfo(log"Getting CDC dataFrame for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
       log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
@@ -263,7 +295,11 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
       deltaLog.getChanges(
-          startVersion, catalogTableOpt, options.failOnDataLoss).map { case (version, actions) =>
+          startVersion,
+          catalogTableOpt,
+          options.failOnDataLoss,
+          skipNoDataChangeFileActions = true)
+          .map { case (version, actions) =>
         // skipIndexedFile must be applied after creating IndexedFile so that
         // IndexedFile.index is consistent across all versions.
         val (fileActions, skipIndexedFile, metadataOpt, protocolOpt, commitInfoOpt) =
@@ -294,7 +330,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
                   remove = remove,
                   shouldSkip = skipIndexedFile)
             })
-        (version, new IndexedChangeFileSeq(itr, isInitialSnapshot = false), commitInfoOpt)
+        val isInlineManifestCommit = actions.exists {
+          case checkpoint: Checkpoint => checkpoint.contentRoot.version == version
+          case _ => false
+        }
+        (version,
+          new IndexedChangeFileSeq(itr, isInitialSnapshot = false, isInlineManifestCommit),
+          commitInfoOpt)
       }
     }
 
@@ -350,7 +392,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     }
 
     logInfo(log"Getting CDC file changes for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
       log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, fromIndex=" +
       log"${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
       log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} took timeMs=" +
@@ -408,11 +450,13 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         protocolAction,
         commitInfoAction)
     } else {
+      val changesDataFunc =
+        CommitInfo.fileActionChangesData(actions.collectFirst { case ci: CommitInfo => ci })
       (actions.filter {
         case a: AddFile =>
-          a.dataChange
+          changesDataFunc(a)
         case r: RemoveFile =>
-          r.dataChange
+          changesDataFunc(r)
         case m: Metadata =>
           checkAndCacheMetadata(m)
           false
@@ -426,7 +470,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           shouldSkipIndexedFile = CDCReader.shouldSkipFileActionsInCommit(commitInfo)
           commitInfoAction = Some(commitInfo)
           false
-        case _: AddCDCFile | _: SetTransaction | _: DomainMetadata =>
+        case _: AddCDCFile | _: SetTransaction | _: DomainMetadata | _: Checkpoint =>
           false
         case null => // Some crazy future feature. Ignore
           false

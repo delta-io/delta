@@ -242,7 +242,8 @@ class DataFiltersBuilder(
       dataFilter: Expression,
       isNullExpansionDepth: Integer): Option[DataSkippingPredicate] = dataFilter match {
     // Expressions that contain only literals are not eligible for skipping.
-    case cmp: Expression if cmp.children.forall(areAllLeavesLiteral) => None
+    case cmp: Expression if cmp.children.forall(DataFiltersBuilder.areAllLeavesLiteral)
+      => None
 
     // Push skipping predicate generation through the AND:
     //
@@ -610,8 +611,14 @@ class DataFiltersBuilder(
     // percentage of files have the same min-max value. As a rough heuristic, only allow rewriting
     // expressions that reference only the clustering columns (since these columns are more likely
     // to have the same min-max values).
+    // We can't support floating point values because Delta statistics don't distinguish -0.0 from
+    // +0.0. Expressions such as FORMAT_STRING expose the difference, making min == max unsafe.
     case SkippingEligibleColumn(c, SkippingEligibleDataType(dt))
       if dt != TimestampType && dt != TimestampNTZType &&
+        (!spark.sessionState.conf.getConf(
+          DeltaSQLConf
+            .DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_FLOATING_POINT_VALIDATION_ENABLED) ||
+          (dt != FloatType && dt != DoubleType)) &&
         (!limitPartitionLikeFiltersToClusteringColumns ||
           clusteringColumnPaths.exists(SchemaUtils.areLogicalNamesEqual(_, c.reverse))) =>
       // Only rewrite the expression if all stats are collected for this column.
@@ -741,7 +748,10 @@ class DataFiltersBuilder(
         DataSkippingPredicate(Column(finalExpr), statsCols.toSet)
     }
   }
+}
 
+
+object DataFiltersBuilder {
   // We are doing the iterative approach because of stack depth concerns.
   private[stats] def areAllLeavesLiteral(e: Expression): Boolean = {
     val stack = scala.collection.mutable.Stack[Expression]()
@@ -760,4 +770,3 @@ class DataFiltersBuilder(
     true
   }
 }
-

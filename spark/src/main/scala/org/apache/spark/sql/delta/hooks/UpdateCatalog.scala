@@ -358,8 +358,17 @@ object UpdateCatalog {
       catalog.externalCatalog.alterTableDataSchema(db, tblName, schema)
     }
 
-    // We have to update the properties anyway with the latest version/timestamp information
-    catalog.alterTable(table.copy(properties = updatedProperties(snapshot) ++ additionalProperties))
+    // We have to update the properties anyway with the latest version/timestamp information.
+    // If RETAIN_COMMENTS_DURING_REPLACE_TABLE is enabled, replace table may carry over table
+    // comments. UC has to be aware of this.
+    val updatedTable = table.copy(
+      properties = updatedProperties(snapshot) ++ additionalProperties)
+    catalog.alterTable(
+      if (spark.conf.get(DeltaSQLConf.RETAIN_COMMENTS_DURING_REPLACE_TABLE)) {
+        updatedTable.copy(comment = Option(snapshot.metadata.description))
+      } else {
+        updatedTable
+      })
   }
 
   /** Updates our properties map with the version and timestamp information of the snapshot. */

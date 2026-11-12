@@ -27,6 +27,7 @@ import java.util.HashSet;
 import static org.apache.hadoop.fs.s3a.Constants.DEFAULT_MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.Constants.MAX_PAGING_KEYS;
 import static org.apache.hadoop.fs.s3a.S3AUtils.iteratorToStatuses;
+import static org.apache.hadoop.fs.s3a.S3AUtils.maybeAddTrailingSlash;
 
 
 /**
@@ -66,7 +67,8 @@ public final class S3LogStoreUtil {
                     ListObjectsV2Request.builder()
                         .bucket(s3afs.getBucket())
                         .maxKeys(maxKeys)
-                        .prefix(s3afs.pathToKey(parentPath))
+                        .prefix(maybeAddTrailingSlash(s3afs.pathToKey(parentPath)))
+                        .delimiter("/")
                         .startAfter(keyBefore(s3afs.pathToKey(resolvedPath)))
                         .build()
                 ), ACCEPT_ALL,
@@ -89,13 +91,23 @@ public final class S3LogStoreUtil {
             Path parentPath) throws IOException {
         S3AFileSystem s3afs;
         try {
-             s3afs = (S3AFileSystem) fs;
+            s3afs = (S3AFileSystem) unwrap(fs);
         } catch (ClassCastException e) {
             throw new UnsupportedOperationException(
                     "The Hadoop file system used for the S3LogStore must be castable to " +
                             "org.apache.hadoop.fs.s3a.S3AFileSystem.", e);
         }
         return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(s3afs, resolvedPath, parentPath));
+    }
+
+    /**
+     * Unwraps {@link FilterFileSystem} wrappers that delegate to a real {@link S3AFileSystem}.
+     */
+    static FileSystem unwrap(FileSystem fs) {
+        while (!(fs instanceof S3AFileSystem) && fs instanceof FilterFileSystem) {
+            fs = ((FilterFileSystem) fs).getRawFileSystem();
+        }
+        return fs;
     }
 
     /**

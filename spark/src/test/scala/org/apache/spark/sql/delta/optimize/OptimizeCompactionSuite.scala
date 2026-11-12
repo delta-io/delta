@@ -21,6 +21,7 @@ import java.io.File
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions._
@@ -642,13 +643,20 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
   test("optimize on a catalog managed table should fail") {
     withCatalogManagedTable() { tableName =>
+      spark.sql(s"INSERT INTO $tableName VALUES (1)")
+      val snapshotBefore = getSnapshot(tableName)
+
       checkError(
         intercept[DeltaUnsupportedOperationException] {
           spark.sql(s"OPTIMIZE $tableName")
         },
         "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
-        parameters = Map("operation" -> "OPTIMIZE")
+        parameters = Map("operation" -> "DATA_REORGANIZATION")
       )
+
+      val snapshotAfter = getSnapshot(tableName)
+      assert(snapshotAfter.version === snapshotBefore.version)
+      assert(snapshotAfter.allFiles.collect().toSet === snapshotBefore.allFiles.collect().toSet)
     }
   }
 
@@ -678,15 +686,17 @@ trait OptimizeCompactionSuiteBase extends QueryTest
             val snapshot = deltaLog.update()
             assert(snapshot.allFiles.count() == 4)
 
-            new OptimizeExecutor(
-              spark,
-              snapshot,
-              catalogTable = None,
-              partitionPredicate = Seq.empty,
-              zOrderByColumns = Seq.empty,
-              isAutoCompact = false,
-              DeltaOptimizeContext()
-            ).optimize()
+            val usageRecords = Log4jUsageLogger.track {
+              new OptimizeExecutor(
+                spark,
+                snapshot,
+                catalogTable = None,
+                partitionPredicate = Seq.empty,
+                zOrderByColumns = Seq.empty,
+                isAutoCompact = false,
+                DeltaOptimizeContext()
+              ).optimize()
+            }
 
             val filesAfter = deltaLog.update().allFiles.count()
             if (enableNormalization) {
@@ -698,6 +708,10 @@ trait OptimizeCompactionSuiteBase extends QueryTest
             }
             checkAnswer(spark.read.format("delta").load(path).select("id"),
               Seq(Row(0), Row(1), Row(2), Row(3)))
+            val numUnnormalizedValuesEvents = usageRecords.count(_.tags.get("opType").contains(
+              "delta.normalizedPartitionValues.unnormalizedValuesExist"))
+            val expectedNumUnnormalizedValuesEvents = if (enableNormalization) 1 else 0
+            assert(numUnnormalizedValuesEvents === expectedNumUnnormalizedValuesEvents)
           }
         }
       }

@@ -470,6 +470,38 @@ trait PartitionLikeDataSkippingSuiteBase
       assert(scanResult.partitionLikeDataFilters.size == 0)
     }
   }
+
+  Seq("FLOAT", "DOUBLE").foreach { dataType =>
+    test(s"partition-like data skipping is disabled for $dataType columns") {
+      val tbl = "tbl"
+      withSQLConf(
+          DeltaSQLConf
+            .DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_FLOATING_POINT_VALIDATION_ENABLED.key ->
+            "true") {
+        withClusteredTable(tbl, s"a BIGINT, b $dataType", "b") {
+          spark.range(100)
+            .selectExpr("id AS a", s"CAST(-0.0 AS $dataType) AS b")
+            .union(spark.range(100)
+              .selectExpr("id AS a", s"CAST(0.0 AS $dataType) AS b"))
+            .coalesce(1)
+            .write
+            .format("delta")
+            .mode("append")
+            .saveAsTable(tbl)
+
+          Seq("0.0", "-0.0").foreach { value =>
+            validateExpectedScanMetrics(
+              tableName = tbl,
+              query = s"SELECT * FROM $tbl WHERE format_string('%s', b) = '$value'",
+              expectedNumFiles = 1,
+              expectedNumPartitionLikeDataFilters = 0,
+              allPredicatesUsed = false,
+              minNumFilesToApply = 1L)
+          }
+        }
+      }
+    }
+  }
 }
 
 class PartitionLikeDataSkippingSuite extends PartitionLikeDataSkippingSuiteBase
