@@ -218,7 +218,7 @@ public class SchemaUtilsTest {
   }
 
   @Test
-  public void testSchemaWithFieldMetadataToKernel() {
+  public void testSchemaRoundTripWithFieldMetadata() {
     // Schema with field metadata (e.g., column mapping)
     org.apache.spark.sql.types.StructType sparkSchema =
         new org.apache.spark.sql.types.StructType()
@@ -242,13 +242,15 @@ public class SchemaUtilsTest {
                     .putString("delta.columnMapping.physicalName", "col-abc-123")
                     .build());
 
+    // Verify Spark → Kernel conversion
     StructType actualKernelSchema = SchemaUtils.convertSparkSchemaToKernelSchema(sparkSchema);
     assertEquals(expectedKernelSchema, actualKernelSchema);
   }
 
   private void checkConversion(
       org.apache.spark.sql.types.DataType sparkDataType, DataType kernelDataType) {
-    assertEquals(kernelDataType, SchemaUtils.convertSparkDataTypeToKernelDataType(sparkDataType));
+    DataType toKernel = SchemaUtils.convertSparkDataTypeToKernelDataType(sparkDataType);
+    assertEquals(kernelDataType, toKernel);
   }
 
   ////////////////////////////////

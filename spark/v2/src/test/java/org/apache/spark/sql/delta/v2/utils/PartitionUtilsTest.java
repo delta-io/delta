@@ -88,10 +88,6 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     return new PartitionValueCaster(partitionSchema, ZoneId.of("UTC"));
   }
 
-  private static StructType sparkSchemaOf(Snapshot snapshot) {
-    return SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata());
-  }
-
   @Test
   public void testGetPartitionRow_FieldOrdering() {
     // Schema defines order: year, month, day
@@ -392,7 +388,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     StructType readDataSchema = dataSchema;
     StructType ddlOrderedReadOutputSchema =
         SchemaUtils.ddlOrderedOutputSchema(
-            sparkSchemaOf(snapshot), readDataSchema, partitionSchema);
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
+            readDataSchema,
+            partitionSchema);
     Filter[] filters = new Filter[0];
     scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
     Configuration hadoopConf = new Configuration();
@@ -432,7 +430,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     StructType readDataSchema = dataSchema;
     StructType ddlOrderedReadOutputSchema =
         SchemaUtils.ddlOrderedOutputSchema(
-            sparkSchemaOf(snapshot), readDataSchema, partitionSchema);
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
+            readDataSchema,
+            partitionSchema);
     Filter[] filters = new Filter[0];
     scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
     Configuration hadoopConf = new Configuration();
@@ -479,7 +479,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     StructType readDataSchema = dataSchema;
     StructType ddlOrderedReadOutputSchema =
         SchemaUtils.ddlOrderedOutputSchema(
-            sparkSchemaOf(snapshot), readDataSchema, partitionSchema);
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
+            readDataSchema,
+            partitionSchema);
     Filter[] filters = new Filter[0];
     scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
     Configuration hadoopConf = new Configuration();
@@ -613,7 +615,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            sparkSchemaOf(snapshot), readDataSchema, partitionSchema);
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
+            readDataSchema,
+            partitionSchema);
     assertArrayEquals(new String[] {"id", "part", "col3"}, result.fieldNames());
   }
 
@@ -639,7 +643,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            sparkSchemaOf(snapshot), readDataSchema, partitionSchema);
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
+            readDataSchema,
+            partitionSchema);
     assertArrayEquals(new String[] {"id", "col3", "part"}, result.fieldNames());
   }
 
@@ -659,7 +665,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            sparkSchemaOf(snapshot), readDataSchema, emptyPartitions);
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
+            readDataSchema,
+            emptyPartitions);
     // Returns the readDataSchema instance unchanged (short-circuit).
     assertSame(readDataSchema, result);
   }
@@ -697,7 +705,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            sparkSchemaOf(snapshot), readDataSchema, partitionSchema);
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
+            readDataSchema,
+            partitionSchema);
     assertArrayEquals(new String[] {"id", "part", "col3", "_metadata"}, result.fieldNames());
   }
 
@@ -728,7 +738,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            sparkSchemaOf(snapshot), readDataSchema, partitionSchema);
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
+            readDataSchema,
+            partitionSchema);
     assertArrayEquals(new String[] {"a", "p1", "b", "p2", "c"}, result.fieldNames());
   }
 
