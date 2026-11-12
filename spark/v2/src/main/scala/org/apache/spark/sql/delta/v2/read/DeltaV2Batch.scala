@@ -89,15 +89,17 @@ private[read] final class DeltaV2Batch(
     DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
 
   override def planInputPartitions(): Array[InputPartition] = {
-    recordFrameProfile("batchScan.planInputPartitions") {
-      PartitionUtils.planInputPartitions(
-        SparkSession.active,
-        deltaScan,
-        partitionSchema,
-        tablePath,
-        zoneId,
-        hadoopConf,
-        sqlConf)
+    recordDeltaOperationForTablePath(tablePath, "scan.planPartitions") {
+      recordFrameProfile("batchScan.planInputPartitions") {
+        PartitionUtils.planInputPartitions(
+          SparkSession.active,
+          deltaScan,
+          partitionSchema,
+          tablePath,
+          zoneId,
+          hadoopConf,
+          sqlConf)
+      }
     }
   }
 
