@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Row, SparkSession}
-import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.CatalystTypeConverters
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -393,8 +393,9 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
    * The values are read from the materialized source, which is the data the join reads. So the
    * collected keys are exactly the keys of the join (a key missing from them could prune the file
    * of a matching row and turn the update of that row into an insert), and collecting them does
-   * not scan the source data again. A source that MERGE does not materialize (for example the
-   * source of an insert-only MERGE, which is read once) is not used.
+   * not scan the source data again. The pruning does not apply to a source that MERGE does not
+   * materialize: most often a direct read of a Delta table (only deterministic filters and
+   * projections, see `shouldMaterializeSource`), and the source of an insert-only MERGE.
    */
   protected def getSourceKeyFilePruningPredicates(spark: SparkSession): Seq[Expression] = {
     val maxSourceRows = spark.conf.get(DeltaSQLConf.MERGE_SOURCE_KEY_FILE_PRUNING_MAX_SOURCE_ROWS)
@@ -412,19 +413,18 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     }
     val isSourceMaterialized = getMergeSource.isMaterialized
     val rows = if (isSourceMaterialized) {
-      // Run the projection as an RDD of the MERGE's execution, not as a separate query, and stop
-      // reading the materialized source after `maxSourceRows + 1` rows.
-      getMergeSource.df.select(keyColumns: _*).queryExecution.toRdd
-        .mapPartitionsInternal(_.map(_.copy()))
-        .take(maxSourceRows + 1)
+      getMergeSource.df.select(keyColumns: _*).take(maxSourceRows + 1)
     } else {
-      Array.empty[InternalRow]
+      Array.empty[Row]
     }
     val predicates = if (!isSourceMaterialized || rows.length > maxSourceRows) {
       Seq.empty
     } else {
       keys.zipWithIndex.map { case ((targetKey, _), i) =>
-        val values = rows.iterator.map(_.get(i, targetKey.dataType)).filter(_ != null).toSeq
+        val toCatalyst = CatalystTypeConverters.createToCatalystConverter(targetKey.dataType)
+        // A NULL source key matches no target row: the keys come from `=` conjuncts only (not
+        // null-safe `<=>`), and `NULL = x` is never true.
+        val values = rows.iterator.map(row => toCatalyst(row.get(i))).filter(_ != null).toSeq
         MergeSourceKeyFilePruning.keyIn(targetKey, values)
       }
     }
