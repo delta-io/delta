@@ -1046,8 +1046,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         assertSame(expectedContext, actualContext);
       }
       verify(tableManager, atLeastOnce())
-          .getSingleCommitIterator(
-              anyLong(), any(), same(expectedContext), anyBoolean());
+          .getSingleCommitIterator(anyLong(), any(), same(expectedContext), anyBoolean());
     } finally {
       stream.stop();
     }
@@ -1061,7 +1060,6 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     tableManagerField.set(scan, Option.apply(tableManager));
     return tableManager;
   }
-
 
   @Test
   public void testEqualsWithSameFilters() {

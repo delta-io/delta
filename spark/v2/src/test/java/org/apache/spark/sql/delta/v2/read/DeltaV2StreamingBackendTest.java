@@ -61,10 +61,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
 
   private static DeltaSourceOffset createEndOffset(String tableId, long version) {
     return DeltaSourceOffset.apply(
-        tableId,
-        version,
-        DeltaSourceOffset.BASE_INDEX(),
-        /* isInitialSnapshot= */ false);
+        tableId, version, DeltaSourceOffset.BASE_INDEX(), /* isInitialSnapshot= */ false);
   }
 
   private static List<Long> collectCommitVersions(ClosableIterator<DeltaSingleCommit> commits)

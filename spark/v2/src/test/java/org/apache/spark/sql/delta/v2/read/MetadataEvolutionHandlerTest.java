@@ -110,23 +110,24 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   }
 
   /**
-   * Build a lightweight handler that throws on table access. Suitable for tests
-   * that only exercise tracking state, offset arithmetic, or iterator manipulation — NOT for tests
-   * that call private helpers like collectMetadataAtVersion.
+   * Build a lightweight handler that throws on table access. Suitable for tests that only exercise
+   * tracking state, offset arithmetic, or iterator manipulation — NOT for tests that call private
+   * helpers like collectMetadataAtVersion.
    */
   private MetadataEvolutionHandler buildLightweightHandler(
       Option<DeltaSourceMetadataTrackingLog> trackingLog,
       DeltaStreamUtils.SchemaReadOptions readOptions) {
-    DeltaV2TableManager tableManager = mock(DeltaV2TableManager.class, invocation -> {
-      throw new UnsupportedOperationException("not expected in this test");
-    });
+    DeltaV2TableManager tableManager =
+        mock(
+            DeltaV2TableManager.class,
+            invocation -> {
+              throw new UnsupportedOperationException("not expected in this test");
+            });
     return new MetadataEvolutionHandler(
         spark,
         "test-table-id",
         new DeltaV2StreamingBackend(
-            tableManager,
-            EMPTY_QUERY_CONTEXT,
-            /* snapshotVersionAtSourceInit= */ 0L),
+            tableManager, EMPTY_QUERY_CONTEXT, /* snapshotVersionAtSourceInit= */ 0L),
         tableManager,
         EMPTY_QUERY_CONTEXT,
         emptyDeltaOptions(),
@@ -178,14 +179,14 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
       trackingLog.writeNewMetadata(entry, false);
     }
 
-    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
-        spark, tablePath, Collections.emptyMap(), Option.empty());
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, tablePath, Collections.emptyMap(), Option.empty());
     MetadataEvolutionHandler handler =
         new MetadataEvolutionHandler(
             spark,
             "test-table-id",
-            new DeltaV2StreamingBackend(
-                tableManager, EMPTY_QUERY_CONTEXT, initVersion),
+            new DeltaV2StreamingBackend(tableManager, EMPTY_QUERY_CONTEXT, initVersion),
             tableManager,
             EMPTY_QUERY_CONTEXT,
             emptyDeltaOptions(),
