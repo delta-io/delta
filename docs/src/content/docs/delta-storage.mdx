@@ -145,23 +145,94 @@ spark-shell \
 
 ## Amazon S3
 
-Delta Lake supports reads and writes to S3 in two different modes: Single-cluster and Multi-cluster.
+For new multi-cluster workloads, use native S3 conditional writes with Delta Lake Spark 4.5 and above and a compatible Hadoop S3A runtime. The `io.delta.storage.S3LogStore` implementation coordinates commits directly through S3, without DynamoDB.
 
-|  | Single-cluster | Multi-cluster |
-| --- | --- | --- |
-| Configuration | Comes with Delta Lake out-of-the-box | Is experimental and requires extra configuration |
-| Reads | Supports concurrent reads from multiple clusters | Supports concurrent reads from multiple clusters |
-| Writes | Supports concurrent writes from a _single_ Spark driver | Supports multi-cluster writes |
-| Permissions | S3 credentials | S3 and DynamoDB operating permissions |
+Choose the setup that matches your runtime and existing clients:
 
-### Single-cluster setup (default)
+| Setup | Configuration | Concurrent writes | Additional permissions |
+| --- | --- | --- | --- |
+| Native S3, recommended | Delta Lake Spark 4.5 and above automatically selects `S3LogStore` when the filesystem supports it and no LogStore override applies. | Supports multiple Spark drivers using compatible conditional-write protocols. | S3 permissions. |
+| DynamoDB compatibility | Explicitly configure `S3DynamoDBLogStore` and its dependency. | All writers use the same DynamoDB table, region, and compatible LogStore protocol. | S3 and DynamoDB permissions. |
+| Single-driver compatibility | Older Delta versions or filesystems without native-write capabilities use `S3SingleDriverLogStore` by default. | Writes must originate from one Spark driver. | S3 permissions. |
 
-In this default mode, Delta Lake supports concurrent reads from multiple clusters, but concurrent writes to S3 must originate from a _single_ Spark driver in order for Delta Lake to provide transactional guarantees. This is because S3 currently does not provide mutual exclusion, that is, there is no way to ensure that only one writer is able to create a file.
+Automatic native selection applies to Delta Lake Spark. Other engines have their own selection logic. See [Delta Standalone](/delta-standalone/) and [Delta Kernel Java](/delta-kernel-java/) for their configuration.
+
+<Aside type="caution">
+  If a table already uses DynamoDB coordination, follow [Migrate S3 writes from
+  DynamoDB to native conditional
+  writes](/porting/#migrate-s3-writes-from-dynamodb-to-native-conditional-writes)
+  before changing the configuration. Do not run native and DynamoDB-coordinated
+  clients against the same table during the transition.
+</Aside>
+
+### Native S3 setup
+
+Use this setup for filesystem-based commits to AWS general-purpose S3 buckets. You need:
+
+- Delta Lake Spark 4.5 or above and a compatible Apache Spark version.
+- Hadoop S3A 3.4.2 or above, with matching Hadoop runtime and `hadoop-aws` dependencies. Use compatible classloaders for Delta Storage and S3A. Adding a newer connector JAR to an incompatible Hadoop runtime does not satisfy this requirement.
+- S3 credentials and permissions. [AWS Identity and Access Management (IAM) roles](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles.html) are recommended.
+- Conditional creation enabled in S3A, including any bucket-specific setting. The `fs.s3a.create.conditional.enabled` option defaults to `true`.
+- S3A streams that support user metadata, aborting an incomplete upload, and publishing the complete object on close. Magic output streams are unsupported.
+
+S3 conditional writes create a commit object only if the destination key does not exist. Every writer on a table must use a compatible atomic commit protocol. Keep commit objects immutable during recovery, including protection from external deletion and replacement.
+
+1. Start Spark with the Delta Lake and S3A dependencies that match your runtime. For a compatible Spark distribution using Hadoop 3.4.2, run:
+
+   ```bash
+   bin/spark-shell \
+     --packages io.delta:delta-spark_2.13:4.5.0,org.apache.hadoop:hadoop-aws:3.4.2 \
+     --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
+     --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog \
+     --conf spark.hadoop.fs.s3a.create.conditional.enabled=true
+   ```
+
+   Use your IAM role or existing S3A credential configuration. Native setup does not require the `delta-storage-s3-dynamodb` package or a LogStore override.
+
+1. Write and read a Delta table. For example:
+
+   ```scala
+   val path = "s3a://<bucket>/<table-path>"
+   spark.range(5).write.format("delta").save(path)
+   spark.read.format("delta").load(path).show()
+   ```
+
+1. Check the driver logs for `io.delta.storage.S3LogStore` for the S3 scheme you use. If the logs select `S3SingleDriverLogStore`, resolve the runtime or configuration issue before using independent writers.
+
+#### LogStore selection and overrides
+
+A LogStore override is an application setting that chooses an implementation explicitly. For example, this setting keeps `s3a` paths on DynamoDB even after upgrading to Delta Lake Spark 4.5:
+
+```ini
+spark.delta.logStore.s3a.impl=io.delta.storage.S3DynamoDBLogStore
+```
+
+Selection honors `spark.delta.logStore.class` and `spark.delta.logStore.<scheme>.impl` settings, including their aliases without the `spark.` prefix. Without an override, Spark checks the filesystem capabilities for the operation and selects the native or single-driver store. The check applies to `s3`, `s3a`, and `s3n` paths backed by a supported S3A filesystem.
+
+You can explicitly select the native store for a scheme. For example:
+
+```ini
+spark.delta.logStore.s3a.impl=io.delta.storage.S3LogStore
+```
+
+Explicit native selection rejects unsupported writes. During automatic selection, a filesystem that lacks the required capabilities retains `S3SingleDriverLogStore` with a warning. Errors while checking capabilities or performing a native write propagate to the caller.
+
+#### Troubleshoot an unknown write outcome
+
+If S3 stores a commit but the client loses the success response, the native store checks the object's metadata to establish whether its write succeeded. When that check confirms ownership, the call succeeds normally.
+
+If the outcome remains unresolved, the store throws `S3UnknownWriteOutcomeException`. The commit may already be visible to other readers. Check the transaction outcome before retrying the application operation, because repeating a committed append can duplicate data. Configure any application retry identity on the initial write and reuse it for retries of that write. Adding an identity only after an unknown outcome cannot deduplicate the earlier write. See [Idempotent writes](/delta-batch/#idempotent-writes) for the supported options.
+<a id="single-cluster-setup-default"></a>
+
+### Single-cluster compatibility
+
+This compatibility setup uses `S3SingleDriverLogStore`, which coordinates writes within one JVM. It supports concurrent reads from multiple clusters, but writes must originate from a single Spark driver. Use [Native S3 setup](#native-s3-setup) for supported multi-driver workloads.
 
 <Aside type="caution">
   Concurrent writes to the same Delta table on S3 storage from multiple Spark
   drivers can lead to data loss. For a multi-cluster solution, please see the
-  [Multi-cluster setup](#multi-cluster-setup) section below.
+  [Native S3 setup](#native-s3-setup) requirements or retain the
+  [DynamoDB compatibility](#multi-cluster-setup) configuration.
 </Aside>
 
 #### Requirements (S3 single-cluster)
@@ -172,7 +243,7 @@ In this default mode, Delta Lake supports concurrent reads from multiple cluster
 
 #### Quickstart (S3 single-cluster)
 
-This section explains how to quickly start reading and writing Delta tables on S3 using single-cluster mode. For a detailed explanation of the configuration, see [Setup Configuration (S3 multi-cluster)](#setup-configuration-s3-multi-cluster).
+The following example uses Delta Lake 4.0.0 and Hadoop 3.4.0 as a single-driver compatibility setup. For the recommended Spark 4.5 setup, see [Native S3 setup](#native-s3-setup).
 
 1. Use the following command to launch a Spark shell with Delta Lake and S3 support (assuming you use Spark 4.0.0 which is pre-built for Hadoop 3.4.0):
 
@@ -209,22 +280,24 @@ For other languages and more examples of Delta table operations, see the [Quicks
 For efficient listing of Delta Lake metadata files on S3, set the configuration `delta.enableFastS3AListFrom=true`. This performance optimization is in experimental support mode. It will only work on `S3A` filesystems and will not work on [Amazon's EMR](https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-file-systems.html) default filesystem `S3`.
 
 <Tabs>
-  <TabItem label="Scala">
-    ```scala
+  <TabItem label="Bash">
+    ```bash
     bin/spark-shell \
       --packages io.delta:delta-spark_2.13:4.0.0,org.apache.hadoop:hadoop-aws:3.4.0 \
       --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
       --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
-      --conf "spark.hadoop.delta.enableFastS3AListFrom=true
+      --conf spark.hadoop.delta.enableFastS3AListFrom=true
     ```
   </TabItem>
 </Tabs>
 
-### Multi-cluster setup
+<a id="multi-cluster-setup"></a>
 
-<Aside type="note">This support is new and experimental.</Aside>
+### DynamoDB compatibility
 
-This mode supports concurrent writes to S3 from multiple clusters and has to be explicitly enabled by configuring Delta Lake to use the right `LogStore` implementation. This implementation uses [DynamoDB](https://aws.amazon.com/dynamodb/) to provide the mutual exclusion that S3 is lacking.
+<Aside type="note">This DynamoDB-based setup is experimental.</Aside>
+
+This setup uses `S3DynamoDBLogStore` to coordinate multi-cluster writes through [DynamoDB](https://aws.amazon.com/dynamodb/). Retain it for existing DynamoDB-coordinated workloads or runtimes that require this configuration. For supported new Spark workloads, use [Native S3 setup](#native-s3-setup). To change an existing workload, follow the [migration procedure](/porting/#migrate-s3-writes-from-dynamodb-to-native-conditional-writes).
 
 <Aside type="caution">
   This multi-cluster writing solution is only safe when all writers use this
@@ -236,7 +309,7 @@ This mode supports concurrent writes to S3 from multiple clusters and has to be 
 #### Requirements (S3 multi-cluster)
 
 - All of the requirements listed in [Requirements (S3 single-cluster)](#requirements-s3-single-cluster) section
-- In additon to S3 credentials, you also need DynamoDB operating permissions
+- In addition to S3 credentials, you also need DynamoDB operating permissions
 
 #### Quickstart (S3 multi-cluster)
 
@@ -248,7 +321,7 @@ This section explains how to quickly start reading and writing Delta tables on S
   <TabItem label="Bash">
     ```bash
     bin/spark-shell \
-     --packages io.delta:delta-spark_2.13:3,org.apache.hadoop:hadoop-aws:3.4.0,io.delta:delta-storage-s3-dynamodb:4.0.0 \
+     --packages io.delta:delta-spark_2.13:4.0.0,org.apache.hadoop:hadoop-aws:3.4.0,io.delta:delta-storage-s3-dynamodb:4.0.0 \
      --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
      --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
      --conf spark.delta.logStore.s3a.impl=io.delta.storage.S3DynamoDBLogStore \
@@ -299,7 +372,7 @@ For other languages and more examples of Delta table operations, see the [Quicks
   </TabItem>
 </Tabs>
 
-2. Follow the configuration steps listed in [Configuration (S3 single-cluster)](#configuration-s3-single-cluster) section.
+2. Follow the configuration steps listed in [Requirements (S3 single-cluster)](#requirements-s3-single-cluster) section.
 
 3. Include the `delta-storage-s3-dynamodb` JAR in the classpath.
 

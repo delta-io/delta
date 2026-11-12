@@ -35,6 +35,9 @@ The `delta-kernel-api` module contains the core of the Kernel that abstracts out
 If your connector is not using the [`DefaultEngine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) provided by the Kernel, the dependency `delta-kernel-defaults` from the above list can be skipped.
 
 
+For S3 writes, the default engine selects `S3SingleDriverLogStore`, which does not coordinate commits across independent JVMs. The automatic native selection described in the [S3 storage configuration](/delta-storage/#amazon-s3) applies to Delta Lake Spark. Configure commit coordination for your engine before using independent writers.
+
+
 ## Read a Delta table in a single process
 In this section, we will walk through how to build a very simple single-process Delta connector that can read a Delta table using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
 
