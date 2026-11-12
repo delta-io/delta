@@ -87,10 +87,9 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   override private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
-      catalogTableOpt: Option[CatalogTable],
+      queryContext: DeltaV2QueryContext,
       failOnDataLoss: Boolean)
       : ClosableIterator[DeltaSingleCommit] = {
-    val queryContext = DeltaV2QueryContext(catalogTableOpt)
     val kernelEngine = kernelContext.getDefaultEngine()
     var commitRange: KernelCommitRange = null
     var earliestVersionToFetch = startVersion

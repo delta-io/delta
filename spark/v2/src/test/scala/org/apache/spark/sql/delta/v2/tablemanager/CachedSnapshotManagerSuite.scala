@@ -189,6 +189,7 @@ class CachedSnapshotManagerSuite
           assertRoutesWith(Some(legacyCatalogTable))(operation()))
 
         def contextualOperations(context: DeltaV2QueryContext): Seq[() => Any] = Seq(
+          () => tableManager.getSingleCommitIterator(0L, None, context),
           () => tableManager.loadLatestSnapshot(context),
           () => tableManager.loadSnapshotAt(0L, context),
           () => tableManager.getActiveCommitAtTime(0L, false, false, false, context),
