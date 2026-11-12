@@ -42,9 +42,10 @@ import org.apache.spark.sql.internal.SQLConf
  * </ul>
  */
 class DeltaV2Mode private (mode: String) {
-  private final val NONE = "NONE"
-  private final val STRICT = "STRICT"
-  private final val AUTO = "AUTO"
+  import DeltaSQLConf.{
+    V2_ENABLE_MODE_AUTO => AUTO,
+    V2_ENABLE_MODE_NONE => NONE,
+    V2_ENABLE_MODE_STRICT => STRICT}
 
   /** Captures the mode from the supplied SQL configuration. */
   def this(sqlConf: SQLConf) = this(sqlConf.getConf(DeltaSQLConf.V2_ENABLE_MODE))
