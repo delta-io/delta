@@ -32,21 +32,21 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * DeltaV2TestBase} creates a new Spark session for every test class and stops it in
  * {@code @AfterAll}.
  */
-public abstract class DeltaV2PartitionedTableTestBase extends DeltaV2TestBase {
+abstract class DeltaV2PartitionedTableTestBase extends DeltaV2TestBase {
 
-  protected static String tablePath;
-  protected static String tableName;
+  static String tablePath;
+  static String tableName;
 
   /** Creates the shared partitioned table {@code name} at {@code tempDir}. */
-  protected static void setUpSharedPartitionedTable(String name, File tempDir) {
+  static void setUpSharedPartitionedTable(String name, File tempDir) {
     tableName = name;
     tablePath = tempDir.getAbsolutePath();
     createPartitionedTable(tableName, tablePath);
   }
 
-  protected final CaseInsensitiveStringMap options = new CaseInsensitiveStringMap(new HashMap<>());
+  final CaseInsensitiveStringMap options = new CaseInsensitiveStringMap(new HashMap<>());
 
-  protected final DeltaV2Table table =
+  final DeltaV2Table table =
       new DeltaV2Table(
           Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
 }
