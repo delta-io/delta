@@ -65,11 +65,14 @@ public class DeltaV2Changelog implements Changelog {
     // each per-commit Metadata against this same end-version schema.
     Snapshot endSnapshot = deltaV2Table.getSnapshotManager().loadSnapshotAt(endVersion);
     StructType endSchema = endSnapshot.schema();
-    StructType cdcSchema =
-        CDCSchemaContext.cdcOutputSchema(
-            endSchema.add(METADATA_COLUMN, METADATA_STRUCT, false), false);
+    StructType cdcSchema = changelogSchema(endSchema);
 
     return CatalogV2UtilShims.structTypeToV2Columns(cdcSchema);
+  }
+
+  static StructType changelogSchema(StructType dataSchema) {
+    return CDCSchemaContext.appendNonNullableCDCColumns(
+        dataSchema.add(METADATA_COLUMN, METADATA_STRUCT, false));
   }
 
   // TODO: optimise to false when deletion vectors are guaranteed enabled across the entire

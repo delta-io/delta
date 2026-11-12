@@ -7,7 +7,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import org.apache.spark.sql.delta.RowTracking$;
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
-import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext;
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
@@ -77,11 +76,7 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
       DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
     }
 
-    StructType cdcSchema =
-        CDCSchemaContext.cdcOutputSchema(
-            endSchema.add(
-                DeltaV2Changelog.METADATA_COLUMN, DeltaV2Changelog.METADATA_STRUCT, false),
-            false);
+    StructType cdcSchema = DeltaV2Changelog.changelogSchema(endSchema);
     return new DeltaV2ChangelogScan(
         cdcSchema,
         commitRange,

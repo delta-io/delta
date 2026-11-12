@@ -43,7 +43,7 @@ public class CDCSchemaContext implements Serializable {
   public static final int COMMIT_VERSION_IDX = 1;
   public static final int COMMIT_TIMESTAMP_IDX = 2;
 
-  private static final StructField[] CDC_FIELDS = cdcOutputSchema(new StructType(), true).fields();
+  private static final StructField[] CDC_FIELDS = appendCDCColumns(new StructType()).fields();
 
   /** Read data schema augmented with CDC columns (for Parquet reader). */
   private final StructType readDataSchemaWithCDC;
@@ -100,16 +100,23 @@ public class CDCSchemaContext implements Serializable {
   }
 
   /**
-   * Appends CDC columns with the requested nullability. They are nullable for the Parquet read
-   * path, where schema evolution null-fills missing columns before {@link CDCReadFunction} fills
-   * them, matching V1 {@link CDCReader#cdcReadSchema}. The changelog reader sets all three values
-   * for every file, so it exposes them as non-null.
+   * Appends nullable CDC columns for the Parquet read path, where schema evolution null-fills
+   * missing columns before {@link CDCReadFunction} fills them, matching V1 {@link
+   * CDCReader#cdcReadSchema}.
    */
-  public static StructType cdcOutputSchema(StructType schema, boolean nullable) {
+  public static StructType appendCDCColumns(StructType schema) {
     return schema
-        .add(CDC_TYPE_COLUMN, DataTypes.StringType, nullable)
-        .add(CDC_COMMIT_VERSION, DataTypes.LongType, nullable)
-        .add(CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, nullable);
+        .add(CDC_TYPE_COLUMN, DataTypes.StringType, true)
+        .add(CDC_COMMIT_VERSION, DataTypes.LongType, true)
+        .add(CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, true);
+  }
+
+  /** Appends non-null CDC columns for changelog readers, which set all values for every file. */
+  public static StructType appendNonNullableCDCColumns(StructType schema) {
+    return schema
+        .add(CDC_TYPE_COLUMN, DataTypes.StringType, false)
+        .add(CDC_COMMIT_VERSION, DataTypes.LongType, false)
+        .add(CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, false);
   }
 
   /** Returns true if the given field name is a CDC column. */
@@ -117,11 +124,6 @@ public class CDCSchemaContext implements Serializable {
     return CDC_TYPE_COLUMN.equalsIgnoreCase(name)
         || CDC_COMMIT_VERSION.equalsIgnoreCase(name)
         || CDC_COMMIT_TIMESTAMP.equalsIgnoreCase(name);
-  }
-
-  /** Appends nullable CDC columns; see {@link #cdcOutputSchema(StructType, boolean)}. */
-  public static StructType appendCDCColumns(StructType schema) {
-    return cdcOutputSchema(schema, true);
   }
 
   public StructType getReadDataSchemaWithCDC() {

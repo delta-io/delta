@@ -332,7 +332,7 @@ class DeltaV2ChangelogBatch implements Batch {
             sqlConf,
             /* isWriteTimeCDCRead */ false);
 
-    StructType outputSchema = CDCSchemaContext.cdcOutputSchema(readDataSchema, false);
+    StructType outputSchema = CDCSchemaContext.appendNonNullableCDCColumns(readDataSchema);
     return new CDCPartitionReaderFactory(delegate, outputSchema);
   }
 

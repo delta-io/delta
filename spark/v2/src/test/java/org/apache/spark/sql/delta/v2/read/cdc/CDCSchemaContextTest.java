@@ -164,20 +164,14 @@ public class CDCSchemaContextTest {
   }
 
   @Test
-  void testCDCOutputSchemaNullability() {
-    StructType nullable =
-        DATA_SCHEMA
-            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType, true)
-            .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType, true)
-            .add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, true);
+  void testAppendNonNullableCDCColumns() {
     StructType nonNullable =
         DATA_SCHEMA
             .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType, false)
             .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType, false)
             .add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, false);
 
-    assertEquals(nullable, CDCSchemaContext.cdcOutputSchema(DATA_SCHEMA, true));
-    assertEquals(nonNullable, CDCSchemaContext.cdcOutputSchema(DATA_SCHEMA, false));
+    assertEquals(nonNullable, CDCSchemaContext.appendNonNullableCDCColumns(DATA_SCHEMA));
   }
 
   private static List<Integer> toJavaList(Seq<Object> seq) {

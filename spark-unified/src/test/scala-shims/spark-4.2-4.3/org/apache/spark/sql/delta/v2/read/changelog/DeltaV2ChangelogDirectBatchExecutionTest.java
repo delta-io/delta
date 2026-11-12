@@ -43,6 +43,7 @@ import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Disabled;
@@ -91,6 +92,19 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
             }
           }
           assertEquals(3, cdcColumnCount, "Expected all three CDC columns");
+
+          Scan scan =
+              changeLog
+                  .newScanBuilder(new CaseInsensitiveStringMap(Collections.emptyMap()))
+                  .build();
+          int scanCDCFieldCount = 0;
+          for (StructField field : scan.readSchema().fields()) {
+            if (cdcNames.contains(field.name())) {
+              assertFalse(field.nullable(), field.name() + " must be non-nullable");
+              scanCDCFieldCount++;
+            }
+          }
+          assertEquals(3, scanCDCFieldCount, "Expected all three CDC fields in read schema");
         });
   }
 
