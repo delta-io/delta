@@ -21,6 +21,12 @@ final class RowTrackingMetadataValueUtils {
 
   private RowTrackingMetadataValueUtils() {}
 
+  /**
+   * Returns the required row-tracking long constant from {@code file}. Fails fast with a clear
+   * {@link IllegalStateException} instead of an NPE on {@code longValue()} when the constant is
+   * missing. {@code requiredConstantDescription} is spliced into the exception message; callers
+   * pass descriptions of the form {@code "<name> constant"}.
+   */
   static long requireRowTrackingLong(
       PartitionedFile file, String key, String requiredConstantDescription) {
     Object rawValue = file.otherConstantMetadataColumnValues().get(key).getOrElse(() -> null);
