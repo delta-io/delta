@@ -16,15 +16,18 @@
 
 package org.apache.spark.sql.delta.v2.kernel
 
+import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.hadoop.conf.Configuration
 import io.delta.kernel.defaults.engine.{DefaultEngine => KernelDefaultEngine}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 
 /** Factory for creating the default Kernel [[KernelEngine]] used by the DSv2 connector. */
-object KernelEngineFactory {
+object KernelEngineFactory extends DeltaV2Logging {
 
   /** Builds the backend-appropriate default engine. */
   def createDefaultEngine(hadoopConf: Configuration): KernelEngine = {
-    KernelDefaultEngine.create(hadoopConf)
+    recordFrameProfile("kernelEngineFactory.createDefaultEngine") {
+      KernelDefaultEngine.create(hadoopConf)
+    }
   }
 }

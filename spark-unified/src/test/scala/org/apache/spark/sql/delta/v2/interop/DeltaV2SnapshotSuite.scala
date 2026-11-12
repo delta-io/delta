@@ -48,7 +48,8 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable
  */
 class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
 
-  private lazy val kernelContext = new KernelContext(Map.empty, LogStore(spark))
+  private lazy val kernelContext =
+    new KernelContext(Map.empty, LogStore(spark), "file:/tmp/delta-v2-snapshot-suite")
 
   private def engine: Engine = kernelContext.getDefaultEngine()
 
@@ -65,7 +66,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       spark.range(2, 4).write.format("delta").mode("append")
         .option("txnAppId", appId).option("txnVersion", 1).save(path)
 
-      val context = spy(new KernelContext(Map.empty, LogStore(spark)))
+      val context = spy(new KernelContext(Map.empty, LogStore(spark), path))
       val manager = new PathBasedSnapshotManager(path, context)
       verifyNoInteractions(context)
       val snapshots = Seq(manager.loadLatestSnapshot(), manager.loadSnapshotAt(0L))
@@ -104,7 +105,7 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
         "fs.file.impl" -> classOf[SnapshotContextRecordingFileSystem].getName,
         "fs.file.impl.disable.cache" -> "true",
         SnapshotContextRecordingFileSystem.TableMarkerKey -> "table-option")
-      val context = new KernelContext(invariantOptions, LogStore(spark))
+      val context = new KernelContext(invariantOptions, LogStore(spark), path)
       val manager = new PathBasedSnapshotManager(path, context)
       val originalSession = SparkSession.active
       val sessionA = spark.newSession()

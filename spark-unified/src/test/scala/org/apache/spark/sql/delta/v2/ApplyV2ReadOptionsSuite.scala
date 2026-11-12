@@ -271,7 +271,9 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
   private def seedSchemaLogWithExtraColumn(tablePath: String, schemaLogPath: String): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     val snapshotManager =
-      new PathBasedSnapshotManager(tablePath, new KernelContext(deltaLog.options, deltaLog.store))
+      new PathBasedSnapshotManager(
+        tablePath,
+        new KernelContext(deltaLog.options, deltaLog.store, tablePath))
     val tableId = snapshotManager.loadLatestSnapshot.metadata.getId
     val trackingLog = DeltaSourceMetadataTrackingLog.create(
       spark, schemaLogPath, tableId, tablePath, parameters = Map.empty[String, String])
