@@ -48,13 +48,13 @@ private[v2] trait DeltaV2TableManager {
    * @param startVersion first commit version to include.
    * @param endVersion last commit version to include, or empty to read through the
    *   latest available commit.
-   * @param catalogTableOpt catalog metadata is used to read the table's commit range.
+   * @param queryContext provides catalog metadata used to read the table's commit range.
    * @param failOnDataLoss whether to fail when commits in the range are missing.
    */
   private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
-      catalogTableOpt: Option[CatalogTable],
+      queryContext: DeltaV2QueryContext,
       failOnDataLoss: Boolean = false)
       : ClosableIterator[DeltaSingleCommit]
 

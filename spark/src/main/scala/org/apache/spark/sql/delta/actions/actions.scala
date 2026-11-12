@@ -871,7 +871,7 @@ object FileAction {
       metadata: Metadata,
       protocol: Protocol,
       spark: SparkSession): Boolean =
-    AMTUtils.amtEnabled(metadata, protocol) ||
+    AMTUtils.amtSupported(protocol) ||
       spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
 
   /**

@@ -150,6 +150,7 @@ class DeltaV2TableManagerImplSuite
       val manager = DeltaV2TableManagerCache.forTable(
         spark, dir.getCanonicalPath, Collections.emptyMap())
       val operations = Seq[() => Any](
+        () => manager.getSingleCommitIterator(0, None, null),
         () => manager.loadLatestSnapshot(null),
         () => manager.loadSnapshotAt(0, null),
         () => manager.getActiveCommitAtTime(0, false, false, false, null),
@@ -240,7 +241,8 @@ class DeltaV2TableManagerImplSuite
             (1L, None, List(1L, 2L)))
           ranges.foreach { case (startVersion, endVersion, expectedVersions) =>
             val changes =
-              manager.getSingleCommitIterator(startVersion, endVersion, catalogTableOpt)
+              manager.getSingleCommitIterator(
+                startVersion, endVersion, DeltaV2QueryContext(catalogTableOpt))
             try {
               val versions = changes.map { commit =>
                 try {
@@ -301,7 +303,8 @@ class DeltaV2TableManagerImplSuite
             assert(v1Commits === expected)
 
             forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-              val v2Commits = manager.getSingleCommitIterator(0L, None, catalogTableOpt)
+              val v2Commits = manager.getSingleCommitIterator(
+                0L, None, DeltaV2QueryContext(catalogTableOpt))
                 .processAndClose(_.map { commit =>
                   try {
                     commit.version -> commit.timestamp

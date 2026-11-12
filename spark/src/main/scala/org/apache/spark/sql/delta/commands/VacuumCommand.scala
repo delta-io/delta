@@ -237,7 +237,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
-      val isAdaptiveMetadataTable = AMTUtils.amtEnabled(snapshot)
+      val isAdaptiveMetadataTable = AMTUtils.amtSupported(snapshot.protocol)
       val shouldIcebergMetadataDirBeHidden =
          isAdaptiveMetadataTable || UniversalFormat.icebergEnabled(snapshot.metadata)
       val latestCommitVersionOutsideOfRetentionWindowOpt: Option[Long] =
