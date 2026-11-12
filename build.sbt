@@ -521,6 +521,7 @@ lazy val sparkV2 = {
 
       Test / javaOptions ++= Seq("-ea"),
       libraryDependencies ++= junit5TestDependencies ++ Seq(
+        "org.mockito" % "mockito-inline" % "4.11.0" % "test",
         "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
@@ -546,6 +547,7 @@ lazy val spark = (project in file("spark-unified"))
   .dependsOn(sparkV1)
   .dependsOn(sparkV2)
   .dependsOn(storage)
+  .dependsOn(storage % "test->test") // Shared S3 HTTP fixture for native LogStore tests
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-spark",
@@ -683,6 +685,7 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -1159,8 +1162,9 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     libraryDependencies ++= Seq(
       "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.4",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.15.4",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.15.4",
       "org.apache.parquet" % "parquet-hadoop" % "1.16.0",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -1259,8 +1263,9 @@ lazy val storage = (project in file("storage"))
     exportJars := true,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
-      // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
-      // versions with known vulnerabilities.
+      // Legacy LogStores retain their Hadoop compatibility. The automatically selected
+      // native S3LogStore requires S3A 3.4.2+ and the capabilities in
+      // storage/S3_NATIVE_PUT_IF_ABSENT.md.
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
 
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
@@ -1391,14 +1396,14 @@ lazy val iceberg = (project in file("iceberg"))
           // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
           // due to legacy scala.
           "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-          "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
+          "com.github.ben-manes.caffeine" % "caffeine" % "3.2.4",
           "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
           "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
           "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
           "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
-          "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
-          "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
-          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.11.0" % "provided",
+          "org.apache.httpcomponents.core5" % "httpcore5" % "5.4.3" % "test",
+          "org.apache.httpcomponents.client5" % "httpclient5" % "5.6.4" % "test",
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.12.0" % "provided",
           // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
           "com.google.cloud.bigdataoss" % "util-hadoop" % gcsConnectorVersion % "provided"
         )
@@ -1429,7 +1434,7 @@ lazy val iceberg = (project in file("iceberg"))
         s"iceberg-shaded_${scalaBinaryVersion.value}-${version.value}.jar",
         s"scala-library-${scala213}.jar",
         s"scala-collection-compat_${scalaBinaryVersion.value}-2.1.1.jar",
-        "caffeine-2.9.3.jar",
+        "caffeine-3.2.4.jar",
         // Note: We are excluding
         // - antlr4-runtime-4.9.3.jar
         // - checker-qual-3.19.0.jar
@@ -1445,6 +1450,8 @@ lazy val iceberg = (project in file("iceberg"))
       }
     },
     assembly / assemblyMergeStrategy := {
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _*) => MergeStrategy.discard
       // Project iceberg `dependsOn` spark and accidentally brings in it, along with its
       // compile-time dependencies (like delta-storage). We want these excluded from the
       // delta-iceberg jar.
@@ -1469,7 +1476,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-val icebergShadedVersion = "1.11.0"
+val icebergShadedVersion = "1.12.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)

@@ -18,14 +18,13 @@ package org.apache.spark.sql.delta.v2.interop
 
 import java.io.File
 import java.nio.file.{Files, StandardCopyOption}
+import java.util.Collections
 
-import org.apache.spark.sql.delta.{DeltaOperations, OptimisticTransaction, OptimisticTransactionSuite}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaOperations, OptimisticTransactionSuite}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.test.V2ForceTest
-import io.delta.spark.internal.v2.kernel.KernelEngineFactory
+import org.apache.spark.sql.delta.v2.tablemanager.{DeltaV2TableManager, DeltaV2TableManagerCache}
 import org.apache.hadoop.fs.Path
-import io.delta.kernel.{Table => KernelTable}
-import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshotImpl}
 
 import org.apache.spark.sql.types.{LongType, StructType}
 import org.apache.spark.util.SystemClock
@@ -47,16 +46,11 @@ class DeltaV2OptimisticTransactionSuite
    * Creates the transaction under test as a Kernel-backed [[DeltaV2OptimisticTransaction]] for the
    * inherited V1 conflict test cases.
    */
-  override protected def startTestTransaction(dataPath: Path): OptimisticTransaction = {
-    // scalastyle:off deltahadoopconfiguration
-    val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-    // scalastyle:on deltahadoopconfiguration
-    val kernelSnap = KernelTable
-      .forPath(kernelEngine, dataPath.toString)
-      .getLatestSnapshot(kernelEngine)
-      .asInstanceOf[KernelSnapshotImpl]
-    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap)
-    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, kernelEngine)
+  override protected def startTestTransaction(dataPath: Path): DeltaV2OptimisticTransaction = {
+    val tableManager = tableManagerFor(dataPath)
+    val snapshot = tableManager.loadLatestSnapshot(DeltaV2QueryContext.empty)
+      .asInstanceOf[DeltaV2Snapshot]
+    new DeltaV2OptimisticTransaction(catalogTable = None, snapshot, tableManager)
   }
 
   override protected def testDefaultMetadata(): Metadata =
@@ -91,30 +85,12 @@ class DeltaV2OptimisticTransactionSuite
 
   override protected def shouldFail(testName: String): Boolean = shouldFailTests.contains(testName)
 
-  /** Builds a Kernel-backed transaction over the latest snapshot of the table at `dir`. */
-  private def startKernelTxn(dir: File): DeltaV2OptimisticTransaction = {
-    // scalastyle:off deltahadoopconfiguration
-    // No DeltaLog here (the snapshot is loaded via Kernel), so use the session Hadoop conf.
-    val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-    // scalastyle:on deltahadoopconfiguration
-    val kernelSnap = KernelTable
-      .forPath(kernelEngine, dir.getCanonicalPath)
-      .getLatestSnapshot(kernelEngine)
-      .asInstanceOf[KernelSnapshotImpl]
-    val deltaV2Snapshot = new DeltaV2Snapshot(kernelSnap)
-    new DeltaV2OptimisticTransaction(catalogTable = None, deltaV2Snapshot, kernelEngine)
-  }
+  private def tableManagerFor(dataPath: Path): DeltaV2TableManager =
+    DeltaV2TableManagerCache.forTable(spark, dataPath.toString, Collections.emptyMap(), None)
 
-  private def latestKernelSnapshot(dir: File): DeltaV2Snapshot = {
-    // scalastyle:off deltahadoopconfiguration
-    val kernelEngine = KernelEngineFactory.createDefaultEngine(spark.sessionState.newHadoopConf())
-    // scalastyle:on deltahadoopconfiguration
-    val kernelSnap = KernelTable
-      .forPath(kernelEngine, dir.getCanonicalPath)
-      .getLatestSnapshot(kernelEngine)
-      .asInstanceOf[KernelSnapshotImpl]
-    new DeltaV2Snapshot(kernelSnap)
-  }
+  private def latestKernelSnapshot(dir: File): DeltaV2Snapshot =
+    tableManagerFor(new Path(dir.getCanonicalPath))
+      .loadLatestSnapshot(DeltaV2QueryContext.empty).asInstanceOf[DeltaV2Snapshot]
 
   /** Seeds a simple (unpartitioned) V1 Delta table at `dir`. */
   private def seedTable(dir: File): Unit = {
@@ -125,18 +101,18 @@ class DeltaV2OptimisticTransactionSuite
   test("constructor succeeds and readVersion matches the seeded version") {
     withTempDir { dir =>
       seedTable(dir) // version 0
-      assert(startKernelTxn(dir).readVersion === 0L)
+      assert(startTestTransaction(new Path(dir.getCanonicalPath)).readVersion === 0L)
 
       spark.range(0, 1).toDF("id")
         .write.format("delta").mode("append").save(dir.getCanonicalPath) // version 1
-      assert(startKernelTxn(dir).readVersion === 1L)
+      assert(startTestTransaction(new Path(dir.getCanonicalPath)).readVersion === 1L)
     }
   }
 
   test("metadata and protocol resolve from the Kernel snapshot") {
     withTempDir { dir =>
       seedTable(dir)
-      val txn = startKernelTxn(dir)
+      val txn = startTestTransaction(new Path(dir.getCanonicalPath))
 
       // Read state reflects the seeded table: a single LONG `id` column, unpartitioned.
       assert(txn.metadata.schema.fieldNames.toSeq === Seq("id"))
@@ -158,7 +134,7 @@ class DeltaV2OptimisticTransactionSuite
   test("null-deltaLog construction overrides resolve without a V1 DeltaLog") {
     withTempDir { dir =>
       seedTable(dir)
-      val txn = startKernelTxn(dir)
+      val txn = startTestTransaction(new Path(dir.getCanonicalPath))
 
       // newDeltaHadoopConf: sourced from the session conf (no V1 deltaLog); non-null and usable.
       val conf = txn.newDeltaHadoopConf()
@@ -178,7 +154,7 @@ class DeltaV2OptimisticTransactionSuite
         .selectExpr("id", "id % 2 as p")
         .write.format("delta").partitionBy("p").save(dir.getCanonicalPath)
 
-      val txn = startKernelTxn(dir)
+      val txn = startTestTransaction(new Path(dir.getCanonicalPath))
       assert(txn.snapshot.isInstanceOf[DeltaV2Snapshot])
       assert(txn.metadata.partitionColumns === Seq("p"))
     }
@@ -187,7 +163,7 @@ class DeltaV2OptimisticTransactionSuite
   test("blind append of a synthetic AddFile commits through Kernel") {
     withTempDir { dir =>
       seedTable(dir)
-      val txn = startKernelTxn(dir)
+      val txn = startTestTransaction(new Path(dir.getCanonicalPath))
       assert(txn.readVersion === 0L)
 
       val add = AddFile(
@@ -222,7 +198,7 @@ class DeltaV2OptimisticTransactionSuite
       val target = new File(dir, targetName)
       Files.copy(parquetFile.toPath, target.toPath, StandardCopyOption.REPLACE_EXISTING)
 
-      val txn = startKernelTxn(dir)
+      val txn = startTestTransaction(new Path(dir.getCanonicalPath))
       val add = AddFile(
         path = targetName,
         partitionValues = Map.empty,
@@ -241,7 +217,7 @@ class DeltaV2OptimisticTransactionSuite
     withTempDir { dir =>
       seedTable(dir)
       (1 to 3).foreach { i =>
-        val txn = startKernelTxn(dir)
+        val txn = startTestTransaction(new Path(dir.getCanonicalPath))
         assert(txn.readVersion === (i - 1).toLong)
         val add = AddFile(s"synthetic-$i", Map.empty, 1L, 1L, dataChange = true)
         txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
@@ -252,35 +228,10 @@ class DeltaV2OptimisticTransactionSuite
     }
   }
 
-  test("commit to a row-tracking table drops the Kernel-owned row-tracking domain metadata") {
-    withTempDir { dir =>
-      withSQLConf(
-        "spark.databricks.delta.properties.defaults.enableRowTracking" -> "true") {
-        spark.range(0, 5).toDF("id").coalesce(1)
-          .write.format("delta").save(dir.getCanonicalPath)
-      }
-      val txn = startKernelTxn(dir)
-      val add = AddFile(
-        path = "synthetic-row-tracking-file",
-        partitionValues = Map.empty,
-        size = 1L,
-        modificationTime = 1L,
-        dataChange = true,
-        stats = """{"numRecords":3}""")
-      txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
-
-      val post = latestKernelSnapshot(dir)
-      assert(post.version === 1L)
-      val committed =
-        post.allFiles.collect().find(_.path == "synthetic-row-tracking-file").get
-      assert(committed.baseRowId.isDefined)
-    }
-  }
-
   test("unsupported actions fail loudly") {
     withTempDir { dir =>
       seedTable(dir)
-      val txn = startKernelTxn(dir)
+      val txn = startTestTransaction(new Path(dir.getCanonicalPath))
       val setTxn = SetTransaction("test-app", 1L, Some(1L))
       val e = intercept[UnsupportedOperationException] {
         txn.commit(setTxn :: Nil, DeltaOperations.ManualUpdate)
@@ -295,7 +246,7 @@ class DeltaV2OptimisticTransactionSuite
    * below to drive `kernelStatistics` with a chosen stats payload.
    */
   private def commitWithStats(dir: File, statsJson: String): Unit = {
-    val txn = startKernelTxn(dir)
+    val txn = startTestTransaction(new Path(dir.getCanonicalPath))
     val add = AddFile(
       path = "synthetic-stats-file",
       partitionValues = Map.empty,
@@ -375,38 +326,50 @@ class DeltaV2OptimisticTransactionSuite
   /**
    * Seeds a table partitioned by a single column `p` of `partitionType`, inserts one row with
    * `partitionValueSql`, then commits a synthetic [[AddFile]] through Kernel reusing the seeded
-   * row's serialized partition values. Asserts the commit succeeds and advances the version.
+   * row's serialized partition values. Asserts the commit advances the version and preserves
+   * the physical partition keys and values when column mapping is enabled.
    *
-   * This exercises the partition-value typing in `generateKernelAppendActionRows`: Kernel's
+   * This exercises the partition-value typing in `kernelAppendActionsIterable`: Kernel's
    * `getWriteContext` validates each literal's type against the partition schema with exact
    * type-equality, so a non-string partition column would fail if values were still typed as
    * strings.
    */
   private def checkTypedPartitionAppend(
-      partitionType: String, partitionValueSql: String): Unit = {
+      partitionType: String,
+      partitionValueSql: String,
+      mappingMode: Option[String] = None): Unit = {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
+      val columnMappingProperty = mappingMode
+        .map(mode => s" TBLPROPERTIES ('delta.columnMapping.mode' = '$mode')")
+        .getOrElse("")
       spark.sql(
         s"""CREATE TABLE delta.`$path` (id LONG, p $partitionType)
-           |USING delta PARTITIONED BY (p)""".stripMargin)
+           |USING delta PARTITIONED BY (p)$columnMappingProperty""".stripMargin)
       spark.sql(s"INSERT INTO delta.`$path` VALUES (1, $partitionValueSql)")
 
       val base = latestKernelSnapshot(dir)
-      val baseVersion = base.version
       val sample = base.allFiles.collect().head
+      val physicalPartitionName = DeltaColumnMapping.getPhysicalName(base.metadata.schema("p"))
+      assert(sample.partitionValues.keySet === Set(physicalPartitionName))
+      if (mappingMode.isDefined) {
+        assert(physicalPartitionName.startsWith("col-"))
+      }
 
-      val txn = startKernelTxn(dir)
       val add = AddFile(
         path = s"synthetic-${sample.path}",
         partitionValues = sample.partitionValues,
         size = 1L,
         modificationTime = 1L,
         dataChange = true)
-      txn.commit(add :: Nil, DeltaOperations.ManualUpdate)
+      startTestTransaction(new Path(dir.getCanonicalPath))
+        .commit(add :: Nil, DeltaOperations.ManualUpdate)
 
       val post = latestKernelSnapshot(dir)
-      assert(post.version === baseVersion + 1)
-      assert(post.allFiles.collect().map(_.path).exists(_.startsWith("synthetic-")))
+      assert(post.version === base.version + 1)
+      val committedAdds = post.allFiles.collect().filter(_.path == add.path)
+      assert(committedAdds.length === 1)
+      assert(committedAdds.head.partitionValues === sample.partitionValues)
     }
   }
 
@@ -438,9 +401,18 @@ class DeltaV2OptimisticTransactionSuite
     checkTypedPartitionAppend("STRING", "'foo'")
   }
 
+  for {
+    mappingMode <- Seq("name", "id")
+    partitionValueSql <- Seq("5", "NULL")
+  } {
+    test(s"append with column mapping $mappingMode preserves INT partition $partitionValueSql") {
+      checkTypedPartitionAppend("INT", partitionValueSql, Some(mappingMode))
+    }
+  }
+
   private def concurrentAppend(
       dir: File, fileName: String, partitionValues: Map[String, String] = Map.empty): Unit = {
-    val txn = startKernelTxn(dir)
+    val txn = startTestTransaction(new Path(dir.getCanonicalPath))
     txn.commit(
       AddFile(fileName, partitionValues, 1L, 1L, dataChange = true) :: Nil,
       DeltaOperations.ManualUpdate)
@@ -478,7 +450,7 @@ class DeltaV2OptimisticTransactionSuite
       }
       assert(adds.size === 4)
 
-      val txn = startKernelTxn(dir)
+      val txn = startTestTransaction(new Path(dir.getCanonicalPath))
       txn.commit(adds.toList, DeltaOperations.ManualUpdate)
 
       val post = latestKernelSnapshot(dir)

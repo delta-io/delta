@@ -339,52 +339,92 @@ class DeltaLog private(
    * return an empty Iterator.
    * Callers are encouraged to use the other override which takes the endVersion if available to
    * avoid I/O and improve performance of this method.
+   *
+   * @param startVersion the first version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`. There is performance benefit on
+   *                                    AMT tables when set. This only takes effect when
+   *                                    [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled.
    */
   def getChanges(
       startVersion: Long,
       catalogTableOpt: Option[CatalogTable] = None,
-      failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(
-        startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
-      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
-    }
-  }
-
-  private[sql] def getChanges(
-      startVersion: Long,
-      endVersion: Long,
-      catalogTableOpt: Option[CatalogTable],
-      failOnDataLoss: Boolean): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(
-        startVersion,
-        endVersion,
-        catalogTableOpt,
-        failOnDataLoss).map { case (version, status) =>
-      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      failOnDataLoss: Boolean = false,
+      skipNoDataChangeFileActions: Boolean = false): Iterator[(Long, Seq[Action])] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)) {
+      getSingleCommitIterator(startVersion, catalogTableOpt, failOnDataLoss)
+        .map(_.asInstanceOf[SingleCommit])
+        .map { commit =>
+          (commit.version, commit.getActions(skipNoDataChangeFileActions))
+        }
+    } else {
+      getChangeLogFiles(
+          startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
+        (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      }
     }
   }
 
   /**
-   * Lazily get all commits starting from "startVersion" (inclusive) as [[SingleCommit]]
+   * Get all actions over [startVersion, endVersion] (both inclusive).
+   *
+   * @param startVersion the first version to read.
+   * @param endVersion the last version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`. There is performance benefit on
+   *                                    AMT tables when set. This only takes effect when
+   *                                    [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled.
+   */
+  private[sql] def getChanges(
+      startVersion: Long,
+      endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean,
+      skipNoDataChangeFileActions: Boolean): Iterator[(Long, Seq[Action])] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)) {
+      getSingleCommitIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss)
+        .map(_.asInstanceOf[SingleCommit])
+        .map { commit =>
+          (commit.version, commit.getActions(skipNoDataChangeFileActions))
+        }
+    } else {
+      getChangeLogFiles(
+          startVersion,
+          endVersion,
+          catalogTableOpt,
+          failOnDataLoss).map { case (version, status) =>
+        (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      }
+    }
+  }
+
+  /**
+   * Lazily get all commits starting from "startVersion" (inclusive) as [[DeltaSingleCommit]]
    * handles, without exposing the underlying log files. If startVersion doesn't exist, return an
    * empty Iterator. This is the streaming counterpart of [[getChanges]]
    *
    * Callers are encouraged to use the other override which takes the endVersion if available to
    * avoid I/O and improve performance of this method.
    */
-  private[sql] def getChangesIterator(
+  private[sql] def getSingleCommitIterator(
       startVersion: Long,
       catalogTableOpt: Option[CatalogTable] = None,
-      failOnDataLoss: Boolean = false): Iterator[SingleCommit] =
+      failOnDataLoss: Boolean = false): Iterator[DeltaSingleCommit] =
     getChangeLogFiles(startVersion, catalogTableOpt, failOnDataLoss).map {
       case (version, status) => SingleCommit(this, version, status)
     }
 
-  private[sql] def getChangesIterator(
+  private[sql] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Long,
       catalogTableOpt: Option[CatalogTable],
-      failOnDataLoss: Boolean): Iterator[SingleCommit] =
+      failOnDataLoss: Boolean): Iterator[DeltaSingleCommit] =
     getChangeLogFiles(startVersion, endVersion, catalogTableOpt, failOnDataLoss).map {
       case (version, status) => SingleCommit(this, version, status)
     }
@@ -394,12 +434,13 @@ class DeltaLog private(
    * [[FileStatus]].
    *
    * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
-   * callers should use [[getChangesIterator]] instead, which returns [[SingleCommit]] handles and
-   * keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
+   * callers should use [[getSingleCommitIterator]] instead, which returns [[DeltaSingleCommit]]
+   * handles and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata
+   * Tree).
    */
   @deprecated(
     "This method exposes the log's raw file statuses and will be removed in the " +
-    "future. Use getChanges and variants instead"
+    "future. Use getSingleCommitIterator instead"
   )
   private[sql] def getChangeLogFiles(
       startVersion: Long,
@@ -437,12 +478,13 @@ class DeltaLog private(
    * avoid I/O and improve performance of this method.
    *
    * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
-   * callers should use [[getChangesIterator]] instead, which returns [[SingleCommit]] handles and
-   * keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
+   * callers should use [[getSingleCommitIterator]] instead, which returns [[DeltaSingleCommit]]
+   * handles and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata
+   * Tree).
    */
   @deprecated(
     "This method exposes the log's raw file statuses and will be removed in the " +
-    "future. Use getChanges and variants instead"
+    "future. Use getSingleCommitIterator instead"
   )
   def getChangeLogFiles(
       startVersion: Long,
@@ -1250,19 +1292,12 @@ object DeltaLog extends DeltaLogging {
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil,
       shouldRewritePartitionFilters: Boolean = true): DataFrame = {
-
-    val rewrittenFilters = if (shouldRewritePartitionFilters) {
-      rewritePartitionFilters(
-        partitionSchema,
-        files.sparkSession.sessionState.conf.resolver,
-        partitionFilters,
-        partitionColumnPrefixes)
-    } else {
-      partitionFilters
-    }
-    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    val columnFilter = Column(expr)
-    files.filter(columnFilter)
+    DeltaLogUtils.filterFileList(
+      partitionSchema,
+      files,
+      partitionFilters,
+      partitionColumnPrefixes,
+      shouldRewritePartitionFilters)
   }
 
   /**
@@ -1279,26 +1314,8 @@ object DeltaLog extends DeltaLogging {
       resolver: Resolver,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
-    partitionFilters
-      .map(_.transformUp {
-      case a: Attribute =>
-        // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
-        // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
-        val unquoted = a.name.stripPrefix("`").stripSuffix("`")
-        val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
-        partitionCol match {
-          case Some(f: StructField) =>
-            val name = DeltaColumnMapping.getPhysicalName(f)
-            Cast(
-              UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
-              f.dataType)
-          case None =>
-            // This should not be able to happen, but the case was present in the original code so
-            // we kept it to be safe.
-            log.error(s"Partition filter referenced column ${a.name} not in the partition schema")
-            UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
-        }
-    })
+    DeltaLogUtils.rewritePartitionFilters(
+      partitionSchema, resolver, partitionFilters, partitionColumnPrefixes)
   }
 
 
@@ -1346,5 +1363,74 @@ object DeltaLog extends DeltaLogging {
         hadoopPath.toUri.toString
       }
     }
+  }
+}
+
+/** Partition-filtering helpers shared by DeltaLog and snapshot readers. */
+object DeltaLogUtils extends DeltaLogging {
+
+  /**
+   * Filters the given [[Dataset]] by the given `partitionFilters`, returning those that match.
+   * @param files The active files in the log state, which contain partition value information
+   * @param partitionFilters Filters on the partition columns
+   * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
+   * @param shouldRewritePartitionFilters Whether to rewrite `partitionFilters` to be over the
+   *                                      [[AddFile]] schema
+   */
+  def filterFileList(
+      partitionSchema: StructType,
+      files: DataFrame,
+      partitionFilters: Seq[Expression],
+      partitionColumnPrefixes: Seq[String] = Nil,
+      shouldRewritePartitionFilters: Boolean = true): DataFrame = {
+
+    val rewrittenFilters = if (shouldRewritePartitionFilters) {
+      rewritePartitionFilters(
+        partitionSchema,
+        files.sparkSession.sessionState.conf.resolver,
+        partitionFilters,
+        partitionColumnPrefixes)
+    } else {
+      partitionFilters
+    }
+    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
+    val columnFilter = Column(expr)
+    files.filter(columnFilter)
+  }
+
+  /**
+   * Rewrite the given `partitionFilters` to be used for filtering partition values.
+   * We need to explicitly resolve the partitioning columns here because the partition columns
+   * are stored as keys of a Map type instead of attributes in the AddFile schema and thus
+   * cannot be resolved automatically.
+   *
+   * @param partitionFilters Filters on the partition columns
+   * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
+   */
+  def rewritePartitionFilters(
+      partitionSchema: StructType,
+      resolver: Resolver,
+      partitionFilters: Seq[Expression],
+      partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
+    partitionFilters
+      .map(_.transformUp {
+      case a: Attribute =>
+        // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
+        // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
+        val unquoted = a.name.stripPrefix("`").stripSuffix("`")
+        val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
+        partitionCol match {
+          case Some(f: StructField) =>
+            val name = DeltaColumnMapping.getPhysicalName(f)
+            Cast(
+              UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
+              f.dataType)
+          case None =>
+            // This should not be able to happen, but the case was present in the original code so
+            // we kept it to be safe.
+            log.error(s"Partition filter referenced column ${a.name} not in the partition schema")
+            UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
+        }
+    })
   }
 }

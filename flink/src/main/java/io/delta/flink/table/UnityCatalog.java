@@ -466,7 +466,8 @@ public class UnityCatalog implements DeltaCatalog {
     return withErrorHandling(
         () -> {
           SchemasApi schemasApi = new SchemasApi(apiClient);
-          return schemasApi.listSchemas(this.name, Integer.MAX_VALUE, null).getSchemas().stream()
+          return schemasApi.listSchemas(this.name, Integer.MAX_VALUE, null, false).getSchemas()
+              .stream()
               .map(SchemaInfo::getName)
               .collect(Collectors.toList());
         });
@@ -476,7 +477,7 @@ public class UnityCatalog implements DeltaCatalog {
     return withErrorHandling(
         () -> {
           SchemasApi schemasApi = new SchemasApi(apiClient);
-          return schemasApi.getSchema(String.format("%s.%s", getName(), name));
+          return schemasApi.getSchema(String.format("%s.%s", getName(), name), false);
         });
   }
 
@@ -484,7 +485,8 @@ public class UnityCatalog implements DeltaCatalog {
     return withErrorHandling(
         () -> {
           TablesApi tablesApi = new TablesApi(apiClient);
-          return tablesApi.listTables(getName(), schema, Integer.MAX_VALUE, "").getTables().stream()
+          return tablesApi.listTables(getName(), schema, Integer.MAX_VALUE, "", false).getTables()
+              .stream()
               .map(TableInfo::getName)
               .collect(Collectors.toList());
         });
@@ -494,7 +496,7 @@ public class UnityCatalog implements DeltaCatalog {
     return withErrorHandling(
         () -> {
           TablesApi tablesApi = new TablesApi(apiClient);
-          return tablesApi.getTable(tableId, false, false);
+          return tablesApi.getTable(tableId, false, false, false);
         });
   }
 }

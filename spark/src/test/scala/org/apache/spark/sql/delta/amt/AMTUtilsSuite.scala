@@ -16,14 +16,43 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.AdaptiveMetadataTableFeature
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, DeltaConfigs}
+import org.apache.spark.sql.delta.actions.{
+  AddFile,
+  DeletionVectorDescriptor,
+  Metadata,
+  Protocol,
+  RemoveFile
+}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
 class AMTUtilsSuite extends QueryTest with SharedSparkSession {
+
+  test("amtSupported and amtEnabled for each AMT feature and each AMT property value") {
+    val devProtocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val previewProtocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
+    // (protocol, AMT property, amtSupported, amtEnabled)
+    val cases = Seq(
+      (devProtocol, None, true, false),
+      (devProtocol, Some("true"), true, true),
+      (devProtocol, Some("false"), true, false),
+      (previewProtocol, None, true, true),
+      (previewProtocol, Some("true"), true, true),
+      (previewProtocol, Some("false"), true, true),
+      (Protocol(), None, false, false),
+      (Protocol(), Some("true"), false, false),
+      (Protocol(), Some("false"), false, false))
+    cases.foreach { case (protocol, property, supported, enabled) =>
+      val metadata = Metadata(
+        configuration = property.map(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key -> _).toMap)
+      val clue = s"protocol: $protocol, AMT property: $property"
+      assert(AMTUtils.amtSupported(protocol) === supported, clue)
+      assert(AMTUtils.amtEnabled(metadata, protocol) === enabled, clue)
+    }
+  }
 
   test("invariantCheckWithLogging: succeeds when the invariant holds") {
     AMTUtils.invariantCheckWithLogging(
@@ -129,11 +158,99 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
   }
 
   test("amtEnabled: true when the protocol supports the AMT feature") {
-    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
     assert(AMTUtils.amtEnabled(Metadata(), protocol))
   }
 
   test("amtEnabled: false when the protocol lacks the AMT feature") {
     assert(!AMTUtils.amtEnabled(Metadata(), Protocol()))
+  }
+
+  test("AMTSnapshotId fills missing AddFile and RemoveFile lifecycle IDs") {
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
+    val dv = DeletionVectorDescriptor(
+      storageType = "u",
+      pathOrInlineDv = "test-dv",
+      offset = Some(1),
+      sizeInBytes = 10,
+      cardinality = 1)
+    val newFile = AddFile("new", Map.empty, 1L, 1L, dataChange = true)
+    val dvUpdate = AddFile(
+      "existing", Map.empty, 1L, 1L, dataChange = true,
+      deletionVector = dv,
+      snapshotId = Some(2L))
+    val remove = AddFile(
+      "removed", Map.empty, 1L, 1L, dataChange = true,
+      deletionVector = dv,
+      snapshotId = Some(2L),
+      modifiedSnapshotId = Some(3L)).remove
+    val removeWithAssignedSnapshotId = remove.copy(snapshotId = Some(7L))
+    val unstampedNoDataChangeRemove =
+      remove.copy(dataChange = false, snapshotId = None, modifiedSnapshotId = None)
+    val unstampedMetadataReAdd =
+      dvUpdate.copy(dataChange = false, snapshotId = None, modifiedSnapshotId = None)
+
+    val assigned = AMTSnapshotId.assignIfMissing(
+      Metadata(), protocol,
+      Iterator(
+        newFile,
+        dvUpdate,
+        remove,
+        removeWithAssignedSnapshotId,
+        unstampedNoDataChangeRemove,
+        unstampedMetadataReAdd),
+      snapshotId = 5L).toSeq
+    val assignedNew = assigned(0).asInstanceOf[AddFile]
+    assert(assignedNew.snapshotId.contains(5L))
+    assert(assignedNew.modifiedSnapshotId.isEmpty)
+
+    val assignedDvUpdate = assigned(1).asInstanceOf[AddFile]
+    assert(assignedDvUpdate.snapshotId.contains(2L))
+    assert(assignedDvUpdate.modifiedSnapshotId.contains(5L))
+
+    val assignedRemove = assigned(2).asInstanceOf[RemoveFile]
+    assert(assignedRemove.snapshotId.contains(5L))
+    assert(assignedRemove.modifiedSnapshotId.contains(3L))
+
+    val preservedRemove = assigned(3).asInstanceOf[RemoveFile]
+    assert(preservedRemove.snapshotId.contains(7L))
+    assert(preservedRemove.modifiedSnapshotId.contains(3L))
+
+    val assignedNoDataChangeRemove = assigned(4).asInstanceOf[RemoveFile]
+    assert(assignedNoDataChangeRemove.snapshotId.contains(5L))
+    assert(assignedNoDataChangeRemove.modifiedSnapshotId.contains(5L))
+
+    val assignedMetadataReAdd = assigned(5).asInstanceOf[AddFile]
+    assert(assignedMetadataReAdd.snapshotId.contains(5L))
+    assert(assignedMetadataReAdd.modifiedSnapshotId.contains(5L))
+  }
+
+  test("AMTSnapshotId preserves a materialized modification ID") {
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
+    val add = AddFile(
+      "materialized",
+      Map.empty,
+      1L,
+      1L,
+      dataChange = true,
+      modifiedSnapshotId = Some(3L))
+    val remove = add.remove
+
+    val assigned = AMTSnapshotId.assignIfMissing(
+      Metadata(), protocol, Iterator(add, remove), snapshotId = 5L).toSeq
+    assert(assigned(0).asInstanceOf[AddFile].modifiedSnapshotId.contains(3L))
+    assert(assigned(1).asInstanceOf[RemoveFile].modifiedSnapshotId.contains(3L))
+  }
+
+
+  test("AMTSnapshotId generates a non-negative random ID") {
+    assert(AMTSnapshotId.generate() >= 0L)
+  }
+
+  test("AMTSnapshotId leaves actions unchanged when AMT is disabled") {
+    val add = AddFile("plain", Map.empty, 1L, 1L, dataChange = true)
+    val assigned = AMTSnapshotId.assignIfMissing(
+      Metadata(), Protocol(), Iterator(add), snapshotId = 5L).toSeq
+    assert(assigned == Seq(add))
   }
 }

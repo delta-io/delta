@@ -16,11 +16,11 @@
 
 package io.delta.kernel.internal.table;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
@@ -277,13 +277,12 @@ public class SnapshotFactory {
 
   private void validateMaxCatalogVersionPresence(Protocol protocol) {
     boolean isCatalogManaged = TableFeatures.isCatalogManagedSupported(protocol);
-    if (isCatalogManaged) {
-      checkArgument(
-          ctx.maxCatalogVersion.isPresent(),
+    if (isCatalogManaged && !ctx.maxCatalogVersion.isPresent()) {
+      throw DeltaErrors.maxCatalogVersionError(
           "Must provide maxCatalogVersion for catalogManaged tables");
-    } else {
-      checkArgument(
-          !ctx.maxCatalogVersion.isPresent(),
+    }
+    if (!isCatalogManaged && ctx.maxCatalogVersion.isPresent()) {
+      throw DeltaErrors.maxCatalogVersionError(
           "Should not provide maxCatalogVersion for file-system managed tables");
     }
   }

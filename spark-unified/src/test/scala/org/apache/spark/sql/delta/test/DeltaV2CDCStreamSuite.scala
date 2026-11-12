@@ -16,7 +16,13 @@
 
 package org.apache.spark.sql.delta.test
 
-import org.apache.spark.sql.delta.{DeltaCDCStreamDeletionVectorMixin, DeltaCDCStreamSuite, DeltaConfigs, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaCDCStreamDeletionVectorMixin, DeltaCDCStreamSuite, DeltaConfigs, DeltaLog, DeltaOperations, DeltaRuntimeException}
+import org.apache.spark.sql.delta.actions.AddCDCFile
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.Row
 
 /**
  * Test suite that runs DeltaCDCStreamSuite using the V2 connector (V2_ENABLE_MODE=STRICT).
@@ -37,6 +43,8 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
 
   // V2 doesn't support write ops; run DELETE in V1 mode.
   override protected def executeDeleteSql(sqlText: String): Unit = executeInV1Mode(sqlText)
+
+  override protected def executeDml(sqlText: String): Unit = executeInV1Mode(sqlText)
 
   override protected def shouldPassTests: Set[String] = Set(
     // ========== Core CDC streaming tests ==========
@@ -102,9 +110,256 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
 class DeltaV2CDCStreamDeletionVectorSuite
     extends DeltaV2CDCStreamSuite with DeltaCDCStreamDeletionVectorMixin {
 
+  import testImplicits._
+
+  test(
+    "CDC mid-stream deletion vectors require restart with the same checkpoint") {
+    withTempDirs { (inputDir, checkpointDir, _) =>
+      val path = inputDir.getCanonicalPath
+      spark.range(1, 4).coalesce(1).write.format("delta")
+        .option(DeltaConfigs.CHANGE_DATA_FEED.key, "true")
+        .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, "false").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val initialSnapshot = deltaLog.update()
+      assert(!initialSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature))
+      val originalFile = initialSnapshot.allFiles.collect().head.path
+      val initialRows = Seq((1L, "insert", 0L), (2L, "insert", 0L), (3L, "insert", 0L))
+      val stream = loadCDCStream(path).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(stream)(
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+        ProcessAllAvailable(),
+        CheckAnswer(initialRows: _*),
+        Assert {
+          executeDml(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES " +
+            "('delta.enableDeletionVectors' = 'true')")
+          assert(deltaLog.update().protocol.isFeatureSupported(DeletionVectorsTableFeature))
+          ()
+        },
+        ProcessAllAvailable(),
+        CheckAnswer(initialRows: _*),
+        Assert {
+          executeDeleteSql(s"DELETE FROM delta.`$path` WHERE id = 1")
+          val filesWithDVs = getFilesWithDeletionVectors(deltaLog)
+          assert(filesWithDVs.size == 1)
+          assert(filesWithDVs.head.path == originalFile)
+          assert(filesWithDVs.head.deletionVector.cardinality == 1L)
+          assert(!deltaLog.getChanges(2L).next()._2.exists(_.isInstanceOf[AddCDCFile]))
+          ()
+        },
+        ExpectFailure[DeltaRuntimeException] { error =>
+          checkError(
+            error.asInstanceOf[DeltaRuntimeException],
+            "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_RESTART",
+            "55000",
+            Map.empty[String, String])
+        },
+        AssertOnQuery { query =>
+          assert(query.offsetLog.getLatestBatchId() == query.commitLog.getLatestBatchId())
+          true
+        },
+        CheckAnswer { (rows: Seq[Row]) =>
+          val events = rows.map(row => (row.getLong(0), row.getString(1), row.getLong(2)))
+          assert(events.sortBy(_._1) == initialRows)
+          ()
+        })
+
+      Seq(4L).toDF("id").write.format("delta").mode("append").save(path)
+      val restartedStream = loadCDCStream(path).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      testStream(restartedStream)(
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "delete", 2L), (4L, "insert", 3L)),
+        StopStream)
+    }
+  }
+
+  test(
+    "CDC historical deletion vectors after committed activation require schema tracking") {
+    withSQLConf(
+        DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key -> "true",
+        DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> "true") {
+      withTempDirs { (inputDir, checkpointDir, _) =>
+        val path = inputDir.getCanonicalPath
+        val checkpoint = checkpointDir.getCanonicalPath
+        spark.range(1, 4).coalesce(1).write.format("delta")
+          .option(DeltaConfigs.CHANGE_DATA_FEED.key, "true")
+          .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, "false").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val options = Map("maxFilesPerTrigger" -> "1")
+
+        testStream(loadCDCStream(path, options).drop(CDCReader.CDC_COMMIT_TIMESTAMP))(
+          StartStream(checkpointLocation = checkpoint),
+          ProcessAllAvailable(),
+          CheckAnswer((1L, "insert", 0L), (2L, "insert", 0L), (3L, "insert", 0L)),
+          Assert {
+            executeDml(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES " +
+              "('delta.enableDeletionVectors' = 'true')")
+          },
+          ProcessAllAvailable(),
+          StopStream)
+
+        executeDeleteSql(s"DELETE FROM delta.`$path` WHERE id = 1")
+        val deleteVersion = deltaLog.update().version
+        assert(getFilesWithDeletionVectors(deltaLog).nonEmpty)
+        assert(!deltaLog.getChanges(deleteVersion).next()._2.exists(_.isInstanceOf[AddCDCFile]))
+        // Read the inferred DELETE and the append before the metadata barriers for the drop.
+        Seq(4L).toDF("id").coalesce(1).write.format("delta").mode("append").save(path)
+        val appendVersion = deltaLog.update().version
+        executeDml(s"ALTER TABLE delta.`$path` DROP FEATURE deletionVectors")
+        assert(!deltaLog.update().protocol.isFeatureSupported(DeletionVectorsTableFeature))
+
+        testStream(loadCDCStream(path, options).drop(CDCReader.CDC_COMMIT_TIMESTAMP))(
+          StartStream(checkpointLocation = checkpoint),
+          ExpectFailure[DeltaRuntimeException] { error =>
+            checkError(
+              error.asInstanceOf[DeltaRuntimeException],
+              "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_SCHEMA_TRACKING",
+              "55000",
+              Map.empty[String, String])
+          },
+          CheckAnswer { (rows: Seq[Row]) =>
+            assert(rows.isEmpty)
+            ()
+          })
+
+        val trackedOptions = options +
+          ("schemaTrackingLocation" -> new Path(checkpoint, "_schema_location").toString)
+        // Persist the historical protocol, then restart to use it.
+        testStream(loadCDCStream(path, trackedOptions).drop(CDCReader.CDC_COMMIT_TIMESTAMP))(
+          StartStream(checkpointLocation = checkpoint),
+          ExpectFailure[DeltaRuntimeException] { error =>
+            assert(error.asInstanceOf[DeltaRuntimeException].getErrorClass ==
+              "DELTA_STREAMING_METADATA_EVOLUTION")
+          })
+
+        // Read the inferred DELETE and the append, then stop at the property change disabling DVs.
+        testStream(loadCDCStream(path, trackedOptions).drop(CDCReader.CDC_COMMIT_TIMESTAMP))(
+          StartStream(checkpointLocation = checkpoint),
+          ExpectFailure[DeltaRuntimeException] { error =>
+            assert(error.asInstanceOf[DeltaRuntimeException].getErrorClass ==
+              "DELTA_STREAMING_METADATA_EVOLUTION")
+          },
+          CheckAnswer { (rows: Seq[Row]) =>
+            val events = rows.map(row => (row.getLong(0), row.getString(1), row.getLong(2)))
+            assert(events.sortBy(_._1) == Seq(
+              (1L, "delete", deleteVersion), (4L, "insert", appendVersion)))
+            ()
+          })
+      }
+    }
+  }
+
+  test(
+    "CDC mid-stream deletion vectors do not require restart for explicit change files") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      spark.range(1, 4).coalesce(1).write.format("delta")
+        .option(DeltaConfigs.CHANGE_DATA_FEED.key, "true")
+        .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, "false").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      assert(!deltaLog.update().protocol.isFeatureSupported(DeletionVectorsTableFeature))
+      val stream = loadCDCStream(path).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(stream)(
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "insert", 0L), (2L, "insert", 0L), (3L, "insert", 0L)),
+        Assert {
+          executeDml(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES " +
+            "('delta.enableDeletionVectors' = 'true')")
+          assert(deltaLog.update().protocol.isFeatureSupported(DeletionVectorsTableFeature))
+          ()
+        },
+        ProcessAllAvailable(),
+        Assert {
+          executeDml(s"UPDATE delta.`$path` SET id = 10 WHERE id = 1")
+          assert(deltaLog.getChanges(2L).next()._2.exists(_.isInstanceOf[AddCDCFile]))
+          assert(getFilesWithDeletionVectors(deltaLog).nonEmpty)
+          ()
+        },
+        ProcessAllAvailable(),
+        CheckAnswer(
+          (1L, "insert", 0L), (2L, "insert", 0L), (3L, "insert", 0L),
+          (1L, "update_preimage", 2L), (10L, "update_postimage", 2L)),
+        Assert {
+          Seq(4L).toDF("id").write.format("delta").mode("append").save(path)
+        },
+        ProcessAllAvailable(),
+        CheckAnswer(
+          (1L, "insert", 0L), (2L, "insert", 0L), (3L, "insert", 0L),
+          (1L, "update_preimage", 2L), (10L, "update_postimage", 2L), (4L, "insert", 3L)),
+        StopStream)
+    }
+  }
+
+  test("CDC historical deletion vectors reject an already planned batch") {
+    withTempDirs { (inputDir, checkpointDir, _) =>
+      val path = inputDir.getCanonicalPath
+      val checkpoint = checkpointDir.getCanonicalPath
+      spark.range(1, 4).coalesce(1).write.format("delta")
+        .option(DeltaConfigs.CHANGE_DATA_FEED.key, "true")
+        .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, "true").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      var lastBatch = -1L
+
+      testStream(loadCDCStream(path).drop(CDCReader.CDC_COMMIT_TIMESTAMP))(
+        StartStream(checkpointLocation = checkpoint),
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "insert", 0L), (2L, "insert", 0L), (3L, "insert", 0L)),
+        Assert {
+          executeDeleteSql(s"DELETE FROM delta.`$path` WHERE id = 1")
+          assert(getFilesWithDeletionVectors(deltaLog).nonEmpty)
+          assert(!deltaLog.getChanges(1L).next()._2.exists(_.isInstanceOf[AddCDCFile]))
+          ()
+        },
+        ProcessAllAvailable(),
+        CheckAnswer(
+          (1L, "insert", 0L), (2L, "insert", 0L), (3L, "insert", 0L),
+          (1L, "delete", 1L)),
+        AssertOnQuery { query =>
+          lastBatch = query.commitLog.getLatestBatchId().get
+          true
+        },
+        StopStream)
+
+      // Replay the recorded batch after the latest protocol no longer advertises DVs.
+      val commitFile = new Path(checkpoint, s"commits/$lastBatch")
+      assert(commitFile.getFileSystem(deltaLog.newDeltaHadoopConf()).delete(commitFile, false))
+      withSQLConf(
+          DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key -> "true",
+          DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> "true") {
+        executeDml(s"ALTER TABLE delta.`$path` DROP FEATURE deletionVectors")
+      }
+      assert(!deltaLog.update().protocol.isFeatureSupported(DeletionVectorsTableFeature))
+
+      testStream(loadCDCStream(path).drop(CDCReader.CDC_COMMIT_TIMESTAMP))(
+        StartStream(checkpointLocation = checkpoint),
+        ExpectFailure[DeltaRuntimeException] { error =>
+          checkError(
+            error.asInstanceOf[DeltaRuntimeException],
+            "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_SCHEMA_TRACKING",
+            "55000",
+            Map.empty[String, String])
+        },
+        AssertOnQuery { query =>
+          assert(query.offsetLog.getLatestBatchId().contains(lastBatch))
+          assert(!query.commitLog.getLatestBatchId().contains(lastBatch))
+          true
+        },
+        CheckAnswer { (rows: Seq[Row]) =>
+          assert(rows.isEmpty)
+          ()
+        })
+    }
+  }
+
   override protected def shouldPassTests: Set[String] =
     super.shouldPassTests ++
       Set(
+        "CDC historical deletion vectors reject an already planned batch",
+        "CDC historical deletion vectors after committed activation require schema tracking",
+        "CDC mid-stream deletion vectors require restart with the same checkpoint",
+        "CDC mid-stream deletion vectors do not require restart for explicit change files",
         "CDC DV-diff: only deleted rows appear, not surviving rows",
         "CDC DV-diff: second delete emits only newly deleted rows, not prior deletions",
         "CDC DV-diff: partitioned table includes correct partition values",

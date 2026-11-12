@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 
 /** Invariant enforcement: rejecting commits that break a write- or commit-shape invariant. */
@@ -52,12 +53,48 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         // hole -> the Step-0 coverage assert must fire.
         intercept[AssertionError] {
           new IncrementalAMTWriter(spark, amtDeltaLog).writeIncremental(
-            oldAMTActionsProvider = new BaseAMTCheckpointActionsProvider(amtDeltaLog, provider),
+            oldAMTActionsProvider =
+              new BaseAMTCheckpointActionsProvider(spark, amtDeltaLog, provider),
             intermediateLogCommits = intermediateLogCommits,
             attemptVersion = snapshot.version + 5,
             actionsToCommit = Seq.empty,
+            snapshotId = 1L,
             trigger = AMTTriggerMode.CheckpointIntervalIncremental.name)
         }
+      }
+    }
+  }
+
+  test("writeIncremental rejects a back reference to a leaf manifest not in the base tree") {
+    withSQLConf(leafPackingConfs: _*) {
+      withAmtTable { amtDeltaLog =>
+        commitAmt(amtDeltaLog, (1 to leafPackedFiles).map(fakeAdd))
+        commitCheckpoint(amtDeltaLog, incremental = false)
+        val (staleLeaf, staleLeafFiles) = leafToAddFileMap(amtDeltaLog).toSeq.sortBy(_._1).head
+        val staleRemove = staleLeafFiles.head.remove
+        // A full rewrite writes new leaf manifests, so the new base tree does not hold `staleLeaf`.
+        commitCheckpoint(amtDeltaLog, incremental = false)
+        val snapshot = amtDeltaLog.update()
+        val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
+        assert(!provider.leaves.exists(_.location == staleLeaf))
+        val oldAMTVersion = provider.checkpointAction.contentRoot.version
+        val intermediateLogCommits = snapshot.logSegment.deltas
+          .filter(f => FileNames.getFileVersion(f) > oldAMTVersion)
+        // `verifyAmtBackReferences` rejects `staleRemove` at commit time, so the test calls the
+        // writer directly.
+        val ex = intercept[IllegalStateException] {
+          new IncrementalAMTWriter(spark, amtDeltaLog).writeIncremental(
+            oldAMTActionsProvider =
+              new BaseAMTCheckpointActionsProvider(spark, amtDeltaLog, provider),
+            intermediateLogCommits = intermediateLogCommits,
+            attemptVersion = snapshot.version + 1,
+            actionsToCommit = Seq(staleRemove),
+            snapshotId = 1L,
+            trigger = AMTTriggerMode.InlineWithLargeCommitIncremental.name)
+        }
+        assert(ex.getMessage.contains("not live leaves of the base tree") &&
+          ex.getMessage.contains(staleLeaf),
+          s"expected the base tree back reference invariant; got: ${ex.getMessage}")
       }
     }
   }
@@ -94,11 +131,15 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
         // (dataChange = false); a data-changing re-add is rejected by the incremental writer.
         val liveLeafFile = leafToAddFileMapping.toSeq.sortBy(_._1).head._2.head
         assert(liveLeafFile.backReference.isDefined, "The re-added file must be leaf-resident.")
-        val ex = intercept[IllegalStateException] {
-          withInline {
-            amtDeltaLog.startTransaction().commit(
-              Seq(liveLeafFile.copy(dataChange = true)),
-              DeltaOperations.ComputeStats(predicate = Nil))
+        val ex = withSQLConf(
+          DeltaSQLConf.DELTA_COMMIT_VALIDATE_EXPECTED_DATA_CHANGE_MODE.key ->
+            DeltaSQLConf.DataChangeValidationMode.OFF.toString) {
+          intercept[IllegalStateException] {
+            withInline {
+              amtDeltaLog.startTransaction().commit(
+                Seq(liveLeafFile.copy(dataChange = true)),
+                DeltaOperations.ComputeStats(predicate = Nil))
+            }
           }
         }
         assert(ex.getMessage.contains("dataChange=true is not allowed"),
@@ -172,19 +213,20 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
       file_format = AMTSingleAction.FileFormatParquet,
       tracking = Tracking(
         status = Tracking.Status.Existing,
-        snapshot_id = None, dv_snapshot_id = None, sequence_number = None,
+        snapshot_id = None, modified_snapshot_id = None, sequence_number = None,
         file_sequence_number = None, first_row_id = None,
         deleted_positions = None, replaced_positions = None),
       record_count =
         (addedFiles + existingFiles + deletedFiles + replacedFiles + modifiedFiles).toLong,
       file_size_in_bytes = 100L,
       manifest_info = ManifestInfo(
+        format_version = AMTSingleAction.FormatVersionV4,
         added_files_count = addedFiles, existing_files_count = existingFiles,
         deleted_files_count = deletedFiles, replaced_files_count = replacedFiles,
         modified_files_count = modifiedFiles,
         added_rows_count = 0L, existing_rows_count = 0L,
         deleted_rows_count = 0L, replaced_rows_count = 0L, modified_rows_count = 0L,
-        min_sequence_number = 0L, dv = None, dv_cardinality = None))
+        min_sequence_number = 0L, dv = None))
 
   test("carryForwardOneLeaf rejects a carried leaf mixing live files and tombstones") {
     withTables() { (_, amtDeltaLog) =>
@@ -194,7 +236,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
       val mixed = carriedLeafPointer(existingFiles = 2, deletedFiles = 1)
       val ex = intercept[IllegalStateException] {
         writer.carryForwardOneLeaf(mixed, newMdvPositions = Seq.empty,
-          deletedPositions = Seq.empty, replacedPositions = Seq.empty)
+          deletedPositions = Seq.empty, replacedPositions = Seq.empty, snapshotId = 1L)
       }
       assert(ex.getMessage.contains("both live files and tombstones"),
         s"expected the live+tombstone-mix invariant; got: ${ex.getMessage}")
@@ -209,7 +251,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
       val tombstoneOnly = carriedLeafPointer(deletedFiles = 3)
       val ex = intercept[IllegalStateException] {
         writer.carryForwardOneLeaf(tombstoneOnly, newMdvPositions = Seq(0),
-          deletedPositions = Seq.empty, replacedPositions = Seq.empty)
+          deletedPositions = Seq.empty, replacedPositions = Seq.empty, snapshotId = 1L)
       }
       assert(ex.getMessage.contains("no live file but gained new MDV positions"),
         s"expected the dead-leaf-MDV invariant; got: ${ex.getMessage}")

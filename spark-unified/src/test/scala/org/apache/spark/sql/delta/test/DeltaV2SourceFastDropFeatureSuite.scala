@@ -30,18 +30,17 @@ class DeltaV2SourceFastDropFeatureSuite
 
   override protected def shouldPassTests: Set[String] = Set(
     "Protocol check at startingVersion is skipped when config is disabled",
-    "Protocol validations supress errors when snapshot cannot be reconstructed"
+    "Protocol validations supress errors when snapshot cannot be reconstructed",
+    "Protocol is checked when using startingVersion - useStartingTS: false.",
+    "Protocol is checked when using startingVersion - useStartingTS: true."
   )
 
   override protected def shouldFailTests: Set[String] = Set(
-    // These expect Delta's DeltaUnsupportedTableFeatureException /
+    // This expects Delta's DeltaUnsupportedTableFeatureException /
     // DELTA_UNSUPPORTED_FEATURES_FOR_READ, but the DSv2 read path surfaces Kernel's
     // UnsupportedTableFeatureException untranslated, so the type and error-class assertions don't
-    // match. The feature is caught eagerly while building the snapshot at stream start /
-    // startingVersion.
+    // match. The feature is caught eagerly while building the snapshot at stream start.
     "Latest protocol is checked for unsupported features",
-    "Protocol is checked when using startingVersion - useStartingTS: false.",
-    "Protocol is checked when using startingVersion - useStartingTS: true.",
 
     // Same missing translation, but the feature is only hit mid-stream: Kernel wraps its
     // UnsupportedTableFeatureException in a RuntimeException while iterating commit actions, so the
