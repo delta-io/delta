@@ -15,61 +15,77 @@
  */
 package org.apache.spark.sql.delta.v2.interop
 
-import java.io.Closeable
+import java.io.{InterruptedIOException, UncheckedIOException}
+import java.nio.channels.ClosedByInterruptException
 
 import org.apache.spark.sql.delta.DeltaSingleCommit
-import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
-import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
-import io.delta.kernel.{CommitActions => KernelCommitActions}
-import io.delta.kernel.internal.util.{Utils => KernelUtils}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
+import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore, SupportsRewinding}
+import org.apache.spark.sql.delta.storage.ClosableIterator._
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, Path}
+import io.delta.kernel.{CommitFileStatus => KernelCommitFileStatus}
 
-// TODO: Once interop supports commit caching, restore private[interop]
-// and remove with Closeable.
 /**
  * Kernel-backed [[DeltaSingleCommit]].
  *
- * @param singleKernelCommit the single Kernel commit.
+ * @param kernelCommitFileStatus commit version and file metadata provided by Kernel
+ * @param logStore log store used to read commit actions
+ * @param hadoopConf Hadoop configuration used by the log store
  */
 private[v2] class DeltaV2SingleCommit(
-    private val singleKernelCommit: KernelCommitActions
-) extends DeltaSingleCommit with Closeable {
+    kernelCommitFileStatus: KernelCommitFileStatus,
+    logStore: LogStore,
+    hadoopConf: Configuration) extends DeltaSingleCommit {
 
-  private val (commitVersion, commitTimestamp): (Long, Long) = try {
-    (singleKernelCommit.getVersion(), singleKernelCommit.getTimestamp())
-  } catch {
-    case error: Throwable =>
-      KernelUtils.closeCloseables(singleKernelCommit)
-      throw error
+  override val version: Long = kernelCommitFileStatus.getVersion
+
+  override lazy val timestamp: Long = getActionsIterator().processAndClose { actions =>
+    actions.collectFirst { case commitInfo: CommitInfo => commitInfo }
+      .flatMap(_.inCommitTimestamp)
+      .getOrElse(kernelCommitFileStatus.getFileStatus.getModificationTime)
   }
 
-  override val version: Long = commitVersion
-
-  override val timestamp: Long = commitTimestamp
-
   override def getActionsIterator(
-      maxInMemoryFileSizeBytes: Long): ClosableIterator[Action] with SupportsRewinding[Action] = {
-    // Kernel does not expose the commit's file size, so always use the zero-cache path.
+      maxInMemoryFileSizeBytes: Long = 0)
+      : ClosableIterator[Action] with SupportsRewinding[Action] = {
+    val kernelFileStatus = kernelCommitFileStatus.getFileStatus
+    val fileStatus = new FileStatus(
+      kernelFileStatus.getSize, false, 1, 1L, kernelFileStatus.getModificationTime,
+      new Path(kernelFileStatus.getPath))
+    lazy val actions = logStore.read(fileStatus, hadoopConf).map(Action.fromJson)
+    def createIterator(): ClosableIterator[Action] = {
+      if (kernelFileStatus.getSize < maxInMemoryFileSizeBytes) {
+        actions.iterator.toClosable
+      } else {
+        logStore.readAsIterator(fileStatus, hadoopConf).withClose(_.map(Action.fromJson))
+      }
+    }
     new ClosableIterator[Action] with SupportsRewinding[Action] {
-      private var delegatedIterator =
-        KernelActionUtils.readActions(singleKernelCommit)
-      override def hasNext: Boolean =
-        delegatedIterator.hasNext
-      override def next(): Action =
-        delegatedIterator.next()
-      override def close(): Unit = delegatedIterator.close()
-      override def rewind(): Unit = {
-        close()
-        delegatedIterator =
-          KernelActionUtils.readActions(singleKernelCommit)
+      private var delegatedIterator = withInterruptHandling(createIterator())
+      override def hasNext: Boolean = withInterruptHandling(delegatedIterator.hasNext)
+      override def next(): Action = withInterruptHandling(delegatedIterator.next())
+      override def close(): Unit = withInterruptHandling(delegatedIterator.close())
+      override def rewind(): Unit = withInterruptHandling {
+        delegatedIterator.close()
+        delegatedIterator = createIterator()
       }
     }
   }
 
-  override def close(): Unit = KernelUtils.closeCloseables(singleKernelCommit)
+  private def withInterruptHandling[T](operation: => T): T = {
+    try operation
+    catch {
+      case e: InterruptedIOException => throw new UncheckedIOException(e)
+      case e: ClosedByInterruptException => throw new UncheckedIOException(e)
+    }
+  }
 }
 
 object DeltaV2SingleCommit {
-  def apply(singleKernelCommit: KernelCommitActions): DeltaSingleCommit =
-    new DeltaV2SingleCommit(singleKernelCommit)
+  def apply(
+      kernelCommitFileStatus: KernelCommitFileStatus,
+      logStore: LogStore,
+      hadoopConf: Configuration): DeltaV2SingleCommit =
+    new DeltaV2SingleCommit(kernelCommitFileStatus, logStore, hadoopConf)
 }
