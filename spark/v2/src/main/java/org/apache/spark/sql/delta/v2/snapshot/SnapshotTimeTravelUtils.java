@@ -28,6 +28,21 @@ public final class SnapshotTimeTravelUtils {
 
   private SnapshotTimeTravelUtils() {}
 
+  /**
+   * Resolves the commit active at a timestamp using the loaded snapshot and any catalog commits.
+   * Catalog commits participate in history resolution alongside commits available from the log.
+   *
+   * @param kernelEngine engine used to read the transaction log
+   * @param snapshot loaded snapshot whose log and version bound the lookup
+   * @param catalogCommits catalog-managed commits visible to the loaded snapshot; empty for a
+   *     path-based table
+   * @param timestampMillis timestamp to resolve, in milliseconds since the epoch
+   * @param canReturnLastCommit whether a timestamp after the latest commit may return that commit
+   * @param mustBeRecreatable whether the returned commit must be recreatable from available files
+   * @param canReturnEarliestCommit whether a timestamp before history may return the earliest
+   *     commit
+   * @return the commit active at {@code timestampMillis}
+   */
   public static DeltaHistoryManager.Commit getActiveCommitAtTime(
       Engine kernelEngine,
       SnapshotImpl snapshot,
@@ -47,6 +62,25 @@ public final class SnapshotTimeTravelUtils {
         catalogCommits);
   }
 
+  /**
+   * Validates a version against the loaded snapshot and the earliest available history. The minimum
+   * catalog-commit version bounds the filesystem search for the earliest version; an empty list
+   * performs the search without a catalog bound.
+   *
+   * <p>When {@code checkUpperBoundFirst} is true, an invalid upper bound is rejected before the
+   * filesystem lookup and reports zero as the earliest version. When false, the filesystem lookup
+   * happens first and an upper-bound error reports the actual earliest available version.
+   *
+   * @param kernelEngine engine used to read the transaction log
+   * @param snapshot loaded snapshot whose log and latest version bound the validation
+   * @param catalogCommits catalog-managed commits visible to the loaded snapshot; empty for a
+   *     path-based table
+   * @param version version to validate
+   * @param mustBeRecreatable whether the version must be recreatable from available files
+   * @param allowOutOfRange whether versions above the loaded snapshot are allowed
+   * @param checkUpperBoundFirst whether to reject an invalid upper bound before filesystem access
+   * @throws VersionNotFoundException if the requested version is unavailable
+   */
   public static void checkVersionExists(
       Engine kernelEngine,
       SnapshotImpl snapshot,

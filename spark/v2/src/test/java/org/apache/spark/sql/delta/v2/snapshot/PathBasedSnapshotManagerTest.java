@@ -372,11 +372,16 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
     if (shouldThrow) {
-      assertThrows(
-          VersionNotFoundException.class,
-          () ->
-              snapshotManager.checkVersionExists(
-                  versionToCheck, mustBeRecreatable, allowOutOfRange));
+      VersionNotFoundException exception =
+          assertThrows(
+              VersionNotFoundException.class,
+              () ->
+                  snapshotManager.checkVersionExists(
+                      versionToCheck, mustBeRecreatable, allowOutOfRange));
+
+      if (testName.equals("notAllowOutOfRange")) {
+        assertTrue(exception.getEarliest() > 0);
+      }
 
       assertThrows(
           org.apache.spark.sql.delta.VersionNotFoundException.class,
