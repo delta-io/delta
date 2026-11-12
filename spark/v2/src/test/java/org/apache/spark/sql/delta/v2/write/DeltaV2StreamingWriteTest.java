@@ -422,7 +422,10 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
     assertEquals(versionsBefore, spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count());
   }
 
-  /** An action row carrying more than one action fails the epoch before anything is committed. */
+  /**
+   * An action row carrying more than one action fails the epoch before anything is committed, even
+   * alongside a valid message.
+   */
   @Test
   public void testCommit_rejectsRowWithMultipleActions(@TempDir File tempDir) throws Exception {
     String path = createTable(tempDir, "streaming_multiple_actions");
@@ -431,16 +434,20 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
         "{\"add\":{\"path\":\"f.parquet\",\"partitionValues\":{},\"size\":10,"
             + "\"modificationTime\":123,\"dataChange\":true},"
             + "\"remove\":{\"path\":\"old.parquet\",\"dataChange\":true}}";
+    WriterCommitMessage addFileMessage = writeEpoch(write, 0L, 1, "Alice");
     long versionsBefore = spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count();
 
     IllegalArgumentException error =
         assertThrows(
             IllegalArgumentException.class,
-            () -> write.commit(0L, new WriterCommitMessage[] {actionMessage(actionJson)}));
+            () ->
+                write.commit(
+                    0L, new WriterCommitMessage[] {addFileMessage, actionMessage(actionJson)}));
 
     assertEquals(
         "Expected exactly one action from writer commit message, but found 2 actions",
         error.getMessage());
+    assertEquals(0L, spark.read().format("delta").load(path).count());
     assertEquals(versionsBefore, spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count());
   }
 
