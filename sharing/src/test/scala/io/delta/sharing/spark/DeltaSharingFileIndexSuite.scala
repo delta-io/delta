@@ -525,7 +525,7 @@ class DeltaSharingFileIndexSuite
         // into), nor for IN lists over kMaxSqlInOpSizeLimit (20).
         val dataSqlRLike = SqlRLike(
           SqlAttributeReference("name", StringType)(),
-          SqlLiteral("^a.*", StringType))
+          SqlLiteral("^a.*"))
         val dataSqlLargeIn = SqlIn(
           SqlAttributeReference("cost", FloatType)(),
           (1 to 21).map(i => SqlLiteral(i.toFloat, FloatType)))
