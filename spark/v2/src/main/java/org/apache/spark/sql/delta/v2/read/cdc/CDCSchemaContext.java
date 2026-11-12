@@ -39,17 +39,20 @@ public class CDCSchemaContext implements Serializable {
   public static final String CDC_COMMIT_VERSION = CDCReader.CDC_COMMIT_VERSION();
   public static final String CDC_COMMIT_TIMESTAMP = CDCReader.CDC_COMMIT_TIMESTAMP();
 
+  // V1 CDCReader exposes nullable fields for Parquet schema evolution in write-time/streaming
+  // reads. The changelog API injects every CDC value and therefore exposes non-null fields.
+  public static StructType cdcOutputSchema(StructType endSchema, boolean nullable) {
+    return endSchema
+        .add(CDC_TYPE_COLUMN, DataTypes.StringType, nullable)
+        .add(CDC_COMMIT_VERSION, DataTypes.LongType, nullable)
+        .add(CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, nullable);
+  }
+
   public static final int CHANGE_TYPE_IDX = 0;
   public static final int COMMIT_VERSION_IDX = 1;
   public static final int COMMIT_TIMESTAMP_IDX = 2;
 
-  private static final StructField[] CDC_FIELDS =
-      new StructField[] {
-        DataTypes.createStructField(CDC_TYPE_COLUMN, DataTypes.StringType, /* nullable= */ true),
-        DataTypes.createStructField(CDC_COMMIT_VERSION, DataTypes.LongType, /* nullable= */ true),
-        DataTypes.createStructField(
-            CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, /* nullable= */ true)
-      };
+  private static final StructField[] CDC_FIELDS = cdcOutputSchema(new StructType(), true).fields();
 
   /** Read data schema augmented with CDC columns (for Parquet reader). */
   private final StructType readDataSchemaWithCDC;
@@ -114,11 +117,7 @@ public class CDCSchemaContext implements Serializable {
 
   /** Appends the three CDC columns to the given schema. */
   public static StructType appendCDCColumns(StructType schema) {
-    StructType result = schema;
-    for (StructField field : CDC_FIELDS) {
-      result = result.add(field);
-    }
-    return result;
+    return cdcOutputSchema(schema, true);
   }
 
   public StructType getReadDataSchemaWithCDC() {

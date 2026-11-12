@@ -162,6 +162,17 @@ public class CDCSchemaContextTest {
     assertEquals(CDCSchemaContext.CDC_TYPE_COLUMN, augmented.fields()[2].name());
     assertEquals(CDCSchemaContext.CDC_COMMIT_VERSION, augmented.fields()[3].name());
     assertEquals(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, augmented.fields()[4].name());
+    assertTrue(augmented.fields()[2].nullable());
+    assertTrue(augmented.fields()[3].nullable());
+    assertTrue(augmented.fields()[4].nullable());
+  }
+
+  @Test
+  void testNonNullableCDCOutputSchema() {
+    StructType output = CDCSchemaContext.cdcOutputSchema(DATA_SCHEMA, false);
+    assertFalse(output.fields()[2].nullable());
+    assertFalse(output.fields()[3].nullable());
+    assertFalse(output.fields()[4].nullable());
   }
 
   private static List<Integer> toJavaList(Seq<Object> seq) {
