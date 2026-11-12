@@ -21,6 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import io.delta.kernel.defaults.internal.json.JsonUtils;
+import io.delta.kernel.internal.actions.SingleAction;
 import java.io.File;
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +41,7 @@ import org.apache.spark.sql.delta.shims.VariantShreddingShims;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.InternalRowTestUtils;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.utils.SerializableKernelRowWrapper;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -48,6 +51,7 @@ import org.apache.spark.unsafe.types.VariantVal;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
@@ -387,6 +391,60 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
   }
 
   /**
+   * A commit message whose action row is not a single AddFile fails the epoch before anything is
+   * committed, even alongside a valid message; the batch path applies the same check.
+   */
+  @ParameterizedTest(name = "unsupported action: {0}")
+  @CsvSource(
+      delimiter = '|',
+      value = {
+        "RemoveFile|{\"remove\":{\"path\":\"unused.parquet\",\"dataChange\":true}}",
+        "Protocol|{\"protocol\":{\"minReaderVersion\":1,\"minWriterVersion\":2}}",
+        "SetTransaction|{\"txn\":{\"appId\":\"test-app\",\"version\":1}}"
+      })
+  public void testCommit_rejectsUnsupportedActionBeforeCommitting(
+      String actionName, String actionJson, @TempDir File tempDir) throws Exception {
+    String path = createTable(tempDir, "streaming_unsupported_" + actionName);
+    DeltaV2StreamingWrite write = newWrite(path);
+    WriterCommitMessage addFileMessage = writeEpoch(write, 0L, 1, "Alice");
+    long versionsBefore = spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count();
+
+    UnsupportedOperationException error =
+        assertThrows(
+            UnsupportedOperationException.class,
+            () ->
+                write.commit(
+                    0L, new WriterCommitMessage[] {addFileMessage, actionMessage(actionJson)}));
+
+    assertEquals(
+        "DSv2 Delta writes do not support '" + actionName + "' actions", error.getMessage());
+    assertEquals(0L, spark.read().format("delta").load(path).count());
+    assertEquals(versionsBefore, spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count());
+  }
+
+  /** An action row carrying more than one action fails the epoch before anything is committed. */
+  @Test
+  public void testCommit_rejectsRowWithMultipleActions(@TempDir File tempDir) throws Exception {
+    String path = createTable(tempDir, "streaming_multiple_actions");
+    DeltaV2StreamingWrite write = newWrite(path);
+    String actionJson =
+        "{\"add\":{\"path\":\"f.parquet\",\"partitionValues\":{},\"size\":10,"
+            + "\"modificationTime\":123,\"dataChange\":true},"
+            + "\"remove\":{\"path\":\"old.parquet\",\"dataChange\":true}}";
+    long versionsBefore = spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count();
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> write.commit(0L, new WriterCommitMessage[] {actionMessage(actionJson)}));
+
+    assertEquals(
+        "Expected exactly one action from writer commit message, but found 2 actions",
+        error.getMessage());
+    assertEquals(versionsBefore, spark.sql("DESCRIBE HISTORY delta.`" + path + "`").count());
+  }
+
+  /**
    * Aborting an epoch commits nothing: the written files are left orphaned, not added to the table.
    */
   @Test
@@ -578,6 +636,14 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
       writer.write(InternalRowTestUtils.row(valuePartPairs[i], valuePartPairs[i + 1]));
     }
     return writer.commit();
+  }
+
+  /** A commit message holding one action row parsed from {@code actionJson}. */
+  private static WriterCommitMessage actionMessage(String actionJson) {
+    return new DeltaV2WriterCommitMessage(
+        List.of(
+            new SerializableKernelRowWrapper(
+                JsonUtils.rowFromJson(actionJson, SingleAction.FULL_SCHEMA))));
   }
 
   private String createTable(File tempDir, String tableName) {
