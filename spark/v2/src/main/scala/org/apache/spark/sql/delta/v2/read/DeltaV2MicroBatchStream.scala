@@ -146,7 +146,7 @@ private[read] class DeltaV2MicroBatchStream(
    * process up. We may run multiple micro batches, but the query will stop itself when it reaches
    * this offset.
    */
-  private var lastOffsetForTriggerAvailableNow: Optional[DeltaSourceOffset] = Optional.empty()
+  private var lastOffsetForTriggerAvailableNow: Option[DeltaSourceOffset] = None
 
   private var isLastOffsetForTriggerAvailableNowInitialized: Boolean = false
 
@@ -304,7 +304,7 @@ private[read] class DeltaV2MicroBatchStream(
     lastOffsetForTriggerAvailableNow =
         latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
 
-    lastOffsetForTriggerAvailableNow.ifPresent(
+    lastOffsetForTriggerAvailableNow.foreach(
         lastOffset =>
             logger.info("lastOffset for Trigger.AvailableNow has set to " + lastOffset.json()))
   }
@@ -363,7 +363,7 @@ private[read] class DeltaV2MicroBatchStream(
       val deltaStartOffset: DeltaSourceOffset = DeltaSourceOffset.apply(tableId, startOffset)
       initForTriggerAvailableNowIfNeeded(deltaStartOffset)
       // Return null when no data is available for this batch.
-      val endOffset: DeltaSourceOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null)
+      val endOffset: DeltaSourceOffset = latestOffsetInternal(deltaStartOffset, limit).orNull
       if (endOffset != null) {
         isFirstBatch = false
       }
@@ -396,14 +396,14 @@ private[read] class DeltaV2MicroBatchStream(
    * and state management.
    */
   private def latestOffsetInternal(
-      deltaStartOffset: DeltaSourceOffset, limit: ReadLimit): Optional[DeltaSourceOffset] = {
+      deltaStartOffset: DeltaSourceOffset, limit: ReadLimit): Option[DeltaSourceOffset] = {
     val limits: Optional[DeltaSource.AdmissionLimits] =
         ScalaUtils.toJavaOptional(DeltaSource.AdmissionLimits.apply(options, limit))
-    val endOffset: Optional[DeltaSourceOffset] =
+    val endOffset: Option[DeltaSourceOffset] =
         getNextOffsetFromPreviousOffset(deltaStartOffset, limits, isFirstBatch)
 
-    if (shouldValidateOffsets && endOffset.isPresent()) {
-      DeltaSourceOffset.validateOffsets(deltaStartOffset, endOffset.get())
+    if (shouldValidateOffsets && endOffset.isDefined) {
+      DeltaSourceOffset.validateOffsets(deltaStartOffset, endOffset.get)
     }
 
     endOffset
@@ -431,7 +431,7 @@ private[read] class DeltaV2MicroBatchStream(
   private def getNextOffsetFromPreviousOffset(
       previousOffset: DeltaSourceOffset,
       limits: Optional[DeltaSource.AdmissionLimits],
-      isFirstBatch: Boolean): Optional[DeltaSourceOffset] = {
+      isFirstBatch: Boolean): Option[DeltaSourceOffset] = {
     // Initialize schema tracking log eagerly if possible (fresh stream, first batch).
     // This mirrors v1's getStartingOffsetFromSpecificDeltaVersion eager init path.
     if (isFirstBatch) {
@@ -454,15 +454,17 @@ private[read] class DeltaV2MicroBatchStream(
             /* batchEndVersion= */ null,
             /* alwaysFailUponLogInitialized= */ false)
       }
-      checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersionForMetadataLogInit, null)
+      checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+          startVersionForMetadataLogInit, batchEndVersion = None)
     }
 
     // Handle pending schema change offsets (two-barrier protocol).
     if (metadataEvolutionHandler.shouldTrackMetadataChange()) {
-      val pendingOffset: Optional[DeltaSourceOffset] =
-          metadataEvolutionHandler.getNextOffsetFromPreviousOffsetIfPendingSchemaChange(
-              previousOffset)
-      if (pendingOffset.isPresent()) {
+      val pendingOffset: Option[DeltaSourceOffset] =
+          ScalaUtils.toScalaOption(
+              metadataEvolutionHandler.getNextOffsetFromPreviousOffsetIfPendingSchemaChange(
+                  previousOffset))
+      if (pendingOffset.isDefined) {
         return pendingOffset
       }
     }
@@ -476,33 +478,32 @@ private[read] class DeltaV2MicroBatchStream(
 
     // TODO: Move this validation into DeltaStreamingBackend when DSv2 shares offset
     // discovery with DSv1.
-    val lastFileChange: Optional[IndexedFile] =
-        ScalaUtils.toJavaOptional(
-            DeltaSource.iteratorLast(
-                new IteratorCloseOps(changes)
-                    .withClose(
-                        iterator =>
-                            iterator.map(
-                                file => {
-                                  checkDeletionVectorsReadable(file)
-                                  file
-                                }))))
+    val lastFileChange: Option[IndexedFile] =
+        DeltaSource.iteratorLast(
+            new IteratorCloseOps(changes)
+                .withClose(
+                    iterator =>
+                        iterator.map(
+                            file => {
+                              checkDeletionVectorsReadable(file)
+                              file
+                            })))
 
-    if (!lastFileChange.isPresent()) {
+    if (lastFileChange.isEmpty) {
       // For the first batch, return empty to match DSv1's
       // getStartingOffsetFromSpecificDeltaVersion
       if (isFirstBatch) {
-        return Optional.empty()
+        return None
       }
-      return Optional.of(previousOffset)
+      return Some(previousOffset)
     }
     // Block latestOffset() from generating an invalid offset by proactively
     // verifying incompatible schema changes under column mapping. See more details in the
     // method java doc.
     checkReadIncompatibleSchemaChangeOnStreamStartOnce(
-        previousOffset.reservoirVersion, batchEndVersion = null)
-    val lastFile: IndexedFile = lastFileChange.get()
-    Optional.of(
+        previousOffset.reservoirVersion, batchEndVersion = None)
+    val lastFile: IndexedFile = lastFileChange.get
+    Some(
         DeltaSource.buildOffsetFromIndexedFile(
             tableId,
             lastFile.getVersion(),
@@ -545,8 +546,7 @@ private[read] class DeltaV2MicroBatchStream(
       fileChanges =>
       while (fileChanges.hasNext) {
         val indexedFile: IndexedFile = fileChanges.next()
-        val pf: PartitionedFile = buildPartitionedFile(indexedFile, isCDC, caster)
-        if (pf != null) {
+        buildPartitionedFile(indexedFile, isCDC, caster).foreach { pf =>
           // Also check replay of an already planned batch, which skips latestOffset validation.
           checkDeletionVectorsReadable(indexedFile)
           totalBytesToRead += pf.fileSize
@@ -616,23 +616,26 @@ private[read] class DeltaV2MicroBatchStream(
   }
 
   /**
-   * Returns a {@link PartitionedFile} for the given {@link IndexedFile}, or {@code null} if the
+   * Returns a {@link PartitionedFile} for the given {@link IndexedFile}, or {@code None} if the
    * file should be skipped (no AddFile/CDC payload, or path matches the excludeRegex).
    */
   private def buildPartitionedFile(
-      indexedFile: IndexedFile, isCDC: Boolean, caster: PartitionValueCaster): PartitionedFile = {
+      indexedFile: IndexedFile,
+      isCDC: Boolean,
+      caster: PartitionValueCaster): Option[PartitionedFile] = {
     if (indexedFile.getAddFile() != null) {
       val addFile: AddFile = indexedFile.getAddFile()
-      if (isExcludedPath(addFile.path)) return null
-      return PartitionUtils.buildPartitionedFile(addFile, caster, tablePath)
+      if (isExcludedPath(addFile.path)) return None
+      return Some(PartitionUtils.buildPartitionedFile(addFile, caster, tablePath))
     }
     if (isCDC && indexedFile.getCDCDataFile() != null) {
       val cdcFile: CDCDataFile = indexedFile.getCDCDataFile()
-      if (isExcludedPath(cdcFile.getPath())) return null
-      return PartitionUtils.buildCDCPartitionedFile(
-          cdcFile, indexedFile.getVersion(), caster, tablePath)
+      if (isExcludedPath(cdcFile.getPath())) return None
+      return Some(
+          PartitionUtils.buildCDCPartitionedFile(
+              cdcFile, indexedFile.getVersion(), caster, tablePath))
     }
-    null
+    None
   }
 
   ///////////////
@@ -888,12 +891,12 @@ private[read] class DeltaV2MicroBatchStream(
     // the endOffset as the limit.
     // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
     // Trigger.availableNow() as limit. We know endOffset <= lastOffsetForTriggerAvailableNow.
-    val lastOffsetForThisScan: Optional[DeltaSourceOffset] =
-        endOffset.or(() => lastOffsetForTriggerAvailableNow)
+    val lastOffsetForThisScan: Option[DeltaSourceOffset] =
+        ScalaUtils.toScalaOption(endOffset).orElse(lastOffsetForTriggerAvailableNow)
 
     // Check end boundary (inclusive)
-    if (lastOffsetForThisScan.isPresent()) {
-      val bound: DeltaSourceOffset = lastOffsetForThisScan.get()
+    if (lastOffsetForThisScan.isDefined) {
+      val bound: DeltaSourceOffset = lastOffsetForThisScan.get
       return new IteratorCloseOps(result)
               .withClose(
                   iterator =>
@@ -1045,28 +1048,25 @@ private[read] class DeltaV2MicroBatchStream(
         options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
         "Using schema from schema tracking log cannot tolerate missing commit files.")
 
-    var endVersionOpt: Optional[java.lang.Long] =
-        if (endOffset.isPresent()) {
-          Optional.of(java.lang.Long.valueOf(endOffset.get().reservoirVersion))
-        } else Optional.empty()
+    var endVersionOpt: Option[Long] = ScalaUtils.toScalaOption(endOffset).map(_.reservoirVersion)
 
-    if (endVersionOpt.isPresent()) {
+    if (endVersionOpt.isDefined) {
       // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
       // endVersion to be an actual existing version or empty.
       val latestVersion: Long = snapshotAtSourceInit.version
-      if (endVersionOpt.get() > latestVersion) {
+      if (endVersionOpt.get > latestVersion) {
         // This could happen because:
         // 1. data could be added after snapshotAtSourceInit was captured.
         // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
         // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
         // TODO(#5318): kernel should ideally relax this constraint.
-        endVersionOpt = Optional.of(java.lang.Long.valueOf(streamingBackend.update().version))
+        endVersionOpt = Some(streamingBackend.update().version)
       }
 
       // After capping, check if startVersion is beyond the endVersion.
       // This can happen when all files in the batch come from the initial snapshot
       // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
-      if (startVersion > endVersionOpt.get()) {
+      if (startVersion > endVersionOpt.get) {
         return new ClosableWrapper[CommitActions](Iterator.empty).toClosable
       }
     } else {
@@ -1091,9 +1091,7 @@ private[read] class DeltaV2MicroBatchStream(
         commitRange =
             snapshotManager.getTableChanges(
                 engine,
-                GetTableChangesParam.apply(
-                    earliestVersionToFetch,
-                    ScalaUtils.toScalaOption(endVersionOpt).map(Long.unbox)),
+                GetTableChangesParam.apply(earliestVersionToFetch, endVersionOpt),
                 originalStreamingQueryContext)
         fetched = true
       } catch {
@@ -1344,20 +1342,20 @@ private[read] class DeltaV2MicroBatchStream(
    * @param metadata Metadata that contains a potential schema change
    * @param version Version for the metadata action
    * @param batchStartVersion Starting version of the batch being processed
-   * @param batchEndVersion Ending version of the batch being processed, or null for the latest
+   * @param batchEndVersion Ending version of the batch being processed, or None for the latest
    * @param validatedDuringStreamStart Whether this check is being done during stream start.
    */
   private def checkReadIncompatibleSchemaChanges(
       metadata: Metadata,
       version: Long,
       batchStartVersion: Long,
-      batchEndVersion: java.lang.Long,
+      batchEndVersion: Option[Long],
       validatedDuringStreamStart: Boolean): Unit = {
     logger.info(
         "checking read incompatibility with schema at version {}, inside batch[{}, {}].",
         Long.box(version),
         Long.box(batchStartVersion),
-        if (batchEndVersion != null) batchEndVersion else "latest")
+        batchEndVersion.map(_.toString).getOrElse("latest"))
 
     var newMetadata, oldMetadata: Metadata = null
     if (version < snapshotAtSourceInit.version) {
@@ -1473,7 +1471,8 @@ private[read] class DeltaV2MicroBatchStream(
     }
 
     // Check for column mapping + streaming incompatible schema changes
-    checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersion, endVersionForMetadataLogInit)
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+        startVersion, Some(endVersionForMetadataLogInit))
   }
 
   /**
@@ -1499,7 +1498,7 @@ private[read] class DeltaV2MicroBatchStream(
    *     as well before we can lazily initialize the schema log if needed.
    */
   private def checkReadIncompatibleSchemaChangeOnStreamStartOnce(
-      batchStartVersion: Long, batchEndVersion: java.lang.Long): Unit = {
+      batchStartVersion: Long, batchEndVersion: Option[Long]): Unit = {
     // When schema tracking is enabled, the MetadataEvolutionHandler manages schema changes
     // through the barrier protocol - skip the traditional compatibility check.
     if (metadataEvolutionHandler.shouldTrackMetadataChange()) return
@@ -1537,11 +1536,11 @@ private[read] class DeltaV2MicroBatchStream(
         // If end version is defined (i.e. we have a pending batch), let's also eagerly check all
         // intermediate schema changes against the stream read schema to capture corners cases such
         // as rename and rename back.
-        if (batchEndVersion != null) {
+        if (batchEndVersion.isDefined) {
           for (entry <-
               CollectionConverters.asScala(StreamingHelper.collectMetadataActions(
                       batchStartVersion,
-                      Optional.of(batchEndVersion),
+                      Optional.of(Long.box(batchEndVersion.get)),
                       tableManager,
                       originalStreamingQueryContext,
                       options.failOnDataLoss)
@@ -1775,17 +1774,17 @@ private[read] class DeltaV2MicroBatchStream(
     // Schema-change barrier: emit only the barrier when this commit diverges from source-init.
     // V1 injects in DeltaSourceCDCSupport.filterAndIndexDeltaLogs and short-circuits in
     // IndexedChangeFileSeq.filterFiles; V2 does both here.
-    val barrierResult: Optional[List[IndexedFile]] = Using.resource(
+    val barrierResult: Option[List[IndexedFile]] = Using.resource(
         metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
             metadataAction, protocolAction, version)) { barrierIter =>
       if (barrierIter.hasNext) {
         val result: List[IndexedFile] = new ArrayList[IndexedFile]()
         result.add(barrierIter.next())
-        Optional.of(result)
-      } else Optional.empty[List[IndexedFile]]()
+        Some(result)
+      } else None
     }
-    if (barrierResult.isPresent()) {
-      return barrierResult.get()
+    if (barrierResult.isDefined) {
+      return barrierResult.get
     }
 
     // No-op MERGE: discard inferred actions (DSv1's isValidIndexedFile / shouldSkip).
@@ -1902,18 +1901,18 @@ private[read] class DeltaV2MicroBatchStream(
     }
 
     // Split out the optional BASE sentinel from data files.
-    var baseSentinel: Optional[IndexedFile] = Optional.empty()
+    var baseSentinel: Option[IndexedFile] = None
     val dataFiles: List[IndexedFile] = new ArrayList[IndexedFile]()
     for (file <- CollectionConverters.asScala(commitFiles)) {
       if (file.hasFileAction()) {
         dataFiles.add(file)
       } else {
         Preconditions.checkState(
-            !baseSentinel.isPresent(),
+            baseSentinel.isEmpty,
             String.format(
                 "Expected at most one BASE sentinel per commit, got multiple for version %s",
                 Long.box(commitVersion)))
-        baseSentinel = Optional.of(file)
+        baseSentinel = Some(file)
       }
     }
 
@@ -1949,7 +1948,7 @@ private[read] class DeltaV2MicroBatchStream(
     }
 
     val result: List[IndexedFile] = new ArrayList[IndexedFile]()
-    baseSentinel.ifPresent(file => result.add(file))
+    baseSentinel.foreach(file => result.add(file))
     result.addAll(admittedData)
     // Append END only if the entire commit was admitted. Partial admission leaves the offset
     // on the last admitted file so the next batch resumes from there.
@@ -1978,8 +1977,8 @@ private[read] class DeltaV2MicroBatchStream(
     // When schema tracking is enabled, verifyMetadataAction is false - the handler manages
     // schema changes through the barrier protocol instead.
     if (verifyMetadataAction) {
-      val batchEndVersion: java.lang.Long =
-          endOffsetOpt.map[java.lang.Long](_.reservoirVersion).orElse(null)
+      val batchEndVersion: Option[Long] =
+          ScalaUtils.toScalaOption(endOffsetOpt).map(_.reservoirVersion)
       checkReadIncompatibleSchemaChanges(
           metadata,
           version,
