@@ -294,7 +294,7 @@ class LazyAMTCheckpointProvider(
         lazyAmt.underlyingCheckpointProvider
       case _ =>
         AMTCheckpointProvider.fromCheckpoint(
-          readSnapshot.deltaLog, checkpoint, manifestCommitVersion)
+          SparkSession.active, readSnapshot.deltaLog, checkpoint, manifestCommitVersion)
     }
   }
 }
@@ -723,7 +723,7 @@ class AMTWriterManager(
       val (baseActionsProvider, oldAMTVersion): (BaseAMTActionsProvider, Long) =
         amtProviderOpt match {
           case Some(amtProvider) =>
-            (new BaseAMTCheckpointActionsProvider(deltaLog, amtProvider),
+            (new BaseAMTCheckpointActionsProvider(spark, deltaLog, amtProvider),
               amtProvider.checkpointAction.contentRoot.version)
           case None =>
             (new BaseSnapshotActionsProvider(readSnapshot), readSnapshot.version)

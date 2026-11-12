@@ -114,9 +114,6 @@ private[tablemanager] class DeltaV2TableManagerCache(
     }
   }
 
-  private def elapsedTimeMs(startedAtNs: Long): Long =
-    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNs)
-
   def invalidate(key: CacheKey): Unit = cache.invalidate(key)
 
   /**

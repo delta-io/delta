@@ -40,9 +40,7 @@ To support this feature:
     "name" : "attachments",
     "type" : {
       "type" : "array",
-      "elementType" : {
-        "type" : "file"
-      },
+      "elementType" : "file",
       "containsNull" : false
     },
     "nullable" : false,
@@ -68,15 +66,15 @@ Whether a `uri` is absolute or relative is determined per [RFC 3986](https://dat
 
 ### Referenced-byte write location
 
-A writer writes the files of new references to the table's **write location**: by default the **`_files`** directory of the table root, referenced by relative `uri`s of the form `_files/...`.
+A writer writes the files of new references to the table's **write location**: by default the **`_files`** directory of the table root, referenced by relative `uri`s of the form `_files/...`. A `uri` may also reference an existing file at any location; the write location only says where a writer puts the files it writes.
 
-The write location can be set by a system-controlled domain, **`delta.fileType.writeLocation`**:
+The write location can be set by a table property, **`delta.fileType.writeLocation`**:
 
-- **System-controlled.** Like other `delta.`-prefixed domains, it is not user-settable. Writing it requires the [Domain Metadata](#domain-metadata) feature; a table that relies on the default placement needs nothing beyond `fileType`.
-- **Value.** A table-root-relative path under `_files` (for example `_files/<prefix>`) or an absolute URI outside the table root, where writers write the files of **new** references. Any other value is **invalid**: the domain **must not** be set to one, and a writer that finds one **must not** write files there. The system that sets the domain allocates the location, and the system that owns its storage, such as the catalog, is responsible for keeping the files stored there. Apart from the `VACUUM` rule for `_files` below, this protocol does not protect them. The domain is absent by default; when it is absent, writers write the files under `_files`.
+- **Internal.** `delta.fileType.writeLocation` is an internal table property that cannot be configured by users: writers must not let users set, change or remove it. Only the system that allocates the write location sets or changes it, for example a catalog when it creates the table. A table that relies on the default placement needs nothing beyond `fileType`.
+- **Value.** A table-root-relative path under `_files` (for example `_files/<prefix>`) or an absolute URI outside the table root, where writers write the files of **new** references. Any other value is **invalid**: the property **must not** be set to one, and a writer that finds one **must not** write files there. The system that sets the property allocates the location, and the system that owns its storage, such as the catalog, is responsible for keeping the files stored there. Apart from the `VACUUM` rule for `_files` below, this protocol does not protect them. The property is absent by default; when it is absent, the write location is `_files`.
 - **Write-time placement hint only.** It tells a writer where to write the files of **new** references. It is **never** consulted when resolving a `uri`. A `uri` records its own complete path: files under `_files` get relative `uri` values that include the prefix (for example `_files/abc.png`), and files at an absolute location get absolute `uri` values.
 
-**Resolution never depends on this domain.** A relative `uri` is always the **full table-root-relative path**, resolved against the table root per [URI Resolution](#uri-resolution) — never against `delta.fileType.writeLocation`. Changing the domain therefore affects only where subsequent files are written. `uri`s already written continue to resolve unchanged, because each records its own complete path, and a reader never needs the current, or any past, value of the domain. This is why a location change does not strand earlier references.
+**Resolution never depends on this property.** A relative `uri` is always the **full table-root-relative path**, resolved against the table root per [URI Resolution](#uri-resolution) — never against `delta.fileType.writeLocation`. Changing the property therefore affects only where subsequent files are written. `uri`s already written continue to resolve unchanged, because each records its own complete path, and a reader never needs the current, or any past, value of the property. This is why a location change does not strand earlier references.
 
 Delta does not treat referenced bytes as table data, except when a table reuses another table's data files:
 
@@ -87,7 +85,7 @@ Delta does not treat referenced bytes as table data, except when a table reuses 
   - The bytes are copied unchanged, so checksums of the bytes stay valid; an `ETAG`, which identifies the source object, may not match the copy.
   - Missing source bytes are not an error.
   - The writer **must not** overwrite a different file that already exists at that path in the target; it **must** fail the copy instead.
-  - The target keeps its own `delta.fileType.writeLocation`; a new table does not inherit an absolute one from the source.
+  - The target keeps its own `delta.fileType.writeLocation`: a writer that copies table properties from the source must not copy an absolute one.
 - **Referencing another table's data files in place.** A writer **must not** add another table's data file to a table without copying it if the data file contains relative `uri`s, because they would resolve against the target table's root rather than the root they were written for. A writer that cannot tell may refuse any such data file that has a `file` column.
 
 Delta does not otherwise manage the contents of the write location: creating, retaining, and reclaiming those bytes is the responsibility of the writer or an external system. (A higher layer may add managed semantics — for example lifecycle/garbage collection or access brokering — on top of this location, but that is out of scope for this protocol.)
@@ -128,7 +126,7 @@ Generated Columns | **Supported:** A `file` column is allowed to be used as a so
 Delta CHECK Constraints | A `file` column may be used in a CHECK constraint expression through its **addressable** leaf fields (`uri`, `offset`, `size`, `content_type`, `checksum`), addressed by logical name (for example, `f.size > 0`). The `inline` field is not addressable in expressions. Because a FILE leaf is not a struct field of the Delta schema, this is an explicit carve-out from the usual requirement that referenced columns exist in the schema — see the leaf-addressing rules in [Statistics for File Columns](#statistics-for-file-columns).
 Default Column Values | A `file` column must default to `NULL`. There is no Delta-defined way to construct a non-null `file` literal as a default expression, so `NULL` is the only permitted default (as with the Variant type).
 Change Data Feed | **Supported:** A table using the `file` data type is allowed to enable the Delta Change Data Feed. A `file` value flows through Change Data Feed and time travel like any other column value. See [Time Travel and Change Data Feed](#time-travel-and-change-data-feed) for the distinction between the reference and the referenced bytes.
-Iceberg Compatibility | **Not supported in currently-released Iceberg versions.** No released Iceberg format version has an equivalent type, so a `file` column cannot be represented in an IcebergCompatV1 or IcebergCompatV2 table: under [IcebergCompatV2](#writer-requirements-for-icebergcompatv2) it is blocked by the type allow-list (which excludes `file`), and [IcebergCompatV1](#writer-requirements-for-icebergcompatv1) has no type allow-list (it only blocks `Map`/`Array`/`Void`), so a `file` column is additionally not permitted there. The same holds for IcebergCompatV3. **Support is targeted for Iceberg V4**, via IcebergNativeV4 and the [Iceberg `FILE` type](https://github.com/apache/iceberg/blob/main/format/spec.md#file-type). The FILE sub-fields carry reserved field IDs matching the Iceberg spec (see [Statistics for File Columns](#statistics-for-file-columns)). Writing these IDs into the Parquet files, as required of writers, is what allows a field-ID-based reader to resolve the sub-fields; the remaining conversion details are out of scope here and will follow that work.
+Iceberg Compatibility | **Not supported in Iceberg format versions 1 to 3**, which have no equivalent type. When any of the IcebergCompatV1, IcebergCompatV2 or IcebergCompatV3 features is enabled, a writer must reject any schema containing a `file` type. **Support is targeted for Iceberg V4**, via IcebergNativeV4 and the [Iceberg `FILE` type](https://github.com/apache/iceberg/blob/main/format/spec.md#file-type). The FILE sub-fields carry reserved field IDs matching the Iceberg spec (see [Statistics for File Columns](#statistics-for-file-columns)), so a field-ID-based reader can resolve them; the remaining conversion details are out of scope here.
 Type Widening | **Unsupported:** No type change to or from `file` is supported.
 Map Keys | **Unsupported:** A `file` value is not comparable, so `file` cannot be used as a map key type. `file` is allowed as an array element type — for example the `attachments` field in the schema example above — and as a map value type.
 
@@ -149,7 +147,7 @@ Because a FILE leaf is not a struct field of the Delta schema, addressing one in
 > Note: the per-leaf addressing above describes the current per-file statistics format — `add.stats`, a JSON object keyed by physical name. When field-ID-keyed statistics are used (the Iceberg V4 Adaptive Metadata Tree), each sub-field's statistics are keyed by its reserved field ID above.
 
 The following statistics are collected per leaf:
-- `nullCount` — on **each** leaf field, `inline` included, counting rows in which that leaf is null (a per-sub-field null/value count, aligning with the Iceberg `FILE` spec). (For example, `nullCount` on `uri` counts rows whose value is stored inline — which have no `uri` — **plus** rows in which the entire `file` value is null; and `nullCount` on `inline` counts rows with no inline bytes. It is real data-skipping information.) Whole-value nullness of the `file` column is **not** separately captured, as is also the case for a struct column: the per-leaf encoding has no group-level `nullCount` slot, so `WHERE <file column> IS NULL` cannot be data-skipped from these statistics. (This differs from the Variant type, which keeps a deliberate column-level scalar `nullCount`.)
+- `nullCount` — on **each** leaf field, `inline` included, counting rows in which that leaf is null (a per-sub-field null/value count, aligning with the Iceberg `FILE` spec). (For example, `nullCount` on `uri` counts rows whose value is stored inline without a locator — which have no `uri` — **plus** rows in which the entire `file` value is null; and `nullCount` on `inline` counts rows with no inline bytes. It is real data-skipping information.) Whole-value nullness of the `file` column is **not** separately captured, as is also the case for a struct column: the per-leaf encoding has no group-level `nullCount` slot, so `WHERE <file column> IS NULL` cannot be data-skipped from these statistics. (This differs from the Variant type, which keeps a deliberate column-level scalar `nullCount`.)
 - `minValues` / `maxValues` — on the comparable, skipping-useful leaves only: `uri` (STRING), `offset` (INT64), `size` (INT64), and `content_type` (STRING). Standard per-type rules apply (for example, STRING leaves such as `uri` are truncated to a fixed prefix length).
 - `minValues` / `maxValues` are **not** collected for `checksum` (a digest, or an opaque ETAG, is effectively uniformly distributed, so its min/max cannot skip anything) or for `inline` (binary content with no skipping value, and potentially large). `nullCount` is still collected for both.
 
@@ -197,7 +195,7 @@ For **external** references (a `uri` is set), Delta makes **no guarantee about t
 
 ## Non-Goals
 
-A `file` value is a reference, and the referenced bytes are **external to the table and not under its management.** In particular, `VACUUM` does not treat referenced files as table data: it may delete untracked files that reside under the table's directory, except under `_files` (see [Referenced-byte write location](#referenced-byte-write-location)). Copying another table's data files into a table also copies the bytes referenced by relative `uri`s, but not those referenced by absolute `uri`s (see [Referenced-byte write location](#referenced-byte-write-location)).
+A `file` value is a reference, and the referenced bytes are **external to the table and not under its management.** In particular, `VACUUM` does not treat referenced files as table data: it may delete untracked files that reside under the table's directory, except under `_files` unless the cleanup is reachability-based (see [Referenced-byte write location](#referenced-byte-write-location)). Copying another table's data files into a table also copies the bytes referenced by relative `uri`s, but not those referenced by absolute `uri`s (see [Referenced-byte write location](#referenced-byte-write-location)).
 
 The following are additionally out of scope:
 

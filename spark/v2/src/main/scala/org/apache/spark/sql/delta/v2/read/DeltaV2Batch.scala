@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.v2.read
 
 import java.time.ZoneId
 import java.util.Objects
-import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
@@ -168,7 +167,4 @@ private[read] final class DeltaV2Batch(
 
   private def selectedFileBytes: Long =
     deltaScan.scanned.bytesCompressed.getOrElse(deltaScan.files.iterator.map(_.size).sum)
-
-  private def elapsedTimeMs(startedAtNs: Long): Long =
-    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNs)
 }

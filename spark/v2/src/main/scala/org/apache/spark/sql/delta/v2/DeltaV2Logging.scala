@@ -15,6 +15,7 @@
  */
 package org.apache.spark.sql.delta.v2
 
+import java.util.concurrent.TimeUnit
 import java.util.function.Supplier
 
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -24,6 +25,9 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
  * system-code literals; this trait supplies the shared `Delta` group and `v2.` prefix.
  */
 private[v2] trait DeltaV2Logging extends DeltaLogging {
+  protected final def elapsedTimeMs(startedAtNs: Long): Long =
+    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNs)
+
   private def deltaV2FrameName(nameSuffix: String): String = "v2." + nameSuffix
 
   protected final def recordFrameProfile[T](

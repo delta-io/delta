@@ -23,6 +23,7 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.kernel.unitycatalog.UCLoadCommitRangeOptions;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import java.util.List;
 import java.util.Optional;
@@ -192,10 +193,13 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
         tableId,
         tablePath,
         tableIdentifier,
-        Optional.of(params.startVersion()) /* startVersionOpt */,
-        Optional.empty() /* startTimestampOpt */,
-        ScalaUtils.toJavaOptional(params.endVersion())
-            .map(value -> (Long) value) /* endVersionOpt */,
-        Optional.empty() /* endTimestampOpt */);
+        new UCLoadCommitRangeOptions(
+            Optional.of(params.startVersion()) /* startVersionOpt */,
+            Optional.empty() /* startTimestampOpt */,
+            ScalaUtils.toJavaOptional(params.endVersion())
+                .map(value -> (Long) value) /* endVersionOpt */,
+            Optional.empty() /* endTimestampOpt */,
+            Optional.of(params.commitRangeValidation()),
+            Optional.of(params.failOnDataLoss())));
   }
 }
