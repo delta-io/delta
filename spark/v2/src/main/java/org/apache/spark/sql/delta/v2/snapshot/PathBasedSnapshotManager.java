@@ -24,7 +24,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import java.util.ArrayList;
-import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
@@ -102,15 +101,14 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
     SnapshotImpl snapshot = loadLatestKernelSnapshot();
-    return DeltaHistoryManager.getActiveCommitAtTimestamp(
+    return SnapshotTimeTravelUtils.getActiveCommitAtTime(
         kernelContext.getDefaultEngine(),
         snapshot,
-        snapshot.getLogPath(),
+        new ArrayList<>(),
         timestampMillis,
-        mustBeRecreatable,
         canReturnLastCommit,
-        canReturnEarliestCommit,
-        new ArrayList<>());
+        mustBeRecreatable,
+        canReturnEarliestCommit);
   }
 
   /**
@@ -127,21 +125,14 @@ public class PathBasedSnapshotManager implements DeltaV2SnapshotManager {
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
     SnapshotImpl snapshot = loadLatestKernelSnapshot();
-    long earliest =
-        mustBeRecreatable
-            ? DeltaHistoryManager.getEarliestRecreatableCommit(
-                kernelContext.getDefaultEngine(),
-                snapshot.getLogPath(),
-                Optional.empty() /*earliestRatifiedCommitVersion*/)
-            : DeltaHistoryManager.getEarliestDeltaFile(
-                kernelContext.getDefaultEngine(),
-                snapshot.getLogPath(),
-                Optional.empty() /*earliestRatifiedCommitVersion*/);
-
-    long latest = snapshot.getVersion();
-    if (version < earliest || ((version > latest) && !allowOutOfRange)) {
-      throw new VersionNotFoundException(version, earliest, latest);
-    }
+    SnapshotTimeTravelUtils.checkVersionExists(
+        kernelContext.getDefaultEngine(),
+        snapshot,
+        new ArrayList<>(),
+        version,
+        mustBeRecreatable,
+        allowOutOfRange,
+        false /* checkUpperBoundFirst */);
   }
 
   @Override

@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
+import org.apache.spark.sql.delta.v2.snapshot.SnapshotTimeTravelUtils;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 
 /**
@@ -120,15 +121,14 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
       boolean canReturnEarliestCommit) {
     SnapshotImpl snapshot = loadKernelSnapshot(Optional.empty());
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
-    return DeltaHistoryManager.getActiveCommitAtTimestamp(
+    return SnapshotTimeTravelUtils.getActiveCommitAtTime(
         kernelContext.getDefaultEngine(),
         snapshot,
-        snapshot.getLogPath(),
+        catalogCommits,
         timestampMillis,
-        mustBeRecreatable,
         canReturnLastCommit,
-        canReturnEarliestCommit,
-        catalogCommits);
+        mustBeRecreatable,
+        canReturnEarliestCommit);
   }
 
   /**
@@ -149,34 +149,17 @@ public class UCManagedTableSnapshotManager implements DeltaV2SnapshotManager {
       throws VersionNotFoundException {
     // Load latest to get the current version bounds
     SnapshotImpl snapshot = loadKernelSnapshot(Optional.empty());
-    // Latest version visible in this UC-managed snapshot.
-    long latestSnapshotVersion = snapshot.getVersion();
-
-    // Fast path: check upper bound before expensive filesystem operations
-    if ((version > latestSnapshotVersion) && !allowOutOfRange) {
-      throw new VersionNotFoundException(version, 0 /* earliest */, latestSnapshotVersion);
-    }
-
     // Get the earliest version among catalog commits. This bounds the Kernel's filesystem search
     // for the earliest available version (e.g., if catalog has v0, no filesystem search is needed).
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
-    Optional<Long> earliestCatalogCommitVersion =
-        catalogCommits.stream().map(ParsedCatalogCommitData::getVersion).min(Long::compare);
-
-    long earliestVersion =
-        mustBeRecreatable
-            ? DeltaHistoryManager.getEarliestRecreatableCommit(
-                kernelContext.getDefaultEngine(),
-                snapshot.getLogPath(),
-                earliestCatalogCommitVersion)
-            : DeltaHistoryManager.getEarliestDeltaFile(
-                kernelContext.getDefaultEngine(),
-                snapshot.getLogPath(),
-                earliestCatalogCommitVersion);
-
-    if (version < earliestVersion) {
-      throw new VersionNotFoundException(version, earliestVersion, latestSnapshotVersion);
-    }
+    SnapshotTimeTravelUtils.checkVersionExists(
+        kernelContext.getDefaultEngine(),
+        snapshot,
+        catalogCommits,
+        version,
+        mustBeRecreatable,
+        allowOutOfRange,
+        true /* checkUpperBoundFirst */);
   }
 
   /**
