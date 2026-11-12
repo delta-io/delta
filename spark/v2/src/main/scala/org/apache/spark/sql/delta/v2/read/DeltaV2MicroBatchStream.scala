@@ -926,7 +926,7 @@ private[read] class DeltaV2MicroBatchStream(
         return
       }
     }
-    if (!isCDFEnabled(startSnapshot.metadata)) {
+    if (!CDCReader.isCDCEnabledOnTable(startSnapshot.metadata, spark)) {
       throw new RuntimeException(
           DeltaErrors.changeDataNotRecordedException(startVersion, startVersion, startVersion))
     }
@@ -1712,7 +1712,7 @@ private[read] class DeltaV2MicroBatchStream(
                     startVersion,
                     endOffsetOpt,
                     /* verifyMetadataAction= */ !trackingMetadataChange)
-            if (!isCDFEnabled(metadataAction)) {
+            if (!CDCReader.isCDCEnabledOnTable(metadataAction, spark)) {
               throw new RuntimeException(
                   DeltaErrors.changeDataNotRecordedException(
                       version,
