@@ -197,20 +197,21 @@ public class StreamingHelper {
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
    * @param tableManager table manager backing the table
-   * @param originalQueryContext request-scoped catalog inputs used to load the commit range
+   * @param originalStreamingQueryContext request-scoped catalog inputs used to load the commit
+   *     range
    * @param failOnDataLoss whether to fail when commits in the range are missing
    */
   public static Map<Long, Metadata> collectMetadataActions(
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2TableManager tableManager,
-      DeltaV2QueryContext originalQueryContext,
+      DeltaV2QueryContext originalStreamingQueryContext,
       boolean failOnDataLoss) {
     return collectActions(
         startVersion,
         endVersionOpt,
         tableManager,
-        originalQueryContext,
+        originalStreamingQueryContext,
         failOnDataLoss,
         DeltaLogActionUtils.DeltaAction.METADATA,
         Metadata.class);
@@ -233,20 +234,21 @@ public class StreamingHelper {
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
    * @param tableManager table manager backing the table
-   * @param originalQueryContext request-scoped catalog inputs used to load the commit range
+   * @param originalStreamingQueryContext request-scoped catalog inputs used to load the commit
+   *     range
    * @param failOnDataLoss whether to fail when commits in the range are missing
    */
   public static Map<Long, Protocol> collectProtocolActions(
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2TableManager tableManager,
-      DeltaV2QueryContext originalQueryContext,
+      DeltaV2QueryContext originalStreamingQueryContext,
       boolean failOnDataLoss) {
     return collectActions(
         startVersion,
         endVersionOpt,
         tableManager,
-        originalQueryContext,
+        originalStreamingQueryContext,
         failOnDataLoss,
         DeltaLogActionUtils.DeltaAction.PROTOCOL,
         Protocol.class);
@@ -260,7 +262,7 @@ public class StreamingHelper {
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2TableManager tableManager,
-      DeltaV2QueryContext originalQueryContext,
+      DeltaV2QueryContext originalStreamingQueryContext,
       boolean failOnDataLoss,
       DeltaLogActionUtils.DeltaAction actionType,
       Class<T> actionClass) {
@@ -270,7 +272,7 @@ public class StreamingHelper {
         tableManager.getSingleCommitIterator(
             startVersion,
             ScalaUtils.toScalaOption(endVersionOpt),
-            originalQueryContext,
+            originalStreamingQueryContext,
             failOnDataLoss)) {
       while (commitsIter.hasNext()) {
         DeltaSingleCommit commit = commitsIter.next();
