@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaErrors, DeltaIllegalStateException, DeltaLog, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaConfigs, DeltaErrors, DeltaIllegalStateException, DeltaLog, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -36,7 +36,10 @@ import org.apache.spark.sql.SparkSession
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
 object AMTUtils extends DeltaLogging {
-  /** Whether AMT is **supported** as per the protocol. */
+  /**
+   * Whether AMT is **supported** as per the protocol. Code that reads or keeps AMT state (trees,
+   * back references, `r` DVs) checks this, because that state stays while AMT writes are off.
+   */
   def amtSupported(protocol: Protocol): Boolean =
     AdaptiveMetadataTableFeatureBase.isSupportedBy(protocol)
 
@@ -45,7 +48,13 @@ object AMTUtils extends DeltaLogging {
    * `metadata`.
    */
   def amtEnabled(metadata: Metadata, protocol: Protocol): Boolean =
-    AdaptiveMetadataTableFeatureBase.isSupportedBy(protocol)
+    AdaptiveMetadataTableFeatureBase.supportedBy(protocol) match {
+      // Preview tables were created before the AMT property existed.
+      case Some(AdaptiveMetadataPreviewTableFeature) => true
+      case Some(AdaptiveMetadataTableFeature) =>
+        DeltaConfigs.ADAPTIVE_METADATA_ENABLED.fromMetaData(metadata)
+      case None => false
+    }
 
   /** Whether AMT writes are enabled for `snapshot`. */
   def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
@@ -102,7 +111,7 @@ object AMTUtils extends DeltaLogging {
     amtFeatures.foreach { amtFeature =>
       // Adding AMT to an existing table is an unsupported upgrade. `updateMetadata` already rejects
       // it, but CLONE adds the source's protocol after that, so REPLACE CLONE is caught here.
-      if (snapshot.version >= 0 && !amtEnabled(snapshot)) {
+      if (snapshot.version >= 0 && !amtSupported(snapshot.protocol)) {
         throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeature.name)
       }
       val creationConf = AdaptiveMetadataTableFeatureBase.creationConf(amtFeature)

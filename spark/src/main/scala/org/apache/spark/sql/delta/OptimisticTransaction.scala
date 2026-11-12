@@ -1221,6 +1221,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
         amtFeatureName, metadata.columnMappingMode.name)
     }
 
+    // The AMT property is false when unset, and only `adaptiveMetadata-dev` reads it. CREATE sets
+    // it to true. REPLACE keeps the value of the table it replaces, so it does not turn AMT writes
+    // on or off.
+    val amtPropertyKey = DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key
+    if (isCreatingNewTable && amtFeature == AdaptiveMetadataTableFeature &&
+        !metadata.configuration.contains(amtPropertyKey)) {
+      val valueOpt =
+        if (readVersion >= 0) snapshot.metadata.configuration.get(amtPropertyKey) else Some("true")
+      valueOpt.foreach(value => updatedConfig += (amtPropertyKey -> value))
+    }
+
     metadata.copy(configuration = updatedConfig)
   }
 
