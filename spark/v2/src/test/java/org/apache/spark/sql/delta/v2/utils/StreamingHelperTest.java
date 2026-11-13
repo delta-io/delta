@@ -214,7 +214,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     ClosableIterator<DeltaSingleCommit> v1Commits =
         ScalaUtils.toClosableIterator(commits.map(DeltaV2SingleCommit$.MODULE$::apply));
     when(manager.getSingleCommitIterator(
-            7L, Option.apply((Object) 7L), queryContext.catalogTableOpt(), failOnDataLoss))
+            7L, Option.apply((Object) 7L), queryContext, failOnDataLoss))
         .thenReturn(v1Commits);
     return manager;
   }

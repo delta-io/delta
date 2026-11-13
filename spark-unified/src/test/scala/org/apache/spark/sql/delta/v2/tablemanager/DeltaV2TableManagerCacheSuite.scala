@@ -439,7 +439,7 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
   override private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
-      catalogTableOpt: Option[CatalogTable],
+      queryContext: DeltaV2QueryContext,
       failOnDataLoss: Boolean)
       : ClosableIterator[DeltaSingleCommit] =
     throw new UnsupportedOperationException("stub")

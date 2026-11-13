@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.sources
 import java.sql.Timestamp
 
 import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaLog, DeltaSingleCommit, Snapshot}
+import org.apache.spark.sql.delta.storage.ClosableIterator
+import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
@@ -66,6 +68,7 @@ private[delta] class DeltaLogStreamingBackend(
 
   override def getSingleCommitIterator(
       startVersion: Long,
-      failOnDataLoss: Boolean): Iterator[DeltaSingleCommit] =
-    deltaLog.getSingleCommitIterator(startVersion, catalogTableOpt(), failOnDataLoss)
+      failOnDataLoss: Boolean,
+      endOffset: Option[DeltaSourceOffset]): ClosableIterator[DeltaSingleCommit] =
+    deltaLog.getSingleCommitIterator(startVersion, catalogTableOpt(), failOnDataLoss).toClosable
 }

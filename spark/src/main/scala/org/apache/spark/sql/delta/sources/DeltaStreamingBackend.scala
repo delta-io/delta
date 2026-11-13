@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.sources
 import java.sql.Timestamp
 
 import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaSingleCommit, Snapshot}
+import org.apache.spark.sql.delta.storage.ClosableIterator
 
 
 /**
@@ -74,12 +75,18 @@ trait DeltaStreamingBackend {
    */
   def getSnapshotToValidateProtocol(version: Long): Snapshot
 
+  // TODO: Remove endOffset once Kernel checks missing versions during iteration.
+  // Without an end bound, Kernel may validate through the latest version and fail on
+  // gaps beyond the batch's end offset before iteration begins.
   /**
    * Returns the commits from `startVersion` to the latest version, in version order.
    *
    * @param failOnDataLoss if true, throws if a commit in the range is missing.
+   * @param endOffset optional batch end offset temporarily used to bound Kernel reads while Kernel
+   *                  checks missing versions eagerly; ignored by DeltaLog.
    */
   def getSingleCommitIterator(
       startVersion: Long,
-      failOnDataLoss: Boolean): Iterator[DeltaSingleCommit]
+      failOnDataLoss: Boolean,
+      endOffset: Option[DeltaSourceOffset] = None): ClosableIterator[DeltaSingleCommit]
 }

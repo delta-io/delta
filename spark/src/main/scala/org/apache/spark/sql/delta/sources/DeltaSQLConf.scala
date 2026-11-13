@@ -742,6 +742,34 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  final object AMTBinaryJsonCompressionPolicy {
+    final val DISABLED = "disabled"
+    final val IF_BENEFICIAL = "if-beneficial"
+    final val VALUES = Set(DISABLED, IF_BENEFICIAL)
+  }
+
+  val AMT_BINARY_JSON_COMPRESSION_POLICY =
+    buildConf("amt.binaryJson.compressionPolicy")
+      .internal()
+      .doc("Compression policy for individual AMT binary payloads encoded as JSON strings. " +
+        "'disabled' stores raw bytes. 'if-beneficial' tries ZSTD once and uses it when the " +
+        "compressed payload reduces the final Z85 size, including the header and padding. " +
+        "Ties and empty payloads use raw encoding. Encoding returns a size-limit result if " +
+        "the selected payload exceeds the length header's capacity.")
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(AMTBinaryJsonCompressionPolicy.VALUES)
+      .createWithDefault(AMTBinaryJsonCompressionPolicy.IF_BENEFICIAL)
+
+  val AMT_BINARY_JSON_FORMAT_VERSION =
+    buildConf("amt.binaryJson.formatVersion")
+      .internal()
+      .doc("Envelope format version used to write AMT binary payloads as Z85 JSON strings. " +
+        "Readers use the stored version byte, independently of this writer setting.")
+      .intConf
+      .checkValues(Set(1))
+      .createWithDefault(1)
+
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
       .internal()

@@ -79,7 +79,7 @@ object UnityCatalogQuickstart {
     var retries = 0
     while (!ready && retries < 30) {
       try {
-        new CatalogsApi(createApiClient(serverUri)).listCatalogs(null, null)
+        new CatalogsApi(createApiClient(serverUri)).listCatalogs(null, null, false)
         ready = true
       } catch {
         case _: Exception =>

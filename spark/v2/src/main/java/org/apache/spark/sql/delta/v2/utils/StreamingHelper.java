@@ -52,6 +52,11 @@ import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 @Experimental
 public class StreamingHelper {
 
+  @FunctionalInterface
+  private interface ActionFactory<T> {
+    T apply(ColumnVector actionVector, int rowId);
+  }
+
   /**
    * Returns the index of the field with the given name in the schema of the batch. Throws an {@link
    * IllegalArgumentException} if the field is not found.
@@ -61,6 +66,22 @@ public class StreamingHelper {
     checkArgument(
         index >= 0, "Field '%s' not found in schema: %s", fieldName, columnarBatch.getSchema());
     return index;
+  }
+
+  /**
+   * Extracts an action from the requested field and row using the given action factory.
+   *
+   * <p>Field lookup and vector retrieval happen before the action factory is invoked.
+   */
+  private static <T> Optional<T> getAction(
+      ColumnarBatch columnarBatch,
+      int rowId,
+      DeltaLogActionUtils.DeltaAction deltaAction,
+      ActionFactory<T> actionFactory) {
+    int actionIdx = getFieldIndex(columnarBatch, deltaAction.colName);
+    ColumnVector actionVector = columnarBatch.getColumnVector(actionIdx);
+    T action = actionFactory.apply(actionVector, rowId);
+    return Optional.ofNullable(action);
   }
 
   /**
@@ -118,24 +139,21 @@ public class StreamingHelper {
   /** Get Metadata action from a batch at the specified row, if present. */
   public static Optional<io.delta.kernel.internal.actions.Metadata> getMetadata(
       ColumnarBatch columnarBatch, int rowId) {
-    int metadataIdx =
-        getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.METADATA.colName);
-    ColumnVector metadataVector = columnarBatch.getColumnVector(metadataIdx);
-    io.delta.kernel.internal.actions.Metadata metadata =
-        io.delta.kernel.internal.actions.Metadata.fromColumnVector(metadataVector, rowId);
-
-    return Optional.ofNullable(metadata);
+    return getAction(
+        columnarBatch,
+        rowId,
+        DeltaLogActionUtils.DeltaAction.METADATA,
+        io.delta.kernel.internal.actions.Metadata::fromColumnVector);
   }
 
   /** Get Protocol action from a batch at the specified row, if present. */
   public static Optional<io.delta.kernel.internal.actions.Protocol> getProtocol(
       ColumnarBatch batch, int rowId) {
-    int protocolIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.PROTOCOL.colName);
-    ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-    io.delta.kernel.internal.actions.Protocol protocol =
-        io.delta.kernel.internal.actions.Protocol.fromColumnVector(protocolVector, rowId);
-
-    return Optional.ofNullable(protocol);
+    return getAction(
+        batch,
+        rowId,
+        DeltaLogActionUtils.DeltaAction.PROTOCOL,
+        io.delta.kernel.internal.actions.Protocol::fromColumnVector);
   }
 
   /** Get CommitInfo action from a batch at the specified row, if present. */
@@ -197,20 +215,21 @@ public class StreamingHelper {
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
    * @param tableManager table manager backing the table
-   * @param originalQueryContext request-scoped catalog inputs used to load the commit range
+   * @param originalStreamingQueryContext request-scoped catalog inputs used to load the commit
+   *     range
    * @param failOnDataLoss whether to fail when commits in the range are missing
    */
   public static Map<Long, Metadata> collectMetadataActions(
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2TableManager tableManager,
-      DeltaV2QueryContext originalQueryContext,
+      DeltaV2QueryContext originalStreamingQueryContext,
       boolean failOnDataLoss) {
     return collectActions(
         startVersion,
         endVersionOpt,
         tableManager,
-        originalQueryContext,
+        originalStreamingQueryContext,
         failOnDataLoss,
         DeltaLogActionUtils.DeltaAction.METADATA,
         Metadata.class);
@@ -233,20 +252,21 @@ public class StreamingHelper {
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
    * @param tableManager table manager backing the table
-   * @param originalQueryContext request-scoped catalog inputs used to load the commit range
+   * @param originalStreamingQueryContext request-scoped catalog inputs used to load the commit
+   *     range
    * @param failOnDataLoss whether to fail when commits in the range are missing
    */
   public static Map<Long, Protocol> collectProtocolActions(
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2TableManager tableManager,
-      DeltaV2QueryContext originalQueryContext,
+      DeltaV2QueryContext originalStreamingQueryContext,
       boolean failOnDataLoss) {
     return collectActions(
         startVersion,
         endVersionOpt,
         tableManager,
-        originalQueryContext,
+        originalStreamingQueryContext,
         failOnDataLoss,
         DeltaLogActionUtils.DeltaAction.PROTOCOL,
         Protocol.class);
@@ -260,7 +280,7 @@ public class StreamingHelper {
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2TableManager tableManager,
-      DeltaV2QueryContext originalQueryContext,
+      DeltaV2QueryContext originalStreamingQueryContext,
       boolean failOnDataLoss,
       DeltaLogActionUtils.DeltaAction actionType,
       Class<T> actionClass) {
@@ -270,7 +290,7 @@ public class StreamingHelper {
         tableManager.getSingleCommitIterator(
             startVersion,
             ScalaUtils.toScalaOption(endVersionOpt),
-            originalQueryContext.catalogTableOpt(),
+            originalStreamingQueryContext,
             failOnDataLoss)) {
       while (commitsIter.hasNext()) {
         DeltaSingleCommit commit = commitsIter.next();
