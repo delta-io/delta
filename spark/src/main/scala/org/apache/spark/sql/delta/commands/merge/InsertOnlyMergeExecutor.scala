@@ -84,7 +84,8 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
         val conjunctivePredicates = splitConjunctivePredicates(condition)
         val targetOnlyPredicates =
           conjunctivePredicates.filter(_.references.subsetOf(target.outputSet))
-        dataSkippedFiles = Some(deltaTxn.filterFiles(targetOnlyPredicates))
+        dataSkippedFiles = Some(
+          deltaTxn.filterFiles(targetOnlyPredicates ++ getSourceKeyFilePruningPredicates(spark)))
 
         val targetPlan = buildTargetPlanWithFiles(
           spark,

@@ -110,9 +110,10 @@ class DataFiltersBuilder(
 
   // Helper method for expression types that represent an IN-list of literal values.
   //
-  //
-  // For excessively long IN-lists, we just test whether the file's min/max range overlaps the
-  // range spanned by the list's smallest and largest elements.
+  // A file can match when one of the values lies in its min/max range. Lists with up to
+  // `skipping.inList.exactMaxValues` values are tested this way, with a binary search over the
+  // sorted values (`SortedValuesInRange`). For longer lists, we just test whether the file's
+  // min/max range overlaps the range spanned by the list's smallest and largest elements.
   private def constructLiteralInListDataFilters(
       a: Expression,
       possiblyNullValues: Seq[Any],
@@ -137,8 +138,19 @@ class DataFiltersBuilder(
     if (!SkippingEligibleDataType(dt)) {
       // Don't waste time building expressions for incompatible types
       None
-    }
-    else {
+    } else if (values.length > 1 &&
+        values.length <= spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_IN_LIST_EXACT_MAX_VALUES) &&
+        builder == DataSkippingPredicateBuilder.ColumnBuilder &&
+        (dt match {
+          case st: StringType => st.supportsBinaryOrdering
+          case _ => true
+        })) {
+      // Emit a filter that tests each value against the file's min/max range, like `a = value`.
+      val sortedValues = values.distinct.sorted(ordering).toIndexedSeq
+      statsProvider.getPredicateWithStatTypesIfExists(pathToColumn, dt, MIN, MAX) { (min, max) =>
+        Column(SortedValuesInRange(min.expr, max.expr, sortedValues))
+      }
+    } else {
       // Emit filters for an imprecise range test that covers the entire entire list.
       val min = Literal(values.min(ordering), dt)
       val max = Literal(values.max(ordering), dt)

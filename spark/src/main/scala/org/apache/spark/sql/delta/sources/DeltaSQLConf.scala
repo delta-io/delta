@@ -1291,6 +1291,36 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_SOURCE_KEY_FILE_PRUNING_ENABLED =
+    buildConf("merge.sourceKeyFilePruning.enabled")
+      .internal()
+      .doc(
+        """
+          |If enabled, a MERGE whose source is materialized (see merge.materializeSource) and has
+          |at most merge.sourceKeyFilePruning.maxSourceRows rows collects the source values of
+          |each `target_column = source_expression` conjunct of the ON condition, and skips the
+          |target files whose min/max statistics or partition values exclude all of them. Not
+          |applied to MERGE with WHEN NOT MATCHED BY SOURCE clauses, which read every target row.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val MERGE_SOURCE_KEY_FILE_PRUNING_MAX_SOURCE_ROWS =
+    buildConf("merge.sourceKeyFilePruning.maxSourceRows")
+      .internal()
+      .doc(
+        """
+          |The maximum number of source rows for which merge.sourceKeyFilePruning.enabled
+          |collects the source's join key values. The values are collected to the driver and
+          |become an IN list in the file-pruning predicate, so this bounds the memory used on the
+          |driver and the size of the predicate (see also skipping.inList.exactMaxValues). A
+          |larger source is merged without this pruning. 0 disables the pruning.
+        """.stripMargin)
+      .intConf
+      .checkValue(v => v >= 0 && v < Int.MaxValue,
+        "merge.sourceKeyFilePruning.maxSourceRows must be between 0 and Int.MaxValue - 1.")
+      .createWithDefault(1000)
+
   val MERGE_INSERT_ONLY_ENABLED =
     buildConf("merge.optimizeInsertOnlyMerge.enabled")
       .internal()
@@ -2296,6 +2326,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       )
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_DATASKIPPING_IN_LIST_EXACT_MAX_VALUES =
+    buildConf("skipping.inList.exactMaxValues")
+      .doc("Data skipping keeps a file for `column IN (v1, ..., vn)` when one of the values " +
+        "lies in the file's min/max range of the column, for IN lists with up to this many " +
+        "values. For longer lists, it only checks that the file's range overlaps the range " +
+        "between the smallest and largest value. The values are shipped with the data skipping " +
+        "filter, so this bounds its size. A value of 1 or less always uses the range check. " +
+        "Strings with a non-binary collation always use the range check.")
+      .internal()
+      .intConf
+      .createWithDefault(10000)
 
   val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED =
     buildConf("skipping.enhancedIsNullPushdownExprs.enabled")
