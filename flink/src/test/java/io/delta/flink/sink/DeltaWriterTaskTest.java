@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.delta.flink.TestHelper;
 import io.delta.flink.table.HadoopTable;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.types.*;
@@ -103,6 +104,44 @@ class DeltaWriterTaskTest extends TestHelper {
                   assertEquals(idx, rows.get(idx).getInt(0));
                 }
               });
+        });
+  }
+
+  @Test
+  void testWriteToColumnMappedTable() {
+    withTempDir(
+        dir -> {
+          String tablePath = dir.getAbsolutePath();
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("payload", StringType.STRING);
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(tablePath),
+                  Map.of(TableConfig.COLUMN_MAPPING_MODE.getKey(), "name"),
+                  schema,
+                  Collections.emptyList());
+          table.open();
+
+          DeltaWriterTask writerTask =
+              new DeltaWriterTask(
+                  "test-job-id",
+                  0,
+                  0,
+                  table,
+                  new DeltaSinkConf(schema, Collections.emptyMap()),
+                  Collections.emptyMap());
+          writerTask.write(
+              GenericRowData.of(1, StringData.fromString("one")), new TestSinkWriterContext(0, 0));
+
+          DeltaWriterResult result = writerTask.complete().get(0);
+          AddFile addFile =
+              new AddFile(result.getDeltaActions().get(0).getStruct(SingleAction.ADD_FILE_ORDINAL));
+          Path fullPath = dir.toPath().resolve(addFile.getPath()).toAbsolutePath();
+          List<Row> rows = readParquet(fullPath, table.getPhysicalSchema());
+
+          assertEquals(1, rows.size());
+          assertEquals(1, rows.get(0).getInt(0));
+          assertEquals("one", rows.get(0).getString(1));
         });
   }
 
