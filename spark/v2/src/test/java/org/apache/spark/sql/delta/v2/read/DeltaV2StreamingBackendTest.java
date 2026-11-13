@@ -25,6 +25,7 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
 import org.apache.spark.sql.delta.VersionNotFoundException;
@@ -214,6 +215,21 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
 
     assertEquals(1L, commitVersion);
     assertEquals(1L, backend.unsafeVolatileSnapshot().version());
+  }
+
+  @Test
+  public void unsafeVolatileTableIdMatchesDeltaLog(@TempDir File tempDir) {
+    String path = createTable(tempDir, /* commits= */ 2);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 1L);
+
+    // The V1 backend returns DeltaLog.unsafeVolatileTableId.
+    assertEquals(
+        DeltaLog.forTable(spark, path).unsafeVolatileTableId(), backend.unsafeVolatileTableId());
   }
 
   @Test

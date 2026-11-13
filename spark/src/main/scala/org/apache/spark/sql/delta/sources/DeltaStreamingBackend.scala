@@ -43,6 +43,9 @@ trait DeltaStreamingBackend {
    */
   def unsafeVolatileSnapshot: Snapshot
 
+  /** The table id of [[unsafeVolatileSnapshot]]. */
+  def unsafeVolatileTableId: String
+
   /** Returns the snapshot at `version`. */
   def getSnapshotAt(version: Long): Snapshot
 
