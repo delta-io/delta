@@ -1606,6 +1606,56 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
     }
   }
 
+  test("Can drop a field that shares a leaf physical name with a clustering column") {
+    // Physical names only need to be unique as full paths, so `s.x` and `t.x` can both use the
+    // physical name `col-x` (e.g. after a table without column mapping is upgraded to it).
+    def nested(xId: Int, yId: Int, yPhysicalName: String): StructType = new StructType()
+      .add("x", IntegerType.INTEGER, fieldMetadataForColumn(xId, "col-x"))
+      .add("y", IntegerType.INTEGER, fieldMetadataForColumn(yId, yPhysicalName))
+    val schemaBefore = new StructType()
+      .add("s", nested(2, 3, "col-sy"), true, fieldMetadataForColumn(1, "col-s"))
+      .add("t", nested(5, 6, "col-ty"), true, fieldMetadataForColumn(4, "col-t"))
+
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      createEmptyTable(
+        engine,
+        tablePath,
+        schemaBefore,
+        clusteringColsOpt = Some(List(new Column(Array("s", "x")))),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      // Dropping the clustering column s.x is still rejected
+      val schemaWithoutSX = new StructType()
+        .add(
+          "s",
+          new StructType().add("y", IntegerType.INTEGER, fieldMetadataForColumn(3, "col-sy")),
+          true,
+          fieldMetadataForColumn(1, "col-s"))
+        .add(schemaBefore.get("t"))
+      assertSchemaEvolutionFails[KernelException](
+        table,
+        engine,
+        schemaWithoutSX,
+        "Cannot drop clustering column x")
+
+      // Dropping t.x, which is not a clustering column, succeeds
+      val schemaWithoutTX = new StructType()
+        .add(schemaBefore.get("s"))
+        .add(
+          "t",
+          new StructType().add("y", IntegerType.INTEGER, fieldMetadataForColumn(6, "col-ty")),
+          true,
+          fieldMetadataForColumn(4, "col-t"))
+      updateTableMetadata(engine, tablePath, schemaWithoutTX)
+
+      val tAfter = table.getLatestSnapshot(engine).getSchema.get("t")
+      assert(tAfter.getDataType.asInstanceOf[StructType].fieldNames().asScala == Seq("y"))
+    }
+  }
+
   test("Updating schema should use the new clustering columns if passed") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)

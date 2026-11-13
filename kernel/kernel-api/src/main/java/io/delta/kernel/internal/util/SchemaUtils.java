@@ -126,7 +126,7 @@ public class SchemaUtils {
       Metadata currentMetadata,
       Metadata newMetadata,
       Protocol newProtocol,
-      Set<String> clusteringColumnPhysicalNames,
+      Set<Column> physicalClusteringColumns,
       boolean allowNewRequiredFields) {
     checkArgument(
         isColumnMappingModeEnabled(
@@ -146,7 +146,7 @@ public class SchemaUtils {
         currentMetadata.getSchema(),
         newMetadata.getSchema(),
         ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration()),
-        clusteringColumnPhysicalNames,
+        physicalClusteringColumns,
         currentMaxFieldId,
         allowNewRequiredFields,
         TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newMetadata.getConfiguration()),
@@ -159,8 +159,8 @@ public class SchemaUtils {
    *
    * @param currentSchema the schema that is present the table schema _before_ the schema evolution
    * @param newSchema the new schema that is present the table schema _after_ the schema evolution
-   * @param clusteringColumnPhysicalNames The clustering columns present in the table before the
-   *     schema update
+   * @param physicalClusteringColumns The clustering columns present in the table before the schema
+   *     update, each given as the full path of physical names
    * @param oldMaxFieldId the maximum field id in the table before the schema update
    * @param allowNewRequiredFields If `false`, adding new required columns throws an error. If
    *     `true`, new required columns are allowed
@@ -174,7 +174,7 @@ public class SchemaUtils {
   public static Optional<StructType> validateSchemaEvolutionById(
       StructType currentSchema,
       StructType newSchema,
-      Set<String> clusteringColumnPhysicalNames,
+      Set<Column> physicalClusteringColumns,
       int oldMaxFieldId,
       boolean allowNewRequiredFields,
       boolean icebergWriterCompatV1Enabled,
@@ -190,7 +190,7 @@ public class SchemaUtils {
         icebergWriterCompatV1Enabled,
         typeWideningEnabled);
     validateClusteringColumnsNotDropped(
-        schemaChanges.removedFields(), clusteringColumnPhysicalNames);
+        currentSchema, schemaChanges.removedFields(), physicalClusteringColumns);
     return schemaChanges.updatedSchema();
     // ToDo Potentially validate IcebergCompatV2 nested IDs
   }
@@ -590,7 +590,7 @@ public class SchemaUtils {
       StructType currentSchema,
       StructType newSchema,
       ColumnMappingMode columnMappingMode,
-      Set<String> clusteringColumnPhysicalNames,
+      Set<Column> physicalClusteringColumns,
       int currentMaxFieldId,
       boolean allowNewRequiredFields,
       boolean icebergWriterCompatV1Enabled,
@@ -601,7 +601,7 @@ public class SchemaUtils {
         return validateSchemaEvolutionById(
             currentSchema,
             newSchema,
-            clusteringColumnPhysicalNames,
+            physicalClusteringColumns,
             currentMaxFieldId,
             allowNewRequiredFields,
             icebergWriterCompatV1Enabled,
@@ -616,15 +616,47 @@ public class SchemaUtils {
   }
 
   private static void validateClusteringColumnsNotDropped(
-      List<StructField> droppedFields, Set<String> clusteringColumnPhysicalNames) {
+      StructType currentSchema,
+      List<StructField> droppedFields,
+      Set<Column> physicalClusteringColumns) {
+    // Physical names are only unique as full paths (e.g. `s.x` and `t.x` can both have the
+    // physical name `x`), so match dropped fields to clustering columns by column ID.
+    Set<Integer> clusteringColumnIds = new HashSet<>();
+    for (Column clusteringColumn : physicalClusteringColumns) {
+      findFieldByPhysicalPath(currentSchema, clusteringColumn)
+          .ifPresent(field -> clusteringColumnIds.add(getColumnId(field)));
+    }
     for (StructField droppedField : droppedFields) {
       // ToDo: At some point plumb through mapping of ID to full name, so we get better error
       // messages
-      if (clusteringColumnPhysicalNames.contains(getPhysicalName(droppedField))) {
+      if (clusteringColumnIds.contains(getColumnId(droppedField))) {
         throw new KernelException(
             String.format("Cannot drop clustering column %s", droppedField.getName()));
       }
     }
+  }
+
+  /** Returns the field at the given path of physical names, if it exists in the schema. */
+  private static Optional<StructField> findFieldByPhysicalPath(
+      StructType schema, Column physicalPath) {
+    DataType currentType = schema;
+    StructField field = null;
+    for (String physicalName : physicalPath.getNames()) {
+      if (!(currentType instanceof StructType)) {
+        return Optional.empty();
+      }
+      field =
+          ((StructType) currentType)
+              .fields().stream()
+                  .filter(f -> getPhysicalName(f).equalsIgnoreCase(physicalName))
+                  .findFirst()
+                  .orElse(null);
+      if (field == null) {
+        return Optional.empty();
+      }
+      currentType = field.getDataType();
+    }
+    return Optional.ofNullable(field);
   }
 
   /**
