@@ -39,7 +39,8 @@ When this feature is supported and enabled, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
-- Require that the table schema contains only data types in the following allow-list: [`byte`, `short`, `integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`, `variant`, `geometry`, `geography`].
+- Require that the table schema contains only data types in the following allow-list: [`byte`, `short`, `integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`, `variant`, `geometry`, `geography`, `void`].
+  - `void` must not be used as a map key or as the type of a partition column, and a `void` field must not have a default value. Every struct field, array element, and map value of type `void` must be nullable (`nullable`, `containsNull`, and `valueContainsNull`, respectively). A `void` column may be changed to any other type in this allow-list. That change is not subject to the type change allow-list below.
 - When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are in the following allow-list:
   - `byte` -> `short`, `integer`, or `long`
   - `short` -> `integer` or `long`
