@@ -93,7 +93,7 @@ abstract class TahoeFileIndex(
   private[delta] def listPartitionsAsAddFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): (Seq[(InternalRow, Seq[AddFile])], Seq[AddFile]) = {
-    val matchedFiles = matchingFiles(partitionFilters, dataFilters)
+    val matchedFiles = matchingFilesForScan(partitionFilters, dataFilters)
     val partitionValuesToFiles = matchedFiles.groupBy(_.partitionValues)
     (convertPartitionsToInternalRow(partitionValuesToFiles.toSeq), matchedFiles)
   }
@@ -109,8 +109,31 @@ abstract class TahoeFileIndex(
   private def listAddFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Map[Map[String, String], Seq[AddFile]] = {
-    matchingFiles(partitionFilters, dataFilters).groupBy(_.partitionValues)
+    matchingFilesForScan(partitionFilters, dataFilters).groupBy(_.partitionValues)
   }
+
+  /**
+   * Returns the files matching the filters of a scan. Filters that only reference the row deleted
+   * column that [[PreprocessTableWithDVs]] adds to scans of tables with deletion vectors, e.g.
+   * `__delta_internal_is_row_deleted#2723 = 0`, are evaluated per row after the scan and can't
+   * skip any files, so they aren't passed to `matchingFiles`. This keeps the filters the same as
+   * when the scan was prepared, so that
+   * [[org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex]] reuses the prepared files instead
+   * of listing them again.
+   */
+  private def matchingFilesForScan(
+      partitionFilters: Seq[Expression],
+      dataFilters: Seq[Expression]): Seq[AddFile] = {
+    val columnName = DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME
+    def isRowDeletedFilter(filter: Expression): Boolean =
+      filter.references.size == 1 && filter.references.head.name == columnName &&
+        !hasColumnNamed(columnName)
+    matchingFiles(partitionFilters, dataFilters.filterNot(isRowDeletedFilter))
+  }
+
+  /** Whether the table has a top-level column with the given name, ignoring case. */
+  private[delta] def hasColumnNamed(name: String): Boolean =
+    metadata.schema.fieldNames.exists(_.equalsIgnoreCase(name))
 
   /**
    * Generates a FileStatusWithMetadata using data extracted from a given AddFile.
