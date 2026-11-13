@@ -29,6 +29,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal;
 import org.apache.spark.sql.delta.storage.LogStore;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
 import org.apache.spark.sql.delta.v2.read.DeltaV2ScanBuilder;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.EqualTo;
@@ -41,6 +42,7 @@ import org.apache.spark.sql.sources.StringStartsWith;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 
 public abstract class DeltaV2TestBase {
@@ -82,6 +84,11 @@ public abstract class DeltaV2TestBase {
       spark.stop();
       spark = null;
     }
+  }
+
+  @AfterEach
+  public void afterEach() {
+    DeltaV2TableManagerCache$.MODULE$.clearCache();
   }
 
   /** Returns a fresh, unique table directory path under the JVM temp dir. */
