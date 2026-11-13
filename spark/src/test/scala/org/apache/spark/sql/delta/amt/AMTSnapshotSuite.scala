@@ -1119,7 +1119,8 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     checkAnswer(spark.read.table(context.tableName), expectedRows.map(Row(_)))
     val committedPaths = snapshot.allFiles.select("path").as[String].collect().toSet
     assert(committedPaths.size == expectedRows.size)
-    assertLeafCount(provider.leaves, numFiles = 2 * leafPackedFiles)
+    assertLeafCount(provider.leaves,
+      numFiles = 2 * leafPackedFiles, exact = context.scenario.isIncremental)
     val df = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
       .getOrElse(fail("AMT provider must contribute leaf-derived actions."))
 
@@ -1344,57 +1345,46 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (${2 * leafPackedFiles - 1})"))) { context =>
     val base = context.provider
-    assertLeafCount(base.leaves, numFiles = 2 * leafPackedFiles)
+    assertLeafCount(base.leaves,
+      numFiles = 2 * leafPackedFiles, exact = context.scenario.isIncremental)
+    assert(base.leaves.size > 1, "The fixture must exercise multiple leaves.")
     val deltaLog = context.postCheckpointSnapshot.deltaLog
     val full = reconstructedPaths(base, deltaLog)
     assert(full.size == 2 * leafPackedFiles)
 
-    // The leaf-local row-index -> entry-location map for each observed leaf.
+    // Bind MDV shapes to observed leaves, without assuming a fixed leaf count. Untouched leaves
+    // also check that positions are leaf-local; the mixed case checks distinct MDVs together.
     val locs = base.leaves.map(leafPosToLoc(_, base.tableRoot))
-    def withMdv(idx: Int, positions: Seq[Long]): DataManifestEntry = {
-      val leaf = base.leaves(idx)
-      leaf.copy(manifest_info = leaf.manifest_info.copy(
-        dv = Some(mdvBytesFor(positions: _*))))
-    }
-    // Exercise every MDV shape in one tree (positions are leaf-local row indices):
-    //   - one leaf: drop a single position (pos 0),
-    //   - one leaf: drop all its positions (whole leaf),
-    //   - one leaf: drop two positions (its 2nd and 4th, i.e. sorted indices 1 and 3),
-    //   - one leaf: an empty MDV (no-op),
-    //   - the remaining leaves: no MDV.
-    // The clustered rewrite does not guarantee a fixed leaf order/size, so the shapes are bound
-    // to leaves chosen by observed size (largest first); the two-position shape needs >= 4
-    // entries.
-    val bySizeDesc = locs.indices.sortBy(i => -locs(i).size)
-    val twoLeaf = bySizeDesc(0)
-    val wholeLeaf = bySizeDesc(1)
-    val singleLeaf = bySizeDesc(2)
-    val emptyLeaf = bySizeDesc(3)
-    def sortedPos(idx: Int): Seq[Long] = locs(idx).keys.toSeq.sorted
-    assert(sortedPos(twoLeaf).size >= 4,
-      s"the largest leaf must hold >= 4 entries for the two-position MDV; " +
-        s"got ${sortedPos(twoLeaf).size}.")
-    val twoPositions = Seq(sortedPos(twoLeaf)(1), sortedPos(twoLeaf)(3))
-    val patched = base.leaves.zipWithIndex.map { case (leaf, idx) =>
-      idx match {
-        case `twoLeaf` => withMdv(idx, twoPositions)
-        case `wholeLeaf` => withMdv(idx, sortedPos(idx))
-        case `singleLeaf` => withMdv(idx, Seq(sortedPos(idx).head))
-        case `emptyLeaf` => withMdv(idx, Seq.empty)
-        case _ => leaf
+    val leafIdx = locs.indices.maxBy(i => locs(i).size)
+    val sortedPositions = locs(leafIdx).keys.toSeq.sorted
+    assert(sortedPositions.size >= 4,
+      s"The largest leaf must hold at least four entries; got ${sortedPositions.size}.")
+    val twoPositions = Seq(sortedPositions(1), sortedPositions(3))
+    val otherLeafIdx = locs.indices.filter(_ != leafIdx).maxBy(i => locs(i).size)
+    val masks = Seq(
+      Seq(sortedPositions.head),
+      sortedPositions,
+      twoPositions,
+      Seq.empty[Long]).map(positions => Map(leafIdx -> positions)) :+
+      Map(leafIdx -> twoPositions, otherLeafIdx -> Seq(locs(otherLeafIdx).keys.min))
+    masks.foreach { positionsByLeaf =>
+      val patched = base.leaves.zipWithIndex.map { case (leaf, idx) =>
+        positionsByLeaf.get(idx).map { positions =>
+          leaf.copy(manifest_info = leaf.manifest_info.copy(
+            dv = Some(mdvBytesFor(positions: _*))))
+        }.getOrElse(leaf)
       }
-    }
-    val provider = AMTCheckpointProvider(
-      spark, base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
+      val provider = AMTCheckpointProvider(
+        spark, base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
 
-    val dropped =
-      twoPositions.map(locs(twoLeaf)).toSet ++
-        locs(wholeLeaf).values.toSet +
-        locs(singleLeaf)(sortedPos(singleLeaf).head)
-    val reconstructed = reconstructedPaths(provider, deltaLog)
-    assert(reconstructed == full -- dropped,
-      "Each MDV must drop exactly its marked positions from its own leaf, and nothing else.")
-    assert(reconstructed.size == full.size - dropped.size)
+      val dropped = positionsByLeaf.toSeq.flatMap { case (idx, positions) =>
+        positions.map(locs(idx))
+      }.toSet
+      val reconstructed = reconstructedPaths(provider, deltaLog)
+      assert(reconstructed == full -- dropped,
+        s"MDVs $positionsByLeaf must only drop marked entries from their own leaves.")
+      assert(reconstructed.size == full.size - dropped.size)
+    }
   }
 
   testAcrossAMTCheckpointScenarios(
