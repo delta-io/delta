@@ -47,7 +47,6 @@ import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
-import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.Tuple2;
@@ -333,11 +332,7 @@ class DeltaV2ChangelogBatch implements Batch {
             sqlConf,
             /* isWriteTimeCDCRead */ false);
 
-    StructType outputSchema =
-        readDataSchema
-            .add("_change_type", DataTypes.StringType, false)
-            .add("_commit_version", DataTypes.LongType, false)
-            .add("_commit_timestamp", DataTypes.TimestampType, false);
+    StructType outputSchema = CDCSchemaContext.appendNonNullableCDCColumns(readDataSchema);
     return new CDCPartitionReaderFactory(delegate, outputSchema);
   }
 

@@ -2,6 +2,7 @@ package org.apache.spark.sql.delta.v2.read.changelog;
 
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
+import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext;
 import org.apache.spark.sql.delta.v2.shims.CatalogV2UtilShims;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import org.apache.spark.sql.connector.catalog.Changelog;
@@ -64,14 +65,14 @@ public class DeltaV2Changelog implements Changelog {
     // each per-commit Metadata against this same end-version schema.
     Snapshot endSnapshot = deltaV2Table.getSnapshotManager().loadSnapshotAt(endVersion);
     StructType endSchema = endSnapshot.schema();
-    StructType cdcSchema =
-        endSchema
-            .add(METADATA_COLUMN, METADATA_STRUCT, false)
-            .add("_change_type", DataTypes.StringType, false)
-            .add("_commit_version", DataTypes.LongType, false)
-            .add("_commit_timestamp", DataTypes.TimestampType, false);
+    StructType cdcSchema = changelogSchema(endSchema);
 
     return CatalogV2UtilShims.structTypeToV2Columns(cdcSchema);
+  }
+
+  static StructType changelogSchema(StructType dataSchema) {
+    return CDCSchemaContext.appendNonNullableCDCColumns(
+        dataSchema.add(METADATA_COLUMN, METADATA_STRUCT, false));
   }
 
   // TODO: optimise to false when deletion vectors are guaranteed enabled across the entire

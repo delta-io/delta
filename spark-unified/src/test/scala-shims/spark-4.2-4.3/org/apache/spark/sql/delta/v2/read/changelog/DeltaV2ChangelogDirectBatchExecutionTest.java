@@ -17,10 +17,12 @@ package org.apache.spark.sql.delta.v2.read.changelog;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext;
 import org.apache.spark.sql.delta.v2.snapshot.SnapshotManagerFactory;
 import java.sql.Timestamp;
 import java.util.ArrayList;
@@ -32,6 +34,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.Batch;
@@ -40,6 +43,7 @@ import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Disabled;
@@ -54,6 +58,55 @@ import org.junit.jupiter.params.provider.ValueSource;
  * through ScanBuilder -> Scan -> Batch -> PartitionReader.
  */
 class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase {
+
+  @Test
+  public void testCDCColumnsAreNonNullable() throws Exception {
+    String tableName = "dsv2_changelog_schema_" + System.nanoTime();
+    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT) USING delta LOCATION '%s' "
+                      + "TBLPROPERTIES ('delta.enableRowTracking'='true')",
+                  tableName, tablePath));
+          DeltaV2Changelog changeLog =
+              new DeltaV2Changelog(
+                  tableName,
+                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
+                  0L,
+                  0L);
+
+          List<String> cdcNames =
+              List.of(
+                  CDCSchemaContext.CDC_TYPE_COLUMN,
+                  CDCSchemaContext.CDC_COMMIT_VERSION,
+                  CDCSchemaContext.CDC_COMMIT_TIMESTAMP);
+          int cdcColumnCount = 0;
+          for (Column column : changeLog.columns()) {
+            if (cdcNames.contains(column.name())) {
+              assertFalse(column.nullable(), column.name() + " must be non-nullable");
+              cdcColumnCount++;
+            }
+          }
+          assertEquals(3, cdcColumnCount, "Expected all three CDC columns");
+
+          Scan scan =
+              changeLog
+                  .newScanBuilder(new CaseInsensitiveStringMap(Collections.emptyMap()))
+                  .build();
+          int scanCDCFieldCount = 0;
+          for (StructField field : scan.readSchema().fields()) {
+            if (cdcNames.contains(field.name())) {
+              assertFalse(field.nullable(), field.name() + " must be non-nullable");
+              scanCDCFieldCount++;
+            }
+          }
+          assertEquals(3, scanCDCFieldCount, "Expected all three CDC fields in read schema");
+        });
+  }
 
   @Disabled("DV-off changelog read over-counts (returns 5 rows instead of 3). "
       + "Pre-existing, independent of the path-encoding fix.")

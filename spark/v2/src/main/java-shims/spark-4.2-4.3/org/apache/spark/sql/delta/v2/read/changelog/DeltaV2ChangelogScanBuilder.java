@@ -18,7 +18,6 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.delta.DeltaErrors;
-import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
@@ -77,12 +76,7 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
       DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
     }
 
-    StructType cdcSchema =
-        endSchema
-            .add(DeltaV2Changelog.METADATA_COLUMN, DeltaV2Changelog.METADATA_STRUCT, false)
-            .add("_change_type", DataTypes.StringType, false)
-            .add("_commit_version", DataTypes.LongType, false)
-            .add("_commit_timestamp", DataTypes.TimestampType, false);
+    StructType cdcSchema = DeltaV2Changelog.changelogSchema(endSchema);
     return new DeltaV2ChangelogScan(
         cdcSchema,
         commitRange,
