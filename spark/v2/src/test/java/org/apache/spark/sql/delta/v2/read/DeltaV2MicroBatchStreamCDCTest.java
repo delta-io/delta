@@ -45,7 +45,9 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
 import org.apache.spark.sql.types.StructField;
@@ -164,6 +166,97 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     // startingVersion=latest resolves to latest+1, which is not materialized. The KernelException
     // is swallowed and the validator returns without throwing.
     assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion + 1));
+  }
+
+  @Test
+  public void testValidateCDFEnabled_passesWhenOnlyLegacyPropertyIsSet(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_legacy_property_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataCapture' = 'true')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    // V1 reads the legacy delta.enableChangeDataCapture key when delta.enableChangeDataFeed is
+    // not set.
+    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    assertFalse(latestSnapshot.metadata().configuration().contains("delta.enableChangeDataFeed"));
+    long latestVersion = latestSnapshot.version();
+    assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion));
+  }
+
+  @Test
+  public void testValidateCDFEnabled_throwsOnMalformedProperty(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_malformed_property_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    long alterVersion = snapshotManager.loadLatestSnapshot().version();
+    // Delta Spark rejects a malformed value at write time, so write the commit directly.
+    writeCommitWithCDFProperty(tablePath, alterVersion, "yes");
+    long malformedVersion = alterVersion + 1;
+    // Loading the snapshot does not parse the property, so the CDF check is what fails below.
+    assertDoesNotThrow(() -> snapshotManager.loadSnapshotAt(malformedVersion));
+
+    // Like V1, a value that is not a boolean fails instead of reading as "CDF disabled", both in
+    // the start version check and in the check of each commit's metadata action.
+    IllegalArgumentException startVersionException =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> stream.validateCDFEnabledOnTable(malformedVersion));
+    assertTrue(
+        startVersionException.getMessage().contains("yes"), startVersionException.getMessage());
+    CommitActions commit = getCommitActions(tablePath, malformedVersion);
+    IllegalArgumentException commitException =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> {
+              try (ClosableIterator<IndexedFile> iter =
+                  stream.processCommitToIndexedFilesForCDC(
+                      commit,
+                      /* startVersion= */ malformedVersion,
+                      /* limits= */ Optional.empty(),
+                      /* endOffsetOpt= */ Optional.empty(),
+                      /* lastProcessedVersion= */ malformedVersion,
+                      /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+                collectAll(iter);
+              }
+            });
+    assertTrue(commitException.getMessage().contains("yes"), commitException.getMessage());
+  }
+
+  /**
+   * Copies the commit at {@code version} to {@code version + 1}, with {@code
+   * delta.enableChangeDataFeed} set to {@code value}. The copied commit must contain the metadata
+   * action that set the property.
+   */
+  private static void writeCommitWithCDFProperty(String tablePath, long version, String value)
+      throws Exception {
+    java.nio.file.Path logDir = java.nio.file.Paths.get(tablePath, "_delta_log");
+    String commit =
+        java.nio.file.Files.readString(logDir.resolve(String.format("%020d.json", version)));
+    String property = "\"delta.enableChangeDataFeed\":\"true\"";
+    assertTrue(commit.contains(property), commit);
+    String newCommit =
+        commit
+            .replace(property, "\"delta.enableChangeDataFeed\":\"" + value + "\"")
+            // Keep in-commit timestamps increasing, in case they are enabled.
+            .replaceAll(
+                "\"inCommitTimestamp\":\\d+",
+                "\"inCommitTimestamp\":" + (System.currentTimeMillis() + 1000));
+    java.nio.file.Files.writeString(
+        logDir.resolve(String.format("%020d.json", version + 1)), newCommit);
   }
 
   private static final DeltaV2MicroBatchStreamTest.ScenarioSetup CDC_TWO_INSERT_SETUP =
@@ -1069,7 +1162,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     StructType tableSchema = seededSnapshot.metadata().schema();
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        DeltaV2TableManagerCache$.MODULE$.forTable(spark, tablePath, javaOptions, Option.empty()),
         latestSnapshot,
         hadoopConf,
         spark,
@@ -1199,7 +1292,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                 .filter(field -> !partitionColNames.contains(field.name()))
                 .toArray(StructField[]::new));
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, snapshot.dataPath().toString(), Collections.emptyMap(), Option.empty()),
         snapshot,
         hadoopConf,
         spark,
@@ -1230,7 +1324,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
 
     CommitRange commitRange =
-        snapshotManager.getTableChanges(engine, version, Optional.of(version));
+        snapshotManager.getTableChanges(
+            engine, GetTableChangesParam$.MODULE$.apply(version, Option.apply(version)));
 
     try (CloseableIterator<CommitActions> iter =
         StreamingHelper.getCommitActionsFromRangeUnsafe(

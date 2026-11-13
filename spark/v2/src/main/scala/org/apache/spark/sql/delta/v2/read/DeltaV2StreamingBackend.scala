@@ -21,9 +21,12 @@ import java.sql.Timestamp
 import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaSingleCommit, Snapshot, VersionNotFoundException}
-import org.apache.spark.sql.delta.sources.DeltaStreamingBackend
+import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaStreamingBackend}
+import org.apache.spark.sql.delta.storage.ClosableIterator
+import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
 import org.apache.spark.sql.delta.v2.exception.{VersionNotFoundException => V2VersionNotFoundException}
-import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SnapshotManager}
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException
 
 
@@ -33,18 +36,21 @@ import io.delta.kernel.exceptions.UnsupportedTableFeatureException
  * [[org.apache.spark.sql.delta.sources.DeltaLogStreamingBackend]]. The other methods can
  * throw Kernel errors.
  *
+ * @param tableManager provides snapshot, history, and commit access for the source table.
  * @param queryContext request-scoped inputs for every snapshot load. The stream reuses it across
  *                     triggers.
+ * @param snapshotVersionAtSourceInit table snapshot version captured at source initialization.
  */
 private[read] class DeltaV2StreamingBackend(
-    snapshotManager: DeltaV2SnapshotManager,
-    queryContext: DeltaV2QueryContext)
+    tableManager: DeltaV2TableManager,
+    queryContext: DeltaV2QueryContext,
+    snapshotVersionAtSourceInit: Long)
   extends DeltaStreamingBackend {
 
   @volatile private var latestSnapshot: Snapshot = _
 
   override def update(): Snapshot = {
-    latestSnapshot = snapshotManager.loadLatestSnapshot(queryContext)
+    latestSnapshot = tableManager.loadLatestSnapshot(queryContext)
     latestSnapshot
   }
 
@@ -53,14 +59,14 @@ private[read] class DeltaV2StreamingBackend(
     Option(latestSnapshot).getOrElse(update())
 
   override def getSnapshotAt(version: Long): Snapshot =
-    snapshotManager.loadSnapshotAt(version, queryContext)
+    tableManager.loadSnapshotAt(version, queryContext)
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean): Unit = {
     try {
-      snapshotManager.checkVersionExists(
+      tableManager.checkVersionExists(
         version, mustBeRecreatable, allowOutOfRange, queryContext)
     } catch {
       case e: V2VersionNotFoundException =>
@@ -73,7 +79,7 @@ private[read] class DeltaV2StreamingBackend(
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
-    val commit = snapshotManager.getActiveCommitAtTime(
+    val commit = tableManager.getActiveCommitAtTime(
       timestamp.getTime,
       canReturnLastCommit,
       mustBeRecreatable,
@@ -96,9 +102,40 @@ private[read] class DeltaV2StreamingBackend(
     }
   }
 
-  // DeltaV2MicroBatchStream still reads its commits itself, so nothing calls this yet.
   override def getSingleCommitIterator(
       startVersion: Long,
-      failOnDataLoss: Boolean): Iterator[DeltaSingleCommit] =
-    throw new UnsupportedOperationException("DeltaV2StreamingBackend does not list commits yet")
+      failOnDataLoss: Boolean,
+      endOffset: Option[DeltaSourceOffset]): ClosableIterator[DeltaSingleCommit] = {
+    var endVersionOpt = endOffset.map(_.reservoirVersion)
+    if (endVersionOpt.isDefined) {
+      // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
+      // endVersion to be an actual existing version or empty.
+      val latestVersion: Long = snapshotVersionAtSourceInit
+      if (endVersionOpt.get > latestVersion) {
+        // This could happen because:
+        // 1. data could be added after the source's initial snapshot was captured.
+        // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
+        // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
+        // TODO(#5318): kernel should ideally relax this constraint.
+        endVersionOpt = Some(update().version)
+      }
+
+      // After capping, check if startVersion is beyond the endVersion.
+      // This can happen when all files in the batch come from the initial snapshot
+      // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
+      if (startVersion > endVersionOpt.get) {
+        return new ClosableWrapper[DeltaSingleCommit](Iterator.empty).toClosable
+      }
+    } else {
+      // When endOffset is empty (offset discovery), check if startVersion exceeds the current
+      // latest version. The snapshot version captured at source initialization may be outdated.
+      val currentLatestVersion: Long = update().version
+      if (startVersion > currentLatestVersion) {
+        return new ClosableWrapper[DeltaSingleCommit](Iterator.empty).toClosable
+      }
+    }
+
+    tableManager.getSingleCommitIterator(
+      startVersion, endVersionOpt, queryContext, failOnDataLoss)
+  }
 }

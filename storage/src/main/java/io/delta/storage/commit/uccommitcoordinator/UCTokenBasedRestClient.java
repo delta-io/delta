@@ -322,12 +322,11 @@ public class UCTokenBasedRestClient implements UCClient {
    * @return The converted GetCommitsResponse
    */
   private GetCommitsResponse toGetCommitsResponse(DeltaGetCommitsResponse response, URI tableUri) {
-    Path basePath = CoordinatedCommitsUtils.commitDirPath(
-        CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
+    Path logPath = CoordinatedCommitsUtils.logDirPath(new Path(tableUri));
 
     List<Commit> commits = new ArrayList<>();
     for (DeltaCommitInfo commitInfo : response.getCommits()) {
-      commits.add(fromDeltaCommitInfo(commitInfo, basePath));
+      commits.add(fromDeltaCommitInfo(commitInfo, logPath));
     }
 
     return new GetCommitsResponse(commits, response.getLatestTableVersion());
@@ -337,17 +336,18 @@ public class UCTokenBasedRestClient implements UCClient {
    * Converts a Unity Catalog SDK {@link DeltaCommitInfo} to a Delta {@link Commit}.
    *
    * @param commitInfo The SDK commit info to convert
-   * @param basePath   The base path for constructing file paths
+   * @param logPath    The table's delta log path; the commit may be staged or already published
    * @return The converted Commit
    */
-  private Commit fromDeltaCommitInfo(DeltaCommitInfo commitInfo, Path basePath) {
+  private Commit fromDeltaCommitInfo(DeltaCommitInfo commitInfo, Path logPath) {
     FileStatus fileStatus = new FileStatus(
         commitInfo.getFileSize(),
         false /* isdir */,
         0 /* block_replication */,
         0 /* blocksize */,
         commitInfo.getFileModificationTimestamp(),
-        new Path(basePath, commitInfo.getFileName()));
+        CoordinatedCommitsUtils.catalogCommitPath(
+            logPath, commitInfo.getVersion(), commitInfo.getFileName()));
 
     return new Commit(commitInfo.getVersion(), fileStatus, commitInfo.getTimestamp());
   }

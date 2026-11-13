@@ -17,30 +17,48 @@ package org.apache.spark.sql.delta.v2.read.changelog;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext;
+import org.apache.spark.sql.delta.v2.utils.PartitionUtils;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.expressions.FileSourceMetadataAttribute$;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
+import org.apache.spark.sql.catalyst.expressions.MetadataStructFieldWithLogicalName$;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.internal.SQLConf;
+import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
 import scala.Tuple2;
 import scala.collection.immutable.Map$;
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.engine.Engine;
 
 /**
- * Unit test for {@link DeltaV2ChangelogBatch.CDCPartitionReader}, the executor-side reader that
+ * Unit tests for changelog reader-factory schemas and
+ * {@link DeltaV2ChangelogBatch.CDCPartitionReader}, the executor-side reader that
  * iterates every {@link PartitionedFile} bundled into one bin-packed {@link FilePartition}, opens a
  * delegate reader per file, and joins that file's CDC tail ({@code _change_type},
  * {@code _commit_version}, {@code _commit_timestamp}) onto each of its rows.
@@ -191,6 +209,51 @@ public class CDCPartitionReaderTest {
               row.getLong(3)));
     }
     return out;
+  }
+
+  @Test
+  public void readerFactoryMarksGeneratedMetadataStruct() {
+    StructType tableSchema = new StructType().add("_metadata", DataTypes.StringType);
+    Snapshot kernelSnapshot = mock(Snapshot.class);
+    Configuration hadoopConf = new Configuration(false);
+    DeltaV2ChangelogBatch batch =
+        new DeltaV2ChangelogBatch(
+            mock(CommitRange.class),
+            mock(Engine.class),
+            tableSchema,
+            kernelSnapshot,
+            hadoopConf);
+    ArgumentCaptor<StructType> readSchemaCaptor = ArgumentCaptor.forClass(StructType.class);
+
+    // Capture the batch's schema at the Parquet factory boundary without a Spark session or I/O.
+    try (MockedStatic<PartitionUtils> factory = mockStatic(PartitionUtils.class)) {
+      batch.createReaderFactory();
+      factory.verify(
+          () ->
+              PartitionUtils.createDeltaParquetReaderFactory(
+                  eq(kernelSnapshot),
+                  eq(tableSchema),
+                  any(StructType.class),
+                  readSchemaCaptor.capture(),
+                  any(StructType.class),
+                  any(Filter[].class),
+                  any(),
+                  eq(hadoopConf),
+                  any(SQLConf.class),
+                  eq(false)));
+    }
+
+    StructType readSchema = readSchemaCaptor.getValue();
+    assertEquals(2, readSchema.length());
+    assertEquals(tableSchema.fields()[0], readSchema.fields()[0]);
+    StructField metadataColumn = readSchema.fields()[1];
+    assertEquals(DeltaV2Changelog.METADATA_STRUCT, metadataColumn.dataType());
+    assertFalse(metadataColumn.nullable());
+    assertFalse(FileSourceMetadataAttribute$.MODULE$.isValid(metadataColumn.metadata()));
+    scala.Option<Tuple2<StructField, String>> matched =
+        MetadataStructFieldWithLogicalName$.MODULE$.unapply(metadataColumn);
+    assertTrue(matched.isDefined());
+    assertEquals(DeltaV2Changelog.METADATA_COLUMN, matched.get()._2());
   }
 
   @Test

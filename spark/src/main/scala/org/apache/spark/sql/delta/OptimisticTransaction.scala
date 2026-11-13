@@ -1221,6 +1221,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
         amtFeatureName, metadata.columnMappingMode.name)
     }
 
+    // The AMT property is false when unset, and only `adaptiveMetadata-dev` reads it. CREATE sets
+    // it to true. REPLACE keeps the value of the table it replaces, so it does not turn AMT writes
+    // on or off.
+    val amtPropertyKey = DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key
+    if (isCreatingNewTable && amtFeature == AdaptiveMetadataTableFeature &&
+        !metadata.configuration.contains(amtPropertyKey)) {
+      val valueOpt =
+        if (readVersion >= 0) snapshot.metadata.configuration.get(amtPropertyKey) else Some("true")
+      valueOpt.foreach(value => updatedConfig += (amtPropertyKey -> value))
+    }
+
     metadata.copy(configuration = updatedConfig)
   }
 
@@ -2900,14 +2911,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val committedKeys =
       committedFileActions.map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     val provider = AMTCheckpointProvider(
+      spark = spark,
       manifestCommitVersion = attemptVersion,
       checkpointAction = result.checkpoint,
       leaves = result.leaves,
       tableRoot = tableRoot)
-    // Only file identities are compared, so the deletion timestamp stamped on the reconstructed
-    // RemoveFiles does not matter.
+    // Only file identities are compared, so neither the deletion timestamp stamped on the
+    // reconstructed RemoveFiles nor the order of the actions matters.
     val treeKeys =
-        provider.reconstructFileActions(deltaLog, dataChange, commitTimestamp = 0L)
+        provider.reconstructFileActions(
+          deltaLog, dataChange, commitTimestamp = 0L, ordered = false)
         .map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     if (treeKeys != committedKeys) {
       val onlyInTree = treeKeys -- committedKeys
@@ -3283,7 +3296,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If this commit writes an AMT, it becomes the latest AMT for the table.
     // Otherwise, use the latest AMT identified before commit, including conflict checking.
     val amtCheckpointProviderForPostCommitSnapshot = amtWriteResultOpt
-      .map(AMTCheckpointProvider.fromWriteResult(deltaLog, _, attemptVersion))
+      .map(AMTCheckpointProvider.fromWriteResult(spark, deltaLog, _, attemptVersion))
       .orElse(amtWriterManager.preCommitLatestAMTCheckpointProviderOpt)
     PrepareCommitResult(
       commitVersion = attemptVersion,

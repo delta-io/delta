@@ -18,20 +18,38 @@ package org.apache.spark.sql.delta.v2.read;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
+import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
 import org.apache.spark.sql.delta.VersionNotFoundException;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import scala.Option;
 
 /** Unit tests for {@link DeltaV2StreamingBackend}. */
 public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
+
+  private final DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.empty();
+
+  @AfterEach
+  void clearTableManagerCache() {
+    DeltaV2TableManagerCache$.MODULE$.clearCache();
+  }
 
   private static String createTable(File dir, int commits) {
     String path = dir.getAbsolutePath();
@@ -41,13 +59,150 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
     return path;
   }
 
+  private static DeltaSourceOffset createEndOffset(String tableId, long version) {
+    return DeltaSourceOffset.apply(
+        tableId, version, DeltaSourceOffset.BASE_INDEX(), /* isInitialSnapshot= */ false);
+  }
+
+  private static List<Long> collectCommitVersions(ClosableIterator<DeltaSingleCommit> commits)
+      throws IOException {
+    try (commits) {
+      List<Long> versions = new ArrayList<>();
+      while (commits.hasNext()) {
+        try (DeltaV2SingleCommit commit = (DeltaV2SingleCommit) commits.next()) {
+          versions.add(commit.version());
+        }
+      }
+      return versions;
+    }
+  }
+
+  @Test
+  public void getSingleCommitIteratorReturnsRequestedVersionsInOrder(@TempDir File tempDir)
+      throws Exception {
+    String path = createTable(tempDir, /* commits= */ 4);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 3L);
+    DeltaSourceOffset endOffset = createEndOffset(backend.update().metadata().id(), 2L);
+
+    assertEquals(
+        List.of(1L, 2L),
+        collectCommitVersions(
+            backend.getSingleCommitIterator(
+                /* startVersion= */ 1L, /* failOnDataLoss= */ true, Option.apply(endOffset))));
+  }
+
+  @Test
+  public void getSingleCommitIteratorCapsEndOffsetAtLatestVersion(@TempDir File tempDir)
+      throws Exception {
+    String path = createTable(tempDir, /* commits= */ 3);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 2L);
+    // Finishing version 2 advances the stream's offset to version 3, which does not exist yet.
+    DeltaSourceOffset endOffset = createEndOffset(backend.update().metadata().id(), 3L);
+
+    assertEquals(
+        List.of(1L, 2L),
+        collectCommitVersions(
+            backend.getSingleCommitIterator(
+                /* startVersion= */ 1L, /* failOnDataLoss= */ true, Option.apply(endOffset))));
+  }
+
+  @Test
+  public void getSingleCommitIteratorReturnsEmptyWhenStartExceedsCappedEnd(@TempDir File tempDir)
+      throws Exception {
+    String path = createTable(tempDir, /* commits= */ 1);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 0L);
+    DeltaSourceOffset endOffset = createEndOffset(backend.update().metadata().id(), 1L);
+
+    assertEquals(
+        Collections.emptyList(),
+        collectCommitVersions(
+            backend.getSingleCommitIterator(
+                /* startVersion= */ 1L, /* failOnDataLoss= */ true, Option.apply(endOffset))));
+  }
+
+  @Test
+  public void getSingleCommitIteratorReadsNewCommitsWithEndOffset(@TempDir File tempDir)
+      throws Exception {
+    withSQLConf(
+        DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT().key(),
+        "0",
+        () -> {
+          String path = createTable(tempDir, /* commits= */ 1);
+          DeltaV2StreamingBackend backend =
+              new DeltaV2StreamingBackend(
+                  DeltaV2TableManagerCache$.MODULE$.forTable(
+                      spark, path, Collections.emptyMap(), Option.empty()),
+                  queryContext,
+                  /* snapshotVersionAtSourceInit= */ 0L);
+          DeltaSourceOffset endOffset = createEndOffset(backend.update().metadata().id(), 1L);
+
+          spark.range(1).write().format("delta").mode("append").save(path);
+
+          assertEquals(
+              List.of(1L),
+              collectCommitVersions(
+                  backend.getSingleCommitIterator(
+                      /* startVersion= */ 1L,
+                      /* failOnDataLoss= */ true,
+                      Option.apply(endOffset))));
+        });
+  }
+
+  @Test
+  public void getSingleCommitIteratorFindsNewCommitsWithoutEndOffset(@TempDir File tempDir)
+      throws Exception {
+    withSQLConf(
+        DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT().key(),
+        "0",
+        () -> {
+          String path = createTable(tempDir, /* commits= */ 1);
+          DeltaV2StreamingBackend backend =
+              new DeltaV2StreamingBackend(
+                  DeltaV2TableManagerCache$.MODULE$.forTable(
+                      spark, path, Collections.emptyMap(), Option.empty()),
+                  queryContext,
+                  /* snapshotVersionAtSourceInit= */ 0L);
+
+          assertEquals(
+              Collections.emptyList(),
+              collectCommitVersions(
+                  backend.getSingleCommitIterator(
+                      /* startVersion= */ 1L, /* failOnDataLoss= */ true, Option.empty())));
+
+          spark.range(1).write().format("delta").mode("append").save(path);
+
+          assertEquals(
+              List.of(1L),
+              collectCommitVersions(
+                  backend.getSingleCommitIterator(
+                      /* startVersion= */ 1L, /* failOnDataLoss= */ true, Option.empty())));
+        });
+  }
+
   @Test
   public void unsafeVolatileSnapshotIsAtLeastAsNewAsActiveCommit(@TempDir File tempDir) {
     String path = createTable(tempDir, /* commits= */ 1);
     DeltaV2StreamingBackend backend =
         new DeltaV2StreamingBackend(
-            new PathBasedSnapshotManager(path, defaultKernelContext),
-            DeltaV2QueryContext$.MODULE$.empty());
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 0L);
     assertEquals(0L, backend.update().version());
 
     spark.range(1).write().format("delta").mode("append").save(path);
@@ -69,8 +224,10 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
     String path = createTable(tempDir, /* commits= */ 3);
     DeltaV2StreamingBackend backend =
         new DeltaV2StreamingBackend(
-            new PathBasedSnapshotManager(path, defaultKernelContext),
-            DeltaV2QueryContext$.MODULE$.empty());
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 2L);
 
     VersionNotFoundException e =
         assertThrows(
@@ -103,8 +260,10 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
                 + "\"]}}"));
     DeltaV2StreamingBackend backend =
         new DeltaV2StreamingBackend(
-            new PathBasedSnapshotManager(path, defaultKernelContext),
-            DeltaV2QueryContext$.MODULE$.empty());
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 0L);
 
     DeltaUnsupportedTableFeatureException e =
         assertThrows(

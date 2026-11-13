@@ -92,7 +92,8 @@ public class UCDeltaOAuthRefreshTest extends UCDeltaTableIntegrationBaseTest {
 
     // The OAuth user can use its catalog, but it must not have admin access to metastore grants.
     ApiClient client = unityCatalogInfo().createApiClient();
-    assertThat(new CatalogsApi(client).getCatalog(unityCatalogInfo().catalogName()).getOwner())
+    assertThat(
+            new CatalogsApi(client).getCatalog(unityCatalogInfo().catalogName(), false).getOwner())
         .isEqualTo(MockOAuthBroker.SUBJECT);
     UpdatePermissions grantRequest =
         new UpdatePermissions()

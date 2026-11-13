@@ -679,6 +679,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val AMT_ROOT_CACHE_MAX_NUM_ENTRIES =
+    buildConf("amt.rootCache.maxNumEntries")
+      .internal()
+      .doc("Cache the persisted AMT root rows only when the entry count from the Parquet " +
+        "footer, including DATA and DATA_MANIFEST entries, is less than this threshold. " +
+        "Otherwise collect only leaf pointers during discovery and read the root again for " +
+        "reconstruction. Set to 0 to disable root row caching and skip the footer count check.")
+      .intConf
+      .checkValue(_ >= 0, "amt.rootCache.maxNumEntries must be non-negative.")
+      .createWithDefault(12000)
+
   val AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT =
     buildConf("amt.largeCommitActionsCountThresholdForInlineManifestCommit")
       .internal()
@@ -730,6 +741,34 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "AMT. When disabled, it reads each commit's log file as written.")
       .booleanConf
       .createWithDefault(false)
+
+  final object AMTBinaryJsonCompressionPolicy {
+    final val DISABLED = "disabled"
+    final val IF_BENEFICIAL = "if-beneficial"
+    final val VALUES = Set(DISABLED, IF_BENEFICIAL)
+  }
+
+  val AMT_BINARY_JSON_COMPRESSION_POLICY =
+    buildConf("amt.binaryJson.compressionPolicy")
+      .internal()
+      .doc("Compression policy for individual AMT binary payloads encoded as JSON strings. " +
+        "'disabled' stores raw bytes. 'if-beneficial' tries ZSTD once and uses it when the " +
+        "compressed payload reduces the final Z85 size, including the header and padding. " +
+        "Ties and empty payloads use raw encoding. Encoding returns a size-limit result if " +
+        "the selected payload exceeds the length header's capacity.")
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(AMTBinaryJsonCompressionPolicy.VALUES)
+      .createWithDefault(AMTBinaryJsonCompressionPolicy.IF_BENEFICIAL)
+
+  val AMT_BINARY_JSON_FORMAT_VERSION =
+    buildConf("amt.binaryJson.formatVersion")
+      .internal()
+      .doc("Envelope format version used to write AMT binary payloads as Z85 JSON strings. " +
+        "Readers use the stored version byte, independently of this writer setting.")
+      .intConf
+      .checkValues(Set(1))
+      .createWithDefault(1)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -1752,6 +1791,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If true, Delta commit will validate the commit checksum file content before and " +
         "after each incremental commit as part of Unit Tests. Note that this overrides any " +
         s"behaviour from ${INCREMENTAL_COMMIT_VERIFY.key} config.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val INCREMENTAL_COMMIT_SKIP_CHECKSUM_ON_NEGATIVE_FIELD =
+    buildConf("incremental.commit.skipChecksumOnNegativeField.enabled")
+      .internal()
+      .doc("An incrementally computed checksum with a negative counter (file count, table " +
+        "size, DV metrics, or a histogram bin) always emits a usage log. If true, that " +
+        "checksum is also discarded, so it is never written or reused for later incremental " +
+        "commits. If false, the checksum is only logged and used as is.")
       .booleanConf
       .createWithDefault(true)
 

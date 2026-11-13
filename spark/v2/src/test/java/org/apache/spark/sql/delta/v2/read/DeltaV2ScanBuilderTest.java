@@ -25,6 +25,7 @@ import io.delta.kernel.engine.Engine;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.OptionalInt;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.connector.read.Scan;
@@ -32,6 +33,8 @@ import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
@@ -542,12 +545,15 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     Engine engine = DefaultEngine.create(spark.sessionState().newHadoopConf());
-    return new DeltaV2ScanBuilder(
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, path, Collections.emptyMap(), Option.empty());
+    return DeltaV2ScanBuilder.create(
         tableName,
         snapshot,
         engine,
         Option.empty(),
-        snapshotManager,
+        tableManager,
         dataSchema,
         partitionSchema,
         tableSchema,
@@ -584,14 +590,14 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
     builder.pushLimit(42);
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-    assertEquals(OptionalInt.of(42), scan.getPushedLimit());
+    assertEquals(Option.apply(42), scan.getPushedLimit());
   }
 
   @Test
   public void testPushLimit_absentByDefault(@TempDir File tempDir) {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-    assertEquals(OptionalInt.empty(), scan.getPushedLimit());
+    assertEquals(Option.empty(), scan.getPushedLimit());
   }
 
   @Test
@@ -601,7 +607,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushLimit(20);
     assertEquals(OptionalInt.of(20), builder.getPushedLimit());
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
-    assertEquals(OptionalInt.of(20), scan.getPushedLimit());
+    assertEquals(Option.apply(20), scan.getPushedLimit());
   }
 
   @Test
@@ -621,7 +627,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushLimit(10);
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
     assertEquals(
-        OptionalInt.empty(),
+        Option.empty(),
         scan.getPushedLimit(),
         "Pushed limit must be cleared when data filters would leave a post-scan residual");
   }
@@ -636,7 +642,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushFilters(
         scala.jdk.javaapi.CollectionConverters.<Expression>asScala(java.util.List.of()).toList());
     assertTrue(builder.pushLimit(10));
-    assertEquals(OptionalInt.empty(), ((DeltaV2Scan) builder.build()).getPushedLimit());
+    assertEquals(Option.empty(), ((DeltaV2Scan) builder.build()).getPushedLimit());
   }
 
   @Test
@@ -650,7 +656,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushLimit(10);
     DeltaV2Scan scan = (DeltaV2Scan) builder.build();
     assertEquals(
-        OptionalInt.of(10),
+        Option.apply(10),
         scan.getPushedLimit(),
         "Pushed limit must be kept when a partition filter leaves no post-scan residual");
   }

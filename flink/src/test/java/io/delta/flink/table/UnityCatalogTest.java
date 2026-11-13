@@ -16,6 +16,9 @@
 
 package io.delta.flink.table;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -31,6 +34,37 @@ import org.junit.jupiter.api.Test;
 
 /** JUnit 6 test suite for UnityCatalog. */
 class UnityCatalogTest extends TestHelper {
+
+  @Test
+  void testCatalogBrowsingSetsIncludeBrowseFalse() {
+    String schemasPath = "/api/2.1/unity-catalog/schemas";
+    String tablesPath = "/api/2.1/unity-catalog/tables";
+    String schemaPath = schemasPath + "/main.default";
+    String tablePath = tablesPath + "/main.default.tbl";
+    MockHttp.withMock(
+        new MockHttp(
+            Map.of(
+                schemasPath, "{\"schemas\":[{\"name\":\"default\"}]}",
+                schemaPath, "{\"name\":\"default\"}",
+                tablesPath, "{\"tables\":[{\"name\":\"tbl\"}]}",
+                tablePath, "{\"name\":\"tbl\"}"),
+            Map.of()),
+        mock -> {
+          UnityCatalog catalog = new UnityCatalog("main", mock.uri(), "");
+          catalog.open();
+
+          assertEquals(List.of("default"), catalog.listSchemas());
+          assertEquals("default", catalog.getSchema("default").getName());
+          assertEquals(List.of("tbl"), catalog.listTables("default"));
+          assertEquals("tbl", catalog.getTableDetail("main.default.tbl").getName());
+
+          for (String path : List.of(schemasPath, schemaPath, tablesPath, tablePath)) {
+            mock.verify(
+                getRequestedFor(urlPathEqualTo(path))
+                    .withQueryParam("include_browse", equalTo("false")));
+          }
+        });
+  }
 
   @Test
   void testToUcTableIdentifier() {

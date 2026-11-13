@@ -49,6 +49,9 @@ private[amt] object AMTContentStats {
   private val CONTENT_STATS_FIELD = "content_stats"
   private val TIGHT_STATS_FIELD = "tight_stats"
 
+  /** Temporary column [[forWrite]] parses an entry's stats JSON into; dropped before it returns. */
+  private val PARSED_STATS_COLUMN = "__amt_parsed_stats"
+
   /**
    * Start of the Iceberg stats field-id space, and the number of ids reserved per table field.
    * A table field's stats sub-struct is stamped `STATS_ID_START + STATS_IDS_PER_FIELD * fieldId`,
@@ -254,16 +257,18 @@ private[amt] object AMTContentStats {
     // is not Parquet-writable), so drop the column here too. Mirrors `AMTPartitionValues.forWrite`
     // for an unpartitioned table.
     if (leaves.isEmpty) return df.drop(CONTENT_STATS_FIELD)
-    val statsParsedExpression = from_json(rawJson, statsSchema)
+    // Parse stats once in a separate projection so all statistics reuse the result.
+    val withParsedStats = df.withColumn(PARSED_STATS_COLUMN, from_json(rawJson, statsSchema))
+    val statsParsed = col(PARSED_STATS_COLUMN)
 
     val perColumn = leaves.map { leaf =>
       // Ordered by ascending id (bounds, then null count) to match the persisted schema.
       val boundColumns = leaf.boundType.toSeq.flatMap { _ =>
         Seq(
-          statPath(statsParsedExpression, DeltaStatistics.MIN, leaf.path).as(LOWER_BOUND),
-          statPath(statsParsedExpression, DeltaStatistics.MAX, leaf.path).as(UPPER_BOUND))
+          statPath(statsParsed, DeltaStatistics.MIN, leaf.path).as(LOWER_BOUND),
+          statPath(statsParsed, DeltaStatistics.MAX, leaf.path).as(UPPER_BOUND))
       }
-      val nullValueCount = statPath(statsParsedExpression, DeltaStatistics.NULL_COUNT, leaf.path)
+      val nullValueCount = statPath(statsParsed, DeltaStatistics.NULL_COUNT, leaf.path)
         .cast(LongType).as(NULL_VALUE_COUNT)
       struct(boundColumns :+ nullValueCount: _*).as(leaf.fieldName)
     }
@@ -271,7 +276,7 @@ private[amt] object AMTContentStats {
     val contentStatsSchema = AMTContentStats.persistedSchema(metadata, protocol)
     val contentStats = when(rawJson.isNull, lit(null).cast(contentStatsSchema))
       .otherwise(struct(perColumn: _*))
-    replaceContentStats(df, contentStats)
+    replaceContentStats(withParsedStats, contentStats).drop(PARSED_STATS_COLUMN)
   }
 
   /**

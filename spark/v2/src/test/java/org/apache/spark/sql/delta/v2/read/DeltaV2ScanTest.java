@@ -1,9 +1,15 @@
 package org.apache.spark.sql.delta.v2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
-import io.delta.kernel.CommitRange;
-import io.delta.kernel.engine.Engine;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -13,9 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalInt;
 import java.util.OptionalLong;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.TableIdentifier;
@@ -37,12 +41,12 @@ import org.apache.spark.sql.connector.read.streaming.ReadLimit;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.stats.DeltaScan;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.kernel.KernelContext;
-import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
@@ -52,6 +56,9 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
+import scala.Function0;
+import scala.Option;
 
 public class DeltaV2ScanTest extends DeltaV2TestBase {
 
@@ -1024,56 +1031,34 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     DeltaV2QueryContext expectedContext = (DeltaV2QueryContext) queryContextField.get(scan);
     assertEquals(expectCatalogTable, expectedContext.catalogTableOpt().isDefined());
 
-    RecordingPathBasedSnapshotManager manager =
-        new RecordingPathBasedSnapshotManager(
-            tablePath, createKernelContext(spark.sessionState().newHadoopConf()));
-    setSnapshotManager(scan, manager);
+    DeltaV2TableManager tableManager = spyTableManager(scan);
     DeltaV2MicroBatchStream stream =
         (DeltaV2MicroBatchStream) scan.toMicroBatchStream(checkpointLocation);
     try {
-      // Discard the scan's pre-construction snapshot load, then exercise snapshot-manager calls
-      // from the constructed stream. This fails if the constructor receives a different context.
-      manager.latestQueryContext = null;
-      manager.tableChangesQueryContext = null;
+      // Verify table-manager calls made by the constructed stream, excluding initialization.
+      clearInvocations(tableManager);
       Offset initialOffset = stream.initialOffset();
       stream.latestOffset(initialOffset, ReadLimit.allAvailable());
-      assertSame(expectedContext, manager.latestQueryContext);
-      assertSame(expectedContext, manager.tableChangesQueryContext);
+      ArgumentCaptor<DeltaV2QueryContext> contextCaptor =
+          ArgumentCaptor.forClass(DeltaV2QueryContext.class);
+      verify(tableManager, atLeastOnce()).loadLatestSnapshot(contextCaptor.capture());
+      for (DeltaV2QueryContext actualContext : contextCaptor.getAllValues()) {
+        assertSame(expectedContext, actualContext);
+      }
+      verify(tableManager, atLeastOnce())
+          .getSingleCommitIterator(anyLong(), any(), same(expectedContext), anyBoolean());
     } finally {
       stream.stop();
     }
   }
 
-  private static void setSnapshotManager(DeltaV2Scan scan, PathBasedSnapshotManager snapshotManager)
-      throws Exception {
-    Field snapshotManagerField = DeltaV2Scan.class.getDeclaredField("snapshotManager");
-    snapshotManagerField.setAccessible(true);
-    snapshotManagerField.set(scan, snapshotManager);
-  }
-
-  private static final class RecordingPathBasedSnapshotManager extends PathBasedSnapshotManager {
-    private DeltaV2QueryContext latestQueryContext;
-    private DeltaV2QueryContext tableChangesQueryContext;
-
-    private RecordingPathBasedSnapshotManager(String tablePath, KernelContext kernelContext) {
-      super(tablePath, kernelContext);
-    }
-
-    @Override
-    public Snapshot loadLatestSnapshot(DeltaV2QueryContext queryContext) {
-      latestQueryContext = queryContext;
-      return super.loadLatestSnapshot(queryContext);
-    }
-
-    @Override
-    public CommitRange getTableChanges(
-        Engine engine,
-        long startVersion,
-        Optional<Long> endVersion,
-        DeltaV2QueryContext queryContext) {
-      tableChangesQueryContext = queryContext;
-      return super.getTableChanges(engine, startVersion, endVersion, queryContext);
-    }
+  private static DeltaV2TableManager spyTableManager(DeltaV2Scan scan) throws Exception {
+    Field tableManagerField = DeltaV2Scan.class.getDeclaredField("tableManager");
+    tableManagerField.setAccessible(true);
+    DeltaV2TableManager tableManager =
+        spy((DeltaV2TableManager) ((Option<?>) tableManagerField.get(scan)).get());
+    tableManagerField.set(scan, Option.apply(tableManager));
+    return tableManager;
   }
 
   @Test
@@ -1264,15 +1249,14 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   private static int[] instrumentDeltaScanSupplier(DeltaV2Scan scan) throws Exception {
     Field supplierField = DeltaV2Scan.class.getDeclaredField("deltaScanSupplier");
     supplierField.setAccessible(true);
-    Supplier<org.apache.spark.sql.delta.stats.DeltaScan> originalSupplier =
-        (Supplier<org.apache.spark.sql.delta.stats.DeltaScan>) supplierField.get(scan);
+    Function0<DeltaScan> originalSupplier = (Function0<DeltaScan>) supplierField.get(scan);
     int[] supplierCalls = new int[] {0};
     supplierField.set(
         scan,
-        (Supplier<org.apache.spark.sql.delta.stats.DeltaScan>)
+        (Function0<DeltaScan>)
             () -> {
               supplierCalls[0]++;
-              return originalSupplier.get();
+              return originalSupplier.apply();
             });
     return supplierCalls;
   }
@@ -1876,10 +1860,10 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   @Test
   public void testLimitPushdown_getterReflectsBuilder() {
-    assertEquals(OptionalInt.of(7), buildScanWithLimit(7).getPushedLimit());
+    assertEquals(Option.apply(7), buildScanWithLimit(7).getPushedLimit());
     DeltaV2Scan noLimit =
         (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
-    assertEquals(OptionalInt.empty(), noLimit.getPushedLimit());
+    assertEquals(Option.empty(), noLimit.getPushedLimit());
   }
 
   @Test

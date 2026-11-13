@@ -1278,7 +1278,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         checkpointWithSyntheticRoot(deltaLog, provider.checkpointAction, rootDataRows)
 
       val rootProvider = AMTCheckpointProvider.fromCheckpoint(
-        deltaLog, checkpoint, manifestCommitVersion = provider.manifestCommitVersion)
+        spark, deltaLog, checkpoint, manifestCommitVersion = provider.manifestCommitVersion)
       assert(rootProvider.leaves.isEmpty, "A DATA-only root must yield no leaf pointers.")
 
       val expected = rootAdds.map(_.path).toSet
@@ -1322,7 +1322,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         leaf.manifest_info.copy(dv = Some(mdvBytesFor(deletedPos)))) +:
         base.leaves.tail
     val provider = AMTCheckpointProvider(
-      base.manifestCommitVersion, base.checkpointAction, patchedLeaves, base.tableRoot)
+      spark, base.manifestCommitVersion, base.checkpointAction, patchedLeaves, base.tableRoot)
 
     val reconstructed = reconstructedPaths(provider, snapshot.deltaLog)
     assert(reconstructed.size == baseCount - 1,
@@ -1385,7 +1385,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       }
     }
     val provider = AMTCheckpointProvider(
-      base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
+      spark, base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
 
     val dropped =
       twoPositions.map(locs(twoLeaf)).toSet ++
@@ -1455,7 +1455,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       } else leaf
     }
     val provider = AMTCheckpointProvider(
-      base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
+      spark, base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
 
     val survivors = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
       .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))

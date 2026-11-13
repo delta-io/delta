@@ -16,13 +16,14 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
-import java.util.{Objects, Optional}
+import java.util.Objects
 
 import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.DeltaHistoryManager
 import io.delta.kernel.internal.SnapshotImpl
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 
 import org.apache.spark.sql.delta.Snapshot
@@ -130,27 +131,46 @@ trait DeltaV2SnapshotManager {
    * Gets a range of table changes between start and end versions.
    *
    * @param engine the engine for executing operations
-   * @param startVersion starting version (inclusive)
-   * @param endVersion optional ending version (inclusive)
+   * @param params the inclusive version range and validation behavior
    */
   @deprecated("Use getTableChanges with a query context instead")
   def getTableChanges(
       engine: Engine,
-      startVersion: Long,
-      endVersion: Optional[java.lang.Long]): CommitRange
+      params: GetTableChangesParam): CommitRange
 
   /** Gets table changes using inputs scoped to the current query. */
   def getTableChanges(
       kernelEngine: Engine,
-      startVersion: Long,
-      endVersion: Optional[java.lang.Long],
+      params: GetTableChangesParam,
       queryContext: DeltaV2QueryContext): CommitRange = {
     Objects.requireNonNull(queryContext, "queryContext is null")
-    getTableChanges(kernelEngine, startVersion, endVersion)
+    getTableChanges(kernelEngine, params)
   }
 }
 
 object DeltaV2SnapshotManager {
+
+  /**
+   * Inputs for loading an inclusive range of table changes.
+   *
+   * @param startVersion the first version to include in the range
+   * @param endVersion the last version to include in the range, or empty to read through the
+   *   latest available commit.
+   * @param commitRangeValidation whether to eagerly validate data loss during commit range
+   *   build time (default true).
+   * @param failOnDataLoss whether lazily validate data loss during commit range iteration
+   *   (default true).
+   */
+  case class GetTableChangesParam(
+      startVersion: Long,
+      endVersion: Option[Long],
+      commitRangeValidation: Boolean = true,
+      failOnDataLoss: Boolean = true)
+
+  object GetTableChangesParam {
+    def apply(startVersion: Long, endVersion: Option[Long]): GetTableChangesParam =
+      new GetTableChangesParam(startVersion, endVersion)
+  }
 
   /**
    * Wraps a Kernel snapshot in the V1 [[Snapshot]] facade returned by manager load APIs.
