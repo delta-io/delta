@@ -66,6 +66,72 @@ You have two options for converting a Parquet table to a Delta table:
 
 For details, see [Convert a Parquet table to a Delta table](/delta-utility/#convert-a-parquet-table-to-a-delta-table).
 
+<a id="migrate-s3-writes-from-dynamodb-to-native-conditional-writes"></a>
+
+## Migrate from DynamoDB to S3 conditional writes
+
+Delta Lake Spark 4.5 and above supports multi-cluster writes to S3 through `io.delta.storage.S3LogStore`, without a DynamoDB table. See [S3 conditional writes](/delta-storage/#native-s3-setup) for the runtime requirements.
+
+If your applications configure `S3DynamoDBLogStore`, upgrading Delta Lake preserves that setting. For example, this setting keeps `s3a` paths on DynamoDB:
+
+```ini
+spark.delta.logStore.s3a.impl=io.delta.storage.S3DynamoDBLogStore
+```
+
+Use a maintenance window to switch every client of the affected tables. This procedure applies to filesystem-based commits using `S3DynamoDBLogStore`.
+
+<Aside type="caution">
+  Pause readers and writers before switching. A reader using
+  `S3DynamoDBLogStore` can publish a pending commit during recovery. Keep
+  ordinary clients stopped while a maintenance application completes recovery.
+</Aside>
+
+1. **Prepare the applications**: Identify every application that reads or writes the tables being migrated, including scheduled and streaming jobs. Confirm that every writer supports compatible S3 conditional writes. For Spark clients, prepare a runtime that meets the [setup requirements](/delta-storage/#native-s3-setup).
+
+1. **Pause the workload**: Stop ordinary readers and writers, wait for running operations to finish, and disable schedules and automatic restarts. Keep the existing DynamoDB configuration and library for the maintenance application used in the next step.
+
+1. **Recover tables with pending commits**: For each configured DynamoDB table and region, run the following scan. It returns distinct Delta table paths with incomplete commit entries:
+
+   ```bash
+   set -o pipefail
+   aws dynamodb scan \
+     --table-name <dynamodb-table-name> \
+     --region <dynamodb-region> \
+     --consistent-read \
+     --filter-expression '#complete = :incomplete' \
+     --expression-attribute-names '{"#complete":"complete"}' \
+     --expression-attribute-values '{":incomplete":{"S":"false"}}' \
+     --projection-expression 'tablePath' \
+     --query 'Items[].tablePath.S' \
+     --output text | tr '\t' '\n' | sort -u
+   ```
+
+   Keep scan pagination enabled. If the DynamoDB table is shared, use only the paths for the tables being migrated. From a fresh maintenance application with the existing `S3DynamoDBLogStore` configuration and the same DynamoDB table and region, read each affected table to trigger recovery. For example, use a path returned by the scan:
+
+   ```sql
+   SELECT * FROM delta.`s3a://<bucket>/<table-path>` LIMIT 1;
+   ```
+
+   Run the scan again and confirm that it returns no paths for the tables being migrated. If a scan or table read fails, or incomplete entries remain, stop and [investigate recovery](#if-recovery-does-not-finish). Stop the maintenance application after recovery completes. Tables without pending commits need no log rewrite.
+
+1. **Update every client configuration**: Remove settings that select `S3DynamoDBLogStore` from application launch arguments, defaults files, job definitions, and deployment templates. Check `spark.delta.logStore.class`, `spark.delta.logStore.<scheme>.impl` for every scheme in use, and their aliases without the `spark.` prefix. Remove the `delta-storage-s3-dynamodb` dependency and its client settings from migrated applications. Retain S3 credentials and matching Hadoop/S3A dependencies. Without an override, supported Spark runtimes automatically use `S3LogStore`.
+
+1. **Restart and verify**: Restart every client with the updated settings. For Spark applications, confirm that the driver logs show `io.delta.storage.S3LogStore`. Check that reads and writes succeed before resuming normal traffic. If Spark selects `S3SingleDriverLogStore`, keep multi-cluster writes paused and correct the runtime or configuration.
+
+1. **Resume the workload**: Resume traffic after every client has been updated and stale applications cannot restart with the old settings. Retain the DynamoDB table and temporary S3 objects through migration verification, and confirm that no other workload needs them before cleanup.
+
+<Aside type="caution">
+  Do not mix `S3DynamoDBLogStore` writers with writers using S3 conditional
+  writes on the same table. Update and restart all clients before resuming the
+  workload.
+</Aside>
+
+<a id="if-recovery-does-not-finish"></a>
+
+### If recovery does not finish
+
+Read-side recovery checks the latest DynamoDB entry for a table. A successful query does not prove that every incomplete entry was cleared, so use the rescan to check completion. If incomplete entries remain, keep the workload paused and inspect the original records and S3 objects. Do not delete entries or mark them complete manually to bypass recovery.
+
 ## Migrate Delta Lake workloads to newer versions
 
 This section discusses any changes that may be required in the user code when migrating from older to newer versions of Delta Lake.
