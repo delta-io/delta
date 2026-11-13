@@ -176,11 +176,21 @@ This design enables:
 
 | Name | Description |
 | - | - |
-| <ins>tightStats</ins> | <ins>Whether per-column statistics (`minValues`, `maxValues`, `nullCount`) are currently **tight** or **wide**. `nullCount` is covered for every column on which statistics are collected. `minValues` and `maxValues` are covered for every such column *other than* `string` columns.</ins> |
+| <ins>tightStats</ins> | <ins>Whether per-column statistics (`minValues`, `maxValues`, `nullCount`, `nanCount`, `valueCount`) are currently **tight** or **wide**. `nullCount`, `nanCount`, and `valueCount` are covered for every column on which they are collected. `minValues` and `maxValues` are covered for every such column *other than* `string` columns.</ins> |
 
 <ins>Unlike `tightBounds`, which excludes both `string` and timestamp columns (because timestamp bounds are truncated down to milliseconds), `tightStats` includes `timestamp` and `timestamp without time zone` columns. When the `adaptiveMetadata` table feature is enabled, writers must write `tightStats` on newly added or updated files. When `tightStats` is explicitly present in `stats` (whether `true` or `false`), `minValues` and `maxValues` of `timestamp` and `timestamp without time zone` columns must not be truncated down to milliseconds and must represent valid lower and upper bounds on the values in the file. Under `tightStats`, `minValues`, `maxValues`, and `nullCount` follow the same tight (`tightStats=true`) and wide (`tightStats=false`) semantics defined for `tightBounds`, except that `timestamp` and `timestamp without time zone` columns are included in the tightness evaluation.</ins>
 
 <ins>When the `adaptiveMetadata` table feature is enabled, if `tightBounds` is absent from `stats`, readers must default it to `false`. Similarly, if `tightStats` is absent, readers must default it to `false`.</ins>
+
+<ins>When the `adaptiveMetadata` table feature is enabled, the following additional per-column statistics are supported in `add.stats` and `remove.stats`. They are keyed by physical column name, like `nullCount`, and have the same meaning as the Iceberg [content stats](#content-stats) they map to (see [Stats Reconciliation](#stats-reconciliation)):</ins>
+
+| Name | Applies to | Description (`stats.tightStats=true`) | Description (`stats.tightStats=false`) |
+| - | - | - | - |
+| <ins>valueCount</ins> | <ins>all columns</ins> | <ins>The number of values in the column across the valid rows of the file, including `null` and NaN values. For a field nested in an array or map, each element, key, or value is counted, so `valueCount` can differ from `numRecords`.</ins> | <ins>Carries no information, and readers must treat it as absent.</ins> |
+| <ins>nanCount</ins> | <ins>`float`, `double`</ins> | <ins>The number of NaN values in the column across the valid rows of the file.</ins> | <ins>If it equals 0, no valid row is NaN in this column. If it equals `numRecords`, every valid row is NaN in this column. Any other value carries no information and should be treated as if absent.</ins> |
+| <ins>totalBytes</ins> | <ins>`string`, `binary`, `variant`</ins> | <ins>An estimate of the uncompressed in-memory size, in bytes, of the non-null values in the column. The estimate depends on the in-memory representation.</ins> | <ins>Same as when `tightStats=true`. `totalBytes` is not covered by tightness.</ins> |
+
+<ins>Writers are not required to write `valueCount`, `nanCount`, or `totalBytes`. A writer that sets `tightStats` to `true` must ensure that every `nullCount`, `nanCount`, and `valueCount` in `stats` is exact for the valid rows of the file. If it cannot, it must omit that count or set `tightStats` to `false`. A writer that copies the stats of an existing file or changes only their tightness, for example to widen them or to write `remove.stats`, must keep any `valueCount`, `nanCount`, and `totalBytes` already present instead of dropping them. A writer that recomputes the stats from the data file replaces them.</ins>
 
 --------
 
@@ -506,7 +516,7 @@ A `DATA_MANIFEST` entry's `tight_stats` may be `true` only if every constituent 
 
 ### Stats Reconciliation
 
-Delta `add` actions carry statistics as a JSON `stats` string (`numRecords`, `nullCount`, `minValues`, `maxValues`, `tightStats`, `tightBounds`), keyed by physical column name. Manifest entries carry the same information as `content_stats`, keyed by column-mapping field ID and stored in each field's type. A live file's stats exist as `add.stats` while it is only in the Delta log, and as `content_stats` once it is folded into the tree — never both. Readers must treat the two representations as equivalent for data skipping. `remove` actions carry a copy of the removed file's stats so that log replay can prune them (see [Remove File](#remove-file)).
+Delta `add` actions carry statistics as a JSON `stats` string (`numRecords`, `nullCount`, `nanCount`, `valueCount`, `totalBytes`, `minValues`, `maxValues`, `tightStats`, `tightBounds`), keyed by physical column name. Manifest entries carry the same information as `content_stats`, keyed by column-mapping field ID and stored in each field's type. A live file's stats exist as `add.stats` while it is only in the Delta log, and as `content_stats` once it is folded into the tree — never both. Readers must treat the two representations as equivalent for data skipping. `remove` actions carry a copy of the removed file's stats so that log replay can prune them (see [Remove File](#remove-file)).
 
 When folding a log `add` into a manifest, writers convert `add.stats` to `content_stats` as follows. Field IDs are the schema's column mapping IDs (`delta.columnMapping.id`), which are assigned in both `name` and `id` mode: the stats key (a physical column name) is matched to the schema field with that `delta.columnMapping.physicalName`, and that field's ID keys the stats struct. `minValues`/`maxValues` are converted from their JSON representation to the field's typed value.
 
@@ -514,13 +524,16 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 |-------------------|--------------------|
 | `numRecords` | entry `record_count` (field 103) |
 | `nullCount[col]` | `null_value_count` |
+| `nanCount[col]` | `nan_value_count` |
+| `valueCount[col]` | `value_count` |
+| `totalBytes[col]` | `total_bytes` |
 | `minValues[col]` | `lower_bound` |
 | `maxValues[col]` | `upper_bound` |
 | `tightStats` | `tight_stats` |
 
-`value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightStats` carries Delta's wide-stats-under-deletion-vectors semantics to `tight_stats`, consistent with `DATA_MANIFEST` entries having `tight_stats = false` when an MDV is present. Both flags cover the bounds and null counts of every column, and neither covers `string` bounds.
+The mapping applies in both directions. When converting a manifest entry back to an `add` or `remove` action, writers must carry `value_count`, `nan_value_count`, and `total_bytes` into `valueCount`, `nanCount`, and `totalBytes` instead of dropping them. A count that is absent on one side is absent on the other, and readers treat it as unknown. `tightStats` carries Delta's wide-stats-under-deletion-vectors semantics to `tight_stats`, consistent with `DATA_MANIFEST` entries having `tight_stats = false` when an MDV is present. Both flags cover the bounds and the null, NaN, and value counts of every column, and neither covers `string` bounds or `total_bytes`.
 
-For a `DATA` entry whose `tight_stats` is `false` or absent, `null_value_count` has the same meaning as a wide `nullCount` (see [Per-file Statistics](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics)). A value of 0 means that no live row is null in that column, and a value equal to `record_count` means that every live row is null. Any other value carries no information, and readers must treat it as absent.
+For a `DATA` entry whose `tight_stats` is `false` or absent, `null_value_count` and `nan_value_count` have the same meaning as a wide `nullCount` (see [Per-file Statistics](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics)) and a wide `nanCount` (see [Per-file Statistics](#per-file-statistics)). A value of 0 means that no live row is null (or NaN) in that column, and a value equal to `record_count` means that every live row is null (or NaN). Any other value carries no information, and readers must treat it as absent. `value_count` carries no information in that case either.
 
 ## Snapshot ID Generation
 
@@ -646,6 +659,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Set `tightStats` on newly written or updated file actions, and write `minValues` and `maxValues` of `timestamp` and `timestamp without time zone` columns in `add.stats` and `remove.stats` as valid lower and upper bounds without truncating down to milliseconds (see [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation)).
+- Keep `valueCount`, `nanCount`, and `totalBytes` when copying file stats or changing only their tightness, and carry them between `add.stats` and `content_stats` in both directions (see [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation)).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
 - Include the `dataChange` field in the `commitInfo` action of every commit (see [Commit Provenance Information](#commit-provenance-information)).
 
