@@ -30,7 +30,6 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl
 
-
 class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
 
   private lazy val kernelContext = new KernelContext(Map.empty, LogStore(spark))
@@ -102,7 +101,6 @@ class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
       assert(kernelFiles.map(_.stats).forall(stat => stat != null && stat.nonEmpty))
     }
   }
-
 
   test("buildAllFiles preserves partition values") {
     withTempDir { dir =>
