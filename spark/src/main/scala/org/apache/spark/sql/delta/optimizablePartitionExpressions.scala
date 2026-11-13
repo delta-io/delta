@@ -21,9 +21,9 @@ import org.apache.spark.sql.delta.OptimizablePartitionExpression._
 
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.dsl.expressions._
-import org.apache.spark.sql.catalyst.expressions.{Cast, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, TruncDate, TruncTimestamp, UnixTimestamp, Year}
+import org.apache.spark.sql.catalyst.expressions.{Cast, Ceil, DateFormatClass, DayOfMonth, Expression, Floor, Hour, IsNull, Literal, Month, Or, Substring, TruncDate, TruncTimestamp, UnixTimestamp, Year}
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
-import org.apache.spark.sql.types.{DateType, StringType, TimestampType}
+import org.apache.spark.sql.types.{DateType, NumericType, StringType, TimestampType}
 
 /**
  * Defines rules to convert a data filter to a partition filter for a special generation expression
@@ -670,6 +670,108 @@ case class TruncDatePartitionExpr(partitionColumn: String, format: String)
     val expr = lit.dataType match {
       case TimestampType | DateType | StringType =>
         Some(partitionColumn.toPartCol >= TruncDate(lit, Literal(format)))
+      case _ => None
+    }
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def isNull(): Option[Expression] = {
+    Some(partitionColumn.toPartCol.isNull)
+  }
+
+}
+
+/**
+ * The rules for the generation expression `CEIL(col)` / `CEILING(col)`.
+ * Since CEIL is monotonically non-decreasing, data filters can be safely
+ * widened to partition filters (e.g. `x < lit` implies `ceil(x) <= ceil(lit)`).
+ *
+ * @param partitionColumn the partition column name using CEIL in its generation expression.
+ */
+case class CeilPartitionExpr(partitionColumn: String)
+  extends OptimizablePartitionExpression {
+
+  override def lessThan(lit: Literal): Option[Expression] = {
+    lessThanOrEqual(lit)
+  }
+
+  override def lessThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case _: NumericType =>
+        Some(partitionColumn.toPartCol <= Ceil(lit))
+      case _ => None
+    }
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def equalTo(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case _: NumericType =>
+        Some(partitionColumn.toPartCol === Ceil(lit))
+      case _ => None
+    }
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def greaterThan(lit: Literal): Option[Expression] = {
+    greaterThanOrEqual(lit)
+  }
+
+  override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case _: NumericType =>
+        Some(partitionColumn.toPartCol >= Ceil(lit))
+      case _ => None
+    }
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def isNull(): Option[Expression] = {
+    Some(partitionColumn.toPartCol.isNull)
+  }
+
+}
+
+/**
+ * The rules for the generation expression `FLOOR(col)`.
+ * Since FLOOR is monotonically non-decreasing, data filters can be safely
+ * widened to partition filters (e.g. `x > lit` implies `floor(x) >= floor(lit)`).
+ *
+ * @param partitionColumn the partition column name using FLOOR in its generation expression.
+ */
+case class FloorPartitionExpr(partitionColumn: String)
+  extends OptimizablePartitionExpression {
+
+  override def lessThan(lit: Literal): Option[Expression] = {
+    lessThanOrEqual(lit)
+  }
+
+  override def lessThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case _: NumericType =>
+        Some(partitionColumn.toPartCol <= Floor(lit))
+      case _ => None
+    }
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def equalTo(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case _: NumericType =>
+        Some(partitionColumn.toPartCol === Floor(lit))
+      case _ => None
+    }
+    expr.map(e => Or(e, IsNull(e)))
+  }
+
+  override def greaterThan(lit: Literal): Option[Expression] = {
+    greaterThanOrEqual(lit)
+  }
+
+  override def greaterThanOrEqual(lit: Literal): Option[Expression] = {
+    val expr = lit.dataType match {
+      case _: NumericType =>
+        Some(partitionColumn.toPartCol >= Floor(lit))
       case _ => None
     }
     expr.map(e => Or(e, IsNull(e)))
