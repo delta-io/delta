@@ -24,6 +24,7 @@ import io.delta.kernel.Table;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -387,7 +388,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     StructType readDataSchema = dataSchema;
     StructType ddlOrderedReadOutputSchema =
         SchemaUtils.ddlOrderedOutputSchema(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
             readDataSchema,
             partitionSchema);
     Filter[] filters = new Filter[0];
@@ -429,7 +430,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     StructType readDataSchema = dataSchema;
     StructType ddlOrderedReadOutputSchema =
         SchemaUtils.ddlOrderedOutputSchema(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
             readDataSchema,
             partitionSchema);
     Filter[] filters = new Filter[0];
@@ -478,7 +479,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     StructType readDataSchema = dataSchema;
     StructType ddlOrderedReadOutputSchema =
         SchemaUtils.ddlOrderedOutputSchema(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
             readDataSchema,
             partitionSchema);
     Filter[] filters = new Filter[0];
@@ -614,7 +615,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
             readDataSchema,
             partitionSchema);
     assertArrayEquals(new String[] {"id", "part", "col3"}, result.fieldNames());
@@ -642,7 +643,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
             readDataSchema,
             partitionSchema);
     assertArrayEquals(new String[] {"id", "col3", "part"}, result.fieldNames());
@@ -664,7 +665,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
             readDataSchema,
             emptyPartitions);
     // Returns the readDataSchema instance unchanged (short-circuit).
@@ -704,7 +705,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
             readDataSchema,
             partitionSchema);
     assertArrayEquals(new String[] {"id", "part", "col3", "_metadata"}, result.fieldNames());
@@ -737,7 +738,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
     StructType result =
         SchemaUtils.ddlOrderedOutputSchema(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            SchemaUtils.convertKernelMetadataToSparkSchema(((SnapshotImpl) snapshot).getMetadata()),
             readDataSchema,
             partitionSchema);
     assertArrayEquals(new String[] {"a", "p1", "b", "p2", "c"}, result.fieldNames());

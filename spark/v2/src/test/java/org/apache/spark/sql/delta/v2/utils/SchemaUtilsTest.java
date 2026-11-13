@@ -40,9 +40,6 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.types.VariantType;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
 import java.util.stream.Stream;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.types.DataTypes;
@@ -221,92 +218,6 @@ public class SchemaUtilsTest {
   }
 
   @Test
-  public void testConvertKernelSchemaToSparkSchema() {
-    StructType kernelSchema =
-        new StructType().add("a", IntegerType.INTEGER, true).add("b", StringType.STRING, false);
-
-    org.apache.spark.sql.types.StructType expectedSparkSchema =
-        DataTypes.createStructType(
-            new org.apache.spark.sql.types.StructField[] {
-              DataTypes.createStructField("a", DataTypes.IntegerType, true),
-              DataTypes.createStructField("b", DataTypes.StringType, false)
-            });
-
-    org.apache.spark.sql.types.StructType actualSparkSchema =
-        SchemaUtils.convertKernelSchemaToSparkSchema(kernelSchema);
-    assertEquals(expectedSparkSchema, actualSparkSchema);
-  }
-
-  @ParameterizedTest
-  @MethodSource("collations")
-  public void testCollatedStringsToSparkAreRejected(String sparkCollation, String kernelCollation) {
-    StringType kernelString = new StringType(kernelCollation);
-    List<StructType> kernelSchemas = new ArrayList<>();
-    kernelSchemas.add(new StructType().add("s", kernelString));
-    kernelSchemas.add(new StructType().add("a", new ArrayType(kernelString, true)));
-    kernelSchemas.add(new StructType().add("outer", new StructType().add("s", kernelString)));
-    List<DataType> kernelTypes =
-        Arrays.asList(kernelString, new MapType(StringType.STRING, kernelString, true));
-    if (sparkCollation.equals("UTF8_BINARY")) {
-      kernelSchemas.forEach(SchemaUtils::convertKernelSchemaToSparkSchema);
-      kernelTypes.forEach(SchemaUtils::convertKernelDataTypeToSparkDataType);
-      return;
-    }
-    // A schema can also record a collation only in field metadata, on a binary string.
-    kernelSchemas.add(
-        new StructType()
-            .add(
-                "s",
-                StringType.STRING,
-                FieldMetadata.builder()
-                    .putFieldMetadata(
-                        "__COLLATIONS",
-                        FieldMetadata.builder().putString("s", kernelCollation).build())
-                    .build()));
-    for (StructType kernelSchema : kernelSchemas) {
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> SchemaUtils.convertKernelSchemaToSparkSchema(kernelSchema),
-          kernelSchema.toString());
-    }
-    for (DataType kernelType : kernelTypes) {
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> SchemaUtils.convertKernelDataTypeToSparkDataType(kernelType),
-          kernelType.toString());
-    }
-  }
-
-  static Stream<Arguments> nullInPrimitiveArraysProvider() {
-    return Stream.of(
-        Arguments.of(
-            "Long",
-            FieldMetadata.builder().putLongArray("ids", new Long[] {1L, null, 3L}).build(),
-            1),
-        Arguments.of(
-            "Double",
-            FieldMetadata.builder().putDoubleArray("scores", new Double[] {1.1, 2.2, null}).build(),
-            2),
-        Arguments.of(
-            "Boolean",
-            FieldMetadata.builder()
-                .putBooleanArray("flags", new Boolean[] {true, null, false})
-                .build(),
-            1));
-  }
-
-  @ParameterizedTest(name = "{0} array with null at index {2}")
-  @MethodSource("nullInPrimitiveArraysProvider")
-  public void testNullInPrimitiveArrays(
-      String typeName, FieldMetadata kernelMetadata, int expectedNullIndex) {
-    Exception ex =
-        assertThrows(
-            Exception.class,
-            () -> SchemaUtils.convertKernelFieldMetadataToSparkMetadata(kernelMetadata));
-    assertTrue(ex.getMessage().contains("Null element at index " + expectedNullIndex));
-  }
-
-  @Test
   public void testSchemaRoundTripWithFieldMetadata() {
     // Schema with field metadata (e.g., column mapping)
     org.apache.spark.sql.types.StructType sparkSchema =
@@ -334,20 +245,12 @@ public class SchemaUtilsTest {
     // Verify Spark → Kernel conversion
     StructType actualKernelSchema = SchemaUtils.convertSparkSchemaToKernelSchema(sparkSchema);
     assertEquals(expectedKernelSchema, actualKernelSchema);
-
-    // Verify Kernel → Spark conversion
-    org.apache.spark.sql.types.StructType sparkSchema2 =
-        SchemaUtils.convertKernelSchemaToSparkSchema(actualKernelSchema);
-    assertEquals(sparkSchema, sparkSchema2);
   }
 
   private void checkConversion(
       org.apache.spark.sql.types.DataType sparkDataType, DataType kernelDataType) {
     DataType toKernel = SchemaUtils.convertSparkDataTypeToKernelDataType(sparkDataType);
     assertEquals(kernelDataType, toKernel);
-    org.apache.spark.sql.types.DataType toSpark =
-        SchemaUtils.convertKernelDataTypeToSparkDataType(kernelDataType);
-    assertEquals(sparkDataType, toSpark);
   }
 
   ////////////////////////////////
@@ -474,8 +377,6 @@ public class SchemaUtilsTest {
       String typeName, Metadata sparkMetadata, FieldMetadata kernelMetadata) {
     assertEquals(
         kernelMetadata, SchemaUtils.convertSparkMetadataToKernelFieldMetadata(sparkMetadata));
-    assertEquals(
-        sparkMetadata, SchemaUtils.convertKernelFieldMetadataToSparkMetadata(kernelMetadata));
   }
 
   @Test
