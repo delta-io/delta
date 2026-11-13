@@ -23,9 +23,11 @@ import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.DeltaFileSystemOptions
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DeltaDataFrameHadoopOptionsSuite extends QueryTest
@@ -43,7 +45,8 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
   private def fakeFileSystemOptions: Map[String, String] = {
     Map(
       "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-      "fs.fake.impl.disable.cache" -> "true"
+      "fs.fake.impl.disable.cache" -> "true",
+      "fs.fake.camelCaseKey" -> "camelCaseValue"
     )
   }
 
@@ -178,13 +181,33 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
       clearCachedDeltaLogToForceReload()
       op
       val deltaLog = DeltaLog.forTable(spark, new Path(path), fakeFileSystemOptions)
+      assert(DeltaLog.cacheSize == 1, "Operation did not reuse the same DeltaLog cache entry")
       assert(
         deltaLog.options("fs.fake.impl") == classOf[FakeFileSystem].getName,
         "fs.fake.impl was not propagated to DeltaLog.options")
       assert(
         deltaLog.newDeltaHadoopConf().get("fs.fake.impl") == classOf[FakeFileSystem].getName,
         "fs.fake.impl was not propagated to Hadoop configuration")
+      assert(
+        deltaLog.options("fs.fake.camelCaseKey") == "camelCaseValue",
+        "mixed-case fs.* option key was not preserved in DeltaLog.options")
+      assert(
+        deltaLog.newDeltaHadoopConf().get("fs.fake.camelCaseKey") == "camelCaseValue",
+        "mixed-case fs.* option key was not preserved in Hadoop configuration")
     }
+  }
+
+  test("filterHadoopOptions preserves mixed-case keys from CaseInsensitiveMap") {
+    val options = CaseInsensitiveMap(Map(
+      "fs.azure.skipUserGroupMetadataDuringInitialization" -> "true",
+      "dfs.datatransfer.server.fixedBlackList.file" -> "/etc/blacklist",
+      "mergeSchema" -> "true"
+    ))
+    val filtered = DeltaFileSystemOptions.filterHadoopOptions(options)
+    assert(filtered == Map(
+      "fs.azure.skipUserGroupMetadataDuringInitialization" -> "true",
+      "dfs.datatransfer.server.fixedBlackList.file" -> "/etc/blacklist"
+    ))
   }
 
   test("all operations should propagate Hadoop file system options") {

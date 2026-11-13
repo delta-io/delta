@@ -197,7 +197,7 @@ case class TableChanges(
   def toReadQuery: LogicalPlan = child.transformUp {
     case DataSourceV2RelationShim(d: DeltaTableV2, _, _, _, options) =>
       // withOptions empties the catalog table stats
-      d.withOptions(options.asScala.toMap).toLogicalRelation
+      d.withOptions(options.asCaseSensitiveMap().asScala.toMap).toLogicalRelation
     case r: NamedRelation =>
       throw DeltaErrors.notADeltaTableException(fnName, r.name)
     case l: LogicalRelation =>
