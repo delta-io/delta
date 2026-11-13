@@ -193,7 +193,7 @@ class DeltaV2Snapshot(
   // --- Files surfaced via Kernel scan ---------------------------------------------------------
 
   override lazy val allFiles: Dataset[AddFile] =
-    KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine)
+    KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine, redactedPath)
 
   // --- StatisticsCollection ------------------------------------------------------------------
 

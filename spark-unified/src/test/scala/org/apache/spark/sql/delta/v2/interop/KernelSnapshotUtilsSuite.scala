@@ -56,10 +56,11 @@ class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
   private def allFilesFor(path: String): (Array[AddFile], Array[AddFile]) = {
     val kernelEngine = engine
     val kernelSnapshot = kernelSnapshotFor(path, kernelEngine)
+    val v1Snapshot = DeltaLog.forTable(spark, path).snapshot
     val kernelFiles = KernelSnapshotUtils
-      .buildAllFiles(kernelSnapshot, spark, kernelEngine)
+      .buildAllFiles(kernelSnapshot, spark, kernelEngine, v1Snapshot.redactedPath)
       .collect()
-    val v1Files = DeltaLog.forTable(spark, path).snapshot.allFiles.collect()
+    val v1Files = v1Snapshot.allFiles.collect()
     (kernelFiles, v1Files)
   }
 
@@ -167,11 +168,12 @@ class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
 
       val kernelEngine = engine
       val kernelSnapshot = kernelSnapshotFor(path, kernelEngine)
-      val kernelFiles =
-        KernelSnapshotUtils.buildAllFiles(kernelSnapshot, spark, kernelEngine).collect()
+      val snapshot = new DeltaV2Snapshot(kernelSnapshot, kernelContext)
+      val kernelFiles = KernelSnapshotUtils
+        .buildAllFiles(kernelSnapshot, spark, kernelEngine, snapshot.redactedPath)
+        .collect()
       assert(kernelFiles.find(_.path == taggedPath).map(_.tags).contains(expectedTags))
 
-      val snapshot = new DeltaV2Snapshot(kernelSnapshot, kernelContext)
       val selectedFiles = snapshot.filesForScan(Nil).files
       assert(selectedFiles.find(_.path == taggedPath).map(_.tags).contains(expectedTags))
     }

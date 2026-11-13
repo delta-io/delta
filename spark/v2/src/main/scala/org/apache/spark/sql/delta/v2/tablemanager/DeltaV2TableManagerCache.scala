@@ -18,8 +18,10 @@ package org.apache.spark.sql.delta.v2.tablemanager
 import java.util.concurrent.{ExecutionException, TimeUnit}
 
 import scala.jdk.CollectionConverters._
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.DeltaTableUtils
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaFileSystemOptions, PathWithFileSystem}
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
@@ -28,6 +30,7 @@ import com.google.common.cache.{Cache, CacheBuilder, RemovalListener}
 import com.google.common.util.concurrent.{ExecutionError, UncheckedExecutionException}
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
@@ -51,17 +54,36 @@ private[tablemanager] class DeltaV2TableManagerCache(
 ) extends DeltaV2Logging {
   import DeltaV2TableManagerCache.CacheKey
 
-  private val cache: Cache[CacheKey, DeltaV2TableManager] = {
-    val listener: RemovalListener[CacheKey, DeltaV2TableManager] = notification => {
-        val manager = notification.getValue
-        if (manager != null) manager.retire()
+  // Eviction can run under another session; retain the loading caller's redacted path.
+  private case class CacheEntry(manager: DeltaV2TableManager, redactedPath: String)
+
+  private val cache: Cache[CacheKey, CacheEntry] = {
+    val listener: RemovalListener[CacheKey, CacheEntry] = notification => {
+      val entry = notification.getValue
+      if (entry != null) {
+        val startedAtNs = ticker.read()
+        try {
+          entry.manager.retire()
+          val elapsedMs = elapsedTimeMs(startedAtNs, ticker.read())
+          logInfo(log"Retired Delta V2 table manager for " +
+            log"${MDC(DeltaLogKeys.PATH, entry.redactedPath)} after cache eviction " +
+            log"(${MDC(DeltaLogKeys.STATUS, notification.getCause)}) in " +
+            log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms")
+        } catch {
+          case NonFatal(e) =>
+            logError(log"Failed to retire Delta V2 table manager for " +
+              log"${MDC(DeltaLogKeys.PATH, entry.redactedPath)} after cache eviction " +
+              log"(${MDC(DeltaLogKeys.STATUS, notification.getCause)}) in " +
+              log"${MDC(DeltaLogKeys.TIME_MS, elapsedTimeMs(startedAtNs, ticker.read()))} ms", e)
+        }
       }
+    }
     CacheBuilder.newBuilder()
       .maximumSize(maxSize)
       .expireAfterAccess(ttlMinutes, TimeUnit.MINUTES)
       .removalListener(listener)
       .ticker(ticker)
-      .build[CacheKey, DeltaV2TableManager]()
+      .build[CacheKey, CacheEntry]()
   }
 
   // Guava's Cache.get wraps loader failures: checked exceptions in ExecutionException, runtime
@@ -69,19 +91,28 @@ private[tablemanager] class DeltaV2TableManagerCache(
   // the original Delta error class, SQLSTATE, and cause chain rather than exposing Guava wrappers.
   def getOrCreate(
       key: CacheKey,
-      initialCatalogTableOpt: Option[CatalogTable] = None
+      initialCatalogTableOpt: Option[CatalogTable] = None,
+      sqlConf: SQLConf = SQLConf.get
   ): DeltaV2TableManager = {
+    val redactedPath = redactPath(key.path, sqlConf)
     try {
       cache.get(key, () => {
         recordFrameProfile("tableManagerCache.createManager") {
-          managerFactory(key, initialCatalogTableOpt)
+          val createStartedAtNs = ticker.read()
+          val created = managerFactory(key, initialCatalogTableOpt)
+          val elapsedMs = elapsedTimeMs(createStartedAtNs, ticker.read())
+          logInfo(log"Created Delta V2 table manager for " +
+            log"${MDC(DeltaLogKeys.PATH, redactedPath)} in " +
+            log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms")
+          CacheEntry(created, redactedPath)
         }
-      })
+      }).manager
     } catch {
       case e @ (_: UncheckedExecutionException |
           _: ExecutionError | _: ExecutionException) =>
         val cause = Option(e.getCause).getOrElse(e)
-        logWarning(log"Cache loader failed; rethrowing original cause", cause)
+        logWarning(log"Failed to load Delta V2 table manager for " +
+          log"${MDC(DeltaLogKeys.PATH, redactedPath)}", cause)
         throw cause
     }
   }
@@ -100,7 +131,8 @@ private[tablemanager] class DeltaV2TableManagerCache(
 
   def size(): Long = cache.size()
 
-  def getIfPresent(key: CacheKey): Option[DeltaV2TableManager] = Option(cache.getIfPresent(key))
+  def getIfPresent(key: CacheKey): Option[DeltaV2TableManager] =
+    Option(cache.getIfPresent(key)).map(_.manager)
 
   def contains(key: CacheKey): Boolean = cache.getIfPresent(key) != null
 
@@ -228,7 +260,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
           key.sessionInvariantFsOptions,
           initialCatalogTableOpt)
       }
-      getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt)
+      getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt, sqlConf)
     }
   }
 
@@ -247,7 +279,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
           key.sessionInvariantFsOptions,
           initialCatalogTableOpt)
       }
-      getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt)
+      getOrCreateInstance(sqlConf).getOrCreate(key, initialCatalogTableOpt, sqlConf)
     }
   }
 

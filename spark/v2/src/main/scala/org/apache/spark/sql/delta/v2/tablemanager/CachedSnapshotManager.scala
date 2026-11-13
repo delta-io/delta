@@ -22,6 +22,7 @@ import java.util.concurrent.locks.ReentrantLock
 import scala.jdk.OptionConverters._
 
 import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.{
@@ -38,6 +39,7 @@ import io.delta.kernel.internal.{
   DeltaHistoryManager => KernelDeltaHistoryManager
 }
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
@@ -200,10 +202,10 @@ private[tablemanager] class CachedSnapshotManager(
         existing.snapshot
       } else {
         if (existing != null && !sameTable) {
-          logWarning(
-            s"Table identity changed while refreshing snapshot: " +
-              s"previous=${existing.snapshot.metadata.id}, " +
-              s"current=${refreshed.snapshot.metadata.id}")
+          logWarning(log"Delta V2 table identity changed while refreshing " +
+            log"${MDC(DeltaLogKeys.PATH, refreshed.snapshot.redactedPath)}: previous=" +
+            log"${MDC(DeltaLogKeys.METADATA_OLD, existing.snapshot.metadata.id)}, current=" +
+            log"${MDC(DeltaLogKeys.METADATA_NEW, refreshed.snapshot.metadata.id)}")
         }
         currentSnapshot = refreshed
         retireSnapshotInternal(existing)
@@ -236,9 +238,11 @@ private[tablemanager] class CachedSnapshotManager(
           validatedAtMs = -1L)
         val previous = currentSnapshot
         if (previous != null && previous.snapshot.metadata.id != loaded.snapshot.metadata.id) {
-          logWarning(
-            s"Table identity changed while loading snapshot at version $version: " +
-              s"previous=${previous.snapshot.metadata.id}, current=${loaded.snapshot.metadata.id}")
+          logWarning(log"Delta V2 table identity changed while loading " +
+            log"${MDC(DeltaLogKeys.PATH, loaded.snapshot.redactedPath)} at version " +
+            log"${MDC(DeltaLogKeys.VERSION, version)}: previous=" +
+            log"${MDC(DeltaLogKeys.METADATA_OLD, previous.snapshot.metadata.id)}, current=" +
+            log"${MDC(DeltaLogKeys.METADATA_NEW, loaded.snapshot.metadata.id)}")
         }
         // An exact-version load proves this snapshot exists, but not that it is the latest.
         currentSnapshot = loaded
@@ -252,8 +256,12 @@ private[tablemanager] class CachedSnapshotManager(
       return upperBound
     }
     // Historical snapshots are returned to the caller but never replace the cached latest snapshot.
-    val historicalSnapshot = withUncachedSnapshotManager(catalogTableOpt)(
-      _.loadSnapshotAt(version))
+    val historicalSnapshot =
+      withUncachedSnapshotManager(catalogTableOpt)(_.loadSnapshotAt(version))
+    logDebug(log"Loaded historical Delta V2 snapshot for " +
+      log"${MDC(DeltaLogKeys.PATH, historicalSnapshot.redactedPath)} at version " +
+      log"${MDC(DeltaLogKeys.VERSION, version)}; cached latest version is " +
+      log"${MDC(DeltaLogKeys.VERSION2, upperBound.version)}")
     historicalSnapshot
   }
 
