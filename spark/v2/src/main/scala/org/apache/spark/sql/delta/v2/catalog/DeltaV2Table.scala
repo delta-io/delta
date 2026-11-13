@@ -483,7 +483,8 @@ class DeltaV2Table private (
       tableManager,
       schemaProvider.getDataSchema(),
       schemaProvider.getPartitionSchema(),
-      info)
+      info,
+      queryContext)
   }
 
   /**
