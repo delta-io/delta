@@ -100,7 +100,15 @@ object SparkMimaExcludes {
       // Changes in 4.2.0
       // MDC and logBasedOnLevel were removed from Spark's Logging trait in Spark 4.2.0-SNAPSHOT
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.MDC"),
-      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.logBasedOnLevel")
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.logBasedOnLevel"),
+
+      // Changes in 4.5.0: remove the CCv1 preview DynamoDB commit coordinator backend.
+      ProblemFilters.exclude[MissingClassProblem](
+        "io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClient"),
+      ProblemFilters.exclude[MissingClassProblem](
+        "io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClientBuilder"),
+      ProblemFilters.exclude[MissingClassProblem](
+        "io.delta.dynamodbcommitcoordinator.ReflectionUtils")
 
       // scalastyle:on line.size.limit
   )

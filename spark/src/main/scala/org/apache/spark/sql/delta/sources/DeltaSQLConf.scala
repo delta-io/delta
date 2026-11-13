@@ -1149,49 +1149,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
-  //////////////////////////////////////////////
-  // DynamoDB Commit Coordinator-specific configs
-  /////////////////////////////////////////////
-
-  val COORDINATED_COMMITS_DDB_AWS_CREDENTIALS_PROVIDER_NAME =
-    buildConf("coordinatedCommits.commitCoordinator.dynamodb.awsCredentialsProviderName")
-      .internal()
-      .doc("The fully qualified class name of the AWS credentials provider to use for " +
-        "interacting with DynamoDB in the DynamoDB Commit Coordinator Client. e.g. " +
-        "com.amazonaws.auth.DefaultAWSCredentialsProviderChain.")
-      .stringConf
-      .createWithDefault("com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
-
-  val COORDINATED_COMMITS_DDB_SKIP_PATH_CHECK =
-    buildConf("coordinatedCommits.commitCoordinator.dynamodb.skipPathCheckEnabled")
-      .internal()
-      .doc("When enabled, the DynamoDB Commit Coordinator will not enforce that the table path " +
-        "of the current Delta table matches the stored in the corresponding DynamoDB table. This " +
-        "should only be used when the observed table path for the same physical table varies " +
-        "depending on how it is accessed (e.g. abfs://path1 vs abfss://path1). Leaving this " +
-        "enabled can be dangerous as every physical copy of a Delta table with try to write to" +
-        " the same DynamoDB table.")
-      .booleanConf
-      .createWithDefault(false)
-
-  val COORDINATED_COMMITS_DDB_READ_CAPACITY_UNITS =
-    buildConf("coordinatedCommits.commitCoordinator.dynamodb.readCapacityUnits")
-      .internal()
-      .doc("Controls the provisioned read capacity units for the DynamoDB table backing the " +
-        "DynamoDB Commit Coordinator. This configuration is only used when the DynamoDB table " +
-        "is first provisioned and cannot be used configure an existing table.")
-      .intConf
-      .createWithDefault(5)
-
-  val COORDINATED_COMMITS_DDB_WRITE_CAPACITY_UNITS =
-    buildConf("coordinatedCommits.commitCoordinator.dynamodb.writeCapacityUnits")
-      .internal()
-      .doc("Controls the provisioned write capacity units for the DynamoDB table backing the " +
-        "DynamoDB Commit Coordinator. This configuration is only used when the DynamoDB table " +
-        "is first provisioned and cannot be used configure an existing table.")
-      .intConf
-      .createWithDefault(5)
-
   val COMMIT_FILES_ITERATOR_BACKFILL_GAP_FIX_ENABLED =
     buildConf("coordinatedCommits.commitFilesIterator.backfillGapFix.enabled")
       .internal()
@@ -1200,10 +1157,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "and Phase 2 (coordinator query), preventing silent data loss.")
       .booleanConf
       .createWithDefault(true)
-
-  //////////////////////////////////////////////
-  // DynamoDB Commit Coordinator-specific configs end
-  /////////////////////////////////////////////
 
   val IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED =
     buildConf("inCommitTimestamp.retainEnablementInfoFix.enabled")

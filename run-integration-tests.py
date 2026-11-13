@@ -382,58 +382,6 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
             print("Failed DynamoDB logstore integration tests tests in %s%s" % (test_file, label))
             raise
 
-def run_dynamodb_commit_coordinator_integration_tests(root_dir, version, test_name, extra_maven_repo,
-                                                extra_packages, conf, variant):
-    """
-    Runs DynamoDB Commit Coordinator integration tests for a single artifact variant.
-
-    variant: dict with suffix, spark_version, support_iceberg, support_hudi.
-             See get_spark_variants() for the format and example.
-    """
-    suffix = variant["suffix"]
-    label = " (suffix=%s)" % (suffix or "none") if suffix else ""
-
-    print(
-        "\n\n##### Running DynamoDB Commit Coordinator integration tests%s on version %s #####"
-        % (label, str(version))
-    )
-
-    test_dir = path.join(root_dir, \
-        path.join("spark", "src", "main", "java", "io", "delta", "dynamodbcommitcoordinator", "integration_tests"))
-    test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
-                  if path.isfile(path.join(test_dir, f)) and
-                  f.endswith(".py") and not f.startswith("_")]
-
-    python_root_dir = path.join(root_dir, "python")
-    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-
-    conf_args = []
-    if conf:
-        for i in conf:
-            conf_args.extend(["--conf", i])
-
-    repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
-
-    # Build package string with the variant's suffix
-    artifact_name = get_artifact_name(version)
-    packages = "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version)
-    if extra_packages:
-        packages += "," + extra_packages
-
-    for test_file in test_files:
-        if test_name is not None and test_name not in test_file:
-            print("\nSkipping DynamoDB Commit Coordinator integration tests in %s\n============" % test_file)
-            continue
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", packages] + repo_args + conf_args + [test_file]
-            print("\nRunning DynamoDB Commit Coordinator integration tests in %s%s\n=============" % (test_file, label))
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed DynamoDB Commit Coordinator integration tests in %s%s" % (test_file, label))
-            raise
 
 def run_s3_log_store_util_integration_tests():
     print("\n\n##### Running S3LogStoreUtil tests #####")
@@ -813,13 +761,7 @@ if __name__ == "__main__":
         required=False,
         default=None,
         nargs="+",
-        help="All `--conf` values passed to `spark-submit` for DynamoDB logstore/commit-coordinator integration tests")
-    parser.add_argument(
-        "--run-dynamodb-commit-coordinator-integration-tests",
-        required=False,
-        default=False,
-        action="store_true",
-        help="Run the DynamoDB Commit Coordinator tests (and only them)")
+        help="All `--conf` values passed to `spark-submit` for DynamoDB logstore integration tests")
     parser.add_argument(
         "--run-iceberg-integration-tests",
         required=False,
@@ -947,14 +889,6 @@ if __name__ == "__main__":
             run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test,
                                                     args.maven_repo, args.packages,
                                                     args.dbb_conf, variant)
-        quit()
-
-    if args.run_dynamodb_commit_coordinator_integration_tests:
-        for variant in variants:
-            set_spark_env(variant["spark_version"])
-            run_dynamodb_commit_coordinator_integration_tests(root_dir, args.version, args.test,
-                                                        args.maven_repo, args.packages,
-                                                        args.dbb_conf, variant)
         quit()
 
     if args.s3_log_store_util_only:
