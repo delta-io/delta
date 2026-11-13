@@ -206,6 +206,16 @@ This section explains how to quickly start reading and writing Delta tables on S
 
 For other languages and more examples of Delta table operations, see the [Quickstart](/quick-start/) page.
 
+<Aside type="note" title="Using an S3-compatible endpoint">
+  The `s3a` connector works with Amazon S3 as well as any S3-compatible object
+  store (for example, Backblaze B2, Cloudflare R2, or MinIO). To target a
+  compatible store, keep the configuration above and set
+  `spark.hadoop.fs.s3a.endpoint` to your provider's endpoint URL (for example,
+  `<your-s3-compatible-endpoint>`). Some providers also require path-style
+  access, which you can enable with
+  `spark.hadoop.fs.s3a.path.style.access=true`.
+</Aside>
+
 For efficient listing of Delta Lake metadata files on S3, set the configuration `delta.enableFastS3AListFrom=true`. This performance optimization is in experimental support mode. It will only work on `S3A` filesystems and will not work on [Amazon's EMR](https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-file-systems.html) default filesystem `S3`.
 
 <Tabs>
