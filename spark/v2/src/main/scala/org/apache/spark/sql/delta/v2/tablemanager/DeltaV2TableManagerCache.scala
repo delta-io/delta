@@ -18,8 +18,10 @@ package org.apache.spark.sql.delta.v2.tablemanager
 import java.util.concurrent.{ExecutionException, TimeUnit}
 
 import scala.jdk.CollectionConverters._
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.DeltaTableUtils
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaFileSystemOptions, PathWithFileSystem}
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
@@ -28,6 +30,7 @@ import com.google.common.cache.{Cache, CacheBuilder, RemovalListener}
 import com.google.common.util.concurrent.{ExecutionError, UncheckedExecutionException}
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
@@ -53,9 +56,27 @@ private[tablemanager] class DeltaV2TableManagerCache(
 
   private val cache: Cache[CacheKey, DeltaV2TableManager] = {
     val listener: RemovalListener[CacheKey, DeltaV2TableManager] = notification => {
-        val manager = notification.getValue
-        if (manager != null) manager.retire()
+      val key = notification.getKey
+      val manager = notification.getValue
+      if (manager != null) {
+        val startedAtNs = System.nanoTime()
+        try {
+          manager.retire()
+          val elapsedMs = elapsedTimeMs(startedAtNs)
+          logInfo(log"Retired Delta V2 table manager for " +
+            log"${MDC(DeltaLogKeys.PATH, key.path)} after cache eviction " +
+            log"(${MDC(DeltaLogKeys.STATUS, notification.getCause)}) in " +
+            log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms")
+        } catch {
+          case NonFatal(e) =>
+            logError(log"Failed to retire Delta V2 table manager for " +
+              log"${MDC(DeltaLogKeys.PATH, key.path)} after cache eviction " +
+              log"(${MDC(DeltaLogKeys.STATUS, notification.getCause)}) in " +
+              log"${MDC(DeltaLogKeys.TIME_MS, elapsedTimeMs(startedAtNs))} ms", e)
+            throw e
+        }
       }
+    }
     CacheBuilder.newBuilder()
       .maximumSize(maxSize)
       .expireAfterAccess(ttlMinutes, TimeUnit.MINUTES)
@@ -74,14 +95,21 @@ private[tablemanager] class DeltaV2TableManagerCache(
     try {
       cache.get(key, () => {
         recordFrameProfile("tableManagerCache.createManager") {
-          managerFactory(key, initialCatalogTableOpt)
+          val createStartedAtNs = System.nanoTime()
+          val created = managerFactory(key, initialCatalogTableOpt)
+          val elapsedMs = elapsedTimeMs(createStartedAtNs)
+          logInfo(log"Created Delta V2 table manager for " +
+            log"${MDC(DeltaLogKeys.PATH, key.path)} in " +
+            log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms")
+          created
         }
       })
     } catch {
       case e @ (_: UncheckedExecutionException |
           _: ExecutionError | _: ExecutionException) =>
         val cause = Option(e.getCause).getOrElse(e)
-        logWarning(log"Cache loader failed; rethrowing original cause", cause)
+        logError(log"Delta V2 table-manager cache load failed for " +
+          log"${MDC(DeltaLogKeys.PATH, key.path)}", cause)
         throw cause
     }
   }
