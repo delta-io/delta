@@ -174,8 +174,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
             partitionSchema,
             writeInfo,
             variantShreddingEnabled);
-    return new DeltaV2StreamingWrite(
-        tableManager.snapshotManager(ScalaUtils.toScalaOption(catalogTable)), context);
+    return new DeltaV2StreamingWrite(tableManager, catalogTable, context);
   }
 
   /**

@@ -20,10 +20,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 
+import io.delta.exceptions.ConcurrentTransactionException;
 import java.io.File;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.format.converter.ParquetMetadataConverter;
 import org.apache.parquet.hadoop.ParquetFileReader;
@@ -38,6 +44,7 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.shims.VariantShreddingShims;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.InternalRowTestUtils;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -85,6 +92,49 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
       DataTypes.createStructType(
           new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
 
+  @ParameterizedTest
+  @ValueSource(longs = {0L, 1L})
+  public void testCommit_concurrentEpochIsSkippedOnlyWhenAlreadyCommitted(
+      long winningEpoch, @TempDir File tempDir) throws Exception {
+    String path = createTable(tempDir, "streaming_epoch_race_" + winningEpoch);
+    DeltaV2TableManager realManager = WriteTestUtils.tableManager(spark, path);
+    DeltaV2StreamingWrite winner = newWrite(path);
+    WriterCommitMessage[] winningMessages = {writeEpoch(winner, winningEpoch, 1, "Winner")};
+    AtomicBoolean injectRace = new AtomicBoolean(false);
+    // Decorate snapshot loading to commit after the losing writer chose its snapshot.
+    // The sink, transactions, files, and conflict checker all use their real implementations.
+    DeltaV2TableManager tableManager = mock(DeltaV2TableManager.class, delegatesTo(realManager));
+    doAnswer(
+            invocation -> {
+              Snapshot snapshot = realManager.loadLatestSnapshot(invocation.getArgument(0));
+              if (injectRace.compareAndSet(true, false)) {
+                winner.commit(winningEpoch, winningMessages);
+              }
+              return snapshot;
+            })
+        .when(tableManager)
+        .loadLatestSnapshot(any());
+    DeltaV2StreamingWrite write = newWrite(path, false, tableManager);
+    WriterCommitMessage[] messages = {writeEpoch(write, 1L, 2, "Current")};
+    injectRace.set(true);
+
+    if (winningEpoch == 1L) {
+      write.commit(1L, messages);
+    } else {
+      assertThrows(ConcurrentTransactionException.class, () -> write.commit(1L, messages));
+    }
+    assertEquals(1L, spark.read().format("delta").load(path).count());
+    assertEquals(
+        winningEpoch,
+        ((DeltaV2Snapshot) WriteTestUtils.latestSnapshot(realManager))
+            .getLatestTransactionVersion("test-query-id")
+            .orElseThrow());
+    if (winningEpoch == 0L) {
+      write.commit(1L, messages);
+      assertEquals(2L, spark.read().format("delta").load(path).count());
+    }
+  }
+
   @Test
   public void testUseCommitCoordinator_isFalse(@TempDir File tempDir) {
     DeltaV2StreamingWrite write = newWrite(createTable(tempDir, "streaming_no_coordinator"));
@@ -117,6 +167,26 @@ public class DeltaV2StreamingWriteTest extends DeltaV2TestBase {
     assertEquals("Bob", rows.get(1).getString(1));
     assertEquals("Carol", rows.get(2).getString(1));
     assertEquals("Dave", rows.get(3).getString(1));
+  }
+
+  @Test
+  public void testCommit_emptyEpochSurvivesRestartAndReplay(@TempDir File tempDir)
+      throws Exception {
+    String path = createTable(tempDir, "streaming_empty_epoch");
+    DeltaV2StreamingWrite write = newWrite(path);
+    write.commit(0L, new WriterCommitMessage[0]);
+    DeltaV2TableManager tableManager = WriteTestUtils.tableManager(spark, path);
+    long versionAfterEmptyEpoch = WriteTestUtils.latestSnapshot(tableManager).version();
+    assertEquals(1L, versionAfterEmptyEpoch);
+
+    DeltaV2StreamingWrite restarted = newWrite(path);
+    restarted.commit(0L, new WriterCommitMessage[] {writeEpoch(restarted, 0L, 1, "Replay")});
+    assertEquals(versionAfterEmptyEpoch, WriteTestUtils.latestSnapshot(tableManager).version());
+    assertEquals(0L, spark.read().format("delta").load(path).count());
+    restarted.commit(1L, new WriterCommitMessage[] {writeEpoch(restarted, 1L, 2, "Next")});
+    List<Row> rows = spark.read().format("delta").load(path).collectAsList();
+    assertEquals(1, rows.size());
+    assertEquals("Next", rows.get(0).getString(1));
   }
 
   /**

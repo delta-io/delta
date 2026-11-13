@@ -24,8 +24,10 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaOperations, Optimist
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.test.V2ForceTest
 import org.apache.spark.sql.delta.v2.tablemanager.{DeltaV2TableManager, DeltaV2TableManagerCache}
+import io.delta.exceptions.ConcurrentTransactionException
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.types.{LongType, StructType}
 import org.apache.spark.util.SystemClock
 
@@ -59,8 +61,6 @@ class DeltaV2OptimisticTransactionSuite
 
   override protected def shouldFailTests: Set[String] = Set(
     // Conflict-checking: DelatV2 unsupported operations gaps
-    "conflicting txns - should conflict",
-    "disjoint txns - should not conflict",
     "delete / delete - should conflict",
     "upgrade / upgrade - should conflict",
     // V2 write-path gaps that STRICT reroutes through the connector (deletion vectors):
@@ -228,16 +228,56 @@ class DeltaV2OptimisticTransactionSuite
     }
   }
 
-  test("unsupported actions fail loudly") {
+  test("multiple application transaction markers fail without committing") {
     withTempDir { dir =>
       seedTable(dir)
       val txn = startTestTransaction(new Path(dir.getCanonicalPath))
       val setTxn = SetTransaction("test-app", 1L, Some(1L))
       val e = intercept[UnsupportedOperationException] {
-        txn.commit(setTxn :: Nil, DeltaOperations.ManualUpdate)
+        txn.commit(Seq(setTxn, setTxn.copy(appId = "other-app")), DeltaOperations.ManualUpdate)
       }
       assert(e.getMessage ==
-        "DeltaV2 unsupported operation: cannot commit action SetTransaction")
+        "DeltaV2 unsupported operation: cannot commit multiple SetTransaction actions")
+      assert(latestKernelSnapshot(dir).version === 0L)
+    }
+  }
+
+  test("streaming commit persists the epoch atomically with its files") {
+    withTempDir { dir =>
+      seedTable(dir)
+      val txn = startTestTransaction(new Path(dir.getCanonicalPath))
+      assert(txn.txnVersion("stream") === -1L)
+      val add = AddFile("stream-file", Map.empty, 1L, 1L, dataChange = true)
+      txn.commit(
+        Seq(add, SetTransaction("stream", 0L, Some(1L))),
+        DeltaOperations.StreamingUpdate(OutputMode.Append(), "stream", 0L))
+      val snapshot = latestKernelSnapshot(dir)
+      assert(snapshot.version === 1L)
+      assert(snapshot.allFiles.collect().exists(_.path == "stream-file"))
+      val nextTxn = startTestTransaction(new Path(dir.getCanonicalPath))
+      assert(nextTxn.txnVersion("stream") === 0L)
+      assert(nextTxn.txnVersion("other-stream") === -1L)
+    }
+  }
+
+  test("application transaction reads conflict with a concurrent epoch commit") {
+    withTempDir { dir =>
+      seedTable(dir)
+      val path = new Path(dir.getCanonicalPath)
+      val first = startTestTransaction(path)
+      val second = startTestTransaction(path)
+      assert(first.txnVersion("stream") === -1L)
+      assert(second.txnVersion("stream") === -1L)
+      first.commit(
+        Seq(SetTransaction("stream", 0L, Some(1L))),
+        DeltaOperations.StreamingUpdate(OutputMode.Append(), "stream", 0L))
+      intercept[ConcurrentTransactionException] {
+        second.commit(
+          Seq(SetTransaction("stream", 1L, Some(2L))),
+          DeltaOperations.StreamingUpdate(OutputMode.Append(), "stream", 1L))
+      }
+      assert(startTestTransaction(path).txnVersion("stream") === 0L)
+      assert(latestKernelSnapshot(dir).version === 1L)
     }
   }
 

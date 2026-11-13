@@ -17,9 +17,6 @@ package org.apache.spark.sql.delta.v2.write;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.delta.kernel.data.Row;
-import io.delta.kernel.utils.CloseableIterable;
-import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.util.Optional;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -37,7 +34,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Unit tests for {@link DeltaV2WriterCommitMessage}, focused on {@code toDataActions}. */
+/** Unit tests for {@link DeltaV2WriterCommitMessage}, focused on {@code toAddFileActions}. */
 public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
 
   private static final StructType TABLE_SCHEMA =
@@ -53,36 +50,33 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testToDataActions_noMessages_isEmpty() {
-    assertEquals(
-        0, countActions(DeltaV2WriterCommitMessage.toDataActions(new WriterCommitMessage[0])));
+  public void testToAddFileActions_noMessages_isEmpty() {
+    assertEquals(0, DeltaV2WriterCommitMessage.toAddFileActions(new WriterCommitMessage[0]).size());
   }
 
   @Test
-  public void testToDataActions_ignoresNonDeltaMessages() {
+  public void testToAddFileActions_ignoresNonDeltaMessages() {
     WriterCommitMessage other = new WriterCommitMessage() {};
     assertEquals(
-        0,
-        countActions(DeltaV2WriterCommitMessage.toDataActions(new WriterCommitMessage[] {other})));
+        0, DeltaV2WriterCommitMessage.toAddFileActions(new WriterCommitMessage[] {other}).size());
   }
 
   @Test
-  public void testToDataActions_flattensActionsFromAllMessages(@TempDir File tempDir)
+  public void testToAddFileActions_flattensActionsFromAllMessages(@TempDir File tempDir)
       throws Exception {
     String path = createTable(tempDir, "commit_msg_flatten");
     DeltaV2DataWriterFactory factory = dataWriterFactory(path);
 
-    // Two tasks, one file (one AddFile action) each; toDataActions must combine both.
+    // Two tasks, one file (one AddFile action) each; toAddFileActions must combine both.
     WriterCommitMessage m1 = writeFile(factory, 0, 1, "Alice");
     WriterCommitMessage m2 = writeFile(factory, 1, 2, "Bob");
 
     assertEquals(
-        2,
-        countActions(DeltaV2WriterCommitMessage.toDataActions(new WriterCommitMessage[] {m1, m2})));
+        2, DeltaV2WriterCommitMessage.toAddFileActions(new WriterCommitMessage[] {m1, m2}).size());
   }
 
   @Test
-  public void testToDataActions_multipleRowsPerFile(@TempDir File tempDir) throws Exception {
+  public void testToAddFileActions_multipleRowsPerFile(@TempDir File tempDir) throws Exception {
     String path = createTable(tempDir, "commit_msg_multi_row");
     DeltaV2DataWriterFactory factory = dataWriterFactory(path);
 
@@ -90,25 +84,7 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
     WriterCommitMessage m = writeFile(factory, 0, 1, "Alice", 2, "Bob", 3, "Carol");
 
     assertEquals(
-        1, countActions(DeltaV2WriterCommitMessage.toDataActions(new WriterCommitMessage[] {m})));
-  }
-
-  private static int countActions(CloseableIterable<Row> actions) {
-    int n = 0;
-    CloseableIterator<Row> it = actions.iterator();
-    try {
-      while (it.hasNext()) {
-        it.next();
-        n++;
-      }
-    } finally {
-      try {
-        it.close();
-      } catch (Exception ignored) {
-        // Test cleanup best-effort.
-      }
-    }
-    return n;
+        1, DeltaV2WriterCommitMessage.toAddFileActions(new WriterCommitMessage[] {m}).size());
   }
 
   private WriterCommitMessage writeFile(
