@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 import java.sql.Date
@@ -44,12 +45,18 @@ import java.util.Locale
  * - Query has no filters.
  * - Query has no GROUP BY.
  * Example of valid query: SELECT COUNT(*), MIN(id), MAX(partition_col) FROM MyDeltaTable
+ *
+ * It also optimizes DISTINCT / GROUP BY queries over partition columns only, using
+ * partitionValues. See [[MetadataOptimizableDistinctPartitionAggregate]] for the conditions.
+ * Example of valid query: SELECT DISTINCT partition_col FROM MyDeltaTable
  */
 trait OptimizeMetadataOnlyDeltaQuery extends Logging {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
     plan.transformUpWithSubqueries {
       case agg@MetadataOptimizableAggregate(tahoeLogFileIndex) =>
         createLocalRelationPlan(agg, tahoeLogFileIndex)
+      case agg@MetadataOptimizableDistinctPartitionAggregate(tahoeLogFileIndex) =>
+        createDistinctPartitionValuesPlan(agg, tahoeLogFileIndex)
     }
   }
 
@@ -114,6 +121,58 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       logInfo(log"Query can't be optimized using metadata because stats are missing")
       plan
     }
+  }
+
+  /**
+   * Replaces an [[Aggregate]] grouping only by partition columns with a [[LocalRelation]] holding
+   * the distinct partition values of the files that contain at least one row, and a [[Project]]
+   * on top evaluating the aggregate output expressions.
+   * Partition values are converted the same way [[TahoeLogFileIndex]] does it during a scan, so
+   * the results are identical to the non-optimized query.
+   */
+  private def createDistinctPartitionValuesPlan(
+      plan: Aggregate,
+      tahoeLogFileIndex: TahoeLogFileIndex): LogicalPlan = {
+    val snapshot = getDeltaScanGenerator(tahoeLogFileIndex).snapshotToScan
+    val groupingAttributes = plan.groupingExpressions.map(_.asInstanceOf[AttributeReference])
+    val partitionColumns = groupingAttributes.map { attr =>
+      snapshot.metadata.partitionSchema.find(_.name.equalsIgnoreCase(attr.name))
+    }
+    if (partitionColumns.exists(_.isEmpty)) {
+      return plan
+    }
+    val physicalNames = partitionColumns.map(c => DeltaColumnMapping.getPhysicalName(c.get))
+
+    // A file can have no rows (e.g. AddFile with numRecords = 0, or all rows deleted by a
+    // deletion vector), and its partition value must not be returned in that case.
+    val dvCardinality = coalesce(col("deletionVector.cardinality"), lit(0))
+    val numLogicalRecords = col("stats.numRecords") - dvCardinality
+    val partitionValueColumns = physicalNames.zipWithIndex.map { case (physicalName, i) =>
+      col(s"partitionValues.`$physicalName`").as(s"partition_$i")
+    }
+    val partitions = getDeltaScanGenerator(tahoeLogFileIndex).filesWithStatsForScan(Nil)
+      .groupBy(partitionValueColumns: _*)
+      .agg(
+        count(when(col("stats.numRecords").isNull, 1)).as("missingNumRecords"),
+        max(numLogicalRecords).as("maxNumLogicalRecords"))
+      .collect()
+
+    if (partitions.exists(_.getAs[Long]("missingNumRecords") > 0)) {
+      logInfo(log"Query can't be optimized using metadata because stats are missing")
+      return plan
+    }
+
+    val timeZone = Option(SQLConf.get.sessionLocalTimeZone)
+    val rows = partitions
+      .filter(_.getAs[Long]("maxNumLogicalRecords") > 0)
+      .map { partition =>
+        InternalRow.fromSeq(groupingAttributes.zipWithIndex.map { case (attr, i) =>
+          Cast(Literal(partition.getString(i)), attr.dataType, timeZone, ansiEnabled = false)
+            .eval()
+        })
+      }.toSeq
+
+    Project(plan.aggregateExpressions, LocalRelation(groupingAttributes, rows))
   }
 
   private def extractMinMaxFieldNames(plan: Aggregate): Seq[String] = {
@@ -369,6 +428,51 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
         case _ =>
           None
       }
+    }
+  }
+
+  /**
+   * Matches an [[Aggregate]] that can be answered using only the partitionValues of the
+   * Delta Log, i.e. a DISTINCT or GROUP BY over partition columns:
+   * - All grouping expressions are partition columns of the table.
+   * - The output contains no aggregate functions and references only grouping columns.
+   * - Query has no filters.
+   * Example: SELECT DISTINCT p1, p2 FROM MyDeltaTable or SELECT p1 FROM MyDeltaTable GROUP BY p1
+   */
+  object MetadataOptimizableDistinctPartitionAggregate {
+
+    def unapply(plan: Aggregate): Option[TahoeLogFileIndex] = {
+      val groupingAttributes = plan.groupingExpressions.collect {
+        case attr: AttributeReference => attr
+      }
+      if (groupingAttributes.isEmpty ||
+        groupingAttributes.size != plan.groupingExpressions.size ||
+        !plan.aggregateExpressions.forall(isGroupingOnlyExpression(_, groupingAttributes))) {
+        return None
+      }
+      val fileIndexOpt = plan.child match {
+        case PhysicalOperation(fields, Nil, DeltaTable(fileIndex: TahoeLogFileIndex))
+          if fields.forall(_.isInstanceOf[AttributeReference]) => Some(fileIndex)
+        case DeltaTable(fileIndex: TahoeLogFileIndex) => Some(fileIndex)
+        case _ => None
+      }
+      fileIndexOpt.filter { fileIndex =>
+        fileIndex.partitionFilters.isEmpty &&
+          groupingAttributes.forall { attr =>
+            fileIndex.partitionSchema.exists { field =>
+              field.name.equalsIgnoreCase(attr.name) && field.dataType == attr.dataType
+            }
+          }
+      }
+    }
+
+    private def isGroupingOnlyExpression(
+        expr: NamedExpression,
+        groupingAttributes: Seq[AttributeReference]): Boolean = {
+      val groupingSet = AttributeSet(groupingAttributes)
+      expr.deterministic &&
+        expr.find(_.isInstanceOf[AggregateExpression]).isEmpty &&
+        expr.references.subsetOf(groupingSet)
     }
   }
 }
