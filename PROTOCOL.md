@@ -124,6 +124,7 @@
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
     - [Primitive Types](#primitive-types)
+      - [Character Type Declarations](#character-type-declarations)
       - [Void Type](#void-type)
     - [Struct Type](#struct-type)
     - [Struct Field](#struct-field)
@@ -2765,7 +2766,7 @@ A reference implementation can be found in [the catalyst package of the Apache S
 
 Type Name | Description
 -|-
-string| UTF-8 encoded string of characters
+string| UTF-8 encoded string of characters. See [Character Type Declarations](#character-type-declarations) for the representation of `CHAR(n)` and `VARCHAR(n)`.
 long| 8-byte signed integer. Range: -9223372036854775808 to 9223372036854775807
 integer|4-byte signed integer. Range: -2147483648 to 2147483647
 short| 2-byte signed integer numbers. Range: -32768 to 32767
@@ -2781,6 +2782,74 @@ timestamp without time zone | Microsecond precision timestamp in a local timezon
 void| A column that contains only `null` values and is never materialized in data files. See section [Void Type](#void-type) for more information.
 
 See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
+
+#### Character Type Declarations
+
+_This section documents an existing metadata convention. It does not introduce new primitive types, table features, or reader and writer requirements._
+
+SQL `CHAR(n)` and `VARCHAR(n)` declarations are represented by the Delta primitive type `string`, not by `char(n)` or `varchar(n)` in the schema's `type` field.
+The original declaration can be retained as a string under the key `__CHAR_VARCHAR_TYPE_STRING` in a [struct field's metadata](#struct-field).
+For a field containing nested character types, this metadata can describe the complete type of the containing field, including structs, arrays, and maps.
+
+In these declarations, `n` is a non-negative integer specifying the maximum number of Unicode code points in a non-null input string, including leading and trailing spaces.
+It is not a count of UTF-8 bytes, UTF-16 code units, or grapheme clusters, and counting does not perform Unicode normalization.
+For example, U+00E9 is one code point, whereas U+0065 followed by U+0301 is two; a supplementary character such as U+1F600 is one code point.
+A zero-length declaration admits only the empty string or `null` when the length bound is enforced, subject to the field's nullability.
+The range of declaration lengths accepted by a connector and its resource limits are implementation-specific.
+
+With length validation enabled, the write path using this convention rejects values longer than `n`, including excess trailing spaces, rather than truncating or trimming them.
+In the read-padded `CHAR(n)` representation, values shorter than `n` are right-padded with U+0020 SPACE on read; padding is not required as a write-time transformation.
+`VARCHAR(n)` does not add padding, and `null` is not padded.
+Consequently, a `CHAR(3)` value can be stored as `"a"` and returned as `"a  "` by a character-aware reader.
+Already-padded values, including values produced by an upstream read or expression, can also be stored.
+Neither declaration changes the [Parquet mapping for `string`](#delta-data-type-to-parquet-type-mappings) or implies a fixed-width physical encoding.
+The existing [partition value serialization](#partition-value-serialization) also applies: an empty string in a partition value is interpreted as `null`.
+
+For example, the following schema retains two top-level declarations and a declaration for array elements:
+
+```json
+{
+  "type": "struct",
+  "fields": [
+    {
+      "name": "fixed",
+      "type": "string",
+      "nullable": true,
+      "metadata": {
+        "__CHAR_VARCHAR_TYPE_STRING": "char(3)"
+      }
+    },
+    {
+      "name": "variable",
+      "type": "string",
+      "nullable": true,
+      "metadata": {
+        "__CHAR_VARCHAR_TYPE_STRING": "varchar(3)"
+      }
+    },
+    {
+      "name": "labels",
+      "type": {
+        "type": "array",
+        "elementType": "string",
+        "containsNull": true
+      },
+      "nullable": true,
+      "metadata": {
+        "__CHAR_VARCHAR_TYPE_STRING": "array<varchar(2)>"
+      }
+    }
+  ]
+}
+```
+
+This annotation is not an explicitly declared [CHECK constraint](#check-constraints) or [column invariant](#column-invariants).
+Its presence does not provide a protocol-level guarantee that every writer enforces the length bound or every reader applies padding.
+Clients that do not interpret it can expose ordinary strings, and data written without length validation can exceed the declared bound.
+Missing metadata does not imply a length bound.
+Comparison, collation, cast semantics, and handling of malformed declarations remain connector-specific.
+The annotation belongs to the schema of each table version; changing a declaration does not imply that existing data files are rewritten.
+See the [character type documentation](https://docs.delta.io/delta-batch/#char-and-varchar-columns) for connector behavior, configuration, and supported schema changes.
 
 #### Void Type
 
