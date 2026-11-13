@@ -442,7 +442,7 @@ If you then run the following query:
   <TabItem label="Python" active>
 
     ```python
-    spark.sql('SELECT * FROM default.events WHERE eventTime >= "2020-10-01 00:00:00" <= "2020-10-01 12:00:00"')
+    spark.sql('SELECT * FROM default.events WHERE eventTime >= "2020-10-01 00:00:00" AND eventTime <= "2020-10-01 12:00:00"')
     ```
   
   </TabItem>
@@ -478,7 +478,7 @@ If you then run the following query:
   <TabItem label="Python" active>
 
     ```python
-    spark.sql('SELECT * FROM default.events WHERE eventTime >= "2020-10-01 00:00:00" <= "2020-10-01 12:00:00"')
+    spark.sql('SELECT * FROM default.events WHERE eventTime >= "2020-10-01 00:00:00" AND eventTime <= "2020-10-01 12:00:00"')
     ```
   
   </TabItem>
