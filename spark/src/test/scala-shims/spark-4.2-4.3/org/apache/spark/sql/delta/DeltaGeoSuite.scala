@@ -1000,6 +1000,28 @@ class DeltaGeoSuite extends QueryTest
     }
   }
 
+  test("CONVERT TO DELTA releases the cached file listing when the geo validation fails") {
+    // Schema inference for a path caches the file listing; it must be released on failure.
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      withTable("src_parquet") {
+        sql(s"CREATE TABLE src_parquet(id INT, g GEOMETRY($DefaultSrid)) USING parquet " +
+          s"LOCATION '$path'")
+        sql(s"INSERT INTO src_parquet VALUES " +
+          s"(1, ST_GeomFromWKB(X'$PointZeroZeroWkb', $DefaultSrid))")
+      }
+      spark.catalog.clearCache()
+
+      val ex = intercept[AnalysisException] {
+        sql(s"CONVERT TO DELTA parquet.`$path`")
+      }
+      assert(ex.getCondition == "DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES",
+        s"Expected DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES, got: ${ex.getCondition}")
+      assert(spark.sharedState.cacheManager.isEmpty,
+        "CONVERT TO DELTA must close the file manifest when the geo validation fails")
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Change Data Feed support for geospatial columns
   // ---------------------------------------------------------------------------

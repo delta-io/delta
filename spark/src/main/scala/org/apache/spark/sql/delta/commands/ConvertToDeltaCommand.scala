@@ -112,8 +112,13 @@ abstract class ConvertToDeltaCommandBase(
       return Seq.empty[Row]
     }
 
-    validateConvert(targetTable)
-    performConvert(spark, txn, convertProperties, targetTable)
+    // validateConvert can cache the file listing, so close the manifest even if it fails.
+    try {
+      validateConvert(targetTable)
+      performConvert(spark, txn, convertProperties, targetTable)
+    } finally {
+      targetTable.fileManifest.close()
+    }
   }
 
   private def validateConvert(table: ConvertTargetTable): Unit = {
