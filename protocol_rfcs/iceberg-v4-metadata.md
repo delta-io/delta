@@ -628,7 +628,7 @@ When reading a leaf manifest, readers must check the `DATA_MANIFEST` entry for a
 ## Reader Requirements for Adaptive Metadata
 
 When `adaptiveMetadata` is supported and active, readers must:
-- Take the latest checkpoint to be the `checkpoint` action with the greatest `checkpointMetadata.version` (across manifest commits, standalone checkpoints, and `_last_checkpoint`), and use its `contentRoot` as the metadata tree. When several `checkpoint` actions have that version, take the one in the latest commit. A later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
+- Take the latest checkpoint to be the `checkpoint` action with the greatest `checkpointMetadata.version` (across manifest commits, standalone checkpoints, and `_last_checkpoint`), and use its `contentRoot` as the metadata tree. A later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
 - Read the root manifest at `contentRoot.path` and skip leaf-manifest entries marked in `manifest_info.dv` (see [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Reconstruct the current table state by applying the commits after `checkpointMetadata.version` on top of the tree, following [Action Reconciliation](#action-reconciliation).
 - Interpret `tightBounds`, `tightStats`, and timestamp bounds in file statistics according to [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation).
