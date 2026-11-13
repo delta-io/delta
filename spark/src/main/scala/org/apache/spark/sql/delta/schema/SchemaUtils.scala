@@ -623,6 +623,22 @@ def normalizeColumnNamesInDataType(
   }
 
   /**
+   * `isReadCompatible` with the default value for each parameter after
+   * `forbidTightenNullability`, for Java callers: Java cannot use default arguments.
+   */
+  def isReadCompatible(
+      existingSchema: StructType,
+      readSchema: StructType,
+      forbidTightenNullability: Boolean): Boolean = {
+    // The named argument selects the method above: a call with three arguments selects this one.
+    isReadCompatible(
+      existingSchema,
+      readSchema,
+      forbidTightenNullability,
+      allowMissingColumns = false)
+  }
+
+  /**
    * Compare an existing schema to a specified new schema and
    * return a message describing the first difference found, if any:
    *   - different field name or datatype
