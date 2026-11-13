@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.v2
 import java.util.concurrent.TimeUnit
 import java.util.function.Supplier
 
+import scala.util.control.NonFatal
+
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.hadoop.fs.Path
@@ -51,16 +53,21 @@ private[v2] trait DeltaV2Logging extends DeltaLogging {
    * path-attribution fallback.
    */
   protected final def recordDeltaEventForTablePath(
-      tablePath: Path,
+      tablePath: => Path,
       opType: String,
       tags: Map[TagDefinition, String] = Map.empty,
-      data: AnyRef = null): Unit = {
-    recordDeltaEvent(
-      provider = null,
-      opType = opType,
-      tags = tags,
-      data = data,
-      path = Some(tablePath))
+      data: => AnyRef = null): Unit = {
+    try {
+      recordDeltaEvent(
+        provider = null,
+        opType = opType,
+        tags = tags,
+        data = data,
+        path = Some(tablePath))
+    } catch {
+      case NonFatal(loggingFailure) =>
+        logWarning("Failed to record table-scoped Delta V2 event", loggingFailure)
+    }
   }
 
   protected final override def recordDeltaOperationForTablePath[A](
