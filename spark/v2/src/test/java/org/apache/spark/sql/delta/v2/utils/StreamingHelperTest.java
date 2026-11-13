@@ -60,7 +60,6 @@ import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -72,11 +71,6 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
   private PathBasedSnapshotManager snapshotManager;
   private final DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.empty();
-
-  @AfterEach
-  void clearTableManagerCache() {
-    DeltaV2TableManagerCache$.MODULE$.clearCache();
-  }
 
   @Test
   public void testGetAddFileWithDataChange() {
