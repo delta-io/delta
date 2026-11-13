@@ -282,7 +282,7 @@ The action that invalidates the existing tree entry carries the backreference:
 
 An `add` thus carries a backreference only when it re-adds a file with no paired `remove`.
 
-A backreference is meaningful only relative to the tree it was computed from. A commit's backreferences are valid only if they target the current tree; if a concurrent manifest commit has produced a new tree (e.g., compaction moved entries between manifests), they are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
+A backreference is meaningful only relative to the tree it was computed from. If a concurrent manifest commit produces a new tree after the tree that a commit read, the commit's backreferences are stale (e.g., compaction moved entries between manifests) and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
 
 Backreferences enable efficient [Manifest Deletion Vector (MDV)](#manifest-deletion-vectors-mdvs) creation during manifest commits: writers can directly construct MDVs from backreferences without scanning leaf manifests. The engine must propagate (manifest, position) metadata through the planning pipeline so it is available at commit time.
 
