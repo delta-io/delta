@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, IsolationLevel, OptimisticTransaction, Snapshot, WinningCommitMetrics}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeletionVectorsTestUtils, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, IsolationLevel, LogCompaction, OptimisticTransaction, Snapshot, WinningCommitMetrics}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, InMemoryLogReplay, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -681,7 +681,7 @@ class AMTBackReferenceSuite
       "the collapsed tombstone must preserve its empty back reference.")
   }
 
-  test("minor-compaction preserves back-references") {
+  test("log compaction writer preserves back-references") {
     withTable("amt_minor_compaction_e2e") {
       val name = "amt_minor_compaction_e2e"
       val adds = emitStampedAddFiles(name)
@@ -724,11 +724,12 @@ class AMTBackReferenceSuite
       val endVersion = deltaLog.update().version
 
       // Compact the two commits above.
-      minorCompactDeltaLog(
-        tablePath = deltaLog.dataPath.toString,
+      LogCompaction.compact(
+        deltaLog = deltaLog,
+        snapshot = deltaLog.update(),
         startVersion = startVersion,
         endVersion = endVersion,
-        tableName = Some(name))
+        catalogTableOpt = Some(catalogTableFor(name)))
 
       val compactedDelta = FileNames.compactedDeltaFile(deltaLog.logPath, startVersion, endVersion)
       val compactedActions = deltaLog.store
