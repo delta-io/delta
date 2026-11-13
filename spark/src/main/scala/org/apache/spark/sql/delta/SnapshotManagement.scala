@@ -1552,7 +1552,8 @@ trait SnapshotManagement { self: DeltaLog =>
       preCommitLogSegment: LogSegment,
       catalogTableOpt: Option[CatalogTable],
       amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider] = None,
-      isIdempotentRetry: Boolean = false): Snapshot = {
+      isIdempotentRetry: Boolean = false
+  ): Snapshot = {
     var previousSnapshot: Snapshot = null
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
       val updatedSnapshot = withSnapshotLockInterruptibly {
@@ -1775,8 +1776,10 @@ trait SnapshotManagement { self: DeltaLog =>
 
   // Populate commit coordinator using catalogOpt if the snapshot is catalog owned.
   protected def populateCommitCoordinator(
-    spark: SparkSession, catalogTableOpt: Option[CatalogTable], snapshot: Snapshot)
-  : Option[TableCommitCoordinatorClient] = {
+      spark: SparkSession,
+      catalogTableOpt: Option[CatalogTable],
+      snapshot: Snapshot
+  ): Option[TableCommitCoordinatorClient] = {
     if (snapshot.isCatalogOwned) {
       CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark,

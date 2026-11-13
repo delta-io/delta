@@ -170,7 +170,8 @@ trait TransactionHelper extends DeltaLogging {
     if (snapshot.isCatalogOwned) {
       // Catalog owned table's commit coordinator is always determined by the catalog.
       CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
-        spark, catalogTable, snapshot)
+        spark, catalogTable, snapshot
+      )
     } else {
       // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent
       // commit, then it will be detected as a conflict and the transaction will anyway fail.
