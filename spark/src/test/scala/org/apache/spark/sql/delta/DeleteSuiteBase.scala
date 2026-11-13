@@ -24,9 +24,10 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanLike
+import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
 
 trait DeleteBaseMixin
   extends QueryTest
@@ -536,7 +537,9 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       case f: FileSourceScanLike if f.relation.location.isInstanceOf[TahoeFileIndex] => f
     })
 
-    assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
+    assert(scans.head.schema.findNestedField(Seq("nested", "key")).nonEmpty)
+    assert(scans.head.schema.findNestedField(Seq("nested", "value")).isEmpty)
+    assert(scans.head.schema.findNestedField(Seq(FileFormat.FILE_PATH)).nonEmpty)
   }
 
   /**
@@ -854,7 +857,7 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
     checkAnswer(sqlContext.table("target"), Nil)
   }
 
-  testWithPartitioning("exists with multi-file target") {
+  testWithPartitioning("exists with RDD-backed source and multi-file target") {
     // Write multiple files to exercise getFileMetadataColumn + distinct()
     // in the first pass across multiple data files.
     import testImplicits._
@@ -866,8 +869,12 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
       .format(writeFormat)
       .mode("overwrite")
       .saveAsTable("target")
-    Seq((3, "x"), (7, "y"), (15, "z"))
-      .toDF("c", "s1")
+    val sourceSchema = StructType(Seq(
+      StructField("c", IntegerType, nullable = false),
+      StructField("s1", StringType, nullable = false)))
+    spark.createDataFrame(
+        spark.sparkContext.parallelize(Seq(Row(3, "x"), Row(7, "y"), Row(15, "z")), 1),
+        sourceSchema)
       .createOrReplaceTempView("source")
 
     withConf(
