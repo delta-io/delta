@@ -43,6 +43,9 @@ jobs:
   generate-matrix:
     name: "Generate Spark Versions Matrix"
     runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
     outputs:
       spark_versions: ${{ steps.generate.outputs.spark_versions }}
       source_build_spark_versions: ${{ steps.generate.outputs.source_build_spark_versions }}
@@ -67,6 +70,20 @@ jobs:
           echo "Generated Spark versions: $SPARK_VERSIONS"
           echo "Generated source-build Spark versions: $SOURCE_BUILD_SPARK_VERSIONS"
           echo "Generated non-source-build Spark versions: $NON_SOURCE_BUILD_SPARK_VERSIONS"
+
+      # Keep the checked-in timings if recent reports cannot be collected.
+      - name: Collect recent test durations
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 project/scripts/collect_test_durations.py --last-n-runs 1
+
+      - name: Share test durations with the shards
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-durations
+          path: project/test-durations.csv
 
   # Builds ~/.m2/repository/org/apache/spark once per source-build Spark version so the
   # sharded source_spark_test jobs all restore the same cache instead of rebuilding 8x.
@@ -110,6 +127,11 @@ jobs:
         shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - name: Download test durations
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: test-durations
+          path: project
       - name: Prepare Spark environment
         uses: ./.github/actions/prepare-spark-env
         with:
