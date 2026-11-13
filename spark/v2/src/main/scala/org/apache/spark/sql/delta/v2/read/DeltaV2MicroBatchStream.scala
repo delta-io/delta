@@ -57,7 +57,6 @@ import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseOp
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
@@ -162,13 +161,15 @@ private[read] class DeltaV2MicroBatchStream(
 
   Objects.requireNonNull(tableManager, "tableManager is null")
   Objects.requireNonNull(originalStreamingQueryContext, "originalStreamingQueryContext is null")
+  Objects.requireNonNull(snapshotAtSourceInit, "snapshotAtSourceInit is null")
   private val snapshotManager: DeltaV2SnapshotManager =
       Objects.requireNonNull(
           tableManager.snapshotManager(originalStreamingQueryContext.catalogTableOpt),
           "snapshotManager is null")
   /** The Delta log operations that compute offsets. */
   private val streamingBackend: DeltaStreamingBackend =
-      new DeltaV2StreamingBackend(snapshotManager, originalStreamingQueryContext)
+      new DeltaV2StreamingBackend(
+          tableManager, originalStreamingQueryContext, snapshotAtSourceInit.version)
   Objects.requireNonNull(hadoopConf, "hadoopConf is null")
   Objects.requireNonNull(spark, "spark is null")
   private val engine: Engine = KernelEngineFactory.createDefaultEngine(hadoopConf)
@@ -195,7 +196,6 @@ private[read] class DeltaV2MicroBatchStream(
   private val sqlConf: SQLConf = SQLConf.get
   Objects.requireNonNull(scalaOptions, "scalaOptions is null")
 
-  Objects.requireNonNull(snapshotAtSourceInit, "snapshotAtSourceInit is null")
   private val tableId: String = this.snapshotAtSourceInit.metadata.id
 
   // The effective descriptor for reading, mirroring v1's readSnapshotDescriptor. When schema
@@ -939,8 +939,15 @@ private[read] class DeltaV2MicroBatchStream(
   private def filterDeltaLogs(
       startVersion: Long,
       endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
+    // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
+    Preconditions.checkArgument(
+        options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+        "Using schema from schema tracking log cannot tolerate missing commit files.")
     val commits: ClosableIterator[DeltaSingleCommit] =
-        getCommitsFromRange(startVersion, endOffset)
+        streamingBackend.getSingleCommitIterator(
+            startVersion,
+            options.failOnDataLoss,
+            ScalaUtils.toScalaOption(endOffset))
     val files: ClosableIterator[IndexedFile] =
         new IteratorFlatMapCloseOp(commits)
             .flatMapWithClose(
@@ -954,6 +961,8 @@ private[read] class DeltaV2MicroBatchStream(
       lastProcessedIndex: Long,
       limits: Optional[DeltaSource.AdmissionLimits],
       endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
+    // TODO: Use streamingBackend.getSingleCommitIterator once CDC consumes DeltaSingleCommit,
+    // then delete getCommitsFromRange.
     var commits: ClosableIterator[CommitActions] =
         getCommitsFromRange(startVersion, endOffset, CDC_ACTION_SET)
 
@@ -988,57 +997,9 @@ private[read] class DeltaV2MicroBatchStream(
     wrapIteratorWithCommitIteratorClose(files, commits)
   }
 
-  /** Returns commits from delta logs within the requested offset range. */
-  private def getCommitsFromRange(
-      startVersion: Long,
-      endOffset: Optional[DeltaSourceOffset]): ClosableIterator[DeltaSingleCommit] = {
-    // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
-    Preconditions.checkArgument(
-        options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
-        "Using schema from schema tracking log cannot tolerate missing commit files.")
-
-    var endVersionOpt: Optional[java.lang.Long] =
-        if (endOffset.isPresent()) {
-          Optional.of(java.lang.Long.valueOf(endOffset.get().reservoirVersion))
-        } else Optional.empty()
-
-    if (endVersionOpt.isPresent()) {
-      // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
-      // endVersion to be an actual existing version or empty.
-      val latestVersion: Long = snapshotAtSourceInit.version
-      if (endVersionOpt.get() > latestVersion) {
-        // This could happen because:
-        // 1. data could be added after snapshotAtSourceInit was captured.
-        // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
-        // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
-        // TODO(#5318): kernel should ideally relax this constraint.
-        endVersionOpt = Optional.of(java.lang.Long.valueOf(streamingBackend.update().version))
-      }
-
-      // After capping, check if startVersion is beyond the endVersion.
-      // This can happen when all files in the batch come from the initial snapshot
-      // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
-      if (startVersion > endVersionOpt.get()) {
-        return new ClosableWrapper[DeltaSingleCommit](Iterator.empty).toClosable
-      }
-    } else {
-      // When endOffset is empty (offset discovery), check if startVersion exceeds the current
-      // latest version. We must load the current latest (not snapshotAtSourceInit) because new
-      // commits may have arrived since stream initialization.
-      val currentLatestVersion: Long = streamingBackend.update().version
-      if (startVersion > currentLatestVersion) {
-        return new ClosableWrapper[DeltaSingleCommit](Iterator.empty).toClosable
-      }
-    }
-
-    tableManager.getSingleCommitIterator(
-        startVersion,
-        ScalaUtils.toScalaOption(endVersionOpt).map(Long.unbox),
-        originalStreamingQueryContext,
-        options.failOnDataLoss)
-  }
-
   /** Resolves the version range and returns commit actions from delta logs. */
+  // TODO: Delete this entire helper once CDC consumes DeltaSingleCommit and uses
+  // streamingBackend.getSingleCommitIterator.
   private def getCommitsFromRange(
       startVersion: Long,
       endOffset: Optional[DeltaSourceOffset],
@@ -1174,17 +1135,17 @@ private[read] class DeltaV2MicroBatchStream(
       //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
       //
       // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
-      val fileActions: ClosableIterator[IndexedFile] =
-          if (validationResult.shouldSkipCommit) {
-              new ClosableWrapper[IndexedFile](Iterator.empty).toClosable
-          } else getFilesFromCommit(commit, version)
-
       // If metadata tracking is active, inject schema change barrier sentinel before file
       // actions. This mirrors v1's getMetadataOrProtocolChangeIndexedFileIterator concatenation
       // in filterAndGetIndexedFiles.
       val metadataBarrier: ClosableIterator[IndexedFile] =
           metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
               validationResult.metadataAction, validationResult.protocolAction, version)
+
+      val fileActions: ClosableIterator[IndexedFile] =
+          if (validationResult.shouldSkipCommit) {
+              new ClosableWrapper[IndexedFile](Iterator.empty).toClosable
+          } else getFilesFromCommit(commit, version)
 
       val inner: ClosableIterator[IndexedFile] =
           new IteratorCloseOps(fileActions)
@@ -1198,10 +1159,8 @@ private[read] class DeltaV2MicroBatchStream(
                                   IndexedFile.sentinel(
                                       version, DeltaSourceOffset.END_INDEX))))
 
-      wrapIteratorWithCommitClose(inner, commit)
+      inner
     } catch { case e: Exception =>
-      // commit is not a CloseableIterator, we need to close it manually.
-      Utils.closeCloseables(commit.asInstanceOf[DeltaV2SingleCommit])
       throw (if (e.isInstanceOf[RuntimeException]) e else new RuntimeException(e))
     }
   }

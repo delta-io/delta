@@ -18,9 +18,6 @@ package org.apache.spark.sql.delta.v2.read;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
-import io.delta.kernel.CommitRange;
-import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.DeltaHistoryManager;
 import java.io.File;
 import java.util.*;
 import java.util.stream.Stream;
@@ -39,11 +36,8 @@ import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
-import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
@@ -95,40 +89,6 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
   private static final Protocol DEFAULT_PROTOCOL = Protocol$.MODULE$.apply(1, 2);
 
-  /**
-   * A no-op snapshot manager that throws on any call. Used for tests that only exercise handler
-   * logic (tracking state, offset arithmetic, iterator manipulation) without hitting the delta log.
-   */
-  private static final DeltaV2SnapshotManager THROWING_SNAPSHOT_MANAGER =
-      new DeltaV2SnapshotManager() {
-        @Override
-        public Snapshot loadLatestSnapshot() {
-          throw new UnsupportedOperationException("not expected in this test");
-        }
-
-        @Override
-        public Snapshot loadSnapshotAt(long version) {
-          throw new UnsupportedOperationException("not expected in this test");
-        }
-
-        @Override
-        public DeltaHistoryManager.Commit getActiveCommitAtTime(
-            long ts, boolean last, boolean recreatable, boolean earliest) {
-          throw new UnsupportedOperationException("not expected in this test");
-        }
-
-        @Override
-        public void checkVersionExists(long version, boolean recreatable, boolean allowOOR)
-            throws VersionNotFoundException {
-          throw new UnsupportedOperationException("not expected in this test");
-        }
-
-        @Override
-        public CommitRange getTableChanges(Engine engine, GetTableChangesParam params) {
-          throw new UnsupportedOperationException("not expected in this test");
-        }
-      };
-
   // ---------------------------------------------------------------------------
   // Builder helpers
   // ---------------------------------------------------------------------------
@@ -150,22 +110,25 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   }
 
   /**
-   * Build a lightweight handler that uses {@link #THROWING_SNAPSHOT_MANAGER}. Suitable for tests
-   * that only exercise tracking state, offset arithmetic, or iterator manipulation — NOT for tests
-   * that call private helpers like collectMetadataAtVersion.
+   * Build a lightweight handler that throws on table access. Suitable for tests that only exercise
+   * tracking state, offset arithmetic, or iterator manipulation — NOT for tests that call private
+   * helpers like collectMetadataAtVersion.
    */
   private MetadataEvolutionHandler buildLightweightHandler(
       Option<DeltaSourceMetadataTrackingLog> trackingLog,
       DeltaStreamUtils.SchemaReadOptions readOptions) {
-    return new MetadataEvolutionHandler(
-        spark,
-        "test-table-id",
-        new DeltaV2StreamingBackend(THROWING_SNAPSHOT_MANAGER, EMPTY_QUERY_CONTEXT),
+    DeltaV2TableManager tableManager =
         mock(
             DeltaV2TableManager.class,
             invocation -> {
               throw new UnsupportedOperationException("not expected in this test");
-            }),
+            });
+    return new MetadataEvolutionHandler(
+        spark,
+        "test-table-id",
+        new DeltaV2StreamingBackend(
+            tableManager, EMPTY_QUERY_CONTEXT, /* snapshotVersionAtSourceInit= */ 0L),
+        tableManager,
         EMPTY_QUERY_CONTEXT,
         emptyDeltaOptions(),
         readOptions,
@@ -216,13 +179,15 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
       trackingLog.writeNewMetadata(entry, false);
     }
 
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, tablePath, Collections.emptyMap(), Option.empty());
     MetadataEvolutionHandler handler =
         new MetadataEvolutionHandler(
             spark,
             "test-table-id",
-            new DeltaV2StreamingBackend(snapshotManager, EMPTY_QUERY_CONTEXT),
-            DeltaV2TableManagerCache$.MODULE$.forTable(
-                spark, tablePath, Collections.emptyMap(), Option.empty()),
+            new DeltaV2StreamingBackend(tableManager, EMPTY_QUERY_CONTEXT, initVersion),
+            tableManager,
             EMPTY_QUERY_CONTEXT,
             emptyDeltaOptions(),
             schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false),
