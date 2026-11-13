@@ -256,7 +256,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 
 | Action | Description |
 |--------|-------------|
-| `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be non-decreasing across all checkpoint actions in the log: two `checkpoint` actions can have the same version (e.g., commits v42 and v43 may both checkpoint v42). |
+| `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be non-decreasing across all checkpoint actions in the log (e.g., commits v42 and v43 may both checkpoint v42). |
 | `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, `commitTimestamp`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). A metadata tree can only be produced as of a version at which In-Commit Timestamps are enabled. `commitTimestamp` is the in-commit timestamp (milliseconds since the Unix epoch) of the commit at `version`. `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
