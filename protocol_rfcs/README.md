@@ -30,6 +30,7 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | 2026-08-10    | [column-updates.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/column-updates.md)                                     | https://github.com/delta-io/delta/issues/7414 | Column Updates                         |
 | 2026-08-27    | [user-defined-types.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/user-defined-types.md)                                               | https://github.com/delta-io/delta/issues/7559 | User-Defined Types (UDT)                            |
 | 2026-09-01    | [concurrent-identity-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/concurrent-identity-columns.md)      | https://github.com/delta-io/delta/issues/7572 | Concurrent Identity Columns            |
+| 2026-09-24    | [invisible-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/invisible-columns.md)                         | https://github.com/delta-io/delta/issues/7731 | Invisible Columns                      |
 
 ### Accepted RFCs
 
