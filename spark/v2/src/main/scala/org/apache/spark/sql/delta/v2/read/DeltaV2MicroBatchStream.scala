@@ -77,7 +77,6 @@ import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
-import io.delta.kernel.internal.util.Preconditions
 import io.delta.kernel.internal.util.Utils
 
 import org.apache.spark.sql.SparkSession
@@ -941,9 +940,9 @@ private[read] class DeltaV2MicroBatchStream(
       startVersion: Long,
       endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
     // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
-    Preconditions.checkArgument(
-        options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
-        "Using schema from schema tracking log cannot tolerate missing commit files.")
+    require(
+      options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+      "Using schema from schema tracking log cannot tolerate missing commit files.")
     val commits: ClosableIterator[DeltaSingleCommit] =
         streamingBackend.getSingleCommitIterator(
             startVersion,
@@ -1006,9 +1005,9 @@ private[read] class DeltaV2MicroBatchStream(
       endOffset: Optional[DeltaSourceOffset],
       actionSet: Set[DeltaAction]): ClosableIterator[CommitActions] = {
     // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
-    Preconditions.checkArgument(
-        options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
-        "Using schema from schema tracking log cannot tolerate missing commit files.")
+    require(
+      options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+      "Using schema from schema tracking log cannot tolerate missing commit files.")
 
     var endVersionOpt: Option[Long] = ScalaUtils.toScalaOption(endOffset).map(_.reservoirVersion)
 
@@ -1259,10 +1258,9 @@ private[read] class DeltaV2MicroBatchStream(
                   endOffsetOpt,
                   verifyMetadataAction)
         } else if (action.isInstanceOf[Protocol]) {
-          Preconditions.checkArgument(
-              protocolAction == null,
-              "Should not encounter two protocol actions in the same commit of version %d",
-              Long.box(version))
+          assert(
+            protocolAction == null,
+            s"Should not encounter two protocol actions in the same commit of version $version")
           protocolAction = action.asInstanceOf[Protocol]
         } else if (action.isInstanceOf[CommitInfo]) {
           val commitInfo: CommitInfo = action.asInstanceOf[CommitInfo]
@@ -1686,10 +1684,9 @@ private[read] class DeltaV2MicroBatchStream(
           val protocolOpt: Optional[io.delta.kernel.internal.actions.Protocol] =
               StreamingHelper.getProtocol(batch, rowId)
           if (protocolOpt.isPresent()) {
-            Preconditions.checkArgument(
-                protocolAction == null,
-                "Should not encounter two protocol actions in the same commit of version %d",
-                Long.box(version))
+            assert(
+              protocolAction == null,
+              s"Should not encounter two protocol actions in the same commit of version $version")
             // TODO: Read CDC commits as V1 actions instead of Kernel batches to remove
             // this Protocol conversion.
             protocolAction = KernelActionUtils.protocolFromKernel(protocolOpt.get())
@@ -1779,18 +1776,18 @@ private[read] class DeltaV2MicroBatchStream(
         if (cdc.getAddFile() != null) {
           val prev: io.delta.kernel.internal.actions.AddFile =
               addByPath.put(cdc.getAddFile().getPath(), cdc.getAddFile())
-          Preconditions.checkArgument(
-              prev == null,
-              "Unexpected duplicate AddFile at path %s in a single commit",
-              cdc.getAddFile().getPath())
+          require(
+            prev == null,
+            s"Unexpected duplicate AddFile at path ${cdc.getAddFile().getPath()} " +
+              "in a single commit")
         // scalastyle:off removeFile // Reads Kernel RemoveFiles; does not create any.
         } else if (cdc.getRemoveFile() != null) {
           val prev: io.delta.kernel.internal.actions.RemoveFile =
               removeByPath.put(cdc.getRemoveFile().getPath(), cdc.getRemoveFile())
-          Preconditions.checkArgument(
-              prev == null,
-              "Unexpected duplicate RemoveFile at path %s in a single commit",
-              cdc.getRemoveFile().getPath())
+          require(
+            prev == null,
+            s"Unexpected duplicate RemoveFile at path ${cdc.getRemoveFile().getPath()} " +
+              "in a single commit")
         }
         // scalastyle:on removeFile
       }
@@ -1869,11 +1866,11 @@ private[read] class DeltaV2MicroBatchStream(
       if (file.hasFileAction()) {
         dataFiles.add(file)
       } else {
-        Preconditions.checkState(
-            baseSentinel.isEmpty,
-            String.format(
-                "Expected at most one BASE sentinel per commit, got multiple for version %s",
-                Long.box(commitVersion)))
+        if (baseSentinel.nonEmpty) {
+          throw new IllegalStateException(
+            "Expected at most one BASE sentinel per commit, " +
+              s"got multiple for version $commitVersion")
+        }
         baseSentinel = Some(file)
       }
     }
@@ -1932,10 +1929,9 @@ private[read] class DeltaV2MicroBatchStream(
       startVersion: Long,
       endOffsetOpt: Optional[DeltaSourceOffset],
       verifyMetadataAction: Boolean): Metadata = {
-    Preconditions.checkArgument(
-        existing == null,
-        "Should not encounter two metadata actions in the same commit of version %d",
-        Long.box(version))
+    assert(
+      existing == null,
+      s"Should not encounter two metadata actions in the same commit of version $version")
     // When schema tracking is enabled, verifyMetadataAction is false - the handler manages
     // schema changes through the barrier protocol instead.
     if (verifyMetadataAction) {
