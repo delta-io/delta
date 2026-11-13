@@ -29,7 +29,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.catalog.Identifier;
@@ -46,6 +45,7 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import scala.Option;
 
 /**
  * Direct (non-analyzer) batch execution contract test for Delta changelog classes.
@@ -77,7 +77,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("DELETE FROM %s WHERE id = 1", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Option.empty());
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
@@ -149,7 +149,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (1)", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Option.empty());
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
 
@@ -200,7 +200,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("UPDATE %s SET name = 'AliceX' WHERE id = 1", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Option.empty());
           StructType dataSchema = spark.table(tableName).schema();
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
@@ -273,7 +273,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Option.empty());
           StructType dataSchema = spark.table(tableName).schema();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
@@ -342,7 +342,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Option.empty());
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
@@ -407,7 +407,7 @@ class DeltaV2ChangelogDirectBatchExecutionTest extends DeltaV2ChangelogTestBase 
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
 
           DeltaV2SnapshotManager snapshotManager =
-              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Optional.empty());
+              SnapshotManagerFactory.create(tablePath, defaultKernelContext, Option.empty());
           long latestVersion = snapshotManager.loadLatestSnapshot().version();
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 

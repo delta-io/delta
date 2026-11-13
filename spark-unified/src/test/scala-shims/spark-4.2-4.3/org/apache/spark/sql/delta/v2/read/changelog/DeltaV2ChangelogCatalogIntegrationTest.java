@@ -24,11 +24,11 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.snapshot.SnapshotManagerFactory;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Optional;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.junit.jupiter.api.Test;
+import scala.Option;
 
 /**
  * Integration tests for catalog-routed CDC entrypoint (TableCatalog.loadChangelog).
@@ -107,7 +107,7 @@ class DeltaV2ChangelogCatalogIntegrationTest extends DeltaV2ChangelogTestBase {
     // Reads through the kernel snapshot manager, so it works inside the STRICT block the test body
     // runs in. tableLocation is resolved by withHistoryTable before STRICT is set.
     DeltaV2SnapshotManager snapshotManager =
-        SnapshotManagerFactory.create(tableLocation, defaultKernelContext, Optional.empty());
+        SnapshotManagerFactory.create(tableLocation, defaultKernelContext, Option.empty());
     long millis = snapshotManager.loadSnapshotAt(version).timestamp();
     return new java.sql.Timestamp(millis);
   }
