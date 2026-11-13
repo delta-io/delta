@@ -88,6 +88,14 @@ public interface UpdateTableTransactionBuilder {
   UpdateTableTransactionBuilder withTablePropertiesRemoved(Set<String> propertyKeys);
 
   /**
+   * Set a new description for the table. If the table already has this description, this does not
+   * add a metadata update to the transaction.
+   *
+   * @param description The new table description. Cannot be null.
+   */
+  UpdateTableTransactionBuilder withDescription(String description);
+
+  /**
    * Update the clustering columns for the table and enable clustering if it is not already enabled.
    * Note: clustering cannot be enabled for a partitioned table.
    *

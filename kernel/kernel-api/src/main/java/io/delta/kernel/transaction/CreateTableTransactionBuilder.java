@@ -47,6 +47,16 @@ public interface CreateTableTransactionBuilder {
   CreateTableTransactionBuilder withTableProperties(Map<String, String> properties);
 
   /**
+   * Set the description of the new Delta table. It is written to the {@code description} field of
+   * the table's metadata, which is where Delta Spark stores the SQL table comment.
+   *
+   * <p>The default, if not specified in the builder, is no description.
+   *
+   * @param description The table description. Cannot be null.
+   */
+  CreateTableTransactionBuilder withDescription(String description);
+
+  /**
    * Set the data layout specification for the new Delta table.
    *
    * <p>The data layout specification determines how data files are organized within the table, such

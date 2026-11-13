@@ -68,6 +68,34 @@ class DeltaReplaceTableTransactionBuilderV2Suite extends DeltaReplaceTableSuite
       assert(e.getMessage.contains("This is a fake committer"))
     }
   }
+
+  test("ReplaceTableTransactionBuilder sets the description of the new table definition") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      def replaceTable(description: Option[String]): Unit = {
+        var builder = TableManager.loadSnapshot(tablePath)
+          .build(engine).asInstanceOf[SnapshotImpl]
+          .buildReplaceTableTransaction(testSchema, testEngineInfo)
+        description.foreach { d => builder = builder.withDescription(d) }
+        builder.build(engine).commit(engine, emptyIterable())
+      }
+      def description: Option[String] = {
+        Option(getMetadata(engine, tablePath).getDescription.orElse(null))
+      }
+
+      TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+        .withDescription("old description")
+        .build(engine)
+        .commit(engine, emptyIterable())
+      assert(description === Some("old description"))
+
+      replaceTable(Some("new description"))
+      assert(description === Some("new description"))
+
+      // The description of the replaced table is not carried over
+      replaceTable(None)
+      assert(description === None)
+    }
+  }
 }
 
 abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
