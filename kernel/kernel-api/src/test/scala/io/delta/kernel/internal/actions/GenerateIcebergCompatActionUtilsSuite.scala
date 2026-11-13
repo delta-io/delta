@@ -283,6 +283,53 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
       }
     }
   }
+  test("generateIcebergCompatWriterV3RemoveAction preserves baseRowId and " +
+    "defaultRowCommitVersion") {
+    val txnRow = getTestTransactionStateRow(compatibleV3TableProperties)
+    val baseRowId = Optional.of[java.lang.Long](42L)
+    val defaultRowCommitVersion = Optional.of[java.lang.Long](7L)
+
+    val row = GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV3RemoveAction(
+      txnRow,
+      testDataFileStatusWithStatistics,
+      Collections.emptyMap(), // partitionValues
+      true, // dataChange
+      baseRowId,
+      defaultRowCommitVersion,
+      Optional.empty(), // deletionVectorDescriptor
+      Optional.empty() // Pre-parsed physicalSchema
+    )
+
+    assert(row.getSchema == SingleAction.FULL_SCHEMA)
+    val removeRow = row.getStruct(SingleAction.REMOVE_FILE_ORDINAL)
+    val removeFile = new RemoveFile(removeRow)
+    assert(removeFile.getBaseRowId.isPresent)
+    assert(removeFile.getBaseRowId.get == 42L)
+    assert(removeFile.getDefaultRowCommitVersion.isPresent)
+    assert(removeFile.getDefaultRowCommitVersion.get == 7L)
+  }
+
+  test("generateIcebergCompatWriterV3RemoveAction with empty baseRowId and " +
+    "defaultRowCommitVersion") {
+    val txnRow = getTestTransactionStateRow(compatibleV3TableProperties)
+
+    val row = GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV3RemoveAction(
+      txnRow,
+      testDataFileStatusWithStatistics,
+      Collections.emptyMap(), // partitionValues
+      true, // dataChange
+      Optional.empty[java.lang.Long](),
+      Optional.empty[java.lang.Long](),
+      Optional.empty(), // deletionVectorDescriptor
+      Optional.empty() // Pre-parsed physicalSchema
+    )
+
+    assert(row.getSchema == SingleAction.FULL_SCHEMA)
+    val removeRow = row.getStruct(SingleAction.REMOVE_FILE_ORDINAL)
+    val removeFile = new RemoveFile(removeRow)
+    assert(!removeFile.getBaseRowId.isPresent)
+    assert(!removeFile.getDefaultRowCommitVersion.isPresent)
+  }
 }
 
 object GenerateIcebergCompatActionUtilsSuite {
@@ -314,5 +361,10 @@ object GenerateIcebergCompatActionUtilsSuite {
   private val compatibleTableProperties = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true",
     TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
+    TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
+
+  private val compatibleV3TableProperties = Map(
+    TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.getKey -> "true",
+    TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true",
     TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
 }
