@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.AdaptiveMetadataTableFeature
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, DeltaConfigs}
 import org.apache.spark.sql.delta.actions.{
   AddFile,
   DeletionVectorDescriptor,
@@ -30,6 +30,29 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
 class AMTUtilsSuite extends QueryTest with SharedSparkSession {
+
+  test("amtSupported and amtEnabled for each AMT feature and each AMT property value") {
+    val devProtocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val previewProtocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
+    // (protocol, AMT property, amtSupported, amtEnabled)
+    val cases = Seq(
+      (devProtocol, None, true, false),
+      (devProtocol, Some("true"), true, true),
+      (devProtocol, Some("false"), true, false),
+      (previewProtocol, None, true, true),
+      (previewProtocol, Some("true"), true, true),
+      (previewProtocol, Some("false"), true, true),
+      (Protocol(), None, false, false),
+      (Protocol(), Some("true"), false, false),
+      (Protocol(), Some("false"), false, false))
+    cases.foreach { case (protocol, property, supported, enabled) =>
+      val metadata = Metadata(
+        configuration = property.map(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key -> _).toMap)
+      val clue = s"protocol: $protocol, AMT property: $property"
+      assert(AMTUtils.amtSupported(protocol) === supported, clue)
+      assert(AMTUtils.amtEnabled(metadata, protocol) === enabled, clue)
+    }
+  }
 
   test("invariantCheckWithLogging: succeeds when the invariant holds") {
     AMTUtils.invariantCheckWithLogging(
@@ -135,7 +158,7 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
   }
 
   test("amtEnabled: true when the protocol supports the AMT feature") {
-    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
     assert(AMTUtils.amtEnabled(Metadata(), protocol))
   }
 
@@ -144,7 +167,7 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
   }
 
   test("AMTSnapshotId fills missing AddFile and RemoveFile lifecycle IDs") {
-    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
     val dv = DeletionVectorDescriptor(
       storageType = "u",
       pathOrInlineDv = "test-dv",
@@ -203,7 +226,7 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
   }
 
   test("AMTSnapshotId preserves a materialized modification ID") {
-    val protocol = Protocol.forTableFeature(AdaptiveMetadataTableFeature)
+    val protocol = Protocol.forTableFeature(AdaptiveMetadataPreviewTableFeature)
     val add = AddFile(
       "materialized",
       Map.empty,

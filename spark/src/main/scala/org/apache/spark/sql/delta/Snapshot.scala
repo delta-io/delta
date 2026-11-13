@@ -26,7 +26,7 @@ import scala.util.Try
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTUtils}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCheckpointProviderBase, AMTUsageLogs, AMTUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
@@ -238,7 +238,7 @@ class Snapshot(
 
   /** Returns the lastManifestCommit reliably for this snapshot's version. */
   lazy val lastManifestCommitOpt: Option[LastManifestCommit] =
-    Option.when(AMTUtils.amtEnabled(this)) {
+    Option.when(AMTUtils.amtSupported(protocol)) {
       _reconstructedProtocolMetadataICTAndLMC.bestEffortLastManifestCommit.orElse {
         // Only fallback to direct CommitInfo read if there are no trailing deltas.
         // This avoids unnecessary I/O when there isn't any AMT checkpoint yet.
@@ -248,7 +248,9 @@ class Snapshot(
               callSite = "Snapshot.lastManifestCommitOpt") { commitInfoOpt =>
             commitInfoOpt.getOrElse {
               throw DeltaErrors.missingCommitInfo(
-                AdaptiveMetadataTableFeature.name, version.toString)
+                AdaptiveMetadataTableFeatureBase.supportedBy(protocol)
+                  .getOrElse(AdaptiveMetadataPreviewTableFeature).name,
+                version.toString)
             }.lastManifestCommit
           }
         }.flatten
@@ -476,77 +478,114 @@ class Snapshot(
     deltaLog.protocolRead(protocol)
     deltaLog.assertTableFeaturesMatchMetadata(protocol, metadata)
     SchemaUtils.recordUndefinedTypes(deltaLog, metadata.schema)
-    assertAMTInvariantsAtInit()
+    AMTUtils.runInvariantsSafely(
+        checkName = "Snapshot.assertAMTInvariantsAtInit",
+        deltaLog = Some(deltaLog),
+        logPath = logPath) {
+      assertAMTInvariantsAtInit()
+    }
   }
 
   /**
-   * Asserts AMT invariants at snapshot initialization. Only effective in testing.
+   * Checks AMT invariants at snapshot initialization, logging in production and throwing in tests.
    */
   private def assertAMTInvariantsAtInit(): Unit = {
     def toStrLMC(lastManifestCommit: LastManifestCommit): String = {
       s"LastManifestCommit[version=${lastManifestCommit.version}, " +
         s"contentRootVersion=${lastManifestCommit.contentRootVersion}]"
     }
-    def toStrCP(amtCheckpointProvider: AMTCheckpointProvider): String = {
+    def toStrCP(amtCheckpointProvider: AMTCheckpointProviderBase): String = {
       s"AMTCheckpointProvider[version=${amtCheckpointProvider.version}]"
     }
 
-    if (!DeltaUtils.isTesting) {
-      return
-    }
+    val eventData: Map[String, Any] = Map(
+      "version" -> version,
+      "logSegmentVersion" -> logSegment.version,
+      "checkpointVersion" -> logSegment.checkpointProvider.version,
+      "checkpointProviderType" -> logSegment.checkpointProvider.getClass.getSimpleName)
 
     val amtCheckpointProviderOpt = logSegment.checkpointProvider match {
-      case amtCheckpointProvider: AMTCheckpointProvider =>
-        if (amtCheckpointProvider.version > version) {
-          throw new IllegalStateException(
-            s"${toStrCP(amtCheckpointProvider)} exceeds snapshot version $version.")
-        }
+      case amtCheckpointProvider: AMTCheckpointProviderBase =>
+        deltaAssert(
+          check = amtCheckpointProvider.version <= version,
+          name = AMTUsageLogs.CHECKPOINT_EXCEEDS_SNAPSHOT_VERSION,
+          msg = s"${toStrCP(amtCheckpointProvider)} exceeds snapshot version $version.",
+          deltaLog = deltaLog,
+          data = eventData,
+          path = Some(logPath))
         Some(amtCheckpointProvider)
       case _ => None
     }
 
-    if (!AMTUtils.amtEnabled(this)) {
-      amtCheckpointProviderOpt.foreach { cp =>
-        throw new IllegalStateException(s"${toStrCP(cp)} is present but AMT is disabled.")
-      }
+    if (!AMTUtils.amtSupported(protocol)) {
+      deltaAssert(
+        check = amtCheckpointProviderOpt.isEmpty,
+        name = AMTUsageLogs.AMT_CHECKPOINT_PROVIDER_WITH_FEATURE_DISABLED,
+        msg = s"AMTCheckpointProvider[version=${logSegment.checkpointProvider.version}] " +
+          "is present but AMT is disabled.",
+        deltaLog = deltaLog,
+        data = eventData,
+        path = Some(logPath))
       return
     }
 
-    if (logSegment.nonCompactedDeltasOpt.isEmpty) {
-      throw new IllegalStateException(
-        s"An AMT-enabled snapshot must define nonCompactedDeltasOpt, got None.\n" +
-          s"${logSegment.toPrettyString}")
-    }
+    deltaAssert(
+      check = logSegment.nonCompactedDeltasOpt.isDefined,
+      name = AMTUsageLogs.SNAPSHOT_INVARIANT_MISSING_NON_COMPACTED_DELTAS,
+      msg = s"An AMT-enabled snapshot must define nonCompactedDeltasOpt, got None.\n" +
+        s"${logSegment}",
+      deltaLog = deltaLog,
+      data = eventData,
+      path = Some(logPath))
 
-    if (amtCheckpointProviderOpt.isDefined && logSegment.deltaAtCheckpointVersionOpt.isEmpty) {
-      throw new IllegalStateException(
-        s"An AMT-enabled snapshot must define deltaAtCheckpointVersionOpt, got None.\n" +
-          s"${logSegment.toPrettyString}")
-    }
+    deltaAssert(
+      check = amtCheckpointProviderOpt.isEmpty || logSegment.deltaAtCheckpointVersionOpt.isDefined,
+      name = AMTUsageLogs.MISSING_DELTA_AT_CHECKPOINT_VERSION,
+      msg = s"An AMT-enabled snapshot must define deltaAtCheckpointVersionOpt, got None.\n" +
+        s"${logSegment}",
+      deltaLog = deltaLog,
+      data = eventData,
+      path = Some(logPath))
 
     (amtCheckpointProviderOpt, lastManifestCommitOpt) match {
       // Normally, the AMT checkpoint provider's version matches the lastManifestCommit exactly.
       // However, during time travel it may instead describe something newer, i.e. a later manifest
       // commit not yet discoverable at the target version, carried forward from lastCheckpointInfo.
-      // Thus, we only throw when the AMT checkpoint provider is stale.
+      // Thus, we only report a violation when the AMT checkpoint provider is stale.
       // For example, if a table has the following latest state:
       //   DeltaLog[commits v0~9, manifest-commit v10 (content root @v5), commits v11~20]
       // Then `deltaLog.getSnapshotAt(version = 8)` could construct a LogSegment with:
       //   LogSegment[AMTCheckpointProvider(version = 5), deltas = commits v6~8]
       case (Some(amtCp), Some(lmc)) =>
-        if (lmc.contentRootVersion > amtCp.version) {
-          throw new IllegalStateException(
-            s"LastManifestCommit.contentRootVersion and AMTCheckpointProvider.version mismatch: " +
-              s"${toStrLMC(lmc)} vs ${toStrCP(amtCp)}")
-        }
+        deltaAssert(
+          check = lmc.contentRootVersion <= amtCp.version,
+          name = AMTUsageLogs.STALE_CHECKPOINT_PROVIDER,
+          msg = s"LastManifestCommit.contentRootVersion ${lmc.contentRootVersion} exceeds " +
+            s"AMTCheckpointProvider.version ${amtCp.version}.",
+          deltaLog = deltaLog,
+          data = eventData ++ Map(
+            "hasLastManifestCommit" -> true,
+            "lastManifestCommitVersion" -> lmc.version,
+            "lastManifestCommitContentRootVersion" -> lmc.contentRootVersion),
+          path = Some(logPath)
+        )
       // When that undiscoverable manifest commit is the first manifest commit, lastManifestCommit
-      // does not exist, so we will not throw here.
+      // does not exist, so this is not a violation.
       case (Some(amtCp), None) => ()
       // But when the lastManifestCommit is present but the AMT checkpoint provider is missing,
       // that's a mismatch.
       case (None, Some(lmc)) =>
-        throw new IllegalStateException(
-          s"LastManifestCommit is present but AMTCheckpointProvider is missing. ${toStrLMC(lmc)}")
+        deltaAssert(
+          check = false,
+          name = AMTUsageLogs.MISSING_CHECKPOINT_PROVIDER,
+          msg = s"${toStrLMC(lmc)} is present but AMTCheckpointProvider is missing.",
+          deltaLog = deltaLog,
+          data = eventData ++ Map(
+            "hasLastManifestCommit" -> true,
+            "lastManifestCommitVersion" -> lmc.version,
+            "lastManifestCommitContentRootVersion" -> lmc.contentRootVersion),
+          path = Some(logPath)
+        )
       case (None, None) => ()
     }
   }
@@ -1034,10 +1073,12 @@ object Snapshot extends DeltaLogging {
     // AddFile-generation logic cannot handle back references (yet): it writes allFiles into the CRC
     // without them. Only leaf-resident files carry a back reference, so a root-only tree yields a
     // back-reference-free list that matches state reconstruction.
-    if (AMTUtils.amtEnabled(snapshot)) {
-      val rootOnly =
-        effectiveLatestAMTCheckpointAtCommitVersion.exists(_.contentRoot.numLeaves.contains(0L))
-      if (!rootOnly) return false
+    // The tree is checked even when the read snapshot is not AMT because the commit that upgrades
+    // the table to AMT can land a leaf bearing tree.
+    if ((AMTUtils.amtSupported(snapshot.protocol) ||
+        effectiveLatestAMTCheckpointAtCommitVersion.isDefined) &&
+        !AMTUtils.isRootOnlyCheckpoint(effectiveLatestAMTCheckpointAtCommitVersion)) {
+      return false
     }
     allFilesInCrcWritePathEnabled(spark, snapshot) &&
       (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)

@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.nio.ByteBuffer
 
+import scala.collection.Seq
+
 import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterProvider}
 import org.apache.spark.sql.delta.deletionvectors.mumbling.{MumblingBitmap, MumblingBitmapWriter}
 import org.apache.hadoop.conf.Configuration
@@ -26,24 +28,30 @@ import org.apache.spark.sql.execution.vectorized.WritableColumnVector
 import org.apache.spark.sql.vectorized.ColumnVector
 
 /**
- * A [[RowIndexFilter]] over an AMT manifest deletion vector (MDV): a leaf row is dropped when its
- * row index is masked (contained) by the MDV, and kept otherwise. This is the AMT-local analog of
- * [[org.apache.spark.sql.delta.util.BitmapFilter.IfContained]] and probes the bitmap per
- * row (row indices within a leaf are dense and small), which matches the point-membership shape of
- * the Mumbling bitmap.
+ * A [[RowIndexFilter]] over one or more AMT manifest bitmaps. By default a leaf row is dropped when
+ * its row index is set in any bitmap, and kept otherwise. With `inverse`, only rows set in at least
+ * one bitmap are kept. This is the AMT-local analog of
+ * [[org.apache.spark.sql.delta.util.BitmapFilter.IfContained]] or
+ * [[org.apache.spark.sql.delta.util.BitmapFilter.IfNotContained]], and probes each
+ * bitmap per row instead of materializing their union.
  */
-private[deletionvectors] final class MumblingRowIndexFilter(bitmap: MumblingBitmap)
+private[deletionvectors] final class MumblingRowIndexFilter(
+    bitmaps: Seq[MumblingBitmap],
+    inverse: Boolean = false)
   extends RowIndexFilter {
+
+  require(bitmaps.nonEmpty, "At least one Mumbling bitmap is required")
 
   private def valueFor(rowIndex: Long): Byte = {
     require(
       rowIndex < MumblingBitmapWriter.MAX_POSITION_EXCLUSIVE,
       s"Row index $rowIndex exceeds the Mumbling bitmap limit " +
         s"${MumblingBitmapWriter.MAX_POSITION_EXCLUSIVE - 1}")
-    if (rowIndex >= 0 && bitmap.isSet(rowIndex.toInt)) {
-      RowIndexFilter.DROP_ROW_VALUE
+    val isSet = rowIndex >= 0 && bitmaps.exists(_.isSet(rowIndex.toInt))
+    if (inverse) {
+      if (isSet) RowIndexFilter.KEEP_ROW_VALUE else RowIndexFilter.DROP_ROW_VALUE
     } else {
-      RowIndexFilter.KEEP_ROW_VALUE
+      if (isSet) RowIndexFilter.DROP_ROW_VALUE else RowIndexFilter.KEEP_ROW_VALUE
     }
   }
 
@@ -71,19 +79,26 @@ private[deletionvectors] final class MumblingRowIndexFilter(bitmap: MumblingBitm
     batch.putByte(0, valueFor(rowIndex))
 }
 
-/**
- * A [[RowIndexFilterProvider]] for a manifest deletion vector carried inline in `manifest_info.dv`.
- */
+/** A [[RowIndexFilterProvider]] for one or more inline AMT manifest bitmaps. */
 private[deletionvectors] final class MumblingRowIndexFilterProvider(
-    inputSerializedBytes: Array[Byte], cardinality: Long)
+    inputSerializedBitmaps: Seq[Array[Byte]],
+    inputComponentCardinalities: Seq[Long],
+    inverse: Boolean = false)
   extends RowIndexFilterProvider with Serializable {
 
-  private val serializedBytes = inputSerializedBytes.clone()
+  require(inputSerializedBitmaps.nonEmpty, "At least one serialized Mumbling bitmap is required")
+  require(inputSerializedBitmaps.size == inputComponentCardinalities.size,
+    "Each serialized Mumbling bitmap must have one component cardinality")
+  require(inputComponentCardinalities.forall(_ >= 0),
+    s"Component cardinalities must be non-negative: $inputComponentCardinalities")
 
-  private def loadBitmap(): MumblingBitmap =
-    new MumblingBitmap(ByteBuffer.wrap(serializedBytes))
+  private[deletionvectors] val serializedBitmaps = inputSerializedBitmaps.map(_.clone()).toArray
+  private[deletionvectors] val componentCardinalities = inputComponentCardinalities.toArray
+
+  private def loadBitmaps(): Seq[MumblingBitmap] =
+    serializedBitmaps.map(bytes => new MumblingBitmap(ByteBuffer.wrap(bytes))).toSeq
 
   override def retrieve(hadoopConf: Configuration): RowIndexFilter =
-    new MumblingRowIndexFilter(loadBitmap())
+    new MumblingRowIndexFilter(loadBitmaps(), inverse)
 
 }

@@ -339,52 +339,92 @@ class DeltaLog private(
    * return an empty Iterator.
    * Callers are encouraged to use the other override which takes the endVersion if available to
    * avoid I/O and improve performance of this method.
+   *
+   * @param startVersion the first version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`. There is performance benefit on
+   *                                    AMT tables when set. This only takes effect when
+   *                                    [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled.
    */
   def getChanges(
       startVersion: Long,
       catalogTableOpt: Option[CatalogTable] = None,
-      failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(
-        startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
-      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
-    }
-  }
-
-  private[sql] def getChanges(
-      startVersion: Long,
-      endVersion: Long,
-      catalogTableOpt: Option[CatalogTable],
-      failOnDataLoss: Boolean): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(
-        startVersion,
-        endVersion,
-        catalogTableOpt,
-        failOnDataLoss).map { case (version, status) =>
-      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      failOnDataLoss: Boolean = false,
+      skipNoDataChangeFileActions: Boolean = false): Iterator[(Long, Seq[Action])] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)) {
+      getSingleCommitIterator(startVersion, catalogTableOpt, failOnDataLoss)
+        .map(_.asInstanceOf[SingleCommit])
+        .map { commit =>
+          (commit.version, commit.getActions(skipNoDataChangeFileActions))
+        }
+    } else {
+      getChangeLogFiles(
+          startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
+        (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      }
     }
   }
 
   /**
-   * Lazily get all commits starting from "startVersion" (inclusive) as [[SingleCommit]]
+   * Get all actions over [startVersion, endVersion] (both inclusive).
+   *
+   * @param startVersion the first version to read.
+   * @param endVersion the last version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`. There is performance benefit on
+   *                                    AMT tables when set. This only takes effect when
+   *                                    [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled.
+   */
+  private[sql] def getChanges(
+      startVersion: Long,
+      endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean,
+      skipNoDataChangeFileActions: Boolean): Iterator[(Long, Seq[Action])] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)) {
+      getSingleCommitIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss)
+        .map(_.asInstanceOf[SingleCommit])
+        .map { commit =>
+          (commit.version, commit.getActions(skipNoDataChangeFileActions))
+        }
+    } else {
+      getChangeLogFiles(
+          startVersion,
+          endVersion,
+          catalogTableOpt,
+          failOnDataLoss).map { case (version, status) =>
+        (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      }
+    }
+  }
+
+  /**
+   * Lazily get all commits starting from "startVersion" (inclusive) as [[DeltaSingleCommit]]
    * handles, without exposing the underlying log files. If startVersion doesn't exist, return an
    * empty Iterator. This is the streaming counterpart of [[getChanges]]
    *
    * Callers are encouraged to use the other override which takes the endVersion if available to
    * avoid I/O and improve performance of this method.
    */
-  private[sql] def getChangesIterator(
+  private[sql] def getSingleCommitIterator(
       startVersion: Long,
       catalogTableOpt: Option[CatalogTable] = None,
-      failOnDataLoss: Boolean = false): Iterator[SingleCommit] =
+      failOnDataLoss: Boolean = false): Iterator[DeltaSingleCommit] =
     getChangeLogFiles(startVersion, catalogTableOpt, failOnDataLoss).map {
       case (version, status) => SingleCommit(this, version, status)
     }
 
-  private[sql] def getChangesIterator(
+  private[sql] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Long,
       catalogTableOpt: Option[CatalogTable],
-      failOnDataLoss: Boolean): Iterator[SingleCommit] =
+      failOnDataLoss: Boolean): Iterator[DeltaSingleCommit] =
     getChangeLogFiles(startVersion, endVersion, catalogTableOpt, failOnDataLoss).map {
       case (version, status) => SingleCommit(this, version, status)
     }
@@ -394,12 +434,13 @@ class DeltaLog private(
    * [[FileStatus]].
    *
    * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
-   * callers should use [[getChangesIterator]] instead, which returns [[SingleCommit]] handles and
-   * keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
+   * callers should use [[getSingleCommitIterator]] instead, which returns [[DeltaSingleCommit]]
+   * handles and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata
+   * Tree).
    */
   @deprecated(
     "This method exposes the log's raw file statuses and will be removed in the " +
-    "future. Use getChanges and variants instead"
+    "future. Use getSingleCommitIterator instead"
   )
   private[sql] def getChangeLogFiles(
       startVersion: Long,
@@ -437,12 +478,13 @@ class DeltaLog private(
    * avoid I/O and improve performance of this method.
    *
    * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
-   * callers should use [[getChangesIterator]] instead, which returns [[SingleCommit]] handles and
-   * keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
+   * callers should use [[getSingleCommitIterator]] instead, which returns [[DeltaSingleCommit]]
+   * handles and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata
+   * Tree).
    */
   @deprecated(
     "This method exposes the log's raw file statuses and will be removed in the " +
-    "future. Use getChanges and variants instead"
+    "future. Use getSingleCommitIterator instead"
   )
   def getChangeLogFiles(
       startVersion: Long,
@@ -498,98 +540,6 @@ class DeltaLog private(
    * --------------------- */
 
   /**
-   * Asserts the highest protocol supported by this client is not less than what required by the
-   * table for performing read or write operations. This ensures the client to support a
-   * greater-or-equal protocol versions and recognizes/supports all features enabled by the table.
-   *
-   * The operation type to be checked is passed as a string in `readOrWrite`. Valid values are
-   * `read` and `write`.
-   */
-  private def protocolCheck(tableProtocol: Protocol, readOrWrite: String): Unit = {
-    val unsupportedTestFeatures =
-      if (spark.conf.get(DeltaSQLConf.UNSUPPORTED_TESTING_FEATURES_ENABLED)) {
-        TableFeature.testUnsupportedFeatures.toSeq
-      } else {
-        Seq.empty
-      }
-
-    // Spark 4.0 does not support the parquet variant logical type annotation. When
-    // the config is enabled, treat the variant table features as unsupported to block
-    // all interactions with variant tables on Spark 4.0 clients.
-    val unsupportedVariantFeatures =
-      if (org.apache.spark.SPARK_VERSION.startsWith("4.0") &&
-          spark.conf.get(DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40)) {
-        Seq(
-          VariantTypeTableFeature,
-          VariantTypePreviewTableFeature,
-          VariantShreddingTableFeature,
-          VariantShreddingPreviewTableFeature)
-      } else {
-        Seq.empty
-      }
-
-    val clientSupportedProtocol =
-      Action.supportedProtocolVersion(
-        featuresToExclude = unsupportedTestFeatures ++ unsupportedVariantFeatures)
-    // Depending on the operation, pull related protocol versions out of Protocol objects.
-    // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
-    val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
-      case "read" => (
-        Action.supportedReaderVersionNumbers,
-        tableProtocol.minReaderVersion,
-        (f: Protocol) => f.readerFeatureNames)
-      case "write" => (
-        Action.supportedWriterVersionNumbers,
-        tableProtocol.minWriterVersion,
-        (f: Protocol) => f.writerFeatureNames)
-      case _ =>
-        throw new IllegalArgumentException("Table operation must be either `read` or `write`.")
-    }
-
-    // Check is complete when both the protocol version and all referenced features are supported.
-    val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol)
-    val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol)
-    if (tableEnabledFeatureNames.subsetOf(clientSupportedFeatureNames) &&
-      clientSupportedVersions.contains(tableRequiredVersion)) {
-      return
-    }
-
-    // Otherwise, either the protocol version, or few features referenced by the table, is
-    // unsupported.
-    val clientUnsupportedFeatureNames =
-      tableEnabledFeatureNames.diff(clientSupportedFeatureNames)
-    // Prepare event log constants and the appropriate error message handler.
-    val (opType, versionKey, unsupportedFeaturesException) = readOrWrite match {
-      case "read" => (
-          "delta.protocol.failure.read",
-          "minReaderVersion",
-          DeltaErrors.unsupportedReaderTableFeaturesInTableException _)
-      case "write" => (
-          "delta.protocol.failure.write",
-          "minWriterVersion",
-          DeltaErrors.unsupportedWriterTableFeaturesInTableException _)
-    }
-    recordDeltaEvent(
-      this,
-      opType,
-      data = Map(
-        "clientVersion" -> clientSupportedVersions.max,
-        versionKey -> tableRequiredVersion,
-        "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
-        "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
-    if (!clientSupportedVersions.contains(tableRequiredVersion)) {
-      throw new InvalidProtocolVersionException(
-        dataPath.toString(),
-        tableProtocol.minReaderVersion,
-        tableProtocol.minWriterVersion,
-        Action.supportedReaderVersionNumbers.toSeq,
-        Action.supportedWriterVersionNumbers.toSeq)
-    } else {
-      throw unsupportedFeaturesException(dataPath.toString(), clientUnsupportedFeatureNames)
-    }
-  }
-
-  /**
    * Asserts that the table's protocol enabled all features that are active in the metadata.
    *
    * A mismatch shouldn't happen when the table has gone through a proper write process because we
@@ -610,20 +560,17 @@ class DeltaLog private(
     }
   }
 
-  /**
-   * Asserts that the client is up to date with the protocol and allowed to read the table that is
-   * using the given `protocol`.
-   */
   def protocolRead(protocol: Protocol): Unit = {
-    protocolCheck(protocol, "read")
+    Protocol.protocolRead(spark, protocol, dataPath.toString, this)
   }
+
 
   /**
    * Asserts that the client is up to date with the protocol and allowed to write to the table
    * that is using the given `protocol`.
    */
   def protocolWrite(protocol: Protocol): Unit = {
-    protocolCheck(protocol, "write")
+    Protocol.protocolCheck(spark, protocol, "write", dataPath.toString, this)
   }
 
   /* ---------------------------------------- *

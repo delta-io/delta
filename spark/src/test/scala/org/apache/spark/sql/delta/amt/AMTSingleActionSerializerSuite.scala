@@ -92,7 +92,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     assert(spark.emptyDataset[AMTSingleAction].schema.fieldNames.toSeq == Seq(
       "content_type", "location", "file_format", "tracking",
       "deletion_vector", "spec_id", "partition", "sort_order_id", "record_count",
-      "file_size_in_bytes", "content_stats", "manifest_info", "key_metadata",
+      "file_size_in_bytes", "content_stats", "tight_stats", "manifest_info", "key_metadata",
       "split_offsets", "tags"))
   }
 
@@ -238,6 +238,7 @@ class AMTSingleActionSerializerSuite extends QueryTest with SharedSparkSession {
     record_count = 1L,
     file_size_in_bytes = 1L,
     content_stats = None,
+    tight_stats = None,
     manifest_info = manifest_info,
     key_metadata = None,
     split_offsets = None,

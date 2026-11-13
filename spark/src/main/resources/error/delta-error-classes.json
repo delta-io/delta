@@ -31,6 +31,18 @@
     ],
     "sqlState" : "0B000"
   },
+  "DELTA_ADAPTIVE_METADATA_INLINE_DELETION_VECTOR_DISALLOWED" : {
+    "message" : [
+      "Cannot add an inline deletion vector to a table with table feature '<feature>', which requires on-disk deletion vectors. This is a bug."
+    ],
+    "sqlState" : "XXKDS"
+  },
+  "DELTA_ADAPTIVE_METADATA_NOT_ENABLED" : {
+    "message" : [
+      "Enabling the table feature '<feature>' is not supported."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_ADAPTIVE_METADATA_REQUIRES_COLUMN_MAPPING_ID_MODE" : {
     "message" : [
       "The table feature '<feature>' requires column mapping mode 'id', but the table property '<prop>' is set to '<mode>'. Recreate the table with '<prop>' = 'id', or omit the property to have it set automatically."
@@ -291,23 +303,11 @@
     ],
     "sqlState" : "42616"
   },
-  "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES" : {
-    "message" : [
-      "<Command> cannot override or unset in-commit timestamp table properties because coordinated commits is enabled in this table and depends on them. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
-    ],
-    "sqlState" : "42616"
-  },
   "DELTA_CANNOT_MODIFY_TABLE_PROPERTY" : {
     "message" : [
       "The Delta table configuration <prop> cannot be specified by the user"
     ],
     "sqlState" : "42939"
-  },
-  "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS" : {
-    "message" : [
-      "<Command> cannot override coordinated commits configurations for an existing target table. Please remove them (\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\", \"delta.coordinatedCommits.tableConf-preview\") from the TBLPROPERTIES clause and then retry the command again."
-    ],
-    "sqlState" : "42616"
   },
   "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI" : {
     "message" : [
@@ -363,12 +363,6 @@
     ],
     "sqlState" : "22003"
   },
-  "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES" : {
-    "message" : [
-      "<Command> cannot set in-commit timestamp table properties together with coordinated commits, because the latter depends on the former and sets the former internally. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
-    ],
-    "sqlState" : "42616"
-  },
   "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES" : {
     "message" : [
       "Can't set location multiple times. Found locations: <locations>."
@@ -380,12 +374,6 @@
       "Cannot change the location of a path based table."
     ],
     "sqlState" : "42613"
-  },
-  "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS" : {
-    "message" : [
-      "ALTER cannot unset coordinated commits configurations. To downgrade a table from coordinated commits, please try again using `ALTER TABLE [table-name] DROP FEATURE 'coordinatedCommits-preview'`."
-    ],
-    "sqlState" : "42616"
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
@@ -461,8 +449,7 @@
   "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE" : {
     "message" : [
       "Failed to write a value of <sourceType> type into the <targetType> type column <columnName> due to an overflow.",
-      "Use `try_cast` on the input value to tolerate overflow and return NULL instead.",
-      "If necessary, set <storeAssignmentPolicyFlag> to \"LEGACY\" to bypass this error or set <updateAndMergeCastingFollowsAnsiEnabledFlag> to true to revert to the old behaviour and follow <ansiEnabledFlag> in UPDATE and MERGE."
+      "Use `try_cast` on the input value to tolerate overflow and return NULL instead."
     ],
     "sqlState" : "22003"
   },
@@ -1877,6 +1864,12 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_INCOMPATIBLE_TABLE_FEATURES" : {
+    "message" : [
+      "Table '<tableName>' cannot support both '<feature1>' and '<feature2>' because they are incompatible."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_INCONSISTENT_LOGSTORE_CONFS" : {
     "message" : [
       "(<setKeys>) cannot be set to different values. Please only set one of them, or set them to the same value."
@@ -2423,18 +2416,6 @@
       "<usageReference>"
     ],
     "sqlState" : "21506"
-  },
-  "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_COMMAND" : {
-    "message" : [
-      "During <command>, either both coordinated commits configurations (\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\") are set in the command or neither of them. Missing: \"<configuration>\". Please specify this configuration in the TBLPROPERTIES clause or remove the other configuration, and then retry the command again."
-    ],
-    "sqlState" : "42616"
-  },
-  "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION" : {
-    "message" : [
-      "During <command>, either both coordinated commits configurations (\"coordinatedCommits.commitCoordinator-preview\", \"coordinatedCommits.commitCoordinatorConf-preview\") are set in the SparkSession configurations or neither of them. Missing: \"<configuration>\". Please set this configuration in the SparkSession or unset the other configuration, and then retry the command again."
-    ],
-    "sqlState" : "42616"
   },
   "DELTA_NESTED_NOT_NULL_CONSTRAINT" : {
     "message" : [
@@ -3081,6 +3062,18 @@
     ],
     "sqlState" : "KD002"
   },
+  "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_RESTART" : {
+    "message" : [
+      "An input file requires deletion-vector filtering, but this stream's reader cannot apply it. Restart the streaming query with the same checkpoint location."
+    ],
+    "sqlState" : "55000"
+  },
+  "DELTA_STREAMING_DELETION_VECTORS_REQUIRE_SCHEMA_TRACKING" : {
+    "message" : [
+      "This stream cannot read historical deletion vectors. Provide a 'schemaTrackingLocation' and restart with the same checkpoint."
+    ],
+    "sqlState" : "55000"
+  },
   "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE" : {
     "message" : [
       "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
@@ -3108,6 +3101,37 @@
       "Updated table protocol: <protocol>"
     ],
     "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_RESTART_REQUIRED_WITH_NEW_DATAFRAME" : {
+    "message" : [
+      "Recreate the streaming DataFrame, then restart the query."
+    ],
+    "subClass" : {
+      "PARTITION_SCHEMA_CHANGED" : {
+        "message" : [
+          "The partition schema changed for Delta table <tableId>.",
+          "Partition schema from analysis:",
+          "<analyzedPartitionSchema>",
+          "Physical partition column names from analysis: <analyzedPhysicalNames>",
+          "Partition schema at source initialization:",
+          "<currentPartitionSchema>",
+          "Physical partition column names at source initialization: <currentPhysicalNames>",
+          ""
+        ]
+      },
+      "SCHEMA_CHANGED" : {
+        "message" : [
+          "The streaming query's schema does not match the current table schema.",
+          "",
+          "Query schema (from analysis): <querySchema>",
+          "",
+          "Current table schema: <tableSchema>",
+          "",
+          "The table schema has changed since this streaming query was created."
+        ]
+      }
+    },
+    "sqlState" : "KD007"
   },
   "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT" : {
     "message" : [
@@ -3159,18 +3183,6 @@
       "The schema log may have been corrupted. Please pick a new schema location."
     ],
     "sqlState" : "22000"
-  },
-  "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART" : {
-    "message" : [
-      "The streaming query's schema does not match the current table schema.",
-      "",
-      "Query schema (from analysis): <querySchema>",
-      "",
-      "Current table schema: <tableSchema>",
-      "",
-      "The table schema has changed since this streaming query was created. Create a new streaming DataFrame to pick up the current schema."
-    ],
-    "sqlState" : "KD007"
   },
   "DELTA_STREAMING_TRAILING_COMMIT_MISSING" : {
     "message" : [

@@ -25,6 +25,7 @@ import java.util.Optional;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 
 /**
  * Wrapper for all CDC file variants: inferred from AddFile (insert/update), inferred from
@@ -64,6 +65,13 @@ public class CDCDataFile {
     this.commitTimestamp = commitTimestamp;
     this.fileSize = fileSize;
     this.dvBase64Override = dvBase64Override;
+  }
+
+  /** Create a CDCDataFile from a V1 AddFile, converting to Kernel at this boundary. */
+  public static CDCDataFile fromAddFile(
+      org.apache.spark.sql.delta.actions.AddFile addFile, long commitTimestamp) {
+    // TODO: Store V1 AddFiles in CDCDataFile to remove this V1-to-Kernel conversion.
+    return fromAddFile(KernelActionUtils$.MODULE$.toKernelScanAddFile(addFile), commitTimestamp);
   }
 
   /** Create a CDCDataFile inferred from an AddFile action (always "insert"). */

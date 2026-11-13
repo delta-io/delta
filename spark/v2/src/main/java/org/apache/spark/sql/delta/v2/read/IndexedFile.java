@@ -17,12 +17,12 @@ package org.apache.spark.sql.delta.v2.read;
 
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
-import io.delta.kernel.internal.actions.AddFile;
 import javax.annotation.Nullable;
+import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 
 /**
- * Java version of IndexedFile.scala that uses Kernel's action classes.
+ * Java version of IndexedFile.scala.
  *
  * <p>File: represents a data file in Delta.
  *
@@ -89,7 +89,7 @@ public class IndexedFile implements AdmittableFile {
   @Override
   public long getFileSize() {
     if (addFile != null) {
-      return addFile.getSize();
+      return addFile.size();
     } else if (cdcDataFile != null) {
       return cdcDataFile.getFileSize();
     }

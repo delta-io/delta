@@ -15,11 +15,14 @@
  */
 package org.apache.spark.sql.delta.v2.utils;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import org.apache.spark.sql.delta.storage.ClosableIterator;
 import scala.Option;
 import scala.Tuple2;
 import scala.collection.JavaConverters;
@@ -65,8 +68,8 @@ public final class ScalaUtils {
    * @param <T> the type of the value
    * @return the corresponding Scala Option
    */
-  public static <T> Option<T> toScalaOption(Optional<T> optional) {
-    return optional.map(Option::apply).orElse(Option.empty());
+  public static <T> Option<T> toScalaOption(Optional<? extends T> optional) {
+    return optional.isPresent() ? Option.apply(optional.get()) : Option.empty();
   }
 
   /**
@@ -85,5 +88,28 @@ public final class ScalaUtils {
     return option.isDefined()
         ? OptionalLong.of(((Number) option.get()).longValue())
         : OptionalLong.empty();
+  }
+
+  // TODO: Remove this adapter after converting its Java callers to Scala.
+  /** Adapts a Java iterator and preserves its close method when it is Closeable. */
+  public static <T> ClosableIterator<T> toClosableIterator(java.util.Iterator<T> iterator) {
+    return new ClosableIterator<T>() {
+      @Override
+      public boolean hasNext() {
+        return iterator.hasNext();
+      }
+
+      @Override
+      public T next() {
+        return iterator.next();
+      }
+
+      @Override
+      public void close() throws IOException {
+        if (iterator instanceof Closeable) {
+          ((Closeable) iterator).close();
+        }
+      }
+    };
   }
 }

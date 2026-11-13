@@ -798,7 +798,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
     // Verify that properties are set on server. This can not be done by DESC EXTENDED.
     TablesApi tablesApi = new TablesApi(uc.createApiClient());
-    TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
+    TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false, false);
     assertThat(tableInfo.getCatalogName()).isEqualTo(catalogName);
     assertThat(tableInfo.getName()).isEqualTo(parseTableName(fullTableName));
     assertThat(tableInfo.getSchemaName()).isEqualTo(schemaName);

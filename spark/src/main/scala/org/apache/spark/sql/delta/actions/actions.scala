@@ -91,6 +91,13 @@ object Action extends DeltaLogging {
     super.recordDeltaEvent(provider, opType, tags, data, path)
   }
 
+  override def recordDeltaEventOncePerTable(
+      provider: DeltaLoggingProvider,
+      opType: String,
+      data: => AnyRef = null): Unit = {
+    super.recordDeltaEventOncePerTable(provider, opType, data)
+  }
+
   /**
    * The maximum protocol version we are currently allowed to use, with or without all recognized
    * features. Optionally, some features can be excluded using `featuresToExclude`.
@@ -317,7 +324,7 @@ case class Protocol private (
   override def getWriterFeatures: java.util.Set[String] = writerFeatures.map(_.asJava).orNull
 }
 
-object Protocol {
+object Protocol extends DeltaLogging {
   import TableFeatureProtocolUtils._
 
   val MIN_READER_VERSION_PROP = "delta.minReaderVersion"
@@ -680,6 +687,116 @@ object Protocol {
       }
     }
   }
+
+  /**
+   * Asserts that the client is up to date with the protocol and allowed to read the table that is
+   * using the given `protocol`.
+   */
+  private[delta] def protocolRead(
+      spark: SparkSession,
+      protocol: Protocol,
+      tablePath: String,
+      loggingProvider: DeltaLoggingProvider): Unit = {
+    protocolCheck(spark, protocol, "read", tablePath, loggingProvider)
+  }
+
+
+  /**
+   * Asserts the highest protocol supported by this client is not less than what required by the
+   * table for performing read or write operations. This ensures the client to support a
+   * greater-or-equal protocol versions and recognizes/supports all features enabled by the table.
+   *
+   * The operation type to be checked is passed as a string in `readOrWrite`. Valid values are
+   * `read` and `write`.
+   */
+  private[delta] def protocolCheck(
+      spark: SparkSession,
+      tableProtocol: Protocol,
+      readOrWrite: String,
+      tablePath: String,
+      loggingProvider: DeltaLoggingProvider): Unit = {
+    val unsupportedTestFeatures =
+      if (spark.conf.get(DeltaSQLConf.UNSUPPORTED_TESTING_FEATURES_ENABLED)) {
+        TableFeature.testUnsupportedFeatures.toSeq
+      } else {
+        Seq.empty
+      }
+
+    // Spark 4.0 does not support the parquet variant logical type annotation. When
+    // the config is enabled, treat the variant table features as unsupported to block
+    // all interactions with variant tables on Spark 4.0 clients.
+    val unsupportedVariantFeatures =
+      if (org.apache.spark.SPARK_VERSION.startsWith("4.0") &&
+          spark.conf.get(DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40)) {
+        Seq(
+          VariantTypeTableFeature,
+          VariantTypePreviewTableFeature,
+          VariantShreddingTableFeature,
+          VariantShreddingPreviewTableFeature)
+      } else {
+        Seq.empty
+      }
+
+    val clientSupportedProtocol =
+      Action.supportedProtocolVersion(
+        featuresToExclude = unsupportedTestFeatures ++ unsupportedVariantFeatures)
+    // Depending on the operation, pull related protocol versions out of Protocol objects.
+    // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
+    val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
+      case "read" => (
+        Action.supportedReaderVersionNumbers,
+        tableProtocol.minReaderVersion,
+        (f: Protocol) => f.readerFeatureNames)
+      case "write" => (
+        Action.supportedWriterVersionNumbers,
+        tableProtocol.minWriterVersion,
+        (f: Protocol) => f.writerFeatureNames)
+      case _ =>
+        throw new IllegalArgumentException("Table operation must be either `read` or `write`.")
+    }
+
+    // Check is complete when both the protocol version and all referenced features are supported.
+    val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol)
+    val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol)
+    if (tableEnabledFeatureNames.subsetOf(clientSupportedFeatureNames) &&
+      clientSupportedVersions.contains(tableRequiredVersion)) {
+      return
+    }
+
+    // Otherwise, either the protocol version, or few features referenced by the table, is
+    // unsupported.
+    val clientUnsupportedFeatureNames =
+      tableEnabledFeatureNames.diff(clientSupportedFeatureNames)
+    // Prepare event log constants and the appropriate error message handler.
+    val (opType, versionKey, unsupportedFeaturesException) = readOrWrite match {
+      case "read" => (
+          "delta.protocol.failure.read",
+          "minReaderVersion",
+          DeltaErrors.unsupportedReaderTableFeaturesInTableException _)
+      case "write" => (
+          "delta.protocol.failure.write",
+          "minWriterVersion",
+          DeltaErrors.unsupportedWriterTableFeaturesInTableException _)
+    }
+    recordDeltaEvent(
+      loggingProvider,
+      opType,
+      data = Map(
+        "clientVersion" -> clientSupportedVersions.max,
+        versionKey -> tableRequiredVersion,
+        "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
+        "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
+    if (!clientSupportedVersions.contains(tableRequiredVersion)) {
+      throw new InvalidProtocolVersionException(
+        tablePath,
+        tableProtocol.minReaderVersion,
+        tableProtocol.minWriterVersion,
+        Action.supportedReaderVersionNumbers.toSeq,
+        Action.supportedWriterVersionNumbers.toSeq)
+    } else {
+      throw unsupportedFeaturesException(tablePath, clientUnsupportedFeatureNames)
+    }
+  }
 }
 
 /**
@@ -769,7 +886,8 @@ sealed trait FileAction extends Action {
    * types for comparison purposes. When false, they are returned as string literals,
    * using verbatim value written in the action.
    *
-   * @param deltaLog The DeltaLog for logging events. May be null if unavailable.
+   * @param deltaLog Identifies the table for logging events, which are recorded once per table
+   *                 and opType. May be null if unavailable, in which case no events are recorded.
    * @param errorOpType Prefix for logging event opTypes.
    * @param errorData Extra fields to include in logging events.
    * @return Map of partition column names to literals.
@@ -780,7 +898,7 @@ sealed trait FileAction extends Action {
       parseToTypedLiterals: Boolean,
       deltaLog: DeltaLog,
       errorOpType: String,
-      errorData: Map[String, Any]): Map[String, Literal] = {
+      errorData: => Map[String, Any]): Map[String, Literal] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
 
     try {
@@ -799,7 +917,7 @@ sealed trait FileAction extends Action {
             useUtcNormalizedTimestamp = true))
         }
         if (stringNormalizedPartitionValues != partitionValues) {
-          Action.recordDeltaEvent(
+          Action.recordDeltaEventOncePerTable(
             deltaLog,
             opType = errorOpType + ".unnormalizedValuesExist",
             data = errorData
@@ -810,7 +928,7 @@ sealed trait FileAction extends Action {
     } catch {
       case NonFatal(e) =>
         val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
-        Action.recordDeltaEvent(
+        Action.recordDeltaEventOncePerTable(
           deltaLog,
           opType = errorOpType + ".partitionValueParsingError" + opTypeSuffix,
           data = errorData ++ Map(
@@ -863,7 +981,7 @@ object FileAction {
       metadata: Metadata,
       protocol: Protocol,
       spark: SparkSession): Boolean =
-    AMTUtils.amtEnabled(metadata, protocol) ||
+    AMTUtils.amtSupported(protocol) ||
       spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
 
   /**
@@ -1168,7 +1286,19 @@ case class AddFile(
   def normalizedPartitionValues(
       spark: SparkSession,
       deltaTxn: OptimisticTransaction): Map[String, Literal] = {
-    normalizedPartitionValues(spark, deltaTxn.metadata.physicalPartitionSchema, Some(deltaTxn))
+    normalizedPartitionValues(
+      spark,
+      deltaTxn.metadata.physicalPartitionSchema,
+      parseToTypedLiterals =
+        spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ),
+      deltaLog = deltaTxn.deltaLog,
+      errorOpType = "delta.normalizedPartitionValues",
+      errorData = Map(
+        "readSnapshotMetadata" -> deltaTxn.snapshot.metadata,
+        "txnMetadata" -> deltaTxn.metadata,
+        "commitInfo" -> deltaTxn.getCommitInfo,
+        "readSnapshotVersion" -> deltaTxn.snapshot.version)
+    )
   }
 
   /**
@@ -1180,19 +1310,19 @@ case class AddFile(
   def normalizedPartitionValues(
       spark: SparkSession,
       partitionSchema: StructType,
-      deltaTxn: Option[OptimisticTransaction] = None): Map[String, Literal] = {
+      snapshot: Snapshot): Map[String, Literal] = {
     normalizedPartitionValues(
       spark,
       partitionSchema,
       parseToTypedLiterals =
         spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ),
-      deltaLog = deltaTxn.map(_.deltaLog).orNull,
+      deltaLog = snapshot.deltaLog,
       errorOpType = "delta.normalizedPartitionValues",
       errorData = Map(
-        "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
-        "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
-        "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull,
-        "readSnapshotVersion" -> deltaTxn.map(_.snapshot.version).getOrElse(-1L))
+        "readSnapshotMetadata" -> snapshot.metadata,
+        "txnMetadata" -> null,
+        "commitInfo" -> null,
+        "readSnapshotVersion" -> snapshot.version)
     )
   }
 

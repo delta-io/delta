@@ -223,7 +223,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
         builder.build(emptyMockEngine)
       }.getMessage
 
-      assert(exMsg.contains("Only staged ratified commits are supported"))
+      assert(exMsg.contains("Only file-based ratified catalog commits are supported"))
     }
   }
 

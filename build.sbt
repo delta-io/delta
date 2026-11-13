@@ -547,6 +547,7 @@ lazy val spark = (project in file("spark-unified"))
   .dependsOn(sparkV1)
   .dependsOn(sparkV2)
   .dependsOn(storage)
+  .dependsOn(storage % "test->test") // Shared S3 HTTP fixture for native LogStore tests
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-spark",
@@ -684,6 +685,7 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -1160,8 +1162,9 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     libraryDependencies ++= Seq(
       "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.15.4",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.15.4",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.15.4",
       "org.apache.parquet" % "parquet-hadoop" % "1.16.0",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -1260,8 +1263,9 @@ lazy val storage = (project in file("storage"))
     exportJars := true,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
-      // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
-      // versions with known vulnerabilities.
+      // Legacy LogStores retain their Hadoop compatibility. The automatically selected
+      // native S3LogStore requires S3A 3.4.2+ and the capabilities in
+      // storage/S3_NATIVE_PUT_IF_ABSENT.md.
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
 
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API

@@ -136,7 +136,7 @@ object AMTWriteHelper extends DeltaLogging {
   // the "last full rewrite" marker across an incremental rewrite and to decide the next trigger.
   def previousAMTContentRoot(snapshot: Snapshot): Option[ContentRoot] =
     snapshot.checkpointProvider match {
-      case amt: AMTCheckpointProvider => Some(amt.checkpointAction.contentRoot)
+      case amt: AMTCheckpointProviderBase => Some(amt.checkpointAction.contentRoot)
       case _ => None
     }
 

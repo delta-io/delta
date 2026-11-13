@@ -45,8 +45,11 @@ trait ManifestBitmap {
   /** Serializes to the on-disk byte form carried in `manifest_info.dv` / the CDF bitmaps. */
   def serializeAsByteArray(): Array[Byte]
 
-  /** Builds a [[RowIndexFilterProvider]] representing this bitmap. */
+  /** Builds a [[RowIndexFilterProvider]] that drops the rows at this bitmap's positions. */
   def toRowIndexFilterProvider(tableRoot: Path): RowIndexFilterProvider
+
+  /** Builds a [[RowIndexFilterProvider]] that keeps only rows at this bitmap's positions. */
+  def toInverseRowIndexFilterProvider(tableRoot: Path): RowIndexFilterProvider
 }
 
 /** A mutable copy of a [[ManifestBitmap]]. */
@@ -66,6 +69,21 @@ object ManifestBitmap {
   /** Deserializes a bitmap previously produced by [[ManifestBitmap.serializeAsByteArray]]. */
   def fromSerializedByteArray(bytes: Array[Byte]): ManifestBitmap =
     MumblingManifestBitmap.fromSerializedByteArray(bytes)
+
+  /**
+   * Builds a provider that probes all of the given bitmaps without materializing their union. A row
+   * is marked when its position is set in any bitmap.
+   */
+  def toRowIndexFilterProvider(
+      bitmaps: Seq[ManifestBitmap],
+      tableRoot: Path,
+      inverse: Boolean = false): RowIndexFilterProvider = {
+    require(bitmaps.nonEmpty, "At least one manifest bitmap is required")
+    new MumblingRowIndexFilterProvider(
+      bitmaps.map(_.serializeAsByteArray()),
+      bitmaps.map(_.cardinality),
+      inverse)
+  }
 }
 
 /** A [[ManifestBitmap]] backed by an immutable [[MumblingBitmap]]. */
@@ -90,7 +108,10 @@ final class MumblingManifestBitmap private[deletionvectors] (
   }
 
   override def toRowIndexFilterProvider(tableRoot: Path): RowIndexFilterProvider =
-    new MumblingRowIndexFilterProvider(serializeAsByteArray(), cardinality)
+    ManifestBitmap.toRowIndexFilterProvider(Seq(this), tableRoot)
+
+  override def toInverseRowIndexFilterProvider(tableRoot: Path): RowIndexFilterProvider =
+    ManifestBitmap.toRowIndexFilterProvider(Seq(this), tableRoot, inverse = true)
 }
 
 object MumblingManifestBitmap {

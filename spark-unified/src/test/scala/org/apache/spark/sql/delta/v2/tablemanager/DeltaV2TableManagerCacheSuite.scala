@@ -15,7 +15,7 @@
  */
 package org.apache.spark.sql.delta.v2.tablemanager
 
-import java.util.{Collections, Optional}
+import java.util.Collections
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.{DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore}
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SnapshotManager}
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache.CacheKey
 import com.google.common.base.Ticker
@@ -435,10 +436,10 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
   override private[v2] def snapshotManager(
       catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager =
     throw new UnsupportedOperationException("stub")
-  override private[v2] def getChangesIterator(
+  override private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
-      catalogTableOpt: Option[CatalogTable],
+      queryContext: DeltaV2QueryContext,
       failOnDataLoss: Boolean)
       : ClosableIterator[DeltaSingleCommit] =
     throw new UnsupportedOperationException("stub")
@@ -461,8 +462,7 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
     throw new UnsupportedOperationException("stub")
   override def getTableChanges(
       kernelEngine: KernelEngine,
-      startVersion: Long,
-      endVersion: Optional[java.lang.Long],
+      params: GetTableChangesParam,
       queryContext: DeltaV2QueryContext): KernelCommitRange =
     throw new UnsupportedOperationException("stub")
   override def retire(): Unit = { retired = true }
