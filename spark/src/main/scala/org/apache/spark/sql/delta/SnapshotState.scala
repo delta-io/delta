@@ -86,18 +86,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   protected def deletedRecordCountsHistogramEnabled: Boolean =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
 
-  /**
-   * Whether [[aggregationsToComputeState]] computes the deletion vector metrics
-   * (`numDeletedRecordsOpt` / `numDeletionVectorsOpt`, and with
-   * [[deletedRecordCountsHistogramEnabled]] also `deletedRecordCountsHistogramOpt`); when it does
-   * not, those aggregates are `null` and the corresponding fields end up as [[None]]. This is the
-   * *writable* predicate; the DV accessors instead gate their reads on the *readable* predicate
-   * ([[deletionVectorsReadableAndMetricsEnabled]]).
-   */
-  protected def checksumDVMetricsComputed: Boolean =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED) &&
-      DeletionVectorUtils.deletionVectorsWritable(this)
-
   /** Whether computedState is already computed or not */
   @volatile protected var _computedStateTriggered: Boolean = false
 
@@ -184,9 +172,8 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * A Map of alias to aggregations which needs to be done to calculate the `computedState`
    */
   protected def aggregationsToComputeState: Map[String, Column] = {
-    val computeChecksumDVMetrics = checksumDVMetricsComputed
     val persistentDVsAggs =
-      if (computeChecksumDVMetrics) {
+      if (deletionVectorsReadableAndMetricsEnabled) {
         Map(
           "numDeletedRecordsOpt" -> sum(coalesce(col("add.deletionVector.cardinality"), lit(0L))),
           "numDeletionVectorsOpt" -> count(col("add.deletionVector")))
@@ -194,7 +181,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
         Map("numDeletedRecordsOpt" -> lit(null), "numDeletionVectorsOpt" -> lit(null))
       }
 
-    val histogramDVsAggExpr = if (computeChecksumDVMetrics && deletedRecordCountsHistogramEnabled) {
+    val histogramDVsAggExpr = if (deletionVectorsReadableAndHistogramEnabled) {
       DeletedRecordCountsHistogramUtils.histogramAggregate(
         when(col("add").isNotNull, coalesce(col("add.deletionVector.cardinality"), lit(0L))))
     } else {
@@ -374,6 +361,11 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
     getFieldFromVersionChecksumIfKnown(
       _.deletedRecordCountsHistogramOpt, deletedRecordCountsHistogramOpt)
 
+  /**
+   * Shared eligibility for reconstructed and checksum-backed DV metrics. Disabling DV creation
+   * does not remove existing deletion vectors, so these metrics depend on readability rather
+   * than writability.
+   */
   protected def deletionVectorsReadableAndMetricsEnabled: Boolean = {
     val checksumDVMetricsEnabled =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED)
