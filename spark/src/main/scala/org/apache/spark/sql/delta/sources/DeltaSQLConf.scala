@@ -3083,10 +3083,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc(
         """When true, the optimizer replaces a batch Change Data Feed relation with the file
-          |scans that read its change data, so column pruning, filter pushdown and statistics
-          |apply to them. When false, the change data is read through an RDD that the relation
-          |builds during physical planning. Both resolve an unspecified ending version at the
-          |query's first action. Has no effect when
+          |scans that read its change data, so nested-field pruning, dynamic partition pruning
+          |and statistics apply to them, and their rows are not converted through an RDD. When
+          |false, the change data is read through an RDD that the relation builds during
+          |physical planning, which receives only top-level columns and static filters. Both
+          |resolve an unspecified ending version at the query's first action. Has no effect when
           |changeDataFeed.skipNondeterministicFilterPushdown.enabled is false.""".stripMargin)
       .booleanConf
       .createWithDefault(true)

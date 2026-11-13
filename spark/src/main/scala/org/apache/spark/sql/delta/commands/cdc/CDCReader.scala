@@ -461,8 +461,12 @@ trait CDCReaderImpl extends CDCReaderBase {
       )
     )
     val totalFiles = numAddFiles + numRemoveFiles + numAddCDCFiles
+    // A batch read with at least one scan leaves the empty DS out. Dynamic partition pruning
+    // follows a join key into the first child of a Union that produces it, so that child must be
+    // a file scan for the scans to be pruned.
+    val unionChildren = if (!isStreaming && dfs.nonEmpty) dfs.toSeq else emptyDf +: dfs.toSeq
     CDCVersionDiffInfo(
-      (emptyDf +: dfs).reduce((df1, df2) => df1.union(
+      unionChildren.reduce((df1, df2) => df1.union(
         df2
       )),
       totalFiles,

@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.expressions.{DynamicPruningExpression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.{FileSourceScanExec, RowDataSourceScanExec, SparkPlan}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -375,6 +376,32 @@ class InlineDeltaCDFRelationSuite extends QueryTest
           assert(!scan.requiredSchema.fieldNames.contains("value"), scan.requiredSchema)
           assert(scan.requiredSchema("info").dataType.asInstanceOf[StructType].fieldNames.toSeq ===
             Seq("a"), scan.requiredSchema)
+        }
+      }
+    }
+  }
+
+  test("dynamic partition pruning applies to the inlined file scans") {
+    withTable("tbl", "dim") {
+      createTableWithChanges("tbl", partitioned = true)
+      sql("CREATE TABLE dim (part INT, name STRING) USING delta")
+      sql("INSERT INTO dim VALUES (0, 'a'), (1, 'b'), (2, 'c')")
+      val query =
+        """SELECT c.id, c._change_type, c._commit_version
+          |FROM table_changes('tbl', 1) c JOIN dim d ON c.part = d.part
+          |WHERE d.name = 'b'""".stripMargin
+      checkInlinedAnswer(sql(query))
+      withSQLConf(inlineKey -> "true", SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
+        val df = sql(query)
+        df.collect()
+        val scans = cdfFileScans(df.queryExecution.executedPlan)
+        // The change, add and remove file scans.
+        assert(scans.map(_.relation.location.getClass).distinct.size === 3, scans)
+        scans.foreach { scan =>
+          assert(scan.partitionFilters.exists {
+            case DynamicPruningExpression(e) => e != Literal.TrueLiteral
+            case _ => false
+          }, scan.partitionFilters)
         }
       }
     }
