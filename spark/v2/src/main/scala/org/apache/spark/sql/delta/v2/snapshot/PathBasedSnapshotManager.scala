@@ -16,6 +16,7 @@
 package org.apache.spark.sql.delta.v2.snapshot
 
 import java.util.Objects.requireNonNull
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.Snapshot
