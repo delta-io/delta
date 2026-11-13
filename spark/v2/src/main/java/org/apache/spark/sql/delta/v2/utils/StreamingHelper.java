@@ -38,6 +38,7 @@ import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.read.CDCDataFile;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
@@ -207,7 +208,9 @@ public class StreamingHelper {
    * <p><b>Throws:</b> {@link IllegalArgumentException} if a single commit contains more than one
    * metadata action; {@link RuntimeException} on underlying I/O errors.
    *
-   * <p>Reads commit JSON through the table manager's LogStore using files listed by Kernel.
+   * <p>Kernel validates every protocol action encountered in the range, even though only metadata
+   * actions are returned. Unsupported reader protocol versions and reader features are rejected. It
+   * does not load a snapshot to validate the starting protocol.
    *
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
@@ -242,7 +245,9 @@ public class StreamingHelper {
    * <p><b>Throws:</b> {@link IllegalArgumentException} if a single commit contains more than one
    * protocol action; {@link RuntimeException} on underlying I/O errors.
    *
-   * <p>Reads commit JSON through the table manager's LogStore using files listed by Kernel.
+   * <p>Kernel validates every protocol action encountered in the range. Unsupported reader protocol
+   * versions and reader features are rejected. It does not load a snapshot to validate the protocol
+   * at the start version.
    *
    * @param startVersion inclusive starting version of the commit range
    * @param endVersionOpt inclusive ending version, or empty to read through the latest
@@ -267,7 +272,10 @@ public class StreamingHelper {
         Protocol.class);
   }
 
-  /** Walks the commit files and rejects commits with more than one matching action. */
+  /**
+   * Walks the commit range filtered to {@code actionType} and rejects commits with more than one
+   * matching action.
+   */
   private static <T extends Action> Map<Long, T> collectActions(
       long startVersion,
       Optional<Long> endVersionOpt,
@@ -287,8 +295,9 @@ public class StreamingHelper {
       while (commitsIter.hasNext()) {
         DeltaSingleCommit commit = commitsIter.next();
         long version = commit.version();
-        try (ClosableIterator<Action> actionsIter =
-            commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) {
+        try (DeltaV2SingleCommit v2Commit = (DeltaV2SingleCommit) commit;
+            ClosableIterator<Action> actionsIter =
+                v2Commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) {
           while (actionsIter.hasNext()) {
             Action action = actionsIter.next();
             if (actionClass.isInstance(action)) {

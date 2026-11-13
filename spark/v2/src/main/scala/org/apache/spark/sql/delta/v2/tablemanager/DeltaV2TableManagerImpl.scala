@@ -15,6 +15,7 @@
  */
 package org.apache.spark.sql.delta.v2.tablemanager
 
+import java.util.EnumSet
 import java.util.concurrent.atomic.AtomicReference
 
 import org.apache.spark.sql.delta.{DeltaSingleCommit, Snapshot}
@@ -36,6 +37,7 @@ import io.delta.kernel.exceptions.{
   StartVersionNotFoundException
 }
 import io.delta.kernel.internal.{DeltaHistoryManager => KernelDeltaHistoryManager}
+import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -89,7 +91,6 @@ private[tablemanager] class DeltaV2TableManagerImpl(
       failOnDataLoss: Boolean)
       : ClosableIterator[DeltaSingleCommit] = {
     val kernelEngine = kernelContext.getDefaultEngine()
-    val hadoopConf = kernelContext.materializeHadoopConf()
     var commitRange: KernelCommitRange = null
     var earliestVersionToFetch = startVersion
     var attempt = 1
@@ -97,7 +98,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
       try {
         commitRange = cachedSnapshotManager.getTableChanges(
           kernelEngine,
-          GetTableChangesParam(earliestVersionToFetch, endVersion, false, failOnDataLoss),
+          GetTableChangesParam(earliestVersionToFetch, endVersion),
           queryContext)
       } catch {
         case e: StartVersionNotFoundException =>
@@ -115,12 +116,12 @@ private[tablemanager] class DeltaV2TableManagerImpl(
       }
       attempt += 1
     }
-    val kernelCommitFiles = commitRange.getCommitFiles()
+    val kernelCommits = commitRange.getCommitActions(
+      kernelEngine, EnumSet.allOf(classOf[KernelDeltaAction]))
     new ClosableIterator[DeltaSingleCommit] {
-      override def hasNext: Boolean = kernelCommitFiles.hasNext
-      override def next(): DeltaSingleCommit =
-        DeltaV2SingleCommit(kernelCommitFiles.next(), logStore, hadoopConf)
-      override def close(): Unit = kernelCommitFiles.close()
+      override def hasNext: Boolean = kernelCommits.hasNext
+      override def next(): DeltaSingleCommit = DeltaV2SingleCommit(kernelCommits.next())
+      override def close(): Unit = kernelCommits.close()
     }
   }
 

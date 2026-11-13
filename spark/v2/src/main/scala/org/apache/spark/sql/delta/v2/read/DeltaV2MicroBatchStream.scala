@@ -57,6 +57,7 @@ import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseOp
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
@@ -1135,17 +1136,17 @@ private[read] class DeltaV2MicroBatchStream(
       //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
       //
       // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
+      val fileActions: ClosableIterator[IndexedFile] =
+          if (validationResult.shouldSkipCommit) {
+              new ClosableWrapper[IndexedFile](Iterator.empty).toClosable
+          } else getFilesFromCommit(commit, version)
+
       // If metadata tracking is active, inject schema change barrier sentinel before file
       // actions. This mirrors v1's getMetadataOrProtocolChangeIndexedFileIterator concatenation
       // in filterAndGetIndexedFiles.
       val metadataBarrier: ClosableIterator[IndexedFile] =
           metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
               validationResult.metadataAction, validationResult.protocolAction, version)
-
-      val fileActions: ClosableIterator[IndexedFile] =
-          if (validationResult.shouldSkipCommit) {
-              new ClosableWrapper[IndexedFile](Iterator.empty).toClosable
-          } else getFilesFromCommit(commit, version)
 
       val inner: ClosableIterator[IndexedFile] =
           new IteratorCloseOps(fileActions)
@@ -1159,8 +1160,10 @@ private[read] class DeltaV2MicroBatchStream(
                                   IndexedFile.sentinel(
                                       version, DeltaSourceOffset.END_INDEX))))
 
-      inner
+      wrapIteratorWithCommitClose(inner, commit)
     } catch { case e: Exception =>
+      // commit is not a CloseableIterator, we need to close it manually.
+      Utils.closeCloseables(commit.asInstanceOf[DeltaV2SingleCommit])
       throw (if (e.isInstanceOf[RuntimeException]) e else new RuntimeException(e))
     }
   }
