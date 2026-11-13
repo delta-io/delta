@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.v2.read;
 import com.google.common.collect.ImmutableSet;
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
+import io.delta.kernel.internal.util.Utils;
 import java.io.IOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.util.*;
@@ -25,12 +26,14 @@ import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
+import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -199,6 +202,32 @@ final class DeltaV2MicroBatchStreamUtils {
       result = result.add(f);
     }
     return result;
+  }
+
+  /**
+   * Wraps an iterator so that closing it also closes the given {@link DeltaV2SingleCommit},
+   * releasing its internal resources. This is necessary because {@link DeltaV2SingleCommit} is an
+   * {@link AutoCloseable} but not a {@link ClosableIterator}, so closing the iterator chain alone
+   * does not close the {@link DeltaV2SingleCommit} that produced it. Package-private for testing.
+   */
+  static ClosableIterator<IndexedFile> wrapIteratorWithCommitClose(
+      ClosableIterator<IndexedFile> inner, DeltaSingleCommit commit) {
+    return new ClosableIterator<IndexedFile>() {
+      @Override
+      public boolean hasNext() {
+        return inner.hasNext();
+      }
+
+      @Override
+      public IndexedFile next() {
+        return inner.next();
+      }
+
+      @Override
+      public void close() throws IOException {
+        Utils.closeCloseables(inner, (DeltaV2SingleCommit) commit);
+      }
+    };
   }
 
   /** Closes the current commit's files before the owning commit iterator. */

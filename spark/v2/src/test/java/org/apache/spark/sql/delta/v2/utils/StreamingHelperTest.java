@@ -22,15 +22,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import io.delta.kernel.CommitFileStatus;
+import io.delta.kernel.CommitActions;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -45,8 +43,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
@@ -55,7 +51,6 @@ import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
-import org.apache.spark.sql.delta.storage.LogStore;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
@@ -214,23 +209,10 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   }
 
   private DeltaV2TableManager mockTableManager(
-      CloseableIterator<CommitFileStatus> commits, boolean failOnDataLoss) {
-    return mockTableManager(
-        commits,
-        failOnDataLoss,
-        defaultKernelContext.logStore(),
-        defaultKernelContext.materializeHadoopConf());
-  }
-
-  private DeltaV2TableManager mockTableManager(
-      CloseableIterator<CommitFileStatus> commits,
-      boolean failOnDataLoss,
-      LogStore logStore,
-      Configuration conf) {
+      CloseableIterator<CommitActions> commits, boolean failOnDataLoss) {
     DeltaV2TableManager manager = mock(DeltaV2TableManager.class);
     ClosableIterator<DeltaSingleCommit> v1Commits =
-        ScalaUtils.toClosableIterator(
-            commits.map(file -> DeltaV2SingleCommit$.MODULE$.apply(file, logStore, conf)));
+        ScalaUtils.toClosableIterator(commits.map(DeltaV2SingleCommit$.MODULE$::apply));
     when(manager.getSingleCommitIterator(
             7L, Option.apply((Object) 7L), queryContext, failOnDataLoss))
         .thenReturn(v1Commits);
@@ -239,7 +221,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
   @Test
   public void testProtocolCollector_closesEmptyCommitIterator() throws IOException {
-    CloseableIterator<CommitFileStatus> commits = mockIterator();
+    CloseableIterator<CommitActions> commits = mockIterator();
 
     assertTrue(
         StreamingHelper.collectProtocolActions(
@@ -254,7 +236,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
       throws IOException {
     IOException readFailure = new IOException("commit iterator read failed");
     IOException closeFailure = new IOException("commit iterator close failed");
-    CloseableIterator<CommitFileStatus> commits = mockIterator();
+    CloseableIterator<CommitActions> commits = mockIterator();
     when(commits.hasNext())
         .thenAnswer(
             ignored -> {
@@ -276,36 +258,29 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testProtocolCollector_closesFileIteratorWhenOpeningActionsFails() throws Exception {
+  public void testProtocolCollector_closesCommitWhenOpeningActionsFails() throws Exception {
     IOException readFailure = new IOException("action iterator open failed");
-    CommitFileStatus kernelCommit =
-        new CommitFileStatus(
-            7L, // version
-            io.delta.kernel.utils.FileStatus.of("/table/7.json", 1L, 0L));
-    CloseableIterator<CommitFileStatus> commits = mockIterator();
-    when(commits.hasNext()).thenReturn(true);
-    when(commits.next()).thenReturn(kernelCommit);
-    LogStore store = mock(LogStore.class);
-    Configuration conf = defaultKernelContext.materializeHadoopConf();
-    when(store.readAsIterator(any(FileStatus.class), same(conf)))
+    CommitActions kernelCommit = mock(CommitActions.class);
+    when(kernelCommit.getVersion()).thenReturn(7L);
+    when(kernelCommit.getActions())
         .thenAnswer(
             ignored -> {
               throw readFailure;
             });
+    CloseableIterator<CommitActions> commits = mockIterator();
+    when(commits.hasNext()).thenReturn(true);
+    when(commits.next()).thenReturn(kernelCommit);
 
     RuntimeException error =
         assertThrows(
             RuntimeException.class,
             () ->
                 StreamingHelper.collectProtocolActions(
-                    7L,
-                    Optional.of(7L),
-                    mockTableManager(commits, true, store, conf),
-                    queryContext,
-                    true));
+                    7L, Optional.of(7L), mockTableManager(commits, true), queryContext, true));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
+    verify(kernelCommit).close();
     verify(commits).close();
   }
 
