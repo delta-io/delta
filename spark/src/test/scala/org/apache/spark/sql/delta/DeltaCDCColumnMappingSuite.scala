@@ -689,8 +689,10 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
           spark.range(end = 5)
             .withColumn("_change_type", lit("insert")))
       }
+      // The CDF read is inlined into file scans (see InlineDeltaCDFRelation), which list pushed
+      // filters without the `*` that the CDF relation scan uses for filters it handles.
       assert(plans.map(_.executedPlan).toString
-        .contains("PushedFilters: [*IsNotNull(id with space), *LessThan(id with space,5)]"))
+        .contains("PushedFilters: [IsNotNull(`id with space`), LessThan(`id with space`,5)]"))
     }
   }
 }

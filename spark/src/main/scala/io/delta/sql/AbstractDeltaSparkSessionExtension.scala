@@ -19,7 +19,7 @@ package io.delta.sql
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.metric.OptimizeConditionalIncrementMetric
-import org.apache.spark.sql.delta.optimizer.RangePartitionIdRewrite
+import org.apache.spark.sql.delta.optimizer.{InlineDeltaCDFRelation, RangePartitionIdRewrite}
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScan
@@ -91,6 +91,10 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     }
     // Optimize ConditionalIncrementMetric with constant condition.
     extensions.injectOptimizerRule { _ => OptimizeConditionalIncrementMetric }
+    // Replace batch CDF relations with the file scans that read their change data.
+    extensions.injectOptimizerRule { session =>
+      InlineDeltaCDFRelation(session)
+    }
 
     extensions.injectPostHocResolutionRule { session =>
       PreprocessTableUpdate(session.sessionState.conf)

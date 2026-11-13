@@ -191,10 +191,18 @@ class CDCReaderSuite
       data.write.format("delta").save(dir.getAbsolutePath)
       sql(s"DELETE FROM delta.`${dir.getAbsolutePath}`")
       writeCdcData(log, cdcData)
+      sql(s"ALTER TABLE delta.`${dir.getAbsolutePath}` SET TBLPROPERTIES ('key' = 'value')")
 
+      // A read with file changes is a union of their scans only, so its size comes from the
+      // files rather than from an empty relation with the default size.
+      val plan = CDCReader.changesToBatchDF(log, 0, 2, spark).queryExecution.optimizedPlan
+      assert(!plan.collectLeaves().exists(_.isInstanceOf[LogicalRDD]), plan.treeString)
+      assert(plan.stats.sizeInBytes < spark.sessionState.conf.defaultSizeInBytes)
+
+      // A read without file changes is the empty relation, which reports a size of 0.
       assert(
         CDCReader
-          .changesToBatchDF(log, 0, 2, spark)
+          .changesToBatchDF(log, 3, 3, spark)
           .queryExecution
           .optimizedPlan
           .collectLeaves()
