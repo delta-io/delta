@@ -17,6 +17,7 @@ package org.apache.spark.sql.delta.v2.read.metadata;
 
 import static org.apache.spark.sql.delta.v2.InternalRowTestUtils.row;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -112,6 +113,21 @@ public class MetadataValueSetterTest {
     assertEquals(52L, metadataRow.getLong(0), "row_id should fall back to baseRowId + rowIndex");
   }
 
+  @Test
+  public void testRowIdSetterRejectsMissingBaseRowId() {
+    RowIdValueSetterBuilder setter = new RowIdValueSetterBuilder(1, 2);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> setter.buildWithFile(simplePartitionedFile()));
+
+    assertEquals(
+        "Missing 'base_row_id' on PartitionedFile 'file:///tmp/setter-test.parquet' for row "
+            + "tracking - every Delta file with row tracking enabled must carry a base_row_id "
+            + "constant.",
+        error.getMessage());
+  }
+
   // ---------------------------------------------------------------------------
   // RowCommitVersionValueSetterBuilder
   // ---------------------------------------------------------------------------
@@ -146,6 +162,21 @@ public class MetadataValueSetterTest {
     bound.setValue(metadataRow, 0, innerRow);
 
     assertEquals(9L, metadataRow.getLong(0));
+  }
+
+  @Test
+  public void testRowCommitVersionSetterRejectsMissingDefaultCommitVersion() {
+    RowCommitVersionValueSetterBuilder setter = new RowCommitVersionValueSetterBuilder(1);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> setter.buildWithFile(simplePartitionedFile()));
+
+    assertEquals(
+        "Missing 'default_row_commit_version' on PartitionedFile "
+            + "'file:///tmp/setter-test.parquet' for row tracking - every Delta file with row "
+            + "tracking enabled must carry a default_row_commit_version constant.",
+        error.getMessage());
   }
 
   // ---------------------------------------------------------------------------
