@@ -290,6 +290,17 @@ public class Checkpointer {
   }
 
   /**
+   * Reads {@code _last_checkpoint} and parses it into a fully-typed {@link LastCheckpointInfo}.
+   *
+   * <p>Unlike {@link #readLastCheckpointFile}, which projects only the classic columnar fields,
+   * this exposes the whole on-disk pointer by parsing the raw blob as a JSON tree.
+   */
+  public Optional<LastCheckpointInfo> readLastCheckpointInfo(Engine engine) {
+    return readLastCheckpointSerialized(engine)
+        .map(serialized -> LastCheckpointInfo.fromJson(serialized.json()));
+  }
+
+  /**
    * Write the given data to last checkpoint metadata file.
    *
    * @param engine {@link Engine} instance to use for writing
