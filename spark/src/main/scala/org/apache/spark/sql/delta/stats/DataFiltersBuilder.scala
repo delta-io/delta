@@ -264,9 +264,7 @@ class DataFiltersBuilder(
       val e1Filter = constructDataFilters(e1, isNullExpansionDepth)
       val e2Filter = constructDataFilters(e2, isNullExpansionDepth)
       if (e1Filter.isDefined && e2Filter.isDefined) {
-        Some(DataSkippingPredicate(
-          e1Filter.get.expr && e2Filter.get.expr,
-          e1Filter.get.referencedStats ++ e2Filter.get.referencedStats))
+        Some(DataSkippingPredicate.and(e1Filter.get, e2Filter.get))
       } else if (e1Filter.isDefined) {
         e1Filter
       } else {
