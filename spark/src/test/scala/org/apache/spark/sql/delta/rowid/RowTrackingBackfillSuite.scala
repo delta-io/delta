@@ -29,10 +29,10 @@ import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
 import org.apache.spark.sql.delta.commands.backfill.{BackfillBatch, BackfillBatchStats, BackfillCommandStats, RowTrackingBackfillBatch, RowTrackingBackfillCommand, RowTrackingBackfillExecutor}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -601,6 +601,106 @@ class RowTrackingBackfillSuite
       assert(backfillBatchStats.totalExecutionTimeInMs >= 0)
       assert(backfillBatchStats.parentTransactionId === backfillTxnId)
       assert(backfillBatchStats.transactionId != null && backfillBatchStats.transactionId.nonEmpty)
+    }
+  }
+
+  /**
+   * Runs a backfill of the test table, which must support row tracking, and returns the number
+   * of times the backfill scanned the table for files to backfill. `filterScan` can drop files
+   * from each scan's result to simulate files that a scan missed.
+   */
+  private def runBackfillCountingScans(
+      log: DeltaLog,
+      maxNumFilesPerCommit: Int,
+      filterScan: (Int, Dataset[AddFile]) => Dataset[AddFile] = (_, files) => files): Int = {
+    val numScans = new AtomicInteger(0)
+    val backfillStats = BackfillCommandStats(
+      transactionId = "backfill-txn-id",
+      nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES)
+    val backfillExecutor = new RowTrackingBackfillExecutor(
+      spark, log, catalogTableOpt = None, "backfill-txn-id", backfillStats) {
+      override def filesToBackfill(snapshot: Snapshot): Dataset[AddFile] = {
+        val scanIndex = numScans.getAndIncrement()
+        filterScan(scanIndex, super.filesToBackfill(snapshot))
+      }
+    }
+    backfillExecutor.run(maxNumFilesPerCommit)
+    numScans.get()
+  }
+
+  /** Versions of the checkpoints in the Delta log of `log`. */
+  private def checkpointVersions(log: DeltaLog): Set[Long] = {
+    val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+    fs.listStatus(log.logPath)
+      .filter(FileNames.isCheckpointFile)
+      .map(FileNames.checkpointVersion)
+      .toSet
+  }
+
+  for (singleScan <- BOOLEAN_DOMAIN)
+  test(s"Backfill scans the table once for all batches, singleScan=$singleScan") {
+    withTestTableWithRowTrackingDisabled() {
+      withSQLConf(DeltaSQLConf.DELTA_BACKFILL_SINGLE_SCAN_ENABLED.key -> singleScan.toString) {
+        val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+        val maxNumFilesPerCommit = 3
+        val numBatches = Math.ceil(numFilesInTable.toDouble / maxNumFilesPerCommit).toInt
+        val numScans = runBackfillCountingScans(log, maxNumFilesPerCommit)
+        assertNumBackfillCommits(numBatches)
+        assertRowIdsAreValid(log)
+        // A single scan plans all batches, then one more scan finds nothing left. Otherwise
+        // each batch scans the table.
+        assert(numScans === (if (singleScan) 2 else numBatches))
+      }
+    }
+  }
+
+  test("Backfill from a single scan backfills the files the scan missed") {
+    withTestTableWithRowTrackingDisabled() {
+      val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+      val allFiles = log.update().allFiles.collect()
+      val missedPaths = allFiles.map(_.path).sorted.take(2).toSet
+      // The first scan, which plans the batches, does not return two of the files.
+      val numScans = runBackfillCountingScans(log, maxNumFilesPerCommit = 3,
+        filterScan = (scanIndex, files) =>
+          if (scanIndex == 0) files.filter(f => !missedPaths.contains(f.path)) else files)
+      // 8 files from the single scan in 3 batches, then 2 files in a batch found by a scan of
+      // the latest snapshot, which then stops because the batch was not full.
+      assertNumBackfillCommits(4)
+      assert(numScans === 2)
+      assertRowIdsAreValid(log)
+      assert(RowTrackingBackfillExecutor.getCandidateFilesToBackfill(log.update()).isEmpty)
+    }
+  }
+
+  for (checkpointInterval <- Seq(Some(0), Some(2), None))
+  test(s"Backfill from a single scan writes its own checkpoints, " +
+      s"checkpointInterval=$checkpointInterval") {
+    withTestTableWithRowTrackingDisabled() {
+      // Every commit of the table is due a checkpoint.
+      sql(s"ALTER TABLE $testTableName SET TBLPROPERTIES ('delta.checkpointInterval' = '1')")
+      val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+      val versionBeforeBackfill = log.update().version
+      val checkpointsBeforeBackfill = checkpointVersions(log)
+
+      val confs = checkpointInterval.map { interval =>
+        DeltaSQLConf.DELTA_BACKFILL_SINGLE_SCAN_CHECKPOINT_INTERVAL.key -> interval.toString
+      }.toSeq
+      withSQLConf(confs: _*) {
+        runBackfillCountingScans(log, maxNumFilesPerCommit = 3)
+      }
+      // 10 files in batches of 3 make 4 backfill commits.
+      val backfillVersions = (versionBeforeBackfill + 1 to versionBeforeBackfill + 4).toSeq
+      assert(log.update().version === backfillVersions.last)
+      assertNumBackfillCommits(backfillVersions.size)
+
+      // Without the conf, the backfill uses the checkpoint interval of the table.
+      val expectedCheckpointIndexes = checkpointInterval.getOrElse(1) match {
+        case 0 => Seq(3)
+        case interval => backfillVersions.indices.filter(i => (i + 1) % interval == 0)
+      }
+      val expectedCheckpoints = expectedCheckpointIndexes.map(backfillVersions).toSet
+      assert(checkpointVersions(log) -- checkpointsBeforeBackfill === expectedCheckpoints)
+      assertRowIdsAreValid(log)
     }
   }
 }
