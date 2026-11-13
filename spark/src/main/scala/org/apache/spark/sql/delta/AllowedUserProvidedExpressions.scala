@@ -298,6 +298,7 @@ object AllowedUserProvidedExpressions {
 
     // predicates
     expression[And]("and"),
+    expression[Between]("between"),
     expression[In]("in"),
     expression[Not]("not"),
     expression[Or]("or"),
