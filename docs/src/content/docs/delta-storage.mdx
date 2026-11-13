@@ -151,7 +151,7 @@ Choose the setup that matches your runtime and existing clients:
 
 | Setup | Configuration | Concurrent writes | Additional permissions |
 | --- | --- | --- | --- |
-| Native S3, recommended | Delta Lake Spark 4.5 and above automatically selects `S3LogStore` when the filesystem supports it and no LogStore override applies. | Supports multiple Spark drivers using compatible conditional-write protocols. | S3 permissions. |
+| Native S3 (default when supported; recommended) | Delta Lake Spark 4.5 and above automatically selects `S3LogStore` when the filesystem supports it and no LogStore override applies. | Supports multiple Spark drivers using compatible conditional-write protocols. | S3 permissions. |
 | DynamoDB compatibility | Explicitly configure `S3DynamoDBLogStore` and its dependency. | All writers use the same DynamoDB table, region, and compatible LogStore protocol. | S3 and DynamoDB permissions. |
 | Single-driver compatibility | Older Delta versions or filesystems without native-write capabilities use `S3SingleDriverLogStore` by default. | Writes must originate from one Spark driver. | S3 permissions. |
 
