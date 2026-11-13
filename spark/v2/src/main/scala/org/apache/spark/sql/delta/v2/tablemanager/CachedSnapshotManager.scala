@@ -202,8 +202,8 @@ private[tablemanager] class CachedSnapshotManager(
         existing.snapshot
       } else {
         if (existing != null && !sameTable) {
-          logWarning(log"Delta table identity changed while refreshing " +
-            log"${MDC(DeltaLogKeys.PATH, tablePath)}: previous=" +
+          logWarning(log"Delta V2 table identity changed while refreshing " +
+            log"${MDC(DeltaLogKeys.PATH, refreshed.snapshot.redactedPath)}: previous=" +
             log"${MDC(DeltaLogKeys.METADATA_OLD, existing.snapshot.metadata.id)}, current=" +
             log"${MDC(DeltaLogKeys.METADATA_NEW, refreshed.snapshot.metadata.id)}")
         }
@@ -238,8 +238,8 @@ private[tablemanager] class CachedSnapshotManager(
           validatedAtMs = -1L)
         val previous = currentSnapshot
         if (previous != null && previous.snapshot.metadata.id != loaded.snapshot.metadata.id) {
-          logWarning(log"Delta table identity changed while loading " +
-            log"${MDC(DeltaLogKeys.PATH, tablePath)} at version " +
+          logWarning(log"Delta V2 table identity changed while loading " +
+            log"${MDC(DeltaLogKeys.PATH, loaded.snapshot.redactedPath)} at version " +
             log"${MDC(DeltaLogKeys.VERSION, version)}: previous=" +
             log"${MDC(DeltaLogKeys.METADATA_OLD, previous.snapshot.metadata.id)}, current=" +
             log"${MDC(DeltaLogKeys.METADATA_NEW, loaded.snapshot.metadata.id)}")
@@ -259,7 +259,7 @@ private[tablemanager] class CachedSnapshotManager(
     val historicalSnapshot =
       withUncachedSnapshotManager(catalogTableOpt)(_.loadSnapshotAt(version))
     logDebug(log"Loaded historical Delta V2 snapshot for " +
-      log"${MDC(DeltaLogKeys.PATH, tablePath)} at version " +
+      log"${MDC(DeltaLogKeys.PATH, historicalSnapshot.redactedPath)} at version " +
       log"${MDC(DeltaLogKeys.VERSION, version)}; cached latest version is " +
       log"${MDC(DeltaLogKeys.VERSION2, upperBound.version)}")
     historicalSnapshot

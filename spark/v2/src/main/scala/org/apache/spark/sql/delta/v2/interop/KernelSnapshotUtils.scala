@@ -32,7 +32,6 @@ import org.apache.spark.sql.delta.v2.DeltaV2Logging
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.util.Utils
 
 /**
  * Helpers for code that has a Kernel snapshot but still needs V1 file actions.
@@ -53,9 +52,8 @@ private[delta] object KernelSnapshotUtils extends DeltaV2Logging {
   def buildAllFiles(
       kernelSnapshot: SnapshotImpl,
       spark: SparkSession,
-      engine: Engine): Dataset[AddFile] = {
-    val redactedPath = Utils.redact(
-      spark.sessionState.conf.stringRedactionPattern, kernelSnapshot.getDataPath.toString)
+      engine: Engine,
+      redactedPath: String): Dataset[AddFile] = {
     try {
       logInfo(log"Building Delta V2 table state for " +
         log"${MDC(DeltaLogKeys.PATH, redactedPath)} at version " +
@@ -64,7 +62,7 @@ private[delta] object KernelSnapshotUtils extends DeltaV2Logging {
       spark.createDataset(collectV1AddFiles(kernelSnapshot, engine))
     } catch {
       case NonFatal(e) =>
-        logError(log"Failed to construct Delta V2 table state for " +
+        logWarning(log"Failed to build Delta V2 table state for " +
           log"${MDC(DeltaLogKeys.PATH, redactedPath)} at version " +
           log"${MDC(DeltaLogKeys.VERSION, kernelSnapshot.getVersion)}", e)
         throw e

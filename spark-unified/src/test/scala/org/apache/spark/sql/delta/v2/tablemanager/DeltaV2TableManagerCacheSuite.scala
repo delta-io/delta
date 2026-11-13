@@ -164,6 +164,7 @@ class DeltaV2TableManagerCacheSuite
     }
   }
 
+
   // --- Guava exception unwrapping via injected factory -------------
 
   test("per-instance: unwraps checked exception from ExecutionException") {

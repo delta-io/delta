@@ -45,8 +45,6 @@ import org.junit.jupiter.api.BeforeAll;
 
 public abstract class DeltaV2TestBase {
 
-  private static final String KERNEL_CONTEXT_TABLE_PATH = System.getProperty("java.io.tmpdir");
-
   protected static SparkSession spark;
   protected static Engine defaultEngine;
   protected static KernelContext defaultKernelContext;
@@ -75,8 +73,7 @@ public abstract class DeltaV2TestBase {
   protected static KernelContext createKernelContext(Configuration hadoopConf) {
     Map<String, String> options = new HashMap<>();
     hadoopConf.forEach(entry -> options.put(entry.getKey(), entry.getValue()));
-    return new KernelContext(
-        ScalaUtils.toScalaMap(options), LogStore.apply(spark), KERNEL_CONTEXT_TABLE_PATH);
+    return new KernelContext(ScalaUtils.toScalaMap(options), LogStore.apply(spark));
   }
 
   @AfterAll
