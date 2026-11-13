@@ -51,7 +51,7 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action must include a `backReference` when the file's entry lives in a leaf manifest, set `extendedFileMetadata` to true, and have a null `deletionTimestamp`:</ins>
+<ins>When the `adaptiveMetadata` table feature is supported and active, the `remove` action must include a `backReference` when the file's entry lives in a leaf manifest, set `extendedFileMetadata` to true, and have a null `deletionTimestamp`:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
@@ -87,7 +87,7 @@ This design enables:
 
 <ins>The `checkpoint` action is self-contained: it embeds the content root reference along with all non-content metadata (`protocol`, `metaData`, `domainMetadata`, `txn`, and `sidecar` entries). Together with the referenced manifest tree, a single `checkpoint` action represents the complete table state up to `checkpointMetadata.version`. Log commits after that version must still be replayed.</ins>
 
-<ins>Once `adaptiveMetadata` is enabled, writers must not produce classic (single-file, multi-part) or V2 checkpoints; checkpoint state is instead carried by the `checkpoint` action, including in [standalone checkpoints](#standalone-checkpoint).</ins>
+<ins>While `adaptiveMetadata` is active, writers must not produce classic (single-file, multi-part) or V2 checkpoints; checkpoint state is instead carried by the `checkpoint` action, including in [standalone checkpoints](#standalone-checkpoint).</ins>
 
 <ins>Table-level aggregates (file count, total size, row count) are derived from the root manifest's aggregated metrics, not from a checkpoint that enumerates every file. Because checkpoints retain no remove tombstones, the count of removes is not part of checkpoint state, and multi-part checkpoint sizing based on that count does not apply.</ins>
 
@@ -203,7 +203,7 @@ Required table features that must also be enabled:
 - `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
 - `inCommitTimestamp`: Reliable timestamp-based metadata cleanup and time travel
 
-`adaptiveMetadata` and `v2Checkpoint` are mutually exclusive: a table must not enable both.
+`adaptiveMetadata` is active when it is supported and the table property `delta.enableAdaptiveMetadata` is absent or set to `true`. Once the property is `false`, writers must not change it until they remove `adaptiveMetadata` from the protocol. A table that supports `adaptiveMetadata` can also support `v2Checkpoint`, which is dormant while `adaptiveMetadata` is active.
 
 ## Storage Layout
 
@@ -783,7 +783,16 @@ When `adaptiveMetadata` is added to `readerFeatures` and `writerFeatures`, the r
 
 ## Feature Removal
 
-When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current metadata tree state so that the table can be read without adaptiveMetadata support. Manifest files that are no longer referenced may be cleaned up.
+To remove `adaptiveMetadata`, a writer first sets `delta.enableAdaptiveMetadata` to `false`. From that commit on, writers write no `contentRoot` action (so no manifest commits and no standalone checkpoints) and no `backReference`. They can write classic or V2 checkpoints that contain no `contentRoot` action. Each commit still carries `lastManifestCommit` forward until the commit that removes the feature from the protocol. Readers take the latest checkpoint across manifest commits, standalone checkpoints, `_last_checkpoint`, and classic or V2 checkpoints.
+
+Before a writer removes `adaptiveMetadata` from the protocol, a writer must produce classic or V2 checkpoints from the current metadata tree state, so that clients without `adaptiveMetadata` support can read the table.
+
+The writer that removes `adaptiveMetadata` from the protocol must also do one of these:
+- Truncate the history so that no retained version contains a `contentRoot` action.
+OR
+- In the same commit, add `checkpointProtection` to the protocol and set `delta.requireCheckpointProtectionBeforeVersion` to the version of that commit (see [Checkpoint Protection](checkpoint-protection.md)).
+
+Manifest files that are no longer referenced in history may be cleaned up.
 
 ## Compatibility Notes
 
