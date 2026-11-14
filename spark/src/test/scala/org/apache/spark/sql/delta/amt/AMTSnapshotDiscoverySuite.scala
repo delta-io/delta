@@ -684,6 +684,38 @@ class AMTSnapshotDiscoverySuite
     }
   }
 
+  test("warm update after a full rewrite of an inline tree's version uses the full rewrite") {
+    val name = "amt_warm_update_same_content_version"
+    withTable(name) {
+      createAMTTable(name, checkpointInterval = 1000)
+      sql(s"INSERT INTO $name VALUES (1)")
+      val deltaLog = deltaLogForName(name)
+      deltaLog.checkpoint(deltaLog.update(), Some(catalogTableFor(name)),
+        Some(AMTTriggerMode.CheckpointIntervalFull))
+      withInline {
+        sql(s"INSERT INTO $name VALUES (2)")
+      }
+      // This handle caches the inline tree at v3, like a cluster that read v3.
+      val staleLog = deltaLogForName(name)
+      assert(amtProvider(staleLog.update()).map(_.manifestCommitVersion).contains(3L),
+        "precondition: v3 carries an inline tree")
+
+      // Another cluster commits a full rewrite of v3 at v4. It has the same content version.
+      DeltaLog.clearCache()
+      val freshLog = deltaLogForName(name)
+      freshLog.checkpoint(freshLog.update(), Some(catalogTableFor(name)),
+        Some(AMTTriggerMode.CheckpointIntervalFull))
+
+      val warm = staleLog.update(catalogTableOpt = Some(catalogTableFor(name)))
+      val (_, cold) = coldLoad(name)
+      assert(amtProvider(cold).map(_.manifestCommitVersion).contains(4L),
+        "precondition: a cold read uses the full rewrite at v4")
+      assert(amtProvider(warm).map(_.manifestCommitVersion).contains(4L),
+        s"the warm update kept the tree from " +
+          s"v${amtProvider(warm).map(_.manifestCommitVersion).getOrElse(-1L)}")
+    }
+  }
+
   /**
    * Context for the warm update test harness.
    *
