@@ -44,7 +44,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
   /**
    * The `content_stats` sub-struct field name for logical column `name`. Sub-structs are named by
-   * the logical name with the (unique) field id attached (see `StatsLeaf.fieldName`) -- e.g.
+   * the logical name with the (unique) field id attached (see `StatsColumn.fieldName`) -- e.g.
    * `d_int_1` -- so a test refers to a column by its logical name and this resolves the id suffix.
    * The logical names used here are unique, so exactly one sub-struct matches.
    */
@@ -407,9 +407,10 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
   test("reading back with fewer indexed columns than were written keeps only the read subset") {
     // Written with 3 indexed columns, then read back after the stats-columns config was lowered to
-    // 2 (same table, physical names/ids unchanged). `forRead` derives its leaves from the read
-    // metadata, so it projects only a and b; c's typed sub-struct is still on disk but drops out of
-    // the reconstructed Delta stats. A superset of persisted stats is never an error, just unused.
+    // 2 (same table, physical names/ids unchanged). `forRead` derives its stats columns from the
+    // read metadata, so it projects only a and b; c's typed sub-struct is still on disk but drops
+    // out of the reconstructed Delta stats. A superset of persisted stats is never an error, just
+    // unused.
     val schema = new StructType().add("a", LongType).add("b", LongType).add("c", LongType)
     val writeMetadata = metadataWithColumnIds(
       schema, configuration = Map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.key -> "3"))
@@ -457,8 +458,8 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       "null_value_count" -> (LongType, "0")))
   }
 
-  test("content stats round-trip a schema whose flattened leaf names collide") {
-    // A top-level column `a_b` and a nested leaf `a`.`b` both flatten to the logical name "a_b".
+  test("content stats round-trip a schema whose flattened column names collide") {
+    // A top-level column `a_b` and a nested column `a`.`b` both flatten to the logical name "a_b".
     // Naming each content_stats sub-struct by that flattened name makes the two collide: the
     // persisted struct gets two "a_b" fields and `forRead`'s by-name lookup is ambiguous. Keying
     // the sub-structs by the (unique) column id keeps them distinct. This asserts each column's
