@@ -548,13 +548,15 @@ trait Checkpoints extends DeltaLogging {
         initSegment
 
       case (amtCheckpointProvider: AMTCheckpointProviderBase, Some(lastManifestCommit)) =>
-        if (amtCheckpointProvider.version == lastManifestCommit.contentRootVersion) {
-          // Happy-path: the versions match. Safe to use the initial AMT checkpoint provider.
+        if (amtCheckpointProvider.lastManifestCommit == lastManifestCommit) {
+          // Happy-path: the provider is the tree that the last manifest commit wrote.
           initSegment
-        } else if (amtCheckpointProvider.version < lastManifestCommit.contentRootVersion) {
+        } else if (amtCheckpointProvider.version <= lastManifestCommit.contentRootVersion) {
           // The initial AMT checkpoint provider is stale, which could happen during:
           //  - `deltaLog.createSnapshotAtInit()` when _last_checkpoint is stale;
           //  - `deltaLog.update()` when a manifest commit has landed after last cached snapshot.
+          //  - a full rewrite of an inline tree's version: the same content version with new
+          //    leaves.
           //
           // We must NOT use the stale AMT checkpoint provider, because:
           //  - A newer content root version is discoverable at the target version, meaning that at
