@@ -16,6 +16,7 @@
 # limitations under the License.
 #
 
+import json
 import tempfile
 import threading
 import unittest
@@ -26,6 +27,21 @@ import collect_test_durations as collector
 
 
 class CollectTestDurationsTest(unittest.TestCase):
+    def test_pr_history_and_master_fallback(self):
+        run = dict(databaseId=7, headSha="0123456789", createdAt="2026-01-01T00:00:00Z")
+        for branch, histories, expected_branches in [
+                ("feature", [[run]], ["feature"]),
+                ("feature", [[], [run]], ["feature", "master"]),
+                ("", [[run]], ["master"])]:
+            with self.subTest(branch=branch, histories=histories):
+                with patch.dict("os.environ", {"GITHUB_HEAD_REF": branch}), \
+                        patch.object(collector, "run_gh", side_effect=[
+                            json.dumps(history) for history in histories]) as query:
+                    self.assertEqual(collector.get_run_ids(5), [7])
+                self.assertEqual([
+                    call.args[0][call.args[0].index("--branch") + 1]
+                    for call in query.call_args_list], expected_branches)
+
     def test_parallel_reports_keep_the_longest_suite_duration(self):
         with tempfile.TemporaryDirectory() as temporary:
             artifacts = [dict(id=i, spark_version="1.0", shard=i) for i in range(4)]
