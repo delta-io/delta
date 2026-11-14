@@ -23,7 +23,7 @@ import scala.util.Random
 
 import org.apache.spark.sql.delta.{CatalogManagedTableFeature, DeltaColumnMappingTestUtilsBase, DeltaLog, DeltaTable, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.actions.Protocol
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider, CatalogOwnedTableUtils, TrackingInMemoryCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider, CatalogManagedTableUtils, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.stats.{DeltaStatistics, PreparedDeltaFileIndex}
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 
@@ -114,7 +114,7 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
   protected def withCatalogManagedTable(createTable: Boolean = true)(f: String => Unit): Unit = {
     CatalogManagedCommitCoordinatorProvider.clearBuilders()
     CatalogManagedCommitCoordinatorProvider.registerBuilder(
-      CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
       TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3))
     withTempTable(createTable = false) { tableName =>
       if (createTable) {

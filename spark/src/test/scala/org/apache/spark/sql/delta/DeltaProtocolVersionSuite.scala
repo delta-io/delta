@@ -3801,7 +3801,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Register a temporary InMemory-CC builder to support CatalogManaged table creation.
       CatalogManagedCommitCoordinatorProvider.clearBuilders()
       CatalogManagedCommitCoordinatorProvider.registerBuilder(
-        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1)
       )
       val finalAdditionalTableProperty = if (enableFeatureInitially) {

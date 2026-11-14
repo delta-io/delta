@@ -41,7 +41,7 @@ class CatalogOwnedEnablementSuite
     super.beforeEach()
     CatalogManagedCommitCoordinatorProvider.clearBuilders()
     CatalogManagedCommitCoordinatorProvider.registerBuilder(
-      catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
       commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3)
     )
   }
@@ -77,7 +77,7 @@ class CatalogOwnedEnablementSuite
   }
 
   protected def commitCoordinatorName: String =
-    CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING
+    CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING
 
   protected def createTable(
       tableName: String,
@@ -238,7 +238,7 @@ class CatalogOwnedEnablementSuite
         "path" -> log.logPath.toString,
         "version" -> expectedVersion,
         "stackTrace" ->
-          ("org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils$" +
+          ("org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTableUtils$" +
             ".recordCommitCoordinatorPopulationUsageLog"),
         "latestCheckpointVersion" -> -1,
         // Only check for certain fields of `checksumOpt` since the entire map
@@ -264,7 +264,7 @@ class CatalogOwnedEnablementSuite
     withRandomTable(createCatalogOwnedTableAtInit = false) { tableName =>
       withTable("t1", "t2") {
         val qolTableFeatures =
-          CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._1)
+          CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._1)
             .toSet
         withSQLConf(defaultCatalogOwnedFeatureEnabledKey -> "supported") {
           sql(s"CREATE TABLE t1 SHALLOW CLONE $tableName")

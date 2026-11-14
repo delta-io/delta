@@ -46,7 +46,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.util.Utils
 
-object CatalogOwnedTableUtils extends DeltaLogging {
+object CatalogManagedTableUtils extends DeltaLogging {
   /** The default catalog name only used for testing. */
   val DEFAULT_CATALOG_NAME_FOR_TESTING: String = "spark_catalog"
 
@@ -211,7 +211,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
 
     // Check default spark session configuration only when creating a new table.
     val isEnablingCOByDefault =
-      isCreatingNew && CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+      isCreatingNew && CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark)
 
     isExplicitlyEnablingCO || isEnablingCOByDefault
   }
@@ -873,7 +873,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    * while rebuilding the configuration map.
    */
   def getExplicitQoLConfigurations(properties: Map[String, String]): Map[String, String] = {
-    val qolKeys = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._2.key).toSet
+    val qolKeys = CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._2.key).toSet
     properties.filter { case (k, _) => qolKeys.contains(k) }
   }
 

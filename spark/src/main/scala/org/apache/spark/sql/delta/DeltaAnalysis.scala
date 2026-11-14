@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.convert.ConvertUtils
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -220,7 +220,7 @@ class DeltaAnalysis(protected val session: SparkSession)
 
           // Catalog-Managed: Specifying the table UUID in the TBLPROPERTIES clause
           // should be blocked.
-          CatalogOwnedTableUtils.validateUCTableIdNotPresent(property = ctl.properties)
+          CatalogManagedTableUtils.validateUCTableIdNotPresent(property = ctl.properties)
 
           // Check whether we are trying to enable Catalog-Managed via explicit property overrides.
           // The reason to check this is, if the source table is a Catalog-Managed table, and

@@ -137,7 +137,7 @@ trait CatalogOwnedTestBaseSuite
     CatalogManagedCommitCoordinatorProvider.clearBuilders()
     catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
       CatalogManagedCommitCoordinatorProvider.registerBuilder(
-        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize)
       )
     }
@@ -204,7 +204,7 @@ trait CatalogOwnedTestBaseSuite
     test(s"$testName [Backfill batch size: $backfillBatchSize]") {
       CatalogManagedCommitCoordinatorProvider.clearBuilders()
       CatalogManagedCommitCoordinatorProvider.registerBuilder(
-        CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
       withDefaultCCTableFeature {
         f
@@ -274,7 +274,7 @@ trait CatalogOwnedTestBaseSuite
       spark: SparkSession,
       metadata: Metadata): Map[String, String] = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      val qolConfs = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+      val qolConfs = CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
         .collect {
           case (feature, config, value)
           => config.key -> value
@@ -307,7 +307,7 @@ trait CatalogOwnedTestBaseSuite
       metadata: Metadata): Iterable[(String, String)] = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
       val CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS =
-        CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+        CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
           .map { case (_, config, _) => config.key }
           .filterNot(Set(
             DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key
@@ -374,7 +374,7 @@ trait CatalogOwnedTestBaseSuite
   protected def validateOnlySpecifiedQoLTableFeaturesAndMetadataPresent(
       tableName: String,
       supportedTableFeatures: Set[TableFeature]): Unit = {
-    CatalogOwnedTableUtils.qolTableFeatureAndProperties.foreach {
+    CatalogManagedTableUtils.qolTableFeatureAndProperties.foreach {
       case (t, config, value) =>
         val isSpecifiedTableFeature = supportedTableFeatures.contains(t)
         validateTableFeatureAndMetadata(
@@ -410,7 +410,7 @@ trait CatalogOwnedTestBaseSuite
   }
 
   protected def validateQoLFeaturesEnablement(tableName: String, expected: Boolean): Unit = {
-    CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.foreach { case (t, config, value) =>
+    CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.foreach { case (t, config, value) =>
       validateTableFeatureAndMetadata(
         tableName,
         tableFeature = t,

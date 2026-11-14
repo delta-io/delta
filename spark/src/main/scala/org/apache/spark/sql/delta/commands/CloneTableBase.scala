@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.amt.AMTUtils
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util._
@@ -467,7 +467,7 @@ abstract class CloneTableBase(
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
     // For CREATE CLONE, check the default spark configuration for Catalog-Managed.
     val catalogOwnedEnabledByDefaultConf =
-      if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+      if (CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark)
           && !tableExists(txn.snapshot)) {
         // Append [[CatalogManagedTableFeature]] to the `configWithOverrides` below if table
         // does not exist, to ensure the final target protocol contains CatalogManaged

@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperti
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -132,7 +132,7 @@ case class CreateDeltaTableCommand(
       getSupportedFeaturesFromTableConfigs(table.properties)
     if (!Utils.isTesting && !allowCatalogManaged &&
       (tableFeatures.contains(CatalogManagedTableFeature) ||
-      CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
+      CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
       throw DeltaErrors.deltaCannotCreateCatalogManagedTable()
     }
 
@@ -146,7 +146,7 @@ case class CreateDeltaTableCommand(
     }
     val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
       sparkSession, existingTableOpt, tableLocation, fileSystemOptions)
-    CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
+    CatalogManagedTableUtils.validatePropertiesForCreateDeltaTableCommand(
       spark = sparkSession,
       tableExists = deltaLog.tableExists,
       query = query,
@@ -458,7 +458,7 @@ case class CreateDeltaTableCommand(
           // In order to enable [[CatalogManagedTableFeature]] for target table w/ default
           // spark configuration of CatalogManaged enabled, we need to manually append
           // [[CatalogManagedTableFeature]] here to the existing source table protocol.
-          val finalizedProtocol = if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(
+          val finalizedProtocol = if (CatalogManagedTableUtils.defaultCatalogOwnedEnabled(
               spark = sparkSession)) {
             val minCatalogOwnedProtocol = Protocol(
               CatalogManagedTableFeature.minReaderVersion,

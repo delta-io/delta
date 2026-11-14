@@ -121,7 +121,7 @@ class CommitFilesIteratorSuite extends AMTCheckpointTestBase {
   private def backfillToVersion(tableName: String, version: Long): Unit = {
     val catalogTable = catalogTableFor(tableName)
     val snapshot = deltaLogForName(tableName).update(catalogTableOpt = Some(catalogTable))
-    CatalogOwnedTableUtils
+    CatalogManagedTableUtils
       .populateTableCommitCoordinatorFromCatalog(spark, Some(catalogTable), snapshot).get
       .backfillToVersion(Some(catalogTable.identifier), version)
   }

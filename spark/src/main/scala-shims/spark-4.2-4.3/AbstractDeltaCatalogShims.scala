@@ -42,7 +42,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{CreateDeltaTableCommand, TableCreationModes}
 import org.apache.spark.sql.delta.coordinatedcommits.{
-  CatalogOwnedTableUtils,
+  CatalogManagedTableUtils,
   CoordinatedCommitsUtils
 }
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
@@ -125,7 +125,7 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
 
     val (catalogTableTarget, protocol) =
       if (isDeltaSource) {
-        CatalogOwnedTableUtils.validateUCTableIdNotPresent(property = explicitDeltaProperties)
+        CatalogManagedTableUtils.validateUCTableIdNotPresent(property = explicitDeltaProperties)
         if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
             configs = explicitDeltaProperties).contains(CatalogManagedTableFeature)) {
           isEnablingCatalogOwnedViaExplicitPropertyOverrides = true

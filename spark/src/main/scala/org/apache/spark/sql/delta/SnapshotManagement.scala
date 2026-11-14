@@ -31,7 +31,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.{Checkpoint, Metadata}
 import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTUtils}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1778,7 +1778,7 @@ trait SnapshotManagement { self: DeltaLog =>
     spark: SparkSession, catalogTableOpt: Option[CatalogTable], snapshot: Snapshot)
   : Option[TableCommitCoordinatorClient] = {
     if (snapshot.isCatalogOwned) {
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+      CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark,
         catalogTableOpt,
         snapshot

@@ -42,7 +42,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
@@ -535,7 +535,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
     val isActiveReplaceCommand = isCreatingNewTable && readVersion != -1
     val shouldUnsetCatalogOwnedConf =
-      isActiveReplaceCommand && CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+      isActiveReplaceCommand && CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark)
     val conf = if (shouldUnsetCatalogOwnedConf) {
       // Unset default CatalogManaged enablement iff:
       // 0. `isCreatingNewTable` indicates that this either is a REPLACE or CREATE command.
@@ -758,16 +758,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
     // this is just a double check since we only want to auto-enable QoL features
     // when creating a new CatalogManaged table through CREATE.
-    if (CatalogOwnedTableUtils.shouldEnableCatalogOwned(
+    if (CatalogManagedTableUtils.shouldEnableCatalogOwned(
         spark, propertyOverrides = newMetadataTmp.configuration) &&
         isCreatingNewTable && this.readVersion == -1) {
 
       // For CatalogManaged table, we add "quality of life" table features as a part of CCv2 table
-      // creation. Look for [[CatalogOwnedTableUtils.updateMetadataForQoLFeatures]] to see
+      // creation. Look for [[CatalogManagedTableUtils.updateMetadataForQoLFeatures]] to see
       // what features are in the list.
       // Note that we need to add features here because features like `ColumnMapping` or
       // `RowTracking` have their own validation/update logic below.
-      newMetadataTmp = CatalogOwnedTableUtils.updateMetadataForQoLFeatures(
+      newMetadataTmp = CatalogManagedTableUtils.updateMetadataForQoLFeatures(
         spark,
         metadata = newMetadataTmp
         )
@@ -1023,7 +1023,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
     // An AMT table cannot keep a QoL feature that AMT is incompatible with (e.g. v2Checkpoint).
     val amtIncompatibleQoLKeys = if (AMTUtils.amtRequested(metadata.configuration)) {
-      CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
+      CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
         case (feature, config, _)
             if AdaptiveMetadataTableFeature.incompatibleFeatures.contains(feature) => config.key
       }.toSet
@@ -3270,7 +3270,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         // (attemptVersion - 1), and we store the unbackfilled manifest commit file status in an
         // extra field in LogSegment. We assume the readSnapshot's commit-coordinator is unchanged,
         // otherwise the conflict checker would have detected a conflict earlier.
-        CatalogOwnedTableUtils
+        CatalogManagedTableUtils
           .populateTableCommitCoordinatorFromCatalog(spark, targetCatalogTable, snapshot)
           .foreach { readSnapshotTableCommitCoordinatorClient =>
             CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
