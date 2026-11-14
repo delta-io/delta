@@ -36,6 +36,8 @@ runs:
     # unreleased UC. Publish the pinned UC build locally before sbt tries to resolve it.
     - name: Set up pinned Unity Catalog
       uses: ./.github/actions/setup-unitycatalog
+      env:
+        SPARK_VERSION: ${{ inputs.spark-version }}
 
     - name: Scala structured logging style check
       shell: bash

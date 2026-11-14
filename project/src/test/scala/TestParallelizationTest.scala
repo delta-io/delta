@@ -51,7 +51,20 @@ object TestParallelizationTest {
     val originalGroups = Seq(
       Tests.Group("serial", definitions.take(3), Tests.SubProcess(forkOptions)),
       Tests.Group("other", definitions.drop(3), Tests.InProcess))
-    for (shards <- Seq(1, NUM_SHARDS)) {
+    val collidingTests = Iterator.from(0).map(i => s"timed-$i").filter { name =>
+      math.abs(scala.util.hashing.MurmurHash3.stringHash(name) % 8) == 0
+    }.take(2).map { name =>
+      new TestDefinition(name, fingerprint, false,
+        Array[sbt.testing.Selector](new sbt.testing.SuiteSelector))
+    }.toVector
+    val timedGroups = Seq(Tests.Group("timed", collidingTests, Tests.SubProcess(forkOptions)))
+    val timings = collidingTests.map(test => test.name -> 10.0)
+    val balanced = (0 until 8).map { shard =>
+      TestParallelization.shardGroups(timedGroups, 8, shard, timings).flatMap(_.tests)
+    }
+    assert(balanced.forall(_.size <= 1), "Timed suites must not stay on the same hash shard")
+    assert(balanced.flatten.map(_.name).sorted == collidingTests.map(_.name).sorted)
+    for (shards <- Seq(1, 8)) {
       val assignedGroups = (0 until shards).flatMap { shard =>
         val groups = TestParallelization.shardGroups(originalGroups, shards, shard)
         groups.zip(originalGroups).foreach { case (group, original) =>

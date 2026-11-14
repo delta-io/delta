@@ -33,13 +33,25 @@ object TestParallelization {
     }
   }
 
-  def shardGroups(groups: Seq[Tests.Group], numShards: Int, shard: Int): Seq[Tests.Group] = {
+  def shardGroups(
+      groups: Seq[Tests.Group],
+      numShards: Int,
+      shard: Int,
+      durations: Seq[(String, Double)] =
+        MinShardGroupDurationStrategy.TOP_N_HIGH_DURATION_TEST_SUITES): Seq[Tests.Group] = {
     require(numShards > 0, "The number of test shards must be positive")
     require(shard >= 0 && shard < numShards,
       s"Assigned shard ID $shard is not between 0 and ${numShards - 1} inclusive")
+    val (assignment, _) = MinShardGroupDurationStrategy.highDurationOptimalAssignment(
+      1, groups.flatMap(_.tests).map(_.name).toSet, durations, numShards)
+    val timedNames = durations.map(_._1).toSet
     groups.map { group =>
       group.withTests(group.tests.filter { test =>
-        math.abs(MurmurHash3.stringHash(test.name) % numShards) == shard
+        if (timedNames.contains(test.name)) {
+          assignment(shard)(0).contains(test.name)
+        } else {
+          math.abs(MurmurHash3.stringHash(test.name) % numShards) == shard
+        }
       })
     }
   }
@@ -297,11 +309,12 @@ object TestParallelization {
     def highDurationOptimalAssignment(
         numGroups: Int,
         testSuiteNames: Set[String],
-        durations: Seq[(String, Double)] = TOP_N_HIGH_DURATION_TEST_SUITES):
+        durations: Seq[(String, Double)] = TOP_N_HIGH_DURATION_TEST_SUITES,
+        numShards: Int = NUM_SHARDS):
         (Array[Array[Set[String]]], Array[Array[Double]]) = {
-      val assignment = Array.fill(NUM_SHARDS)(Array.fill(numGroups)(List.empty[String]))
-      val groupDurations = Array.fill(NUM_SHARDS)(Array.fill(numGroups)(0.0))
-      val shardDurations = Array.fill(NUM_SHARDS)(0.0)
+      val assignment = Array.fill(numShards)(Array.fill(numGroups)(List.empty[String]))
+      val groupDurations = Array.fill(numShards)(Array.fill(numGroups)(0.0))
+      val shardDurations = Array.fill(numShards)(0.0)
       val sortedTestSuites = durations.filter { case (name, _) =>
         testSuiteNames.contains(name)
       }.sortBy(-_._2)
@@ -339,7 +352,7 @@ object TestParallelization {
       var minGroupDuration = Double.MaxValue
       var minShardDuration = Double.MaxValue
 
-      for (shardIdx <- 0 until NUM_SHARDS) {
+      for (shardIdx <- shardDurations.indices) {
         for (groupIdx <- 0 until numGroups) {
           val currentGroupDuration = groupDurations(shardIdx)(groupIdx)
           val currentShardDuration = shardDurations(shardIdx)
