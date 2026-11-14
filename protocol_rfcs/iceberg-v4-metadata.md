@@ -256,7 +256,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 
 | Action | Description |
 |--------|-------------|
-| `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
+| `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be non-decreasing across all checkpoint actions in the log. |
 | `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, `commitTimestamp`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). A metadata tree can only be produced as of a version at which In-Commit Timestamps are enabled. `commitTimestamp` is the in-commit timestamp (milliseconds since the Unix epoch) of the commit at `version`. `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
@@ -282,7 +282,7 @@ The action that invalidates the existing tree entry carries the backreference:
 
 An `add` thus carries a backreference only when it re-adds a file with no paired `remove`.
 
-A backreference is meaningful only relative to the tree it was computed from, identified by that tree's `contentRoot.version`. A commit's backreferences are valid only if they target the current `contentRoot.version`; if a concurrent manifest commit has advanced the tree (e.g., compaction moved entries between manifests), they are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
+A backreference is meaningful only relative to the tree it was computed from. A commit's backreferences are valid only if that tree is still the latest tree when the commit commits. If a concurrent manifest commit has produced a newer tree (e.g., compaction moved entries between manifests), the backreferences are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)). The newer tree can have the same `contentRoot.version`.
 
 Backreferences enable efficient [Manifest Deletion Vector (MDV)](#manifest-deletion-vectors-mdvs) creation during manifest commits: writers can directly construct MDVs from backreferences without scanning leaf manifests. The engine must propagate (manifest, position) metadata through the planning pipeline so it is available at commit time.
 
@@ -590,7 +590,7 @@ Writers should trigger manifest commits to limit the number of JSON log files an
 Manifest commits have the following characteristics:
 
 1. **File actions may be logged**: A manifest commit may also
-   write `add` and `remove` actions to the Delta log, in addition to updating the metadata tree. The `checkpointMetadata.version` may be less than the commit version (the tree covers up to `checkpointMetadata.version`; remaining changes are in the log). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log.
+   write `add` and `remove` actions to the Delta log, in addition to updating the metadata tree. The `checkpointMetadata.version` may be less than the commit version (the tree covers up to `checkpointMetadata.version`; remaining changes are in the log). Checkpoint versions must be non-decreasing across all checkpoint actions in the log.
 
 2. **Non-file actions**: Non-file actions (`metaData`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) are
    never stored in the metadata tree. A manifest commit's `checkpoint` action already carries the current `protocol`, `metaData`, `domainMetadata`, and `txn`s (see [Checkpoint Action](#checkpoint-action)), so a checkpoint-based reader needs nothing else to reconstruct the table state up to `checkpointMetadata.version`. When one of these values changes, the commit that changes it must write a *separate* top-level non-file action, following standard Delta commit semantics.

@@ -2868,7 +2868,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Invariant check that the tree of an inline manifest commit reconstructs the commit's own
+   * Test-only invariant check that an inline manifest commit's tree reconstructs the commit's own
    * AddFiles and RemoveFiles, compared by (path, dv, add or remove). `AddCDCFile`s are not recorded
    * in the tree, so they are left out of the comparison.
    */
@@ -2876,6 +2876,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       actionsToCommit: Seq[Action],
       attemptVersion: Long,
       amtWriteResultOpt: Option[AMTWriteResult]): Unit = {
+    if (!DeltaUtils.isTesting) return
     // Only an incremental AMT that describes this commit records the commit's changes:
     //  - A deferred tree describes the previous table version.
     //  - A full rewrite marks every live entry EXISTING and has no tombstones or changed positions.
