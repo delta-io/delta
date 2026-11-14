@@ -83,7 +83,7 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
   protected[delta] def sizeInBytesIfKnown: Option[Long]
 
   /** Whether the table has [[CatalogManagedTableFeature]] enabled */
-  def isCatalogOwned: Boolean = {
+  def isCatalogManaged: Boolean = {
     version >= 0 &&
       protocol.readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name)
   }
@@ -900,7 +900,7 @@ class Snapshot(
 
   /** Ensures that commit files are backfilled up to the current version in the snapshot. */
   def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
-    val tableCommitCoordinatorClientOpt = if (isCatalogOwned) {
+    val tableCommitCoordinatorClientOpt = if (isCatalogManaged) {
       CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark, catalogTableOpt, this)
     } else {

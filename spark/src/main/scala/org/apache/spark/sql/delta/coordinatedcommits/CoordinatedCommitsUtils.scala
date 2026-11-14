@@ -88,7 +88,7 @@ object CatalogManagedTableUtils extends DeltaLogging {
       spark: SparkSession,
       catalogTableOpt: Option[CatalogTable],
       snapshot: Snapshot): Option[TableCommitCoordinatorClient] = {
-    if (!snapshot.isCatalogOwned) {
+    if (!snapshot.isCatalogManaged) {
       return None
     }
     catalogTableOpt.map { catalogTable =>
@@ -297,7 +297,7 @@ object CatalogManagedTableUtils extends DeltaLogging {
   def validatePropertiesForAlterTableSetPropertiesDeltaCommand(
       snapshot: Snapshot,
       propertyOverrides: Map[String, String]): Unit = {
-    if (snapshot.isCatalogOwned) {
+    if (snapshot.isCatalogManaged) {
       // For Catalog-Managed enabled tables, check the dependent ICT properties.
       // Note: Upgrade/Downgrade have been blocked earlier, which do not need to be
       //       checked here.
@@ -314,7 +314,7 @@ object CatalogManagedTableUtils extends DeltaLogging {
   def validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
       snapshot: Snapshot,
       propKeysToUnset: Seq[String]): Unit = {
-    if (snapshot.isCatalogOwned) {
+    if (snapshot.isCatalogManaged) {
       verifyNotContainsICTConfigurations(propKeys = propKeysToUnset)
     }
   }
@@ -364,7 +364,7 @@ object CatalogManagedTableUtils extends DeltaLogging {
       val isSpecifyingCatalogManaged = TableFeatureProtocolUtils
         .getSupportedFeaturesFromTableConfigs(propertyOverrides)
         .contains(CatalogManagedTableFeature)
-      val existingTableIsCatalogManaged = existingTableSnapshotOpt.exists(_.isCatalogOwned)
+      val existingTableIsCatalogManaged = existingTableSnapshotOpt.exists(_.isCatalogManaged)
 
       // Allow specifying CatalogManaged in REPLACE TABLE if the existing table is already
       // CatalogManaged. In this case, the commit coordinator properties are treated as a no-op.
@@ -608,7 +608,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       val currentSnapshotInDeltaLog = deltaLog.unsafeVolatileSnapshot
       if (currentSnapshotInDeltaLog.version == maxVersionSeen &&
            (currentSnapshotInDeltaLog.tableCommitCoordinatorClientOpt.isEmpty &&
-           !currentSnapshotInDeltaLog.isCatalogOwned)) {
+           !currentSnapshotInDeltaLog.isCatalogManaged)) {
         // If the last version in listing is same as the `unsafeVolatileSnapshot` in deltaLog and
         // if that snapshot doesn't have a commit-coordinator => this table was not a
         // coordinated-commits table at the time of listing. This is because the commit which
@@ -792,7 +792,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    * be a gap in the backfilled commit sequence.
    */
   def backfillWhenCoordinatedCommitsDisabled(snapshot: Snapshot): Unit = {
-    if (snapshot.getTableCommitCoordinatorForWrites.nonEmpty || snapshot.isCatalogOwned) {
+    if (snapshot.getTableCommitCoordinatorForWrites.nonEmpty || snapshot.isCatalogManaged) {
       // Coordinated commits or Catalog-managed is enabled on the table. Don't backfill
       // as backfills are managed by commit-coordinators.
       return

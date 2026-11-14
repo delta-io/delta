@@ -1305,7 +1305,7 @@ trait SnapshotManagement { self: DeltaLog =>
     // filesystem. In this case, now we know that this is CatalogManaged table, do another read to
     // get the commits from the catalog's commit-coordinator.
     val needToReadSnapshotUsingCatalogCommitCoordinator =
-      newSnapshot.isCatalogOwned && initialTableCommitCoordinatorClient.isEmpty
+      newSnapshot.isCatalogManaged && initialTableCommitCoordinatorClient.isEmpty
     if (usedStaleCommitCoordinator || needToReadSnapshotUsingCatalogCommitCoordinator) {
       val commitCoordinatorOpt =
         populateCommitCoordinator(spark, catalogTableOpt, newSnapshot)
@@ -1777,7 +1777,7 @@ trait SnapshotManagement { self: DeltaLog =>
   protected def populateCommitCoordinator(
     spark: SparkSession, catalogTableOpt: Option[CatalogTable], snapshot: Snapshot)
   : Option[TableCommitCoordinatorClient] = {
-    if (snapshot.isCatalogOwned) {
+    if (snapshot.isCatalogManaged) {
       CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark,
         catalogTableOpt,

@@ -515,7 +515,7 @@ class DeltaTableFeatureSuite
           .saveAsTable(table)
         val log = DeltaLog.forTable(spark, TableIdentifier(table))
         val featureName = TestRemovableReaderWriterFeature.name
-        assert(log.update().isCatalogOwned)
+        assert(log.update().isCatalogManaged)
         assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
 
         // Add TestRemovableReaderWriterFeature to the table in unbackfilled delta files

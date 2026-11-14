@@ -62,7 +62,7 @@ class CommitFilesIteratorSuite extends AMTCheckpointTestBase {
         val deltaLog = deltaLogForName(tableName)
         val initialSnapshot = deltaLog.update()
         assert(initialSnapshot.version == 0L)
-        assert(initialSnapshot.isCatalogOwned == (tableKind != Filesystem))
+        assert(initialSnapshot.isCatalogManaged == (tableKind != Filesystem))
         body(tableName, deltaLog)
       }
     } finally {

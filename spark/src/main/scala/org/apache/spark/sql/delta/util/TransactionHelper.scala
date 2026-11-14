@@ -167,7 +167,7 @@ trait TransactionHelper extends DeltaLogging {
 
   private[delta] lazy val readSnapshotTableCommitCoordinatorClientOpt:
       Option[TableCommitCoordinatorClient] = {
-    if (snapshot.isCatalogOwned) {
+    if (snapshot.isCatalogManaged) {
       // Catalog managed table's commit coordinator is always determined by the catalog.
       CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark, catalogTable, snapshot)
@@ -183,7 +183,7 @@ trait TransactionHelper extends DeltaLogging {
       readSnapshotTableCommitCoordinatorClientOpt match {
         // TODO: Capture the CO -> FS downgrade case when we start
         //       supporting downgrade for CO.
-        case Some(_) if snapshot.isCatalogOwned =>                             // CO commit
+        case Some(_) if snapshot.isCatalogManaged =>                             // CO commit
           (CoordinatedCommitType.CO_COMMIT, snapshot.metadata)
         case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
           (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
