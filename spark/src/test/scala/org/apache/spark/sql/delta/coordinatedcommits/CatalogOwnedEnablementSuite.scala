@@ -209,7 +209,7 @@ class CatalogOwnedEnablementSuite
     }.filter { log =>
       log.metric == "tahoeEvent" &&
         log.tags.getOrElse("opType", null) ==
-          CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS
+          CatalogManagedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS
     }
 
     assert(usageLog.nonEmpty, "Should have usage log for INVALID_PATH_BASED_ACCESS scenario")

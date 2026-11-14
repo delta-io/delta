@@ -417,7 +417,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   private def logAndThrowPathBasedAccessNotAllowed(snapshot: Snapshot): Nothing = {
     recordCommitCoordinatorPopulationUsageLog(
       snapshot.deltaLog,
-      opType = CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS,
+      opType = CatalogManagedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS,
       snapshot,
       catalogTableOpt = None,
       commitCoordinatorOpt = None,
