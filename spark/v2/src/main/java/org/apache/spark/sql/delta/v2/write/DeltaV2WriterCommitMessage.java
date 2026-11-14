@@ -15,19 +15,20 @@
  */
 package org.apache.spark.sql.delta.v2.write;
 
-import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.utils.CloseableIterable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
+import org.apache.spark.sql.delta.actions.Action;
+import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.utils.SerializableKernelRowWrapper;
+import scala.jdk.javaapi.CollectionConverters;
 
 /**
  * Commit message for a single write task. Holds the serialized Delta log action rows (e.g. AddFile)
- * produced by that task. The driver deserializes these and passes them to {@link
- * io.delta.kernel.Transaction#commit}.
+ * produced by that task. The driver decodes and validates them before committing through the
+ * optimistic transaction.
  */
 class DeltaV2WriterCommitMessage implements WriterCommitMessage {
 
@@ -42,19 +43,35 @@ class DeltaV2WriterCommitMessage implements WriterCommitMessage {
   }
 
   /**
-   * Flattens the Delta log action rows from every task's commit message into the {@link
-   * CloseableIterable} that {@link io.delta.kernel.Transaction#commit} expects.
+   * Decodes append actions shared by batch and streaming writes. Each task row must contain exactly
+   * one AddFile; driver-owned actions such as SetTransaction cannot come from a task.
    */
-  static CloseableIterable<Row> toDataActions(WriterCommitMessage[] messages) {
-    List<Row> allActionRows = new ArrayList<>();
+  static List<Action> toAddFileActions(WriterCommitMessage[] messages) {
+    List<Action> actions = new ArrayList<>();
     for (WriterCommitMessage msg : messages) {
       if (msg instanceof DeltaV2WriterCommitMessage) {
         DeltaV2WriterCommitMessage deltaMsg = (DeltaV2WriterCommitMessage) msg;
         for (SerializableKernelRowWrapper wrapper : deltaMsg.actionRows) {
-          allActionRows.add(wrapper.getRow());
+          List<Action> rowActions =
+              CollectionConverters.asJava(
+                  KernelActionUtils$.MODULE$.actionsFromKernelRow(wrapper.getRow()));
+          if (rowActions.size() != 1) {
+            throw new IllegalArgumentException(
+                "Expected exactly one action from writer commit message, but found "
+                    + rowActions.size()
+                    + " actions");
+          }
+          Action action = rowActions.get(0);
+          if (!(action instanceof AddFile)) {
+            throw new UnsupportedOperationException(
+                "Delta V2 writers do not support '"
+                    + action.getClass().getSimpleName()
+                    + "' actions");
+          }
+          actions.add(action);
         }
       }
     }
-    return CloseableIterable.inMemoryIterable(Utils.toCloseableIterator(allActionRows.iterator()));
+    return actions;
   }
 }

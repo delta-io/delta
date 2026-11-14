@@ -17,25 +17,32 @@ package org.apache.spark.sql.delta.v2.write;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.Operation;
-import io.delta.kernel.Transaction;
-import io.delta.kernel.data.Row;
-import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.ConcurrentTransactionException;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.utils.CloseableIterable;
+import java.util.List;
+import java.util.Optional;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
 import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
 import org.apache.spark.sql.delta.DeltaConfigs;
+import org.apache.spark.sql.delta.DeltaOperations;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.delta.actions.Protocol;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.actions.SetTransaction;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2OptimisticTransaction;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
+import org.apache.spark.sql.streaming.OutputMode;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.Option;
+import scala.jdk.javaapi.CollectionConverters;
 
 /**
  * StreamingWrite for DSv2 streaming <b>Append</b>. Spark's {@code V2Writes} rebuilds this per
@@ -43,13 +50,13 @@ import org.slf4j.LoggerFactory;
  * DeltaV2DataWriterFactory}), built from a throwaway transaction whose operation-independent
  * context is serialized into the factory. This class adds only the driver-side commit.
  *
- * <p>{@link #commit} builds its transaction from a freshly reloaded snapshot (so it commits at
- * {@code latest+1}), mirroring V1's per-batch {@code deltaLog.startTransaction()}.
+ * <p>{@link #commit} builds an optimistic transaction from a freshly reloaded snapshot for each
+ * epoch. Batch and streaming share the optimistic commit implementation and task-action decoding.
  *
- * <p><b>Idempotency:</b> {@code withTransactionId(queryId, epochId)} records a {@code
- * SetTransaction}; {@link #commit} pre-checks the committed epoch for {@code queryId} and skips a
- * replay, as V1 ({@code txn.txnVersion}) does. A concurrent same-epoch commit that races the
- * pre-check is still caught as {@link ConcurrentTransactionException} and skipped.
+ * <p><b>Idempotency:</b> {@code txnVersion(queryId)} checks the committed epoch and registers the
+ * application-id read dependency. A {@code SetTransaction} is committed atomically with the files.
+ * A concurrent application-id update is skipped only if a fresh snapshot confirms this epoch has
+ * already committed.
  *
  * <p><b>Layout guard:</b> {@link #commit} fails the query if the reloaded snapshot's schema or
  * protocol has diverged from the write state's, since Kernel does not re-validate the
@@ -62,8 +69,9 @@ class DeltaV2StreamingWrite implements StreamingWrite {
 
   private static final Logger logger = LoggerFactory.getLogger(DeltaV2StreamingWrite.class);
 
-  private final Engine engine;
-  private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2TableManager tableManager;
+  private final DeltaV2QueryContext queryContext;
+  private final Option<CatalogTable> catalogTable;
   private final String queryId;
   private final DeltaV2WriteContext context;
   // The write state's schema/protocol baseline; the per-epoch guard fails if the table diverges.
@@ -78,13 +86,19 @@ class DeltaV2StreamingWrite implements StreamingWrite {
   private final boolean variantLayoutFollowsProperty;
 
   /**
-   * @param snapshotManager reloads the latest snapshot per epoch (see {@link #commit})
+   * @param tableManager reloads the latest snapshot per epoch (see {@link #commit})
+   * @param catalogTable current catalog metadata for the target
    * @param context shared write setup
    */
-  DeltaV2StreamingWrite(DeltaV2SnapshotManager snapshotManager, DeltaV2WriteContext context) {
+  DeltaV2StreamingWrite(
+      DeltaV2TableManager tableManager,
+      Optional<CatalogTable> catalogTable,
+      DeltaV2WriteContext context) {
     this.context = requireNonNull(context, "context is null");
-    this.engine = requireNonNull(context.getEngine(), "engine is null");
-    this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
+    this.tableManager = requireNonNull(tableManager, "tableManager is null");
+    this.catalogTable =
+        ScalaUtils.toScalaOption(requireNonNull(catalogTable, "catalogTable is null"));
+    this.queryContext = DeltaV2QueryContext.apply(catalogTable);
     this.queryId = requireNonNull(context.getWriteInfo().queryId(), "queryId is null");
     Snapshot initialSnapshot =
         requireNonNull(context.getInitialSnapshot(), "initialSnapshot is null");
@@ -106,14 +120,10 @@ class DeltaV2StreamingWrite implements StreamingWrite {
 
   @Override
   public void commit(long epochId, WriterCommitMessage[] messages) {
-    // TODO: Expose streaming transaction construction and latest transaction-version lookup
-    // through the snapshot facade so this path does not depend on SnapshotImpl.
-    // Kernel-only: needs SnapshotImpl.buildUpdateTableTransaction
-    // (TransactionBuilder) for the streaming commit, and
-    // getLatestTransactionVersion for the epoch-skip check.
     // One reload, so the skip check, guards, and the transaction below all judge the same snapshot.
-    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
-    SnapshotImpl kernelLatestSnapshot = DeltaV2Snapshot$.MODULE$.getKernelSnapshot(latestSnapshot);
+    DeltaV2Snapshot latestSnapshot = loadLatestSnapshot();
+    DeltaV2OptimisticTransaction txn =
+        new DeltaV2OptimisticTransaction(catalogTable, latestSnapshot, tableManager);
 
     // Skip an already-committed epoch before any guard runs. StreamingWrite.commit may be called
     // more than once for one epoch and must be idempotent, so a repeated commit of a committed
@@ -121,8 +131,7 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // and a table change since must not turn that success into a failure. Its executor-written
     // files for this repeat are orphaned (VACUUM'd). The next uncommitted epoch still hits the
     // guards.
-    long committedEpoch =
-        kernelLatestSnapshot.getLatestTransactionVersion(engine, queryId).orElse(-1L);
+    long committedEpoch = txn.txnVersion(queryId);
     if (committedEpoch >= epochId) {
       logger.info("Skipping already committed epoch {} for query {}", epochId, queryId);
       return;
@@ -137,22 +146,31 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     //  as a blind append, skipping the conflict check V1 gets via readWholeTable().
 
     try {
-      Transaction txn =
-          kernelLatestSnapshot
-              .buildUpdateTableTransaction(DeltaV2Write.getEngineInfo(), Operation.STREAMING_UPDATE)
-              .withTransactionId(queryId, epochId)
-              .build(engine);
-      CloseableIterable<Row> dataActions = DeltaV2WriterCommitMessage.toDataActions(messages);
-      long version = txn.commit(engine, dataActions).getVersion();
+      List<Action> actions = DeltaV2WriterCommitMessage.toAddFileActions(messages);
+      actions.add(new SetTransaction(queryId, epochId, Option.apply(txn.clock().getTimeMillis())));
+      long version =
+          txn.commit(CollectionConverters.asScala(actions).toSeq(), streamingOperation(epochId));
       logger.info(
           "DSv2 streaming epoch {} for query {} committed at version {}",
           epochId,
           queryId,
           version);
     } catch (ConcurrentTransactionException e) {
-      // Backstop for a concurrent writer racing the same epoch between the pre-check and commit.
+      // A concurrent update for an older epoch is a conflict, not proof this epoch succeeded.
+      if (loadLatestSnapshot().getLatestTransactionVersion(queryId).orElse(-1L) < epochId) {
+        throw e;
+      }
       logger.info("Skipping already committed epoch {} for query {}", epochId, queryId);
     }
+  }
+
+  private DeltaV2Snapshot loadLatestSnapshot() {
+    return (DeltaV2Snapshot) tableManager.loadLatestSnapshot(queryContext);
+  }
+
+  private DeltaOperations.StreamingUpdate streamingOperation(long epochId) {
+    return new DeltaOperations.StreamingUpdate(
+        OutputMode.Append(), queryId, epochId, Option.empty());
   }
 
   /** Fails the epoch if the fresh snapshot's schema/protocol diverged from the write's baseline. */

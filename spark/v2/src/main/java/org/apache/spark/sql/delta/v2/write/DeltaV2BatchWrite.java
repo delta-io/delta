@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.v2.write;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Operation;
-import java.util.ArrayList;
 import java.util.List;
 import org.apache.spark.sql.SaveMode;
 import org.apache.spark.sql.connector.write.BatchWrite;
@@ -29,11 +28,8 @@ import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.delta.DeltaOperations;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.actions.Action;
-import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2OptimisticTransaction;
-import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
-import org.apache.spark.sql.delta.v2.utils.SerializableKernelRowWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Option;
@@ -75,32 +71,7 @@ class DeltaV2BatchWrite implements Write, BatchWrite {
 
   @Override
   public void commit(WriterCommitMessage[] messages) {
-    List<Action> actions = new ArrayList<>();
-    for (WriterCommitMessage msg : messages) {
-      if (msg instanceof DeltaV2WriterCommitMessage) {
-        for (SerializableKernelRowWrapper wrapper :
-            ((DeltaV2WriterCommitMessage) msg).getActionRows()) {
-          List<Action> rowActions =
-              CollectionConverters.asJava(
-                  KernelActionUtils$.MODULE$.actionsFromKernelRow(wrapper.getRow()));
-          if (rowActions.size() != 1) {
-            throw new IllegalArgumentException(
-                "Expected exactly one action from writer commit message, but found "
-                    + rowActions.size()
-                    + " actions");
-          }
-          Action action = rowActions.get(0);
-          if (!(action instanceof AddFile)) {
-            throw new UnsupportedOperationException(
-                "DeltaV2BatchWrite does not support '"
-                    + action.getClass().getSimpleName()
-                    + "' actions");
-          }
-          actions.add(action);
-        }
-      }
-    }
-
+    List<Action> actions = DeltaV2WriterCommitMessage.toAddFileActions(messages);
     long version =
         optimisticTransaction.commit(
             CollectionConverters.asScala(actions).toSeq(), writeOperation());
