@@ -31,6 +31,8 @@ import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.DeltaAnalysisException
 import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
+import org.apache.spark.sql.execution.FileSourceScanLike
+import org.apache.spark.sql.execution.datasources.FileFormat.FILE_PATH
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -464,6 +466,30 @@ class DeltaVariantSuite
                where _change_type = 'update_postimage'"""),
         Seq(Row("update_postimage", -2))
       )
+    }
+  }
+
+  test("nested schema pruning stays enabled when the condition does not reference variant") {
+    withTable("tbl") {
+      sql(
+        """CREATE TABLE tbl USING DELTA AS
+          |SELECT parse_json(cast(id AS string)) v,
+          |       named_struct('a', cast(id AS int), 'b', cast(id * 2 AS int)) s
+          |FROM range(10)""".stripMargin)
+
+      val plans = withSQLConf(
+          DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "false") {
+        DeltaTestUtils.withPhysicalPlansCaptured(spark) {
+          sql("UPDATE tbl SET s.b = -1 WHERE s.a = 3")
+        }
+      }
+
+      val touchedFilesScan = plans
+        .flatMap(_.collect { case scan: FileSourceScanLike => scan })
+        .find(_.schema.fieldNames.contains(FILE_PATH))
+        .getOrElse(fail("Expected the scan that finds the files to update."))
+      assert(DeltaTestUtils.dataSchemaOf(touchedFilesScan) ==
+        StructType.fromDDL("s STRUCT<a: INT>"))
     }
   }
 
