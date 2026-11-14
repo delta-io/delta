@@ -21,12 +21,12 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, FileActionOperationClass, IsolationLevel, Serializable, Snapshot, WriteSerializable}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CommitStats, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, FileActionOperationClass, IsolationLevel, Serializable, Snapshot, WriteSerializable}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.amt.AMTCommitStats
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -167,9 +167,9 @@ trait TransactionHelper extends DeltaLogging {
 
   private[delta] lazy val readSnapshotTableCommitCoordinatorClientOpt:
       Option[TableCommitCoordinatorClient] = {
-    if (snapshot.isCatalogOwned) {
-      // Catalog owned table's commit coordinator is always determined by the catalog.
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+    if (snapshot.isCatalogManaged) {
+      // Catalog managed table's commit coordinator is always determined by the catalog.
+      CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark, catalogTable, snapshot)
     } else {
       // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent
@@ -183,14 +183,14 @@ trait TransactionHelper extends DeltaLogging {
       readSnapshotTableCommitCoordinatorClientOpt match {
         // TODO: Capture the CO -> FS downgrade case when we start
         //       supporting downgrade for CO.
-        case Some(_) if snapshot.isCatalogOwned =>                             // CO commit
+        case Some(_) if snapshot.isCatalogManaged =>                             // CO commit
           (CoordinatedCommitType.CO_COMMIT, snapshot.metadata)
         case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
           (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
         // Only the 0th commit to a table can be a FS -> CO upgrade for now.
         // Upgrading an existing FS table to CO through ALTER TABLE is not supported yet.
         case None if newProtocol.exists(_.readerAndWriterFeatureNames
-            .contains(CatalogOwnedTableFeature.name)) =>                       // FS -> CO
+            .contains(CatalogManagedTableFeature.name)) =>                       // FS -> CO
           (CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT, metadata)
         case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
           (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
@@ -214,14 +214,14 @@ trait TransactionHelper extends DeltaLogging {
         // "CATALOG_EMPTY" because `catalogTable` is not available
         // for the 0th FS commit.
         catalogTable.flatMap { ct =>
-          CatalogOwnedTableUtils.getCatalogName(
+          CatalogManagedTableUtils.getCatalogName(
             spark,
             identifier = ct.identifier)
         }.getOrElse("CATALOG_MISSING")
       } else {
         metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
       },
-      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
+      // For Catalog-Managed table, the coordinator conf for UC-CC is [[Map.empty]]
       // so we don't distinguish between CO/CC here.
       commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
   }

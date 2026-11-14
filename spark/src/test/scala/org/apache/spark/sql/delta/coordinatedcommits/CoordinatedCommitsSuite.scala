@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 
 import com.databricks.spark.util.Log4jUsageLogger
 import com.databricks.spark.util.UsageRecord
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, CommitCoordinatorGetCommitsFailedException, CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaIllegalArgumentException, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CheckpointPolicy, CommitCoordinatorGetCommitsFailedException, CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaIllegalArgumentException, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CoordinatedCommitType._
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, CHECKPOINT_POLICY, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
@@ -328,7 +328,7 @@ class CatalogOwnedSuite
   with CatalogOwnedTestBaseSuite {
 
   override def sparkConf: SparkConf = {
-    // Make sure all new tables in tests use CatalogOwned table feature by default.
+    // Make sure all new tables in tests use CatalogManaged table feature by default.
     super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
   }
 }
@@ -347,7 +347,7 @@ abstract class CommitCoordinatorSuiteBase
   test("0th commit happens via filesystem") {
     val commitCoordinatorName = "tracking-in-memory"
     object NoBackfillingCommitCoordinatorBuilder$
-        extends CatalogOwnedCommitCoordinatorBuilder {
+        extends CatalogManagedCommitCoordinatorBuilder {
 
       override def getName: String = commitCoordinatorName
 
@@ -452,7 +452,7 @@ abstract class CommitCoordinatorSuiteBase
   testWithDefaultCommitCoordinatorUnset("snapshot is updated recursively when FS table" +
       " is converted to commit-coordinator table on a concurrent cluster") {
     if (isCatalogOwnedTest) {
-      // TODO: CatalogOwned table cannot change its catalog, hence modify below to
+      // TODO: CatalogManaged table cannot change its catalog, hence modify below to
       // test race upgrade from normal table after implementing upgrade.
       cancel("Upgrade is not yet supported for catalog owned tables")
     }
@@ -532,7 +532,7 @@ abstract class CommitCoordinatorSuiteBase
     if (isCatalogOwnedTest) {
       // TODO: This test is important to test the robustness of the ability to resolve
       // stale snapshot status interaction with upgrade/downgrade. Implement this suite
-      // for catalog owned tables once we enable upgrade.
+      // for catalog managed tables once we enable upgrade.
       cancel("Upgrade is not yet supported for catalog owned tables")
     }
     val batchSize = 10
@@ -894,7 +894,7 @@ abstract class CommitCoordinatorSuiteBase
     if (isCatalogOwnedTest) {
       // TODO: Once upgrade is supported, this unit test can only test
       // first upgrade part (FS -> CC1) because there is no CC1 -> FS -> CC2 transition
-      // in CatalogOwned table feature. Note that only one Catalog can exist for
+      // in CatalogManaged table feature. Note that only one Catalog can exist for
       // each table identifier.
       cancel("Upgrade is not yet supported for catalog owned tables")
     }
@@ -1642,7 +1642,7 @@ abstract class CommitCoordinatorSuiteBase
         sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
       }
       assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-      assert(!DeltaLog.forTable(spark, tempDir).snapshot.isCatalogOwned)
+      assert(!DeltaLog.forTable(spark, tempDir).snapshot.isCatalogManaged)
       assert(DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(
         IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
@@ -1657,7 +1657,7 @@ abstract class CommitCoordinatorSuiteBase
       sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
       val snapshot = DeltaLog.forTable(spark, tempDir).unsafeVolatileSnapshot
       assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-      assert(!snapshot.isCatalogOwned)
+      assert(!snapshot.isCatalogManaged)
       assert(!snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
   }
@@ -1682,8 +1682,8 @@ abstract class CommitCoordinatorSuiteBase
         sql(s"REPLACE TABLE t1 (id STRING) USING delta")
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, CatalystTableIdentifier("t1"))
         if (isCatalogOwnedTest) {
-          assert(snapshot.isCatalogOwned)
-          // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogOwned
+          assert(snapshot.isCatalogManaged)
+          // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogManaged
           // since we don't support upgrade yet.
           assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
         } else {
@@ -1706,7 +1706,7 @@ abstract class CommitCoordinatorSuiteBase
     sql(s"CREATE TABLE $target LIKE $source USING DELTA")
     val snapshot = DeltaLog.forTable(spark, target).unsafeVolatileSnapshot
     assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-    assert(!snapshot.isCatalogOwned)
+    assert(!snapshot.isCatalogManaged)
   }
 
   test("CREATE an external table in a location with an existing table works correctly.") {
@@ -1725,7 +1725,7 @@ abstract class CommitCoordinatorSuiteBase
       sql(s"CREATE TABLE $tableName (id LONG) USING delta TBLPROPERTIES " +
         s"('foo' = 'bar') LOCATION '${dir.getAbsolutePath}'")
       val snapshot = DeltaLog.forTable(spark, tablePath).snapshot
-      assert(snapshot.tableCommitCoordinatorClientOpt.nonEmpty || snapshot.isCatalogOwned)
+      assert(snapshot.tableCommitCoordinatorClientOpt.nonEmpty || snapshot.isCatalogManaged)
       assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
   }
