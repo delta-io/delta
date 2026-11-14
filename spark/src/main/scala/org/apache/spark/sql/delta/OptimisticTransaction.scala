@@ -534,9 +534,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
   /** Creates new metadata with global Delta configuration defaults. */
   private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
     val isActiveReplaceCommand = isCreatingNewTable && readVersion != -1
-    val shouldUnsetCatalogOwnedConf =
-      isActiveReplaceCommand && CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark)
-    val conf = if (shouldUnsetCatalogOwnedConf) {
+    val shouldUnsetCatalogManagedConf =
+      isActiveReplaceCommand && CatalogManagedTableUtils.defaultCatalogManagedEnabled(spark)
+    val conf = if (shouldUnsetCatalogManagedConf) {
       // Unset default CatalogManaged enablement iff:
       // 0. `isCreatingNewTable` indicates that this either is a REPLACE or CREATE command.
       // 1. `readVersion != 1` indicates the table already exists.
@@ -547,16 +547,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
       //       [[InCommitTimestampTableFeature]] & [[VacuumProtocolCheckTableFeature]].
       //
       // Note that this does *not* affect global spark conf state as we are modifying
-      // the copy of `spark.sessionState.conf`. Thus, `defaultCatalogOwnedFeatureEnabledKey`
+      // the copy of `spark.sessionState.conf`. Thus, `defaultCatalogManagedFeatureEnabledKey`
       // will remain unchanged for any concurrent operations that use the same SparkSession.
-      val defaultCatalogOwnedFeatureEnabledKey =
+      val defaultCatalogManagedFeatureEnabledKey =
         TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature)
       // Isolate the spark conf to be used in the subsequent [[DeltaConfigs.mergeGlobalConfigs]]
       // by cloning the existing configuration.
       // Note: [[SQLConf.clone]] is already atomic so no extra synchronization is needed.
       val clonedConf = spark.sessionState.conf.clone()
       // Unset default CC conf on the cloned spark conf.
-      clonedConf.unsetConf(defaultCatalogOwnedFeatureEnabledKey)
+      clonedConf.unsetConf(defaultCatalogManagedFeatureEnabledKey)
       clonedConf
     } else {
       spark.sessionState.conf
@@ -758,7 +758,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
     // this is just a double check since we only want to auto-enable QoL features
     // when creating a new CatalogManaged table through CREATE.
-    if (CatalogManagedTableUtils.shouldEnableCatalogOwned(
+    if (CatalogManagedTableUtils.shouldEnableCatalogManaged(
         spark, propertyOverrides = newMetadataTmp.configuration) &&
         isCreatingNewTable && this.readVersion == -1) {
 
@@ -1039,9 +1039,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // existing table does have Coordinated Commits configurations or Catalog-Managed enabled.
     // Otherwise, we treat the ICT configurations the same as any other configurations,
     // by merging them from the default.
-    val isCatalogOwnedEnabledBeforeReplace = snapshot.protocol
+    val isCatalogManagedEnabledBeforeReplace = snapshot.protocol
       .readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name)
-    if (existingCCConfs.nonEmpty || isCatalogOwnedEnabledBeforeReplace) {
+    if (existingCCConfs.nonEmpty || isCatalogManagedEnabledBeforeReplace) {
       val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }

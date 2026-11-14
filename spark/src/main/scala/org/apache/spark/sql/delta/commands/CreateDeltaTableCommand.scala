@@ -132,7 +132,7 @@ case class CreateDeltaTableCommand(
       getSupportedFeaturesFromTableConfigs(table.properties)
     if (!Utils.isTesting && !allowCatalogManaged &&
       (tableFeatures.contains(CatalogManagedTableFeature) ||
-      CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
+      CatalogManagedTableUtils.defaultCatalogManagedEnabled(spark = sparkSession))) {
       throw DeltaErrors.deltaCannotCreateCatalogManagedTable()
     }
 
@@ -458,12 +458,12 @@ case class CreateDeltaTableCommand(
           // In order to enable [[CatalogManagedTableFeature]] for target table w/ default
           // spark configuration of CatalogManaged enabled, we need to manually append
           // [[CatalogManagedTableFeature]] here to the existing source table protocol.
-          val finalizedProtocol = if (CatalogManagedTableUtils.defaultCatalogOwnedEnabled(
+          val finalizedProtocol = if (CatalogManagedTableUtils.defaultCatalogManagedEnabled(
               spark = sparkSession)) {
-            val minCatalogOwnedProtocol = Protocol(
+            val minCatalogManagedProtocol = Protocol(
               CatalogManagedTableFeature.minReaderVersion,
               CatalogManagedTableFeature.minWriterVersion).withFeature(CatalogManagedTableFeature)
-            protocol.merge(minCatalogOwnedProtocol)
+            protocol.merge(minCatalogManagedProtocol)
           } else {
             protocol
           }

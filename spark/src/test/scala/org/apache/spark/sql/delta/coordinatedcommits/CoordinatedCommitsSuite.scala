@@ -329,7 +329,7 @@ class CatalogOwnedSuite
 
   override def sparkConf: SparkConf = {
     // Make sure all new tables in tests use CatalogManaged table feature by default.
-    super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    super.sparkConf.set(defaultCatalogManagedFeatureEnabledKey, "supported")
   }
 }
 

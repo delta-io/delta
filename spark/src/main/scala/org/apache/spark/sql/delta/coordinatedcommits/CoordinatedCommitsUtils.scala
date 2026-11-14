@@ -56,15 +56,15 @@ object CatalogManagedTableUtils extends DeltaLogging {
    * This helper method is used to control whether a transaction should use CC.
    *
    * @param txn The OptimisticTransaction to modify protocol and metadata on
-   * @param withCatalogOwnedTableFeature If true, adds CatalogManagedTableFeature to the protocol
+   * @param withCatalogManagedTableFeature If true, adds CatalogManagedTableFeature to the protocol
    *                                      and ensures ICT enablement. If false, removes it.
    *
    * @note When adding CatalogManagedTableFeature, this method also forces a metadata update
    *       to ensure ICT (In-Commit Timestamp) is properly enabled. See the below comment
    *       for details.
    */
-  def setTxnProtocol(txn: OptimisticTransaction, withCatalogOwnedTableFeature: Boolean): Unit = {
-    if (withCatalogOwnedTableFeature) {
+  def setTxnProtocol(txn: OptimisticTransaction, withCatalogManagedTableFeature: Boolean): Unit = {
+    if (withCatalogManagedTableFeature) {
       val p = txn.protocol.withFeature(feature = CatalogManagedTableFeature)
       txn.updateProtocol(protocol = p)
       // Force a metadata update to trigger ICT (In-Commit Timestamp) enablement.
@@ -201,7 +201,7 @@ object CatalogManagedTableUtils extends DeltaLogging {
    * session configuration during creating a new table,
    * or via the explicit table property overrides.
    */
-  def shouldEnableCatalogOwned(
+  def shouldEnableCatalogManaged(
       spark: SparkSession,
       propertyOverrides: Map[String, String],
       isCreatingNew: Boolean = true): Boolean = {
@@ -211,7 +211,7 @@ object CatalogManagedTableUtils extends DeltaLogging {
 
     // Check default spark session configuration only when creating a new table.
     val isEnablingCOByDefault =
-      isCreatingNew && CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark)
+      isCreatingNew && CatalogManagedTableUtils.defaultCatalogManagedEnabled(spark)
 
     isExplicitlyEnablingCO || isEnablingCOByDefault
   }
@@ -403,7 +403,7 @@ object CatalogManagedTableUtils extends DeltaLogging {
    * @param spark The SparkSession to check.
    * @return True if Catalog-Managed is enabled by default, false otherwise.
    */
-  def defaultCatalogOwnedEnabled(spark: SparkSession): Boolean = {
+  def defaultCatalogManagedEnabled(spark: SparkSession): Boolean = {
     spark.conf
       .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature))
       .contains("supported")
