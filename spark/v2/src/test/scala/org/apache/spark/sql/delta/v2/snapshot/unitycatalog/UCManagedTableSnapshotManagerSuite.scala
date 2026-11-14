@@ -43,7 +43,7 @@ class UCManagedTableSnapshotManagerSuite
   private val testUcAuthConfig = Map("token" -> testUcToken).asJava
 
   private def kernelContext =
-    new KernelContext(Map.empty, LogStore(spark), "file:/tmp/uc-snapshot-manager-suite")
+    new KernelContext(Map.empty, LogStore(spark))
 
   private def createManager(
       ucClient: InMemoryUCClient,
