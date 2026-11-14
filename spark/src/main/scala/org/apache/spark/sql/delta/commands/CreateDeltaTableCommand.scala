@@ -131,7 +131,7 @@ case class CreateDeltaTableCommand(
     val tableFeatures = TableFeatureProtocolUtils.
       getSupportedFeaturesFromTableConfigs(table.properties)
     if (!Utils.isTesting && !allowCatalogManaged &&
-      (tableFeatures.contains(CatalogOwnedTableFeature) ||
+      (tableFeatures.contains(CatalogManagedTableFeature) ||
       CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
       throw DeltaErrors.deltaCannotCreateCatalogManagedTable()
     }
@@ -455,14 +455,14 @@ case class CreateDeltaTableCommand(
           // For commands like CREATE LIKE, the `protocol` here may contain table features
           // from source table. It will override the `newProtocol` being created in the above
           // `txn.updateMetadataForNewTable`.
-          // In order to enable [[CatalogOwnedTableFeature]] for target table w/ default
-          // spark configuration of CatalogOwned enabled, we need to manually append
-          // [[CatalogOwnedTableFeature]] here to the existing source table protocol.
+          // In order to enable [[CatalogManagedTableFeature]] for target table w/ default
+          // spark configuration of CatalogManaged enabled, we need to manually append
+          // [[CatalogManagedTableFeature]] here to the existing source table protocol.
           val finalizedProtocol = if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(
               spark = sparkSession)) {
             val minCatalogOwnedProtocol = Protocol(
-              CatalogOwnedTableFeature.minReaderVersion,
-              CatalogOwnedTableFeature.minWriterVersion).withFeature(CatalogOwnedTableFeature)
+              CatalogManagedTableFeature.minReaderVersion,
+              CatalogManagedTableFeature.minWriterVersion).withFeature(CatalogManagedTableFeature)
             protocol.merge(minCatalogOwnedProtocol)
           } else {
             protocol

@@ -82,10 +82,10 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
 
-  /** Whether the table has [[CatalogOwnedTableFeature]] enabled */
+  /** Whether the table has [[CatalogManagedTableFeature]] enabled */
   def isCatalogOwned: Boolean = {
     version >= 0 &&
-      protocol.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
+      protocol.readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name)
   }
 
   /**

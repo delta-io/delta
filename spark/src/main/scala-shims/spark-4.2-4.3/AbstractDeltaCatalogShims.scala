@@ -31,7 +31,7 @@ import org.apache.spark.sql.catalyst.catalog.{
 }
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableInfo, TransactionalCatalogPlugin, V1Table}
 import org.apache.spark.sql.delta.{
-  CatalogOwnedTableFeature,
+  CatalogManagedTableFeature,
   DeltaErrors,
   DeltaV2Mode,
   InCommitTimestampUtils,
@@ -127,7 +127,7 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
       if (isDeltaSource) {
         CatalogOwnedTableUtils.validateUCTableIdNotPresent(property = explicitDeltaProperties)
         if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
-            configs = explicitDeltaProperties).contains(CatalogOwnedTableFeature)) {
+            configs = explicitDeltaProperties).contains(CatalogManagedTableFeature)) {
           isEnablingCatalogOwnedViaExplicitPropertyOverrides = true
         }
 
@@ -147,7 +147,7 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
           if (isEnablingCatalogOwnedViaExplicitPropertyOverrides) {
             snapshot.protocol
           } else {
-            snapshot.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
+            snapshot.protocol.removeFeature(targetFeature = CatalogManagedTableFeature)
           }
 
         (
