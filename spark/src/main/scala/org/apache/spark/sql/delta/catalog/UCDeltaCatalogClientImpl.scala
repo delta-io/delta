@@ -32,6 +32,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{
   CredentialFetchFailedException,
+  TableAlreadyExistsException => StorageTableAlreadyExistsException,
   UnsupportedTableFormatException,
   NoSuchTableException => StorageNoSuchTableException
 }
@@ -40,7 +41,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, TableAlreadyExistsException}
 import org.apache.spark.sql.catalyst.catalog.{
   CatalogStorageFormat,
   CatalogTable,
@@ -481,33 +482,79 @@ private[catalog] class UCDeltaCatalogClientImpl(
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
       uniformMetadata: Option[StorageUniformMetadata] = None): Unit = {
-    if (table.tableType != CatalogTableType.MANAGED) {
-      throw new IllegalArgumentException(
-        s"UCDeltaClient createTable only supports MANAGED tables; " +
-          s"got ${table.tableType} for ${fullQualifiedTableName(ident)}.")
-    }
     val locationUri = table.storage.locationUri.getOrElse(throw new IllegalArgumentException(
       s"createTable requires a storage location on the CatalogTable for " +
         s"${fullQualifiedTableName(ident)}"))
-    // Strip V2-only catalog keys (location, owner, ...) before sending the configuration
-    // to UC; they don't belong in table properties.
-    val cleanedConfiguration =
-      metadata.configuration.view
-        .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
-        .toMap
-    ucClient.createTable(
-      locationUri,
-      toStorageTableIdent(ident),
-      toUcTableType(table.tableType),
-      metadata.copy(
-        description = table.comment.orNull,
-        configuration = cleanedConfiguration),
-      protocol,
-      domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
-      lastCommitTimestampMs,
-      uniformMetadata.toJava)
+    try {
+      ucClient.createTable(
+        locationUri,
+        toStorageTableIdent(ident),
+        toUcTableType(table.tableType),
+        metadata.copy(
+          description = table.comment.orNull,
+          configuration = withoutReservedProperties(metadata.configuration)),
+        protocol,
+        domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
+        lastCommitTimestampMs,
+        lastCommitVersion,
+        uniformMetadata.toJava)
+    } catch {
+      // Spark implements CREATE TABLE IF NOT EXISTS on this exception.
+      case _: StorageTableAlreadyExistsException => throw new TableAlreadyExistsException(ident)
+    }
   }
+
+  // -------------------------------------------------------------------------
+  // DeltaCatalogClient: updateTableMetadata
+  // -------------------------------------------------------------------------
+
+  override def loadTableEntry(ct: CatalogTable): Option[CatalogTableEntry] = {
+    val ident = identifierFromCatalogTable(ct)
+    val info =
+      // Only the entry is needed, not credentials to read the table.
+      try ucClient.loadTable(toStorageTableIdent(ident), false)
+      catch { case _: StorageNoSuchTableException => return None }
+    val properties = Option(info.getMetadata.getConfiguration)
+      .map(_.asScala.toMap)
+      .getOrElse(Map.empty[String, String])
+    Some(CatalogTableEntry(
+      toCatalogTable(ident, info, storageProperties = Map.empty, properties = properties),
+      info.getTableId,
+      info.getEtag.orElseThrow(() => new IllegalStateException(
+        s"UC returned no etag for ${fullQualifiedTableName(ident)}"))))
+  }
+
+  override def updateTableMetadata(
+      ct: CatalogTable,
+      entry: CatalogTableEntry,
+      oldMetadata: Metadata,
+      newMetadata: Metadata,
+      newProtocol: Option[Protocol],
+      domainMetadata: Seq[DomainMetadata],
+      commitVersion: Long,
+      commitTimestampMs: Long): Boolean = {
+    ucClient.updateTableMetadata(
+      toStorageTableIdent(identifierFromCatalogTable(ct)),
+      entry.tableId,
+      entry.etag,
+      oldMetadata,
+      newMetadata.copy(configuration = withoutReservedProperties(newMetadata.configuration)),
+      newProtocol.map(p => p: AbstractProtocol).toJava,
+      domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
+      commitVersion,
+      commitTimestampMs)
+  }
+
+  /**
+   * Strips V2-only catalog keys (location, owner, ...) from a configuration before sending it
+   * to UC; they don't belong in table properties.
+   */
+  private def withoutReservedProperties(configuration: Map[String, String]): Map[String, String] =
+    configuration.view
+      .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
+      .toMap
 
   // -------------------------------------------------------------------------
   // DeltaCatalogClient: reportMetrics
@@ -598,12 +645,6 @@ private[catalog] class UCDeltaCatalogClientImpl(
     val tableConfig = Option(m.getConfiguration)
       .map(_.asScala.toMap)
       .getOrElse(Map.empty[String, String])
-    val partitionColumns = Option(m.getPartitionColumns)
-      .map(_.asScala.toSeq)
-      .getOrElse(Seq.empty[String])
-    val schema = Option(m.getSchemaString)
-      .map(DataType.fromJson(_).asInstanceOf[StructType])
-      .getOrElse(new StructType())
     // workaround for tracking UniForm metadata inside catalogTable
     // Those are only kept in-memory by client and would not be written back to UC
     val uniformProps = info.getUniformMetadata.toScala
@@ -631,20 +672,36 @@ private[catalog] class UCDeltaCatalogClientImpl(
     // Match UCSingleCatalog's V1Table shape: pack tableConfig + credentials + UniForm into
     // `storage.properties`, leave `catalogTable.properties` empty. Required for
     // downstream streaming/routing compatibility.
-    val storage = CatalogStorageFormat.empty.copy(
-      locationUri = Some(new URI(info.getLocation)),
-      properties = mergedStorageProperties)
-    val catalogTable = CatalogTable(
+    V1Table(toCatalogTable(
+      ident,
+      info,
+      storageProperties = mergedStorageProperties,
+      properties = Map.empty))
+  }
+
+  private def toCatalogTable(
+      ident: Identifier,
+      info: TableInfo,
+      storageProperties: Map[String, String],
+      properties: Map[String, String]): CatalogTable = {
+    val m = info.getMetadata
+    CatalogTable(
       identifier = TableIdentifier(ident.name(), ident.namespace().headOption, Some(catalogName)),
       tableType = fromUcTableType(info.getTableType),
-      storage = storage,
-      schema = schema,
+      storage = CatalogStorageFormat.empty.copy(
+        locationUri = Some(new URI(info.getLocation)),
+        properties = storageProperties),
+      schema = Option(m.getSchemaString)
+        .map(DataType.fromJson(_).asInstanceOf[StructType])
+        .getOrElse(new StructType()),
       provider = Option(m.getProvider).map(lower),
-      partitionColumnNames = partitionColumns,
+      partitionColumnNames = Option(m.getPartitionColumns)
+        .map(_.asScala.toSeq)
+        .getOrElse(Seq.empty[String]),
       comment = Option(m.getDescription),
       createTime = if (m.getCreatedTime != null) m.getCreatedTime else 0L,
+      properties = properties,
       tracksPartitionsInCatalog = false)
-    V1Table(catalogTable)
   }
 
   private def toUcTableType(t: CatalogTableType): UCDeltaModels.TableType = t match {

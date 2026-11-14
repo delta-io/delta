@@ -116,6 +116,7 @@ public final class UCDeltaModels {
     private final Map<String, String> storageProperties;
     private final List<String> clientMaintenanceOperations;
     private final Optional<UniformMetadata> uniformMetadata;
+    private final String etag;
 
     public TableInfo(
         UUID tableId,
@@ -125,6 +126,20 @@ public final class UCDeltaModels {
         Map<String, String> storageProperties,
         List<String> clientMaintenanceOperations,
         Optional<UniformMetadata> uniformMetadata) {
+      this(tableId, tableType, location, metadata, storageProperties, clientMaintenanceOperations,
+          uniformMetadata, null);
+    }
+
+    public TableInfo(
+        UUID tableId,
+        TableType tableType,
+        String location,
+        AbstractMetadata metadata,
+        Map<String, String> storageProperties,
+        List<String> clientMaintenanceOperations,
+        Optional<UniformMetadata> uniformMetadata,
+        String etag) {
+      this.etag = etag;
       this.tableId = tableId;
       this.tableType = tableType;
       this.location = location;
@@ -166,6 +181,11 @@ public final class UCDeltaModels {
     /** UniForm conversion metadata, or empty if the table has no UniForm enabled. */
     public Optional<UniformMetadata> getUniformMetadata() {
       return uniformMetadata;
+    }
+
+    /** The catalog entry's etag, which conditions an update on the entry being unchanged. */
+    public Optional<String> getEtag() {
+      return Optional.ofNullable(etag);
     }
   }
 
