@@ -115,7 +115,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
         // in-memory commit coordinator. In this case, we return table commit coordinator
         // registered in the provider so that it can still test CatalogManaged table feature
         // capability.
-        CatalogOwnedCommitCoordinatorProvider.getBuilder(DEFAULT_CATALOG_NAME_FOR_TESTING)
+        CatalogManagedCommitCoordinatorProvider.getBuilder(DEFAULT_CATALOG_NAME_FOR_TESTING)
           .flatMap{ builder =>
             Some(builder.buildForCatalog(spark, DEFAULT_CATALOG_NAME_FOR_TESTING))
           }
@@ -143,7 +143,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       identifier: CatalystTableIdentifier): Option[CommitCoordinatorClient] = {
     identifier.nameParts match {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
-        CatalogOwnedCommitCoordinatorProvider.getBuilder(catalog.name)
+        CatalogManagedCommitCoordinatorProvider.getBuilder(catalog.name)
           .map(_.buildForCatalog(spark, catalog.name)).orElse {
             if (catalog.getClass.getName ==
                 UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
