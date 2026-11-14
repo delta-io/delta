@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
+import org.apache.spark.sql.delta.v2.snapshot.SnapshotTimeTravelUtils
 import io.delta.kernel.{CommitRange => KernelCommitRange}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.internal.{
@@ -116,15 +117,14 @@ class UCManagedTableSnapshotManager(
       canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit = {
     val snapshot = loadKernelSnapshot(None)
     val catalogCommits = snapshot.getLogSegment.getAllCatalogCommits
-    KernelDeltaHistoryManager.getActiveCommitAtTimestamp(
+    SnapshotTimeTravelUtils.getActiveCommitAtTime(
       kernelContext.getDefaultEngine,
       snapshot,
-      snapshot.getLogPath,
+      catalogCommits,
       timestampMillis,
-      mustBeRecreatable,
       canReturnLastCommit,
-      canReturnEarliestCommit,
-      catalogCommits
+      mustBeRecreatable,
+      canReturnEarliestCommit
     )
   }
 
@@ -148,53 +148,17 @@ class UCManagedTableSnapshotManager(
       allowOutOfRange: Boolean): Unit = {
     // Load latest to get the current version bounds
     val snapshot = loadKernelSnapshot(None)
-    // Latest version visible in this UC-managed snapshot.
-    val latestSnapshotVersion = snapshot.getVersion
-
-    // Fast path: check upper bound before expensive filesystem operations
-    if (version > latestSnapshotVersion && !allowOutOfRange) {
-      throw new VersionNotFoundException(
-        version,
-        /* earliest */
-        0,
-        latestSnapshotVersion)
-    }
-
     // Get the earliest version among catalog commits. This bounds the Kernel's filesystem search
     // for the earliest available version (e.g., if catalog has v0, no filesystem search is needed).
     val catalogCommits = snapshot.getLogSegment.getAllCatalogCommits
-    val commitIterator = catalogCommits.iterator
-    val earliestCatalogCommitVersion = if (commitIterator.hasNext) {
-      var earliest = commitIterator.next().getVersion
-      while (commitIterator.hasNext) {
-        earliest = math.min(earliest, commitIterator.next().getVersion)
-      }
-      Some(earliest)
-    } else {
-      None
-    }
-    val kernelEarliestCatalogCommitVersion = earliestCatalogCommitVersion match {
-      case Some(version) => Optional.of[JLong](version)
-      case None => Optional.empty[JLong]
-    }
-
-    val earliestVersion = if (mustBeRecreatable) {
-      KernelDeltaHistoryManager.getEarliestRecreatableCommit(
-        kernelContext.getDefaultEngine,
-        snapshot.getLogPath,
-        kernelEarliestCatalogCommitVersion
-      )
-    } else {
-      KernelDeltaHistoryManager.getEarliestDeltaFile(
-        kernelContext.getDefaultEngine,
-        snapshot.getLogPath,
-        kernelEarliestCatalogCommitVersion
-      )
-    }
-
-    if (version < earliestVersion) {
-      throw new VersionNotFoundException(version, earliestVersion, latestSnapshotVersion)
-    }
+    SnapshotTimeTravelUtils.checkVersionExists(
+      kernelContext.getDefaultEngine,
+      snapshot,
+      catalogCommits,
+      version,
+      mustBeRecreatable,
+      allowOutOfRange,
+      true /* checkUpperBoundFirst */)
   }
 
   /**

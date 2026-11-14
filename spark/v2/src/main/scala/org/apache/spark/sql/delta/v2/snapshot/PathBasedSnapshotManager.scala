@@ -16,7 +16,6 @@
 package org.apache.spark.sql.delta.v2.snapshot
 
 import java.util.Objects.requireNonNull
-import java.util.Optional
 
 import scala.collection.JavaConverters._
 
@@ -93,15 +92,14 @@ class PathBasedSnapshotManager(tablePath: String, kernelContext: KernelContext)
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit = {
     val kernelSnapshot = loadLatestKernelSnapshot()
-    KernelDeltaHistoryManager.getActiveCommitAtTimestamp(
+    SnapshotTimeTravelUtils.getActiveCommitAtTime(
       kernelContext.getDefaultEngine,
       kernelSnapshot,
-      kernelSnapshot.getLogPath,
+      List.empty[KernelParsedCatalogCommitData].asJava,
       timestampMillis,
-      mustBeRecreatable,
       canReturnLastCommit,
-      canReturnEarliestCommit,
-      List.empty[KernelParsedCatalogCommitData].asJava)
+      mustBeRecreatable,
+      canReturnEarliestCommit)
   }
 
   /**
@@ -120,22 +118,14 @@ class PathBasedSnapshotManager(tablePath: String, kernelContext: KernelContext)
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean): Unit = {
     val kernelSnapshot = loadLatestKernelSnapshot()
-    val earliest = if (mustBeRecreatable) {
-      KernelDeltaHistoryManager.getEarliestRecreatableCommit(
-        kernelContext.getDefaultEngine,
-        kernelSnapshot.getLogPath,
-        Optional.empty() /* earliestRatifiedCommitVersion */)
-    } else {
-      KernelDeltaHistoryManager.getEarliestDeltaFile(
-        kernelContext.getDefaultEngine,
-        kernelSnapshot.getLogPath,
-        Optional.empty() /* earliestRatifiedCommitVersion */)
-    }
-
-    val latest = kernelSnapshot.getVersion
-    if (version < earliest || (version > latest && !allowOutOfRange)) {
-      throw new VersionNotFoundException(version, earliest, latest)
-    }
+    SnapshotTimeTravelUtils.checkVersionExists(
+      kernelContext.getDefaultEngine,
+      kernelSnapshot,
+      List.empty[KernelParsedCatalogCommitData].asJava,
+      version,
+      mustBeRecreatable,
+      allowOutOfRange,
+      false /* checkUpperBoundFirst */)
   }
 
   override def getTableChanges(
