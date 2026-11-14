@@ -24,7 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider, InMemoryCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider, InMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -506,9 +506,9 @@ class DeltaTableFeatureSuite
     val table = "tbl"
     DeltaLog.clearCache()
     withTable(table) {
-      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+      CatalogManagedCommitCoordinatorProvider.clearBuilders()
       try {
-        CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+        CatalogManagedCommitCoordinatorProvider.registerBuilder(
           "spark_catalog", InMemoryCommitCoordinatorBuilder(batchSize = 100))
         spark.range(0).write.format("delta")
           .option(propertyKey(CatalogOwnedTableFeature), "supported")
@@ -562,7 +562,7 @@ class DeltaTableFeatureSuite
         sql(s"ALTER TABLE $table DROP FEATURE $featureName")
         assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
       } finally {
-        CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+        CatalogManagedCommitCoordinatorProvider.clearBuilders()
       }
     }
   }

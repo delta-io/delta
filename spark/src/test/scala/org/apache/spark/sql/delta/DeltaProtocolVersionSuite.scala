@@ -3798,9 +3798,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       featureExpectedAtTheEnd: Boolean = false): Unit = {
     val featureName = VacuumProtocolCheckTableFeature.name
     withTempTable(createTable = false) { tableName =>
-      // Register a temporary InMemory-CC builder to support CatalogOwned table creation.
-      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+      // Register a temporary InMemory-CC builder to support CatalogManaged table creation.
+      CatalogManagedCommitCoordinatorProvider.clearBuilders()
+      CatalogManagedCommitCoordinatorProvider.registerBuilder(
         catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1)
       )
