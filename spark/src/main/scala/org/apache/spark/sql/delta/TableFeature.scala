@@ -400,7 +400,7 @@ object TableFeature {
       VariantShreddingPreviewTableFeature,
       VariantShreddingTableFeature,
       FileTypePreviewTableFeature,
-      CatalogOwnedTableFeature,
+      CatalogManagedTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
     if (isTesting && testingFeaturesEnabled) {
@@ -967,7 +967,7 @@ sealed abstract class AdaptiveMetadataTableFeatureBase(name: String)
   //    must be present. Note that presence alone is not enough; `id` mode is enforced separately
   //    in [[OptimisticTransaction.scala]].
   override def requiredFeatures: Set[TableFeature] = Set(
-    CatalogOwnedTableFeature,
+    CatalogManagedTableFeature,
     RowTrackingFeature,
     DomainMetadataTableFeature,
     DeletionVectorsTableFeature,
@@ -1356,7 +1356,7 @@ object CoordinatedCommitsTableFeature
 }
 
 /** Table feature to represent tables that commits are managed by catalog */
-object CatalogOwnedTableFeature
+object CatalogManagedTableFeature
   extends ReaderWriterFeature(name = "catalogManaged")
   with RemovableFeature {
 

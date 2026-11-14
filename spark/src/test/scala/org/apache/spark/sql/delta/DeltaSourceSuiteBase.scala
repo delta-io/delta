@@ -127,7 +127,7 @@ trait DeltaSourceSuiteBase
     val updatedConfiguration = if (catalogOwnedDefaultCreationEnabledInTests) {
       // This withMetadata helper calls txn.commit(Metadata, ManualUpdate) directly, bypassing
       // the normal CREATE TABLE path (CreateDeltaTableCommand, DeltaTestImplicits.commitActions)
-      // that populates newProtocol with CatalogOwnedTableFeature and auto-enables ICT. Without
+      // that populates newProtocol with CatalogManagedTableFeature and auto-enables ICT. Without
       // ICT, the CatalogManaged commit coordinator rejects the commit because it requires
       // commitTimestamp on every version. This is a test-only issue: txn.commit is not a
       // user-facing table creation API, and production tables always go through the full DDL

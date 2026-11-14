@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.amt.AMTUtils
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util._
@@ -319,7 +319,7 @@ abstract class CloneTableBase(
       // ICT enablement provenance info refers to the source's log. The commit re-derives it for
       // the target (see InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo).
       .filterKeys(!InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(_))
-      // Catalog-Owned enabled table's UC table ID property is never copied over to the
+      // Catalog-Managed enabled table's UC table ID property is never copied over to the
       // target table.
       .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
       .toMap
@@ -418,9 +418,9 @@ abstract class CloneTableBase(
         validatedConfigurationsWithoutCoordinatedCommits ++
         finalCatalogOwnedMetadata)
     // An AMT source makes a new target AMT only through the protocol, which the defaults applied
-    // while creating its metadata (e.g. the catalog-owned QoL features) do not see. Request AMT in
-    // the configuration too, so that they skip the features AMT is incompatible with. An existing
-    // target gets none of those defaults.
+    // while creating its metadata (e.g. the catalog-managed QoL features) do not see. Request AMT
+    // in the configuration too, so that they skip the features AMT is incompatible with. An
+    // existing target gets none of those defaults.
     if (!tableExists(targetSnapshot)) {
       AdaptiveMetadataTableFeatureBase.supportedBy(sourceTable.protocol).foreach { amtFeature =>
         metadata = metadata.copy(configuration = metadata.configuration +
@@ -454,9 +454,9 @@ abstract class CloneTableBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       opName: String): Protocol = {
-    // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table.
+    // Catalog-Managed: Do not copy over [[CatalogManagedTableFeature]] from source table.
     val sourceProtocol =
-      sourceTable.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
+      sourceTable.protocol.removeFeature(targetFeature = CatalogManagedTableFeature)
     // Pre-transaction version of the target table.
     val targetProtocol = txn.snapshot.protocol
     // Overriding properties during the CLONE can change the minimum required protocol for target.
@@ -465,16 +465,16 @@ abstract class CloneTableBase(
     // the table property overrides as table features set by it won't be in the transaction
     // metadata anymore.
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
-    // For CREATE CLONE, check the default spark configuration for Catalog-Owned.
+    // For CREATE CLONE, check the default spark configuration for Catalog-Managed.
     val catalogOwnedEnabledByDefaultConf =
-      if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+      if (CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark)
           && !tableExists(txn.snapshot)) {
-        // Append [[CatalogOwnedTableFeature]] to the `configWithOverrides` below if table
-        // does not exist, to ensure the final target protocol contains CatalogOwned
+        // Append [[CatalogManagedTableFeature]] to the `configWithOverrides` below if table
+        // does not exist, to ensure the final target protocol contains CatalogManaged
         // if enabled by default.
-        // Note: We need this because CatalogOwned is enabled through single protocol
+        // Note: We need this because CatalogManaged is enabled through single protocol
         //       without auxiliary metadata.
-        Map(s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported")
+        Map(s"delta.feature.${CatalogManagedTableFeature.name}" -> "supported")
       } else {
         Map.empty
       }

@@ -31,7 +31,7 @@ import org.apache.spark.sql.catalyst.catalog.{
 }
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableInfo, TransactionalCatalogPlugin, V1Table}
 import org.apache.spark.sql.delta.{
-  CatalogOwnedTableFeature,
+  CatalogManagedTableFeature,
   DeltaErrors,
   DeltaV2Mode,
   InCommitTimestampUtils,
@@ -42,7 +42,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{CreateDeltaTableCommand, TableCreationModes}
 import org.apache.spark.sql.delta.coordinatedcommits.{
-  CatalogOwnedTableUtils,
+  CatalogManagedTableUtils,
   CoordinatedCommitsUtils
 }
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
@@ -125,9 +125,9 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
 
     val (catalogTableTarget, protocol) =
       if (isDeltaSource) {
-        CatalogOwnedTableUtils.validateUCTableIdNotPresent(property = explicitDeltaProperties)
+        CatalogManagedTableUtils.validateUCTableIdNotPresent(property = explicitDeltaProperties)
         if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
-            configs = explicitDeltaProperties).contains(CatalogOwnedTableFeature)) {
+            configs = explicitDeltaProperties).contains(CatalogManagedTableFeature)) {
           isEnablingCatalogOwnedViaExplicitPropertyOverrides = true
         }
 
@@ -147,7 +147,7 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
           if (isEnablingCatalogOwnedViaExplicitPropertyOverrides) {
             snapshot.protocol
           } else {
-            snapshot.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
+            snapshot.protocol.removeFeature(targetFeature = CatalogManagedTableFeature)
           }
 
         (

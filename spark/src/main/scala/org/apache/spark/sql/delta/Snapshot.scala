@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCheckpointProviderBase, AMTUsageLogs, AMTUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
@@ -82,10 +82,10 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
 
-  /** Whether the table has [[CatalogOwnedTableFeature]] enabled */
+  /** Whether the table has [[CatalogManagedTableFeature]] enabled */
   def isCatalogOwned: Boolean = {
     version >= 0 &&
-      protocol.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
+      protocol.readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name)
   }
 
   /**
@@ -901,7 +901,8 @@ class Snapshot(
   /** Ensures that commit files are backfilled up to the current version in the snapshot. */
   def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
     val tableCommitCoordinatorClientOpt = if (isCatalogOwned) {
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(spark, catalogTableOpt, this)
+      CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        spark, catalogTableOpt, this)
     } else {
       getTableCommitCoordinatorForWrites
     }

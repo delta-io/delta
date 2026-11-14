@@ -160,10 +160,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(log.snapshot.protocol === Protocol(1, 1))
       log.upgradeProtocol(Action.supportedProtocolVersion(
         featuresToExclude =
-          Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features))
+          Seq(CatalogManagedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features))
       assert(log.snapshot.protocol === Action.supportedProtocolVersion(
         featuresToExclude =
-          Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features))
+          Seq(CatalogManagedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features))
     }
   }
 
@@ -3798,10 +3798,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       featureExpectedAtTheEnd: Boolean = false): Unit = {
     val featureName = VacuumProtocolCheckTableFeature.name
     withTempTable(createTable = false) { tableName =>
-      // Register a temporary InMemory-CC builder to support CatalogOwned table creation.
-      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      // Register a temporary InMemory-CC builder to support CatalogManaged table creation.
+      CatalogManagedCommitCoordinatorProvider.clearBuilders()
+      CatalogManagedCommitCoordinatorProvider.registerBuilder(
+        catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1)
       )
       val finalAdditionalTableProperty = if (enableFeatureInitially) {
@@ -3858,7 +3858,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     testRemoveVacuumProtocolCheckTableFeature(
       enableFeatureInitially = true,
       additionalTableProperties = Seq(
-        (s"$FEATURE_PROP_PREFIX${CatalogOwnedTableFeature.name}", "supported")),
+        (s"$FEATURE_PROP_PREFIX${CatalogManagedTableFeature.name}", "supported")),
       downgradeFailsWithException = Some("DELTA_FEATURE_DROP_DEPENDENT_FEATURE"),
       featureExpectedAtTheEnd = true)
   }

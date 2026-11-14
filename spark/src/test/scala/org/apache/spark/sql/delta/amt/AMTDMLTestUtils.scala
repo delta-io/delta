@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, DeltaConfigs, DeltaLog, DeltaTable, DeltaTestUtils, RowCommitVersion, RowId, Snapshot}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, TrackingInMemoryCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider, CatalogManagedTableUtils, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -67,10 +67,10 @@ trait AMTDMLTestUtils extends AMTCheckpointTestBase {
   // RowTrackingMergeSuiteBase) create catalog-managed tables in their own beforeAll(), which runs
   // before the beforeEach() that normally registers the coordinator.
   override protected def beforeAll(): Unit = {
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
     catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
-      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      CatalogManagedCommitCoordinatorProvider.registerBuilder(
+        catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize))
     }
     super.beforeAll()
