@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, MaintenanceOperation, Snapshot, WinningCommitMetrics}
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint, ContentRoot, FileAction}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint, ContentRoot, FileAction, LastManifestCommit}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -357,8 +357,8 @@ class AMTWriterManager(
   private[delta] def preCommitLatestAMTCheckpointProviderOpt: Option[AMTCheckpointProvider] =
     preCommitLatestAMTCheckpointProvider.providerOpt
 
-  /** The folded AMT tree version the committed actions were last re-stamped against. */
-  private var lastRebasedAMTVersion: Option[Long] = None
+  /** The folded AMT tree the committed actions were last re-stamped against. */
+  private var lastRebasedTree: Option[LastManifestCommit] = None
 
   /** The version this transaction's previous attempt targeted. */
   private var lastAttemptVersion: Long = readSnapshot.version + 1
@@ -841,8 +841,10 @@ class AMTWriterManager(
         BackRefRebaseMetrics(SKIP_REASON_NO_FILE_ACTIONS)
       return currentTransactionInfo
     }
-    val foldedAMTVersion = currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version)
-    if (foldedAMTVersion == lastRebasedAMTVersion) {
+    val foldedTree = currentTransactionInfo.commitInfo.flatMap(_.lastManifestCommit)
+    val foldedAMTVersion = foldedTree.map(_.contentRootVersion)
+    // A full rewrite can keep the contentRootVersion of the last re-stamp target.
+    if (foldedTree == lastRebasedTree) {
       // No new tree was installed since the last rebase, so the actions are already re-stamped
       // against it -- nothing to re-derive.
       pendingBackRefRebaseMetrics =
@@ -851,7 +853,7 @@ class AMTWriterManager(
     }
     // The tree the actions were last stamped against: the previous rebase target, or -- on the
     // first rebase -- the read snapshot's own tree, which is what the writer originally stamped.
-    val oldAMTVersion = lastRebasedAMTVersion
+    val oldAMTVersion = lastRebasedTree.map(_.contentRootVersion)
       .orElse(readSnapshot.lastManifestCommitOpt.map(_.contentRootVersion))
       .getOrElse(0L)
     val foldedContentRootVersion =
@@ -878,7 +880,7 @@ class AMTWriterManager(
           BackRefRebaseMetrics(SKIP_REASON_NO_AMT_PROVIDER)
         actions
     }
-    lastRebasedAMTVersion = foldedAMTVersion
+    lastRebasedTree = foldedTree
     DeltaTestBarrier.waitIfEnabled(AMTWriterManager.REBASE_BACK_REFERENCES_TEST_BARRIER)
     currentTransactionInfo.copy(actions = restampedActions)
   }
