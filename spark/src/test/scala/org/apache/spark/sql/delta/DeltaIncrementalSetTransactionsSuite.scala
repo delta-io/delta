@@ -147,7 +147,7 @@ class DeltaIncrementalSetTransactionsSuite
           commitSetTxn(deltaLog, "app-1", version = 2, lastUpdated = 2) // 2nd commit
           // Commit doesn't trigger stateReconstruction and so the incremental CRC won't have
           // setTransactions present until `setTransactions` API is explicitly invoked before the
-          // commit. This also holds for CatalogOwned tables with Row Tracking enabled: the
+          // commit. This also holds for CatalogManaged tables with Row Tracking enabled: the
           // `domainMetadata` read done by RowId.assignFreshRowIds -> extractHighWatermark is
           // served from the CRC, so it no longer forces a state reconstruction.
           assert(deltaLog.update().checksumOpt.get.setTransactions.isEmpty) // crc has no set-txn
@@ -234,7 +234,7 @@ class DeltaIncrementalSetTransactionsSuite
             // 2. If `computeStatePreloaded` is not set, then Snapshot doesn't have computeState
             //    pre-computed. So next commit will not trigger incremental computation of
             //    [[SetTransaction]].
-            // Note that commits themselves never pre-compute the state, not even for CatalogOwned
+            // Note that commits themselves never pre-compute the state, not even for CatalogManaged
             // tables with Row Tracking enabled: the `domainMetadata` read performed by
             // RowId.assignFreshRowIds is served from the CRC instead of forcing a state
             // reconstruction.

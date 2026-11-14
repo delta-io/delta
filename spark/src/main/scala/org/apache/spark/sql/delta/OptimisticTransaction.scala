@@ -537,7 +537,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val shouldUnsetCatalogOwnedConf =
       isActiveReplaceCommand && CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
     val conf = if (shouldUnsetCatalogOwnedConf) {
-      // Unset default CatalogOwned enablement iff:
+      // Unset default CatalogManaged enablement iff:
       // 0. `isCreatingNewTable` indicates that this either is a REPLACE or CREATE command.
       // 1. `readVersion != 1` indicates the table already exists.
       //    - 0) and 1) suggest that this is an active REPLACE command.
@@ -757,12 +757,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // where the table has not existed yet.
     // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
     // this is just a double check since we only want to auto-enable QoL features
-    // when creating a new CatalogOwned table through CREATE.
+    // when creating a new CatalogManaged table through CREATE.
     if (CatalogOwnedTableUtils.shouldEnableCatalogOwned(
         spark, propertyOverrides = newMetadataTmp.configuration) &&
         isCreatingNewTable && this.readVersion == -1) {
 
-      // For CatalogOwned table, we add "quality of life" table features as a part of CCv2 table
+      // For CatalogManaged table, we add "quality of life" table features as a part of CCv2 table
       // creation. Look for [[CatalogOwnedTableUtils.updateMetadataForQoLFeatures]] to see
       // what features are in the list.
       // Note that we need to add features here because features like `ColumnMapping` or
@@ -923,7 +923,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           .withFeatures(newFeaturesFromTableConf)
           .merge(newProtocolBeforeAddingFeatures))
     }
-    // For CatalogOwned table feature, we don't support the upgrade yet.
+    // For CatalogManaged table feature, we don't support the upgrade yet.
     newProtocol.foreach { p =>
       if (!isCreatingNewTable &&
           p.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name) &&
@@ -1036,7 +1036,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     var newConfs: Map[String, String] =
       newConfsWithoutCC ++ existingCCConfs ++ existingQoLConfsToRetain ++ existingUCTableIdConf
     // We also need to retain the existing ICT dependency configurations, but only when the
-    // existing table does have Coordinated Commits configurations or Catalog-Owned enabled.
+    // existing table does have Coordinated Commits configurations or Catalog-Managed enabled.
     // Otherwise, we treat the ICT configurations the same as any other configurations,
     // by merging them from the default.
     val isCatalogOwnedEnabledBeforeReplace = snapshot.protocol
@@ -1148,7 +1148,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       metadata: Metadata, protocols: Seq[Protocol]): Metadata = {
     if (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata).isDefined ||
         protocols.exists(_.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name))) {
-      // coordinated-commits/catalog-owned require ICT to be enabled as per the spec.
+      // coordinated-commits/catalog-managed require ICT to be enabled as per the spec.
       // If ICT is just in Protocol and not in Metadata,
       // then it is in a 'supported' state but not enabled.
       // In order to enable ICT, we have to set the table property in Metadata.
@@ -3262,14 +3262,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
             version = attemptVersion,
             contentRootVersion = result.contentRootVersion)
         )
-        // CatalogOwned tables assume that before a checkpoint is written, all the commits till the
-        // checkpoint version (inclusive) have been backfilled (in [[Checkpoints.writeCheckpoint]]).
-        // For AMT though, since the checkpoint itself is a (manifest) commit, we lose the inclusive
-        // guarantee: the manifest commit itself cannot be backfilled as it hasn't been written yet.
-        // We still backfill up to the previous version (attemptVersion - 1), and we store the
-        // unbackfilled manifest commit file status in an extra field in LogSegment.
-        // We assume the readSnapshot's commit-coordinator is unchanged, otherwise the conflict
-        // checker would have detected a conflict earlier.
+        // CatalogManaged tables assume that before a checkpoint is written, all the commits till
+        // the checkpoint version (inclusive) have been backfilled (in
+        // [[Checkpoints.writeCheckpoint]]). For AMT though, since the checkpoint itself is a
+        // (manifest) commit, we lose the inclusive guarantee: the manifest commit itself cannot be
+        // backfilled as it hasn't been written yet. We still backfill up to the previous version
+        // (attemptVersion - 1), and we store the unbackfilled manifest commit file status in an
+        // extra field in LogSegment. We assume the readSnapshot's commit-coordinator is unchanged,
+        // otherwise the conflict checker would have detected a conflict earlier.
         CatalogOwnedTableUtils
           .populateTableCommitCoordinatorFromCatalog(spark, targetCatalogTable, snapshot)
           .foreach { readSnapshotTableCommitCoordinatorClient =>
