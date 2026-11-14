@@ -96,7 +96,7 @@ class CachedSnapshotManagerSuite
   private def createManager(dir: File): CachedSnapshotManager =
     createManager(
       dir,
-      KernelContext(Map.empty, LogStore.createLogStore(spark), dir.getCanonicalPath))
+      KernelContext(Map.empty, LogStore.createLogStore(spark)))
 
   private def createManager(
       dir: File,
@@ -389,8 +389,7 @@ class CachedSnapshotManagerSuite
         val kernelContext =
           KernelContext(
             invariantOptions,
-            LogStore.createLogStore(constructionSession),
-            dir.getCanonicalPath)
+            LogStore.createLogStore(constructionSession))
         manager = createManager(dir, kernelContext)
 
         SparkSession.setActiveSession(firstOperationSession)
@@ -780,8 +779,7 @@ class CachedSnapshotManagerSuite
           Map(
             "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
             "fs.file.impl.disable.cache" -> "true"),
-          LogStore.createLogStore(spark),
-          dir.getCanonicalPath)
+          LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
         val failures = new ConcurrentLinkedQueue[Throwable]()
         val staleResult = new AtomicReference[Snapshot]()
@@ -853,8 +851,7 @@ class CachedSnapshotManagerSuite
           Map(
             "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
             "fs.file.impl.disable.cache" -> "true"),
-          LogStore.createLogStore(spark),
-          dir.getCanonicalPath)
+          LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
         val operationSessions = Seq(spark.newSession(), spark.newSession())
         operationSessions.foreach(
@@ -936,8 +933,7 @@ class CachedSnapshotManagerSuite
           Map(
             "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
             "fs.file.impl.disable.cache" -> "true"),
-          LogStore.createLogStore(spark),
-          dir.getCanonicalPath)
+          LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
         val operationSessions = Seq(spark.newSession(), spark.newSession())
         operationSessions.foreach(
@@ -1005,8 +1001,7 @@ class CachedSnapshotManagerSuite
           Map(
             "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
             "fs.file.impl.disable.cache" -> "true"),
-          LogStore.createLogStore(spark),
-          dir.getCanonicalPath)
+          LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
         val result = new AtomicReference[Snapshot]()
         val failure = new AtomicReference[Throwable]()
@@ -1060,8 +1055,7 @@ class CachedSnapshotManagerSuite
           Map(
             "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
             "fs.file.impl.disable.cache" -> "true"),
-          LogStore.createLogStore(spark),
-          dir.getCanonicalPath)
+          LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
         val initial = manager.loadLatestSnapshot()
         appendToDeltaTable(dir)
@@ -1143,8 +1137,7 @@ class CachedSnapshotManagerSuite
           Map(
             "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
             "fs.file.impl.disable.cache" -> "true"),
-          LogStore.createLogStore(spark),
-          dir.getCanonicalPath)
+          LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
         manager.loadLatestSnapshot()
         appendToDeltaTable(dir)
@@ -1212,8 +1205,7 @@ class CachedSnapshotManagerSuite
           Map(
             "fs.file.impl" -> classOf[CachedSnapshotManagerBlockingFileSystem].getName,
             "fs.file.impl.disable.cache" -> "true"),
-          LogStore.createLogStore(spark),
-          dir.getCanonicalPath)
+          LogStore.createLogStore(spark))
         val manager = createManager(dir, kernelContext)
         manager.loadLatestSnapshot()
         appendToDeltaTable(dir)

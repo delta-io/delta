@@ -28,10 +28,9 @@ class KernelContextSuite extends SparkFunSuite with SharedSparkSession {
 
   private val hadoopConfKey = "kernel.context.test"
   private val invariantHadoopConfKey = "kernel.context.invariant.test"
-  private val tablePath = "file:/tmp/kernel-context-suite"
 
   private def newContext(options: Map[String, String] = Map.empty): KernelContext =
-    KernelContext(options, LogStore.createLogStore(spark), tablePath)
+    KernelContext(options, LogStore.createLogStore(spark))
 
   test("an empty context uses the active session Hadoop configuration") {
     withSQLConf(hadoopConfKey -> "session-value") {
@@ -49,7 +48,7 @@ class KernelContextSuite extends SparkFunSuite with SharedSparkSession {
 
   test("context retains the provided LogStore") {
     val logStore = LogStore.createLogStore(spark)
-    val context = KernelContext(Map.empty, logStore, tablePath)
+    val context = KernelContext(Map.empty, logStore)
 
     assert(context.logStore eq logStore)
   }
@@ -122,8 +121,8 @@ class KernelContextSuite extends SparkFunSuite with SharedSparkSession {
   test("constructing a context with null session-invariant filesystem options throws") {
     val logStore = LogStore.createLogStore(spark)
     Seq[() => KernelContext](
-      () => new KernelContext(null, logStore, tablePath),
-      () => KernelContext(null, logStore, tablePath)).foreach { createContext =>
+      () => new KernelContext(null, logStore),
+      () => KernelContext(null, logStore)).foreach { createContext =>
       val error = intercept[IllegalArgumentException] {
         createContext()
       }
@@ -133,15 +132,8 @@ class KernelContextSuite extends SparkFunSuite with SharedSparkSession {
 
   test("constructing a context with a null LogStore throws") {
     val error = intercept[IllegalArgumentException] {
-      KernelContext(Map.empty, null, tablePath)
+      KernelContext(Map.empty, null)
     }
     assert(error.getMessage == "requirement failed: logStore must not be null")
-  }
-
-  test("constructing a context with a null table path throws") {
-    val error = intercept[IllegalArgumentException] {
-      KernelContext(Map.empty, LogStore.createLogStore(spark), null)
-    }
-    assert(error.getMessage == "requirement failed: tablePath must not be null")
   }
 }

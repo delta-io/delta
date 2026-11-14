@@ -69,7 +69,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   override private[v2] val logStore = createLogStore(SparkSession.active)
 
   override private[v2] val kernelContext =
-    KernelContext(sessionInvariantFsOptions, logStore, tablePath.toString)
+    KernelContext(sessionInvariantFsOptions, logStore)
 
   private val latestCatalogTable =
     new AtomicReference[CatalogTable](initialCatalogTableOpt.orNull)
