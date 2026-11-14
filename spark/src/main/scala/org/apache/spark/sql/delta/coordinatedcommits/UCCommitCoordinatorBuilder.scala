@@ -44,7 +44,7 @@ import org.apache.spark.util.Utils
  * It caches the UCCommitCoordinatorClient instance for a given metastore ID upon its first access.
  */
 object UCCommitCoordinatorBuilder
-    extends CatalogOwnedCommitCoordinatorBuilder with DeltaLogging {
+    extends CatalogManagedCommitCoordinatorBuilder with DeltaLogging {
 
   /** The coordinator name used in table metadata to identify UC-managed tables. */
   final val COORDINATOR_NAME: String = "unity-catalog"

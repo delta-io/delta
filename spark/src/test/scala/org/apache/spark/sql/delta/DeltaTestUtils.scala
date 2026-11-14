@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -536,7 +536,7 @@ trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val catalogTable = tableName
       .map(name => spark.sessionState.catalog.getTableMetadata(new TableIdentifier(name)))
-    CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+    CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark, catalogTable, snapshotForReplay).foreach {
       tableCommitCoordinatorClient =>
         CoordinatedCommitsUtils.ensureCommitFilesBackfilled(

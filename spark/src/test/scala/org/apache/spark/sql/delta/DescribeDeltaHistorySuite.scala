@@ -22,7 +22,7 @@ import java.io.File
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DescribeDeltaHistoryCommand
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -192,17 +192,17 @@ trait DescribeDeltaHistorySuiteBase
       .asInstanceOf[Map[String, String]]
   }
 
-  // Returns necessary delta property json expected for the test. If Catalog-Owned is enabled,
+  // Returns necessary delta property json expected for the test. If Catalog-Managed is enabled,
   // a few properties will be automatically populated, and this method will take care of it.
   protected def getProperties(
       extraProperty: Option[Map[String, String]] = None): Map[String, String] = {
     val catalogOwnedProperty = if (catalogOwnedDefaultCreationEnabledInTests) {
-      CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
+      CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
         case (feature, config, value)
         => config.key -> value
       }.toMap ++
       // DV is explicitly disabled here b/c the current suite is incompatible
-      // w/ DV, and we automatically enable it as part of CatalogOwned QoL features.
+      // w/ DV, and we automatically enable it as part of CatalogManaged QoL features.
       Map(s"${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}" -> "false")
     } else {
       Map.empty[String, String]
