@@ -93,10 +93,14 @@ class CachedSnapshotManagerSuite
     spark.range(numRows).write.format("delta").mode("append").save(dir.getCanonicalPath)
   }
 
+  private def createManager(dir: File): CachedSnapshotManager =
+    createManager(
+      dir,
+      KernelContext(Map.empty, LogStore.createLogStore(spark)))
+
   private def createManager(
       dir: File,
-      kernelContext: KernelContext = KernelContext(Map.empty, LogStore.createLogStore(spark))
-  ): CachedSnapshotManager = {
+      kernelContext: KernelContext): CachedSnapshotManager = {
     new CachedSnapshotManager(
       new Path(dir.getCanonicalPath),
       kernelContext,
@@ -383,7 +387,9 @@ class CachedSnapshotManagerSuite
         SparkSession.setActiveSession(constructionSession)
         setRecordingMarkers(constructionSession, "construction")
         val kernelContext =
-          KernelContext(invariantOptions, LogStore.createLogStore(constructionSession))
+          KernelContext(
+            invariantOptions,
+            LogStore.createLogStore(constructionSession))
         manager = createManager(dir, kernelContext)
 
         SparkSession.setActiveSession(firstOperationSession)
