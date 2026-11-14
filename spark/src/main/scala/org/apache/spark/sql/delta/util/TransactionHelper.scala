@@ -168,7 +168,7 @@ trait TransactionHelper extends DeltaLogging {
   private[delta] lazy val readSnapshotTableCommitCoordinatorClientOpt:
       Option[TableCommitCoordinatorClient] = {
     if (snapshot.isCatalogOwned) {
-      // Catalog owned table's commit coordinator is always determined by the catalog.
+      // Catalog managed table's commit coordinator is always determined by the catalog.
       CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark, catalogTable, snapshot)
     } else {
@@ -221,7 +221,7 @@ trait TransactionHelper extends DeltaLogging {
       } else {
         metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
       },
-      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
+      // For Catalog-Managed table, the coordinator conf for UC-CC is [[Map.empty]]
       // so we don't distinguish between CO/CC here.
       commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
   }

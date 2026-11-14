@@ -111,9 +111,9 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     }
     .orElse {
       if (Utils.isTesting) {
-        // In unit test with a path based access, it is possible to enable CatalogOwned with
+        // In unit test with a path based access, it is possible to enable CatalogManaged with
         // in-memory commit coordinator. In this case, we return table commit coordinator
-        // registered in the provider so that it can still test CatalogOwned table feature
+        // registered in the provider so that it can still test CatalogManaged table feature
         // capability.
         CatalogOwnedCommitCoordinatorProvider.getBuilder(DEFAULT_CATALOG_NAME_FOR_TESTING)
           .flatMap{ builder =>
@@ -129,7 +129,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
             ))
           }
       }
-      // This table is catalog owned table but catalogTableOpt is not defined. This means
+      // This table is catalog managed table but catalogTableOpt is not defined. This means
       // that the caller is accessing this table by path-based or the calling code path is missing
       // the CatalogTable.
       // TODO: Better error message with proper error code.
@@ -181,7 +181,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
 
   /**
    * The "Quality of Life" table features that will be enabled automatically
-   * when creating CatalogOwned tables.
+   * when creating CatalogManaged tables.
    * Note that we also include the properties (i.e., DeltaConfig and target value)
    * used to determine whether the table features and the corresponding
    * properties/metadata have been enabled or not.
@@ -197,7 +197,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     )
 
   /**
-   * Return true if we should enable CatalogOwned either via default spark
+   * Return true if we should enable CatalogManaged either via default spark
    * session configuration during creating a new table,
    * or via the explicit table property overrides.
    */
@@ -257,12 +257,12 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
 
   /**
-   * The main ICT table properties used as dependencies for Catalog-Owned enabled table.
+   * The main ICT table properties used as dependencies for Catalog-Managed enabled table.
    */
   val ICT_TABLE_PROPERTY_KEYS: Seq[String] = ICT_TABLE_PROPERTY_CONFS.map(_.key)
 
   /**
-   * Verifies that the property keys do not contain any ICT dependencies for Catalog-Owned.
+   * Verifies that the property keys do not contain any ICT dependencies for Catalog-Managed.
    */
   private[delta] def verifyNotContainsICTConfigurations(propKeys: Seq[String]): Unit = {
     ICT_TABLE_PROPERTY_KEYS.foreach { key =>
@@ -288,17 +288,17 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   }
 
   /**
-   * Validates the Catalog-Owned configurations in explicit command overrides for
+   * Validates the Catalog-Managed configurations in explicit command overrides for
    * `AlterTableSetPropertiesDeltaCommand`.
    *
    * If [[CatalogOwnedTableFeature]] presents, we do NOT allow users to
-   * modify any ICT properties that Catalog-Owned depends on.
+   * modify any ICT properties that Catalog-Managed depends on.
    */
   def validatePropertiesForAlterTableSetPropertiesDeltaCommand(
       snapshot: Snapshot,
       propertyOverrides: Map[String, String]): Unit = {
     if (snapshot.isCatalogOwned) {
-      // For Catalog-Owned enabled tables, check the dependent ICT properties.
+      // For Catalog-Managed enabled tables, check the dependent ICT properties.
       // Note: Upgrade/Downgrade have been blocked earlier, which do not need to be
       //       checked here.
       verifyNotContainsICTConfigurations(propKeys = propertyOverrides.keys.toSeq)
@@ -309,7 +309,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
    * Validates the configurations to unset for `AlterTableUnsetPropertiesDeltaCommand`.
    *
    * If the table already has [[CatalogOwnedTableFeature]] present,
-   * we do not allow users to unset any of the ICT properties that Catalog-Owned depends on.
+   * we do not allow users to unset any of the ICT properties that Catalog-Managed depends on.
    */
   def validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
       snapshot: Snapshot,
@@ -398,10 +398,10 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   }
 
   /**
-   * Whether Catalog-Owned is enabled via default SparkSession configuration.
+   * Whether Catalog-Managed is enabled via default SparkSession configuration.
    *
    * @param spark The SparkSession to check.
-   * @return True if Catalog-Owned is enabled by default, false otherwise.
+   * @return True if Catalog-Managed is enabled by default, false otherwise.
    */
   def defaultCatalogOwnedEnabled(spark: SparkSession): Boolean = {
     spark.conf
@@ -793,7 +793,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    */
   def backfillWhenCoordinatedCommitsDisabled(snapshot: Snapshot): Unit = {
     if (snapshot.getTableCommitCoordinatorForWrites.nonEmpty || snapshot.isCatalogOwned) {
-      // Coordinated commits or Catalog-owned is enabled on the table. Don't backfill
+      // Coordinated commits or Catalog-managed is enabled on the table. Don't backfill
       // as backfills are managed by commit-coordinators.
       return
     }

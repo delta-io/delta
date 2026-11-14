@@ -328,7 +328,7 @@ class CatalogOwnedSuite
   with CatalogOwnedTestBaseSuite {
 
   override def sparkConf: SparkConf = {
-    // Make sure all new tables in tests use CatalogOwned table feature by default.
+    // Make sure all new tables in tests use CatalogManaged table feature by default.
     super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
   }
 }
@@ -452,7 +452,7 @@ abstract class CommitCoordinatorSuiteBase
   testWithDefaultCommitCoordinatorUnset("snapshot is updated recursively when FS table" +
       " is converted to commit-coordinator table on a concurrent cluster") {
     if (isCatalogOwnedTest) {
-      // TODO: CatalogOwned table cannot change its catalog, hence modify below to
+      // TODO: CatalogManaged table cannot change its catalog, hence modify below to
       // test race upgrade from normal table after implementing upgrade.
       cancel("Upgrade is not yet supported for catalog owned tables")
     }
@@ -532,7 +532,7 @@ abstract class CommitCoordinatorSuiteBase
     if (isCatalogOwnedTest) {
       // TODO: This test is important to test the robustness of the ability to resolve
       // stale snapshot status interaction with upgrade/downgrade. Implement this suite
-      // for catalog owned tables once we enable upgrade.
+      // for catalog managed tables once we enable upgrade.
       cancel("Upgrade is not yet supported for catalog owned tables")
     }
     val batchSize = 10
@@ -894,7 +894,7 @@ abstract class CommitCoordinatorSuiteBase
     if (isCatalogOwnedTest) {
       // TODO: Once upgrade is supported, this unit test can only test
       // first upgrade part (FS -> CC1) because there is no CC1 -> FS -> CC2 transition
-      // in CatalogOwned table feature. Note that only one Catalog can exist for
+      // in CatalogManaged table feature. Note that only one Catalog can exist for
       // each table identifier.
       cancel("Upgrade is not yet supported for catalog owned tables")
     }
@@ -1683,7 +1683,7 @@ abstract class CommitCoordinatorSuiteBase
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, CatalystTableIdentifier("t1"))
         if (isCatalogOwnedTest) {
           assert(snapshot.isCatalogOwned)
-          // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogOwned
+          // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogManaged
           // since we don't support upgrade yet.
           assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
         } else {
