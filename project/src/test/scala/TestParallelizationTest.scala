@@ -51,7 +51,7 @@ object TestParallelizationTest {
     val originalGroups = Seq(
       Tests.Group("serial", definitions.take(3), Tests.SubProcess(forkOptions)),
       Tests.Group("other", definitions.drop(3), Tests.InProcess))
-    for (shards <- Seq(1, 8)) {
+    for (shards <- Seq(1, NUM_SHARDS)) {
       val assignedGroups = (0 until shards).flatMap { shard =>
         val groups = TestParallelization.shardGroups(originalGroups, shards, shard)
         groups.zip(originalGroups).foreach { case (group, original) =>
