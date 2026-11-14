@@ -96,13 +96,14 @@ private[tablemanager] class CachedSnapshotManager(
       timestampMillis: Long,
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean,
-      canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit =
-    withUncachedSnapshotManager(Option(latestCatalogTable.get()))(
-      _.getActiveCommitAtTime(
-        timestampMillis,
-        canReturnLastCommit,
-        mustBeRecreatable,
-        canReturnEarliestCommit))
+      canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit = {
+    getActiveCommitAtTimeInternal(
+      timestampMillis,
+      canReturnLastCommit,
+      mustBeRecreatable,
+      canReturnEarliestCommit,
+      Option(latestCatalogTable.get()))
+  }
 
   override def getActiveCommitAtTime(
       timestampMillis: Long,
@@ -111,20 +112,40 @@ private[tablemanager] class CachedSnapshotManager(
       canReturnEarliestCommit: Boolean,
       queryContext: DeltaV2QueryContext): KernelDeltaHistoryManager.Commit = {
     Objects.requireNonNull(queryContext, "queryContext is null")
-    withUncachedSnapshotManager(queryContext.catalogTableOpt)(
-      _.getActiveCommitAtTime(
-        timestampMillis,
-        canReturnLastCommit,
-        mustBeRecreatable,
-        canReturnEarliestCommit))
+    getActiveCommitAtTimeInternal(
+      timestampMillis,
+      canReturnLastCommit,
+      mustBeRecreatable,
+      canReturnEarliestCommit,
+      queryContext.catalogTableOpt)
+  }
+
+  private def getActiveCommitAtTimeInternal(
+      timestampMillis: Long,
+      canReturnLastCommit: Boolean,
+      mustBeRecreatable: Boolean,
+      canReturnEarliestCommit: Boolean,
+      catalogTableOpt: Option[CatalogTable]): KernelDeltaHistoryManager.Commit = {
+    recordDeltaOperationForTablePath(tablePath.toString, "snapshot.timeTravel") {
+      withUncachedSnapshotManager(catalogTableOpt)(
+        _.getActiveCommitAtTime(
+          timestampMillis,
+          canReturnLastCommit,
+          mustBeRecreatable,
+          canReturnEarliestCommit))
+    }
   }
 
   override def checkVersionExists(
       version: Long,
       mustBeRecreatable: Boolean,
-      allowOutOfRange: Boolean): Unit =
-    withUncachedSnapshotManager(Option(latestCatalogTable.get()))(
-      _.checkVersionExists(version, mustBeRecreatable, allowOutOfRange))
+      allowOutOfRange: Boolean): Unit = {
+    checkVersionExistsInternal(
+      version,
+      mustBeRecreatable,
+      allowOutOfRange,
+      Option(latestCatalogTable.get()))
+  }
 
   override def checkVersionExists(
       version: Long,
@@ -132,23 +153,47 @@ private[tablemanager] class CachedSnapshotManager(
       allowOutOfRange: Boolean,
       queryContext: DeltaV2QueryContext): Unit = {
     Objects.requireNonNull(queryContext, "queryContext is null")
-    withUncachedSnapshotManager(queryContext.catalogTableOpt)(
-      _.checkVersionExists(version, mustBeRecreatable, allowOutOfRange))
+    checkVersionExistsInternal(
+      version,
+      mustBeRecreatable,
+      allowOutOfRange,
+      queryContext.catalogTableOpt)
+  }
+
+  private def checkVersionExistsInternal(
+      version: Long,
+      mustBeRecreatable: Boolean,
+      allowOutOfRange: Boolean,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    recordFrameProfile("DeltaHistoryManager.checkVersionExists") {
+      recordDeltaOperationForTablePath(tablePath.toString, "snapshot.checkVersion") {
+        withUncachedSnapshotManager(catalogTableOpt)(
+          _.checkVersionExists(version, mustBeRecreatable, allowOutOfRange))
+      }
+    }
   }
 
   override def getTableChanges(
       kernelEngine: KernelEngine,
-      params: GetTableChangesParam): KernelCommitRange =
-    withUncachedSnapshotManager(Option(latestCatalogTable.get()))(
-      _.getTableChanges(kernelEngine, params))
+      params: GetTableChangesParam): KernelCommitRange = {
+    getTableChangesInternal(kernelEngine, params, Option(latestCatalogTable.get()))
+  }
 
   override def getTableChanges(
       kernelEngine: KernelEngine,
       params: GetTableChangesParam,
       queryContext: DeltaV2QueryContext): KernelCommitRange = {
     Objects.requireNonNull(queryContext, "queryContext is null")
-    withUncachedSnapshotManager(queryContext.catalogTableOpt)(
-      _.getTableChanges(kernelEngine, params))
+    getTableChangesInternal(kernelEngine, params, queryContext.catalogTableOpt)
+  }
+
+  private def getTableChangesInternal(
+      kernelEngine: KernelEngine,
+      params: GetTableChangesParam,
+      catalogTableOpt: Option[CatalogTable]): KernelCommitRange = {
+    recordDeltaOperationForTablePath(tablePath.toString, "snapshot.tableChanges") {
+      withUncachedSnapshotManager(catalogTableOpt)(_.getTableChanges(kernelEngine, params))
+    }
   }
 
   // === Snapshot lifecycle ===================================================
@@ -172,7 +217,9 @@ private[tablemanager] class CachedSnapshotManager(
         if (isFresh(current, requiredFreshAfter)) {
           current.snapshot
         } else {
-          rebuildAndInstallInternal(catalogTableOpt)
+          withSnapshotLoadOperation("snapshot.loadLatest") {
+            rebuildAndInstallInternal(catalogTableOpt)
+          }
         }
       }
     }
@@ -226,35 +273,42 @@ private[tablemanager] class CachedSnapshotManager(
       if (current != null && version == current.snapshot.version) {
         return current.snapshot
       }
-      val refreshed =
-        if (isFresh(current, latestSnapshotFreshnessThreshold(), Some(version))) current.snapshot
-        else rebuildAndInstallInternal(catalogTableOpt)
-      // If latest still trails the requested version, attempt the exact load before rejecting it.
-      if (version > refreshed.version) {
-        val loaded = CachedSnapshot(
-          withUncachedSnapshotManager(catalogTableOpt)(_.loadSnapshotAt(version)),
-          validatedAtMs = -1L)
-        val previous = currentSnapshot
-        if (previous != null && previous.snapshot.metadata.id != loaded.snapshot.metadata.id) {
-          logWarning(
-            s"Table identity changed while loading snapshot at version $version: " +
-              s"previous=${previous.snapshot.metadata.id}, current=${loaded.snapshot.metadata.id}")
-        }
-        // An exact-version load proves this snapshot exists, but not that it is the latest.
-        currentSnapshot = loaded
-        retireSnapshotInternal(previous)
-        loaded.snapshot
+      if (isFresh(current, latestSnapshotFreshnessThreshold(), Some(version))) {
+        current.snapshot
       } else {
-        refreshed
+        withSnapshotLoadOperation("snapshot.loadVersion") {
+          val refreshed =
+            rebuildAndInstallInternal(catalogTableOpt)
+          // If latest still trails the requested version, attempt the exact load before
+          // rejecting it.
+          if (version > refreshed.version) {
+            val loaded = CachedSnapshot(
+              withUncachedSnapshotManager(catalogTableOpt)(_.loadSnapshotAt(version)),
+              validatedAtMs = -1L)
+            val previous = currentSnapshot
+            if (previous != null && previous.snapshot.metadata.id != loaded.snapshot.metadata.id) {
+              logWarning(
+                s"Table identity changed while loading snapshot at version $version: " +
+                  s"previous=${previous.snapshot.metadata.id}, " +
+                  s"current=${loaded.snapshot.metadata.id}")
+            }
+            // An exact-version load proves this snapshot exists, not that it is the latest.
+            currentSnapshot = loaded
+            retireSnapshotInternal(previous)
+            loaded.snapshot
+          } else {
+            refreshed
+          }
+        }
       }
     }
     if (version == upperBound.version) {
       return upperBound
     }
     // Historical snapshots are returned to the caller but never replace the cached latest snapshot.
-    val historicalSnapshot = withUncachedSnapshotManager(catalogTableOpt)(
-      _.loadSnapshotAt(version))
-    historicalSnapshot
+    withSnapshotLoadOperation("snapshot.loadVersion") {
+      withUncachedSnapshotManager(catalogTableOpt)(_.loadSnapshotAt(version))
+    }
   }
 
   // === Uncached loading =====================================================
@@ -267,6 +321,9 @@ private[tablemanager] class CachedSnapshotManager(
       kernelContext,
       catalogTableOpt.toJava))
   }
+
+  private def withSnapshotLoadOperation[T](opType: String)(body: => T): T =
+    recordDeltaOperationForTablePath(tablePath.toString, opType)(body)
 
   private def latestSnapshotFreshnessThreshold(): Long = {
     val now = System.currentTimeMillis()
