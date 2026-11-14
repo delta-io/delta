@@ -22,7 +22,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CatalogOwnedTableFeature, CheckpointPolicy, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CatalogManagedTableFeature, CheckpointPolicy, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.CloneTableCommand
@@ -51,24 +51,24 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   val DEFAULT_CATALOG_NAME_FOR_TESTING: String = "spark_catalog"
 
   /**
-   * Sets or removes CatalogOwnedTableFeature from a transaction's protocol.
+   * Sets or removes CatalogManagedTableFeature from a transaction's protocol.
    *
    * This helper method is used to control whether a transaction should use CC.
    *
    * @param txn The OptimisticTransaction to modify protocol and metadata on
-   * @param withCatalogOwnedTableFeature If true, adds CatalogOwnedTableFeature to the protocol
+   * @param withCatalogOwnedTableFeature If true, adds CatalogManagedTableFeature to the protocol
    *                                      and ensures ICT enablement. If false, removes it.
    *
-   * @note When adding CatalogOwnedTableFeature, this method also forces a metadata update
+   * @note When adding CatalogManagedTableFeature, this method also forces a metadata update
    *       to ensure ICT (In-Commit Timestamp) is properly enabled. See the below comment
    *       for details.
    */
   def setTxnProtocol(txn: OptimisticTransaction, withCatalogOwnedTableFeature: Boolean): Unit = {
     if (withCatalogOwnedTableFeature) {
-      val p = txn.protocol.withFeature(feature = CatalogOwnedTableFeature)
+      val p = txn.protocol.withFeature(feature = CatalogManagedTableFeature)
       txn.updateProtocol(protocol = p)
       // Force a metadata update to trigger ICT (In-Commit Timestamp) enablement.
-      // CatalogOwnedTableFeature requires ICT to be enabled in the metadata, but
+      // CatalogManagedTableFeature requires ICT to be enabled in the metadata, but
       // updateMetadataAndProtocolWithRequiredFeatures in prepareInitialActions only runs
       // when there's an explicit metadata change (metadataChanges.headOption is non-empty).
       // Since we're only updating the protocol here without changing metadata content,
@@ -78,7 +78,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       // causing UCCommitCoordinatorClient to fail with DELTA_MISSING_COMMIT_TIMESTAMP.
       txn.updateMetadata(proposedNewMetadata = txn.metadata)
     } else {
-      val p = txn.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
+      val p = txn.protocol.removeFeature(targetFeature = CatalogManagedTableFeature)
       txn.updateProtocol(protocol = p)
     }
   }
@@ -207,7 +207,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       isCreatingNew: Boolean = true): Boolean = {
     // Check explicit property overrides when creating a new or upgrading an existing table.
     val isExplicitlyEnablingCO = TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
-      configs = propertyOverrides).contains(CatalogOwnedTableFeature)
+      configs = propertyOverrides).contains(CatalogManagedTableFeature)
 
     // Check default spark session configuration only when creating a new table.
     val isEnablingCOByDefault =
@@ -277,12 +277,12 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   private[delta] def verifyCatalogManagedStatusIsSupported(
       propertyOverrides: Map[String, String]): Unit = {
     val catalogManagedKey =
-      TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature).toLowerCase(Locale.ROOT)
+      TableFeatureProtocolUtils.propertyKey(CatalogManagedTableFeature).toLowerCase(Locale.ROOT)
     propertyOverrides.foreach { case (key, status) =>
       if (key.toLowerCase(Locale.ROOT) == catalogManagedKey &&
           status.toLowerCase(Locale.ROOT) != TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED) {
         throw DeltaErrors.unsupportedTableFeatureStatusException(
-          feature = CatalogOwnedTableFeature.name, status = status)
+          feature = CatalogManagedTableFeature.name, status = status)
       }
     }
   }
@@ -291,7 +291,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
    * Validates the Catalog-Managed configurations in explicit command overrides for
    * `AlterTableSetPropertiesDeltaCommand`.
    *
-   * If [[CatalogOwnedTableFeature]] presents, we do NOT allow users to
+   * If [[CatalogManagedTableFeature]] presents, we do NOT allow users to
    * modify any ICT properties that Catalog-Managed depends on.
    */
   def validatePropertiesForAlterTableSetPropertiesDeltaCommand(
@@ -308,7 +308,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   /**
    * Validates the configurations to unset for `AlterTableUnsetPropertiesDeltaCommand`.
    *
-   * If the table already has [[CatalogOwnedTableFeature]] present,
+   * If the table already has [[CatalogManagedTableFeature]] present,
    * we do not allow users to unset any of the ICT properties that Catalog-Managed depends on.
    */
   def validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
@@ -354,7 +354,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     verifyCatalogManagedStatusIsSupported(
       DeltaConfigs.mergeGlobalConfigs(spark.sessionState.conf, propertyOverrides))
     // We do not allow users to modify [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]] and
-    // [[CatalogOwnedTableFeature.name]] in any explicit overrides for REPLACE command.
+    // [[CatalogManagedTableFeature.name]] in any explicit overrides for REPLACE command.
     if (tableExists) {
       // Must be "REPLACE" or "REPLACE with CLONE" if the table already exists.
       assert(command == "REPLACE with CLONE" || command == "REPLACE",
@@ -363,7 +363,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
 
       val isSpecifyingCatalogManaged = TableFeatureProtocolUtils
         .getSupportedFeaturesFromTableConfigs(propertyOverrides)
-        .contains(CatalogOwnedTableFeature)
+        .contains(CatalogManagedTableFeature)
       val existingTableIsCatalogManaged = existingTableSnapshotOpt.exists(_.isCatalogOwned)
 
       // Allow specifying CatalogManaged in REPLACE TABLE if the existing table is already
@@ -405,7 +405,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
    */
   def defaultCatalogOwnedEnabled(spark: SparkSession): Boolean = {
     spark.conf
-      .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
+      .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature))
       .contains("supported")
   }
 

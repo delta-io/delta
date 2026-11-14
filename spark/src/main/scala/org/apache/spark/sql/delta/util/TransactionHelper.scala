@@ -21,7 +21,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, FileActionOperationClass, IsolationLevel, Serializable, Snapshot, WriteSerializable}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CommitStats, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, FileActionOperationClass, IsolationLevel, Serializable, Snapshot, WriteSerializable}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
@@ -190,7 +190,7 @@ trait TransactionHelper extends DeltaLogging {
         // Only the 0th commit to a table can be a FS -> CO upgrade for now.
         // Upgrading an existing FS table to CO through ALTER TABLE is not supported yet.
         case None if newProtocol.exists(_.readerAndWriterFeatureNames
-            .contains(CatalogOwnedTableFeature.name)) =>                       // FS -> CO
+            .contains(CatalogManagedTableFeature.name)) =>                       // FS -> CO
           (CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT, metadata)
         case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
           (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)

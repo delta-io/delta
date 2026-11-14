@@ -252,7 +252,7 @@ class DeltaLogSuite extends QueryTest
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
             featuresToExclude =
-              Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
+              Seq(CatalogManagedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
             Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
@@ -284,7 +284,7 @@ class DeltaLogSuite extends QueryTest
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
             featuresToExclude =
-              Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
+              Seq(CatalogManagedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
             Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,

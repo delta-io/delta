@@ -913,7 +913,7 @@ private[delta] class ConflictChecker(
         case DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key => isNew
         // Catalog-managed enablement configuration
         case UCCommitCoordinatorClient.UC_TABLE_ID_KEY
-            if currentTransactionInfo.protocol.isFeatureSupported(CatalogOwnedTableFeature) =>
+            if currentTransactionInfo.protocol.isFeatureSupported(CatalogManagedTableFeature) =>
           isNew
         case _ => true
       }

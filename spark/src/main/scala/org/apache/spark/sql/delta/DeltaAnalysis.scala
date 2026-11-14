@@ -225,13 +225,13 @@ class DeltaAnalysis(protected val session: SparkSession)
           // Check whether we are trying to enable Catalog-Managed via explicit property overrides.
           // The reason to check this is, if the source table is a Catalog-Managed table, and
           // we are also trying to enable Catalog-Managed for the target table - We do *NOT*
-          // want to filter out [[CatalogOwnedTableFeature]] from the source table. If we do that,
+          // want to filter out [[CatalogManagedTableFeature]] from the source table. If we do that,
           // the resulting target table's protocol will *NOT* have CatalogManaged table feature
           // present though we have explicitly specified it in the TBLPROPERTIES clause.
           // This only applies to cases where source table has Catalog-Managed enabled.
           // It works as intended if source table is a normal delta table.
           if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
-                configs = ctl.properties).contains(CatalogOwnedTableFeature)) {
+                configs = ctl.properties).contains(CatalogManagedTableFeature)) {
             isEnablingCatalogOwnedViaExplicitPropertyOverrides = true
           }
 
@@ -280,11 +280,11 @@ class DeltaAnalysis(protected val session: SparkSession)
         } else {
           None
         }
-      // Catalog-Managed: Do not copy over [[CatalogOwnedTableFeature]] from source table
+      // Catalog-Managed: Do not copy over [[CatalogManagedTableFeature]] from source table
       //                except the certain case.
       val protocolAfterFilteringCatalogOwnedFromSource = protocol match {
         case Some(p) if !isEnablingCatalogOwnedViaExplicitPropertyOverrides =>
-          // Only filter out [[CatalogOwnedTableFeature]] when target table is not enabling
+          // Only filter out [[CatalogManagedTableFeature]] when target table is not enabling
           // CatalogManaged.
           // E.g.,
           // - CREATE TABLE t1 LIKE t2
@@ -295,7 +295,7 @@ class DeltaAnalysis(protected val session: SparkSession)
           //   )
           //   - Do not filter CatalogManaged table feature out if target table is enabling
           //     CatalogManaged.
-          Some(p.removeFeature(targetFeature = CatalogOwnedTableFeature))
+          Some(p.removeFeature(targetFeature = CatalogManagedTableFeature))
         case _ =>
           protocol
       }

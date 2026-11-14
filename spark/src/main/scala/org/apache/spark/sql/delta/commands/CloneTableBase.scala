@@ -454,9 +454,9 @@ abstract class CloneTableBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       opName: String): Protocol = {
-    // Catalog-Managed: Do not copy over [[CatalogOwnedTableFeature]] from source table.
+    // Catalog-Managed: Do not copy over [[CatalogManagedTableFeature]] from source table.
     val sourceProtocol =
-      sourceTable.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
+      sourceTable.protocol.removeFeature(targetFeature = CatalogManagedTableFeature)
     // Pre-transaction version of the target table.
     val targetProtocol = txn.snapshot.protocol
     // Overriding properties during the CLONE can change the minimum required protocol for target.
@@ -469,12 +469,12 @@ abstract class CloneTableBase(
     val catalogOwnedEnabledByDefaultConf =
       if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
           && !tableExists(txn.snapshot)) {
-        // Append [[CatalogOwnedTableFeature]] to the `configWithOverrides` below if table
+        // Append [[CatalogManagedTableFeature]] to the `configWithOverrides` below if table
         // does not exist, to ensure the final target protocol contains CatalogManaged
         // if enabled by default.
         // Note: We need this because CatalogManaged is enabled through single protocol
         //       without auxiliary metadata.
-        Map(s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported")
+        Map(s"delta.feature.${CatalogManagedTableFeature.name}" -> "supported")
       } else {
         Map.empty
       }

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ColumnMappingTableFeature, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaConfigs, DomainMetadataTableFeature, RowTrackingFeature}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, ColumnMappingTableFeature, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaConfigs, DomainMetadataTableFeature, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.JsonNode
@@ -227,7 +227,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
    */
   private def amtProtocol: Protocol =
     Protocol(3, 7)
-      .withFeature(CatalogOwnedTableFeature)
+      .withFeature(CatalogManagedTableFeature)
       .withFeature(RowTrackingFeature)
       .withFeature(DomainMetadataTableFeature)
       .withFeature(DeletionVectorsTableFeature)
