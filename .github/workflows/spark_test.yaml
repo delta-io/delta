@@ -74,10 +74,10 @@ jobs:
       # Keep the checked-in timings if recent reports cannot be collected.
       - name: Collect recent test durations
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 project/scripts/collect_test_durations.py --last-n-runs 1 --top-n 1000
+        run: python3 project/scripts/collect_test_durations.py --last-n-runs 5 --top-n 1000
 
       - name: Share test durations with the shards
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
