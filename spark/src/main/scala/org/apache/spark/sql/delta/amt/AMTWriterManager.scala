@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, MaintenanceOperation, Snapshot, WinningCommitMetrics}
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint, ContentRoot, FileAction}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint, ContentRoot, FileAction, LastManifestCommit}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -287,10 +287,10 @@ class LazyAMTCheckpointProvider(
     readSnapshot: Snapshot,
     manifestCommitVersion: Long) {
   lazy val providerOpt: Option[AMTCheckpointProvider] = checkpointOpt.map { checkpoint =>
+    val tree = LastManifestCommit(manifestCommitVersion, checkpoint.contentRoot.version)
     readSnapshot.checkpointProvider match {
-      case amt: AMTCheckpointProvider if amt.checkpointAction.version == checkpoint.version => amt
-      case lazyAmt: LazyCompleteAMTCheckpointProvider
-          if lazyAmt.checkpointAction.version == checkpoint.version =>
+      case amt: AMTCheckpointProvider if amt.lastManifestCommit == tree => amt
+      case lazyAmt: LazyCompleteAMTCheckpointProvider if lazyAmt.lastManifestCommit == tree =>
         lazyAmt.underlyingCheckpointProvider
       case _ =>
         AMTCheckpointProvider.fromCheckpoint(
@@ -348,7 +348,10 @@ class AMTWriterManager(
    * This is updated after every round of [[ConflictChecker]] rebase.
    */
   private var preCommitLatestAMTCheckpointProvider: LazyAMTCheckpointProvider =
-    new LazyAMTCheckpointProvider(readSnapshotAMTCheckpointOpt, readSnapshot, readSnapshot.version)
+    new LazyAMTCheckpointProvider(
+      readSnapshotAMTCheckpointOpt,
+      readSnapshot,
+      readSnapshot.lastManifestCommitOpt.map(_.version).getOrElse(readSnapshot.version))
 
   /**
    * The folded-latest AMT provider the committed actions' back references are stamped against after
@@ -686,18 +689,21 @@ class AMTWriterManager(
   /** True when there was a winning manifest commit concurrent to this transaction */
   private def winningCommitInstalledNewAMTTree(
       currentTransactionInfo: CurrentTransactionInfo): Boolean = {
-    val readSnapshotAMTVersion = readSnapshot.lastManifestCommitOpt.map(_.contentRootVersion)
-    val preCommitAMTVersion = currentTransactionInfo.preCommitLatestAMTCheckpointOpt.map(_.version)
-    (readSnapshotAMTVersion, preCommitAMTVersion) match {
+    val readTree = readSnapshot.lastManifestCommitOpt
+    val foldedTree = currentTransactionInfo.commitInfo.flatMap(_.lastManifestCommit)
+    (readTree, foldedTree) match {
       case (Some(_), None) =>
         throw new IllegalStateException(
           "The read snapshot has an AMT but the winning commits has no AMT -- this can happen " +
             "only during downgrade -- not supported yet")
-      case (Some(readVersion), Some(foldedVersion)) if readVersion > foldedVersion =>
+      case (Some(read), Some(folded)) if read.contentRootVersion > folded.contentRootVersion =>
         throw new IllegalStateException(
-          s"The rebased AMT moved backwards: read-snapshot tree version $readVersion is newer " +
-            s"than the folded tree version $foldedVersion.")
-      case (readOpt, foldedOpt) => readOpt != foldedOpt
+          s"The rebased AMT moved backwards: read-snapshot tree version " +
+            s"${read.contentRootVersion} is newer than the folded tree version " +
+            s"${folded.contentRootVersion}.")
+      case (readOpt, foldedOpt) =>
+        // A winner can write a new tree with the read tree's contentRootVersion.
+        readOpt != foldedOpt
     }
   }
 

@@ -466,6 +466,106 @@ class AMTConflictResolutionSuite
     }
   }
 
+  /** Runs `deltaLog.checkpoint`, the call that CheckpointHook makes. */
+  private def hookCheckpoint(
+      deltaLog: DeltaLog,
+      tableName: String,
+      triggerMode: AMTTriggerMode): Unit =
+    deltaLog.checkpoint(deltaLog.update(), Some(catalogTableFor(tableName)), Some(triggerMode))
+
+  private def sortedIds(tableName: String): Seq[Int] =
+    spark.table(tableName).select("id").collect().map(_.getInt(0)).toSeq.sorted
+
+  /** Creates a leaf-packed table whose v3 is an inline tree that describes v3. */
+  private def setupInlineTreeAtV3(tableName: String, rowsPerFile: Int): DeltaLog = {
+    createAMTTable(tableName, checkpointInterval = noAutoCheckpointInterval)
+    val deltaLog = deltaLogForName(tableName)
+    appendRowsAsSeparateFiles(tableName, numFiles = leafPackedFiles, rowsPerFile = rowsPerFile)
+    hookCheckpoint(deltaLog, tableName, AMTTriggerMode.CheckpointIntervalFull)
+    withInline {
+      sql(s"INSERT INTO $tableName VALUES (100000)")
+    }
+    assert(checkpointAt(deltaLog, 3L).map(_.version).contains(3L),
+      "precondition: v3 carries an inline tree that describes v3")
+    deltaLog
+  }
+
+  for ((rowsPerFile, deleteKind) <- Seq(1 -> "file removal", 2 -> "deletion vector")) {
+    test("Winning Commit [Full checkpoint of the version the loser read] vs Losing commit " +
+        s"[$deleteKind DELETE that read an inline tree] - the delete survives the next tree") {
+      val name = s"amt_conflict_delete_vs_full_rewrite_of_read_version_$rowsPerFile"
+      withSQLConf(leafPackingConfs: _*) {
+        withTable(name) {
+          val deltaLog = setupInlineTreeAtV3(name, rowsPerFile)
+          val expectedIds = sortedIds(name).filterNot(_ == 0)
+
+          // A reads v3 and stamps its back reference against the inline tree. B is the full
+          // rewrite that CheckpointHook runs after an inline commit on the full-rewrite cadence.
+          // B's new leaves also describe v3, so A must see B's tree by its root.
+          val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(
+            deleteTxn(name, id = 0),
+            () => {
+              hookCheckpoint(deltaLog, name, AMTTriggerMode.CheckpointIntervalFull)
+              Array.empty
+            })
+          ThreadUtils.awaitResult(futureB, Duration.Inf)
+          ThreadUtils.awaitResult(futureA, Duration.Inf)
+          assert(checkpointAt(deltaLog, 4L).map(_.version).contains(3L),
+            "precondition: the full rewrite at v4 also describes v3")
+          assert(sortedIds(name) == expectedIds, "precondition: the DELETE applied")
+
+          // A new cluster builds the next tree on the full rewrite. Outside tests a checksum
+          // mismatch only logs, so readers see the state that this tree describes.
+          withSQLConf(DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false") {
+            DeltaLog.clearCache()
+            hookCheckpoint(
+              deltaLogForName(name), name, AMTTriggerMode.CheckpointIntervalIncremental)
+            DeltaLog.clearCache()
+            assert(checkpointAt(deltaLogForName(name), 6L).isDefined,
+              "precondition: the next tree committed at v6")
+            val ids = sortedIds(name)
+            assert(ids == expectedIds,
+              s"rows changed after the next tree: extra=${ids.diff(expectedIds)} " +
+                s"missing=${expectedIds.diff(ids)}")
+          }
+        }
+      }
+    }
+  }
+
+  test("Winning Commits [Full checkpoint of the version the loser read, then a DELETE] vs " +
+      "Losing commit [inline-incremental commit] - the inline tree keeps the delete") {
+    val name = "amt_conflict_inline_vs_full_rewrite_of_read_version"
+    withSQLConf(leafPackingConfs ++
+        Seq(DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false"): _*) {
+      withTable(name) {
+        val deltaLog = setupInlineTreeAtV3(name, rowsPerFile = 1)
+        val expectedIds = (sortedIds(name).filterNot(_ == 0) :+ 100001).sorted
+
+        // A is an inline append that reads v3. Before A commits, a full rewrite of v3 commits v4
+        // and a log-only DELETE stamped against that rewrite commits v5. A must build its tree on
+        // the full rewrite, which has the same content version as the tree A read.
+        val Seq(futureA) = runFunctionsWithOrderingFromObserver(Seq(
+            () => withInline { sql(s"INSERT INTO $name VALUES (100001)").collect() })) {
+          case observerA :: Nil =>
+            unblockUntilPreCommit(observerA)
+            waitForPrecommit(observerA)
+            hookCheckpoint(deltaLog, name, AMTTriggerMode.CheckpointIntervalFull)
+            withInlineThreshold(Int.MaxValue) { deleteTxn(name, id = 0)() }
+            unblockCommit(observerA)
+            waitForCommit(observerA)
+        }
+        ThreadUtils.awaitResult(futureA, Duration.Inf)
+        assert(checkpointAt(deltaLog, 6L).isDefined, "precondition: A committed an inline tree")
+        DeltaLog.clearCache()
+        val ids = sortedIds(name)
+        assert(ids == expectedIds,
+          s"rows changed after A's inline tree: extra=${ids.diff(expectedIds)} " +
+            s"missing=${expectedIds.diff(ids)}")
+      }
+    }
+  }
+
   test("Winning Commit [Full checkpoint commit] vs Losing commit " +
     "[inline-incremental commit] - Success") {
     withTable("amt_conflict_inline_vs_full_tree_winner") {
