@@ -2054,6 +2054,12 @@
     ],
     "sqlState" : "25000"
   },
+  "DELTA_INVALID_LIGHTWEIGHT_CLUSTERING_COLUMN" : {
+    "message" : [
+      "Column '<column>' in '<config>' is not a clustering column of the table. Clustering columns: <clusteringColumns>."
+    ],
+    "sqlState" : "42703"
+  },
   "DELTA_INVALID_LOGSTORE_CONF" : {
     "message" : [
       "(`<classConfig>`) and (`<schemeConfig>`) cannot be set at the same time. Please set only one group of them."
