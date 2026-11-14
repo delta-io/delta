@@ -76,8 +76,6 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     if kernel_version:
         cmd.append(f"-DkernelVersion={kernel_version}")
 
-    cmd.append("clean")
-
     test_cmd = "test"
     if shard:
         os.environ["SHARD_ID"] = str(shard)

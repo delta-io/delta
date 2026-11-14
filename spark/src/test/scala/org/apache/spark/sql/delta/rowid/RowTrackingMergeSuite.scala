@@ -16,11 +16,16 @@
 
 package org.apache.spark.sql.delta.rowid
 
+import scala.collection.mutable.ArrayBuffer
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.scalatest.{Args, DoNotDiscover, Reporter}
+import org.scalatest.events.Event
 
+import org.apache.spark.{SparkContext, SparkFunSuite}
 import org.apache.spark.sql.{Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
@@ -51,7 +56,11 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
   }
 
   override protected def afterAll(): Unit = {
-    sql(s"DROP TABLE IF EXISTS $SOURCE_TABLE_NAME")
+    try {
+      sql(s"DROP TABLE IF EXISTS $SOURCE_TABLE_NAME")
+    } finally {
+      super.afterAll()
+    }
   }
 
   protected def withTestTable(
@@ -336,6 +345,33 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
     rowsAfterMerge.foreach { case (storedId, lastModifiedVersion, rowCommitVersion) =>
       assert(rowCommitVersion === lastModifiedVersion,
         s"row commit version does not match for row with stored_id $storedId")
+    }
+  }
+}
+
+class RowTrackingMergeSuiteBaseCleanupSuite extends SparkFunSuite {
+  test("row tracking MERGE suites stop their Spark context") {
+    @DoNotDiscover
+    class CleanupProbe extends RowTrackingMergeSuiteBase with DeltaDMLTestUtilsNameBased {
+      var context: SparkContext = _
+
+      test("capture Spark context") {
+        context = spark.sparkContext
+      }
+    }
+
+    val probe = new CleanupProbe
+    val events = ArrayBuffer.empty[Event]
+    val reporter = new Reporter {
+      override def apply(event: Event): Unit = {
+        events += event
+      }
+    }
+    try {
+      assert(probe.run(None, Args(reporter)).succeeds(), events.mkString("\n"))
+      assert(probe.context.isStopped)
+    } finally {
+      Option(probe.context).foreach(_.stop())
     }
   }
 }

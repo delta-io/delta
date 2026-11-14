@@ -32,10 +32,22 @@ runs:
           ~/.cache/coursier
         key: delta-sbt-cache-spark${{ inputs.spark-version }}-scala${{ inputs.scala }}
 
+    # Reuse compiled classes and Zinc data. Test reports are outside this path.
+    - name: Restore compiled Scala classes
+      id: compiled-cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: '**/target/scala-*'
+        key: delta-sbt-compiled-${{ runner.os }}-spark${{ inputs.spark-version }}-scala${{ inputs.scala }}-${{ hashFiles('build.sbt', 'project/*.scala', 'project/*.sbt', 'project/build.properties') }}-${{ github.sha }}
+        restore-keys: |
+          delta-sbt-compiled-${{ runner.os }}-spark${{ inputs.spark-version }}-scala${{ inputs.scala }}-${{ hashFiles('build.sbt', 'project/*.scala', 'project/*.sbt', 'project/build.properties') }}-
+
     # Delta's sparkUnityCatalog module (part of sparkGroup) depends on APIs that are only in
     # unreleased UC. Publish the pinned UC build locally before sbt tries to resolve it.
     - name: Set up pinned Unity Catalog
       uses: ./.github/actions/setup-unitycatalog
+      env:
+        SPARK_VERSION: ${{ inputs.spark-version }}
 
     - name: Scala structured logging style check
       shell: bash
@@ -62,6 +74,13 @@ runs:
         name: test-reports-spark${{ inputs.spark-version }}-shard${{ inputs.shard }}
         path: "**/target/test-reports/*.xml"
         retention-days: 7
+
+    - name: Save compiled Scala classes
+      if: inputs.shard == '0' && steps.compiled-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: '**/target/scala-*'
+        key: ${{ steps.compiled-cache.outputs.cache-primary-key }}
 
     - name: Save SBT cache
       if: github.event_name == 'push' && github.ref == 'refs/heads/master'
