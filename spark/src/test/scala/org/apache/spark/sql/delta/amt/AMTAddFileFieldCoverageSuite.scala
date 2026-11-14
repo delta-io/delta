@@ -18,10 +18,11 @@ package org.apache.spark.sql.delta.amt
 
 import scala.reflect.runtime.universe._
 
-import org.apache.spark.sql.delta.actions.{Action, AddFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.types.StructType
 
 /**
  * Pins the fields of [[AddFile]] and of the AMT types the DataEntry -> AddFile conversion reads,
@@ -30,7 +31,8 @@ import org.apache.spark.sql.functions.lit
  *
  * Reflection only sees constructor parameters, so a field added to a case class is caught even
  * when nothing else in the test refers to it. `addFileColumn` is also called for every
- * [[AddFile]] field, so a field it has no mapping for fails here rather than at read time.
+ * [[AddFile]] field, so a field it has no mapping for fails here rather than at read time. The
+ * [[RemoveFile]]s of the change files are pinned and checked the same way.
  */
 class AMTAddFileFieldCoverageSuite extends AMTSyntheticTreeTestBase {
 
@@ -38,6 +40,28 @@ class AMTAddFileFieldCoverageSuite extends AMTSyntheticTreeTestBase {
     "Revisit addFileColumn in ColumnarAMTCheckpointProvider and DataEntry.toAddFile, decide " +
       "whether each added or removed field needs a transformation in the conversion, then " +
       "update the expected map in AMTAddFileFieldCoverageSuite."
+
+  private val removeFileUpdateInstructions =
+    "Revisit removeFileColumn in AMTCheckpointProvider and AddFile.removeWithTimestamp, " +
+      "decide whether each added or removed field needs a transformation in the change files, " +
+      "then update the expected map in AMTAddFileFieldCoverageSuite."
+
+  private val expectedRemoveFileFields: Map[String, String] = Map(
+    "path" -> "AddFile.path",
+    "deletionTimestamp" -> "the commit timestamp",
+    "dataChange" -> "the commit-level dataChange",
+    "extendedFileMetadata" -> "always true",
+    "partitionValues" -> "AddFile.partitionValues",
+    "size" -> "AddFile.size",
+    "tags" -> "AddFile.tags",
+    "deletionVector" -> "AddFile.deletionVector",
+    "baseRowId" -> "AddFile.baseRowId",
+    "defaultRowCommitVersion" -> "AddFile.defaultRowCommitVersion",
+    "stats" -> "AddFile.stats",
+    "backReference" -> "null, as change files carry no back reference",
+    "snapshotId" -> "null, stamped by OptimisticTransaction during commit",
+    "modifiedSnapshotId" -> "AddFile.modifiedSnapshotId"
+  )
 
   private val expectedAddFileFields: Map[String, String] = Map(
     "path" -> "DataEntry.location, URL-encoded (encodePath / toAddFile)",
@@ -122,6 +146,30 @@ class AMTAddFileFieldCoverageSuite extends AMTSyntheticTreeTestBase {
     }
   }
 
+  test("removeFileColumn maps every RemoveFile field") {
+    withSyntheticTree("amt_remove_file_column_fields") { tree =>
+      val provider = tree.provider(Seq.empty)
+      // `removeFileColumn` has no fallback case, so an unmapped field throws a MatchError.
+      val removeFileSchema = Action.logSchema("remove").dataType.asInstanceOf[StructType]
+      val unmapped = removeFileSchema.fields.toSeq.filter { field =>
+        try {
+          provider.removeFileColumn(field, timestamp = lit(0L), dataChange = lit(true))
+          false
+        } catch {
+          case _: MatchError => true
+        }
+      }.map(_.name)
+      assert(unmapped.isEmpty,
+        "removeFileColumn has no mapping for RemoveFile fields " +
+          unmapped.mkString("[", ", ", "]") + ". " + removeFileUpdateInstructions)
+    }
+  }
+
+  test("RemoveFile fields are all reviewed for the AMT change files") {
+    assertReviewed(
+      "RemoveFile", typeOf[RemoveFile], expectedRemoveFileFields, removeFileUpdateInstructions)
+  }
+
   test("AddFile fields are all reviewed for the AMT conversion") {
     assertReviewed("AddFile", typeOf[AddFile], expectedAddFileFields)
   }
@@ -142,14 +190,18 @@ class AMTAddFileFieldCoverageSuite extends AMTSyntheticTreeTestBase {
     assertReviewed("AMTPassthrough", typeOf[AMTPassthrough], expectedAMTPassthroughFields)
   }
 
-  private def assertReviewed(typeName: String, tpe: Type, reviewed: Map[String, String]): Unit = {
+  private def assertReviewed(
+      typeName: String,
+      tpe: Type,
+      reviewed: Map[String, String],
+      instructions: String = updateInstructions): Unit = {
     val actual = constructorFields(tpe)
     val added = actual.filterNot(reviewed.contains).sorted
     val removed = reviewed.keys.filterNot(actual.contains).toSeq.sorted
     if (added.nonEmpty || removed.nonEmpty) {
       fail(
         typeName + " fields changed. Added: " + added.mkString("[", ", ", "]") +
-          ". Removed: " + removed.mkString("[", ", ", "]") + ". " + updateInstructions)
+          ". Removed: " + removed.mkString("[", ", ", "]") + ". " + instructions)
     }
   }
 
