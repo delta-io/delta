@@ -22,7 +22,7 @@ object TestParallelizationTest {
   def main(args: Array[String]): Unit = {
     val names = Set("slow", "medium", "unknown-a", "unknown-b")
     val durations = Seq("slow" -> 30.0, "medium" -> 10.0)
-    for (groupCount <- Seq(1, 4)) {
+    for (groupCount <- Seq(1, 4, 8)) {
       val (assignment, loads) = highDurationOptimalAssignment(groupCount, names, durations)
       assert(assignment.flatMap(_.flatMap(_.toSeq)).sorted.toSeq == Seq("medium", "slow"))
       assert(math.abs(loads.map(_.sum).sum - 40.0) < 0.000001)
@@ -92,9 +92,10 @@ object TestParallelizationTest {
     IO.withTemporaryDirectory { directory =>
       val assigned = (0 until NUM_SHARDS).flatMap { shard =>
         val strategy = TestParallelization.MinShardGroupDurationStrategy(
-          4, directory, shard, forkOptions, discoveredNames.toSet)
+          8, directory, shard, forkOptions, discoveredNames.toSet)
         definitions.foreach(strategy.add)
         val groups = strategy.testGroups
+        assert(groups.size == 8)
         groups.foreach { group =>
           val index = group.name.stripPrefix("Test group ").toInt
           val options = forkOptions.withRunJVMOptions(forkOptions.runJVMOptions :+
