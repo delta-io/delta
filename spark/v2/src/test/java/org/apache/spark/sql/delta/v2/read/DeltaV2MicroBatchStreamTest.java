@@ -4077,13 +4077,9 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     assertEquals(3L, dsv2Exception.getEarliestAvailableVersion().get().longValue());
   }
 
-  /**
-   * failOnDataLoss=false in v2 only handles missing start commits. Mid-log gaps (e.g., a deleted
-   * file in the middle) still throw regardless of failOnDataLoss.
-   */
+  /** failOnDataLoss=false skips missing commits in the middle of the log. */
   @Test
-  public void testFailOnDataLoss_false_midLogGapStillThrows(@TempDir File tempDir)
-      throws Exception {
+  public void testFailOnDataLoss_false_midLogGapIsSkipped(@TempDir File tempDir) throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_fdl_mid_gap_" + System.nanoTime();
     createEmptyTestTable(testTablePath, testTableName);
@@ -4097,9 +4093,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     DeltaLog.forTable(spark, new Path(testTablePath)).checkpoint();
     Path logPath = new Path(testTablePath, "_delta_log");
     File midFile = new File(new Path(logPath, String.format("%020d.json", 3)).toUri().getPath());
-    if (midFile.exists()) {
-      midFile.delete();
-    }
+    assertTrue(midFile.delete());
 
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     PathBasedSnapshotManager snapshotManager =
@@ -4108,27 +4102,24 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
 
-    // Reading from version 1 (which exists) should throw InvalidTableException because
-    // version 3 is missing in the middle — non-contiguous versions are not a log-retention
-    // scenario and are never ignored.
-    io.delta.kernel.exceptions.InvalidTableException midGapException =
-        assertThrows(
-            io.delta.kernel.exceptions.InvalidTableException.class,
-            () -> {
-              try (ClosableIterator<IndexedFile> changes =
-                  stream.getFileChanges(
-                      /* fromVersion= */ 1L,
-                      /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
-                      /* isInitialSnapshot= */ false,
-                      /* endOffset= */ Optional.empty())) {
-                while (changes.hasNext()) {
-                  changes.next();
-                }
-              }
-            });
-    assertTrue(
-        midGapException.getMessage().contains("versions are not contiguous"),
-        "Unexpected message: " + midGapException.getMessage());
+    List<Long> versions = new ArrayList<>();
+    try (ClosableIterator<IndexedFile> changes =
+        stream.getFileChanges(
+            /* fromVersion= */ 1L,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* endOffset= */ Optional.empty())) {
+      while (changes.hasNext()) {
+        IndexedFile file = changes.next();
+        if (file.hasFileAction()) {
+          versions.add(file.getVersion());
+        }
+      }
+    } finally {
+      stream.stop();
+    }
+    assertEquals(
+        List.of(1L, 2L, 4L, 5L), versions.stream().distinct().collect(Collectors.toList()));
   }
 
   // ================================================================================================
