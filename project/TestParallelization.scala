@@ -93,10 +93,8 @@ object TestParallelization {
       val groupsCount = (Test / forkTestJVMCount).value
       val shard = (Test / shardId).value
       val baseJvmDir = baseDirectory.value
-      // Queue smaller batches so a slow batch does not leave the other test JVMs idle.
-      // The concurrent ForkedTestGroup limit stays at forkTestJVMCount.
       MinShardGroupDurationStrategy(
-        groupsCount * 2, baseJvmDir, shard, defaultForkOptions.value,
+        groupsCount, baseJvmDir, shard, defaultForkOptions.value,
         (Test / definedTests).value.map(_.name).toSet)
     },
     Test / parallelExecution := true,
