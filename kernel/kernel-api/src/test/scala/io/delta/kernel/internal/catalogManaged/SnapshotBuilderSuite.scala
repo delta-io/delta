@@ -24,7 +24,7 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{KernelException, UnsupportedProtocolVersionException, UnsupportedTableFeatureException}
+import io.delta.kernel.exceptions.{KernelException, MaxCatalogVersionException, UnsupportedProtocolVersionException, UnsupportedTableFeatureException}
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData, ParsedPublishedDeltaData}
@@ -249,6 +249,19 @@ class SnapshotBuilderSuite extends AnyFunSuite
     assert(exMsg.contains("Log data must be sorted and contiguous"))
   }
 
+  Seq(None, Some(2L)).foreach { versionOpt =>
+    test(s"withLogData: catalog commits require maxCatalogVersion - version=$versionOpt") {
+      val builder = TableManager.loadSnapshot(dataPath.toString)
+      val error = intercept[MaxCatalogVersionException] {
+        versionOpt.map(builder.atVersion(_)).getOrElse(builder)
+          .withLogData(parsedRatifiedStagedCommits(Seq(0, 1, 2)).toList.asJava)
+          .build(emptyMockEngine)
+      }
+
+      assert(error.getMessage === "Must provide maxCatalogVersion when providing catalog commits")
+    }
+  }
+
   /////////////////////////////////////
   // Builder Validation Tests -- END //
   /////////////////////////////////////
@@ -294,11 +307,18 @@ class SnapshotBuilderSuite extends AnyFunSuite
   }
 
   test("withMaxCatalogVersion: version time-travel to a file-system managed version is valid") {
-    // The empty mock engine lists no files, so loading the latest protocol would fail.
     TableManager.loadSnapshot(dataPath.toString)
       .atVersion(5)
       .withProtocolAndMetadata(protocol, metadata)
       .withMaxCatalogVersion(10)
+      .build(emptyMockEngine)
+  }
+
+  test("withMaxCatalogVersion: version time-travel to a catalogManaged version without it is " +
+    "valid") {
+    TableManager.loadSnapshot(dataPath.toString)
+      .atVersion(1)
+      .withProtocolAndMetadata(protocolWithCatalogManagedSupport, metadata)
       .build(emptyMockEngine)
   }
 
@@ -355,7 +375,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
     // Input validation should not throw (but will throw later when trying to construct log segment)
     val exMsg = intercept[Exception] {
       TableManager.loadSnapshot(dataPath.toString)
-        .atTimestamp(0L, mockSnapshotAtVersion10)
+        .atTimestamp(500L, mockSnapshotAtVersion10)
         .withMaxCatalogVersion(10)
         .build(emptyMockEngine)
     }.getMessage

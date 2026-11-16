@@ -1192,21 +1192,25 @@ This section provides guidance on how to migrate your connector to the latest ve
 #### Catalog-managed snapshot errors
 
 `SnapshotBuilder.build` now throws `MaxCatalogVersionException`, a subtype of `KernelException`,
-when a catalog-managed table is loaded without `maxCatalogVersion` or a filesystem-managed table is
-loaded with it. These cases previously threw `IllegalArgumentException`; their error messages are
-unchanged. Update any exception handlers that relied on the previous type.
+when the latest snapshot of a catalog-managed table is loaded without `maxCatalogVersion`. This case
+previously threw `IllegalArgumentException`; its error message is unchanged. Update any exception
+handlers that relied on the previous type.
 
-To allow version time travel across a catalog-managed upgrade or downgrade, `atVersion`
-queries reject `maxCatalogVersion` for filesystem-managed versions, and require it for
-catalog-managed versions only while the table is still catalog-managed. To load the latest
-snapshot or perform timestamp-based time travel, provide `maxCatalogVersion` if the supplied
-latest snapshot is catalog-managed; omit it otherwise
+To support catalog-managed upgrades and downgrades, `maxCatalogVersion` requirements changed:
 
-The exception identifies a mismatch between the snapshot protocol and the supplied catalog context.
-This can result from a table changing management modes or from incorrect builder inputs. It does
-not guarantee that a transition occurred or that a retry will succeed. Other catalog-version
-validation errors, including negative versions, version bounds, and log-tail constraints, retain
-their existing exception types.
+- `maxCatalogVersion` is no longer rejected for filesystem-managed snapshots, since a
+  catalog-ratified downgrade produces one. Without `atVersion` or `atTimestamp`, the snapshot is
+  loaded at `maxCatalogVersion` even if later filesystem-managed versions exist.
+- `atVersion` queries no longer require `maxCatalogVersion` because the requested version is
+  catalog-managed. Connectors must still provide it while the table is currently catalog-managed.
+- `atTimestamp` queries require `maxCatalogVersion` if the supplied latest snapshot is
+  catalog-managed.
+- `withLogData` catalog commits now require `maxCatalogVersion`, including for `atVersion` queries.
+
+The exception identifies a missing catalog context. This can result from a table becoming
+catalog-managed or from incorrect builder inputs. It does not guarantee that a transition occurred
+or that a retry will succeed. Other catalog-version validation errors, including negative versions,
+version bounds, and log-tail ordering and coverage, retain their existing exception types.
 
 ### Migration from Delta Lake version 3.1.0 to 3.2.0
 Following are API changes in Delta Kernel 3.2.0 that may require changes in your connector.

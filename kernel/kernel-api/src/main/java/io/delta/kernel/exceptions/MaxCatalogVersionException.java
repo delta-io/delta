@@ -18,15 +18,13 @@ package io.delta.kernel.exceptions;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Thrown when the presence of a maximum catalog version does not match whether the table is
- * catalog-managed. Latest and timestamp queries require a maximum catalog version for
- * catalog-managed tables and reject one for filesystem-managed tables. Version time travel requires
- * one only when both the requested version and the latest version are catalog-managed, and never
- * rejects one.
+ * Thrown when a maximum catalog version is required but not provided: when loading the latest
+ * snapshot of a catalog-managed table, when time traveling by timestamp with a catalog-managed
+ * latest snapshot, or when providing catalog commits.
  *
- * <p>This mismatch can occur when a table changes between catalog-managed and filesystem-managed
- * modes. It can also indicate incorrect snapshot builder inputs, so it does not by itself establish
- * that a transition occurred or that retrying will succeed.
+ * <p>This can occur when a table changes from filesystem-managed to catalog-managed. It can also
+ * indicate incorrect snapshot builder inputs, so it does not by itself establish that a transition
+ * occurred or that retrying will succeed.
  *
  * @since 4.5.0
  */

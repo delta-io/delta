@@ -132,6 +132,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     // TODO: delta-io/delta#4765 support other types
     LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
+    validateMaxCatalogVersionProvidedWithLogData();
     validateMaxCatalogVersionCompatibleWithTimeTravelParams();
     validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad();
   }
@@ -172,6 +173,18 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   private void validateProtocolRead() {
     ctx.protocolAndMetadataOpt.ifPresent(
         x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
+  }
+
+  /**
+   * Staged commits are only known to be ratified because a catalog provided them, so the catalog's
+   * max catalog version must accompany them. This applies even to version time travel and to
+   * commits that have since been published.
+   */
+  private void validateMaxCatalogVersionProvidedWithLogData() {
+    if (!ctx.logDatas.isEmpty() && !ctx.maxCatalogVersion.isPresent()) {
+      throw DeltaErrors.maxCatalogVersionError(
+          "Must provide maxCatalogVersion when providing catalog commits");
+    }
   }
 
   /**

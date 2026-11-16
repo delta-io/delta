@@ -97,7 +97,8 @@ public interface SnapshotBuilder {
    *
    * <p>When log data is provided, Kernel can avoid reading from the filesystem for information that
    * is already available in the parsed data, improving performance. Currently, only ratified staged
-   * commits are supported.
+   * commits are supported, and they require {@link #withMaxCatalogVersion(long)} even for {@link
+   * #atVersion(long)} queries.
    *
    * @param logData the parsed log data to use for optimization
    * @return a new builder instance with the provided log data
@@ -125,12 +126,22 @@ public interface SnapshotBuilder {
    * the latest ratified version of the table. This ensures that any snapshot resolution operations
    * respect the catalog's view of the table state.
    *
-   * <p>Important: This method is required for catalog-managed tables and must not be used for
-   * file-system managed tables. A {@link MaxCatalogVersionException} will be thrown at build time
-   * if this constraint is violated. For {@link #atVersion(long)}, the constraint applies only to
-   * catalog-managed versions of tables that are still catalog-managed: older file-system managed
-   * versions can be read with or without it, and versions from before a downgrade to file-system
-   * management can be read without it.
+   * <p>Important: Catalog implementations must provide this whenever the table is currently
+   * catalog-managed, including for {@link #atVersion(long)} queries. A {@link
+   * MaxCatalogVersionException} will be thrown at build time if it is missing when:
+   *
+   * <ul>
+   *   <li>no version or timestamp is specified and the resolved snapshot is catalog-managed;
+   *   <li>{@link #atTimestamp(long, Snapshot)} is used and the provided {@code latestSnapshot} is
+   *       catalog-managed; or
+   *   <li>{@link #withLogData(List)} provides catalog commits.
+   * </ul>
+   *
+   * <p>Kernel does not otherwise check whether a {@link #atVersion(long)} query needs it, since
+   * that would require loading the latest protocol. It is accepted for file-system managed
+   * snapshots, since a catalog-ratified downgrade produces one: when no version is specified, the
+   * snapshot is resolved at the max catalog version even if later file-system managed versions
+   * exist.
    *
    * <p>When specified, the following additional constraints are enforced:
    *
@@ -160,9 +171,8 @@ public interface SnapshotBuilder {
    *
    * @param engine the engine to use for filesystem operations
    * @return the resolved snapshot instance
-   * @throws MaxCatalogVersionException if a catalog-managed table is loaded without a maximum
-   *     catalog version, or a filesystem-managed table is loaded with one, subject to the time
-   *     travel exceptions described in {@link #withMaxCatalogVersion(long)}
+   * @throws MaxCatalogVersionException if a maximum catalog version is required but not provided,
+   *     as described in {@link #withMaxCatalogVersion(long)}
    */
   Snapshot build(Engine engine);
 }

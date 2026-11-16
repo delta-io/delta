@@ -20,12 +20,9 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.TableManager
-import io.delta.kernel.internal.actions.Protocol
-import io.delta.kernel.internal.table.SnapshotBuilderImpl
+import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils}
-import io.delta.kernel.types.{IntegerType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -59,24 +56,22 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
 
       val engine = createMockFSListFromEngine(checkpointFile ++ deltaFiles ++ crcFiles)
 
-      val testSchema = new StructType().add("c1", IntegerType.INTEGER);
-
-      val builder = TableManager
-        .loadSnapshot(dataPath.toString)
-        .asInstanceOf[SnapshotBuilderImpl]
-        .atVersion(versionToLoad)
-        .withProtocolAndMetadata(new Protocol(1, 2), testMetadata(testSchema))
-        .withLogData(ratifiedCommitParsedLogDatas.toList.asJava)
+      // SnapshotBuilder requires maxCatalogVersion with catalog commits, and then requires them to
+      // reach versionToLoad, so build the LogSegment directly to cover catalog commits that end
+      // before versionToLoad.
+      def buildLogSegment(): LogSegment = new SnapshotManager(dataPath).getLogSegmentForVersion(
+        engine,
+        Optional.of(versionToLoad),
+        ratifiedCommitParsedLogDatas.toList.asJava,
+        Optional.empty() /* maxCatalogVersionOpt */ )
 
       if (expectedExceptionClassOpt.isDefined) {
         val exception = intercept[Throwable] {
-          // Ensure we load the LogSegment to identify any gaps/issues
-          builder.build(engine).getLogSegment
+          buildLogSegment()
         }
         assert(expectedExceptionClassOpt.get.isInstance(exception))
       } else {
-        val snapshot = builder.build(engine)
-        val logSegment = snapshot.getLogSegment
+        val logSegment = buildLogSegment()
 
         val actualDeltaAndCommitFileStatuses = logSegment.getDeltas.asScala
 
