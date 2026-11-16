@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import java.util.concurrent.TimeUnit
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.concurrent.duration.Duration
 
@@ -978,6 +979,19 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       ordered: Boolean = true): Seq[FileAction] =
     toChangeActions(reconstructChangeFiles(deltaLog), dataChange, commitTimestamp, ordered)
       .collect().toSeq
+      .map(_.unwrap.asInstanceOf[FileAction])
+
+  /**
+   * Like [[reconstructFileActions]], in its order, but pulls the actions to the driver one
+   * partition of the sort at a time, so a large commit need not fit in driver memory.
+   */
+  private[delta] def reconstructFileActionsIterator(
+      deltaLog: DeltaLog,
+      dataChange: Boolean,
+      commitTimestamp: Long): Iterator[FileAction] =
+    toChangeActions(
+        reconstructChangeFiles(deltaLog), dataChange, commitTimestamp, ordered = true)
+      .toLocalIterator().asScala
       .map(_.unwrap.asInstanceOf[FileAction])
 
   /**
