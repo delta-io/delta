@@ -26,15 +26,19 @@ import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier => S
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
-import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, UnsupportedTableFormatException, NoSuchTableException => StorageNoSuchTableException}
+import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, TableAlreadyExistsException => StorageTableAlreadyExistsException, UnsupportedTableFormatException, NoSuchTableException => StorageNoSuchTableException}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.catalyst.catalog.CatalogTableType
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, V1Table}
 import org.apache.spark.sql.delta.{CatalogManagedTableMaintenanceOperation, IcebergConstants}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -892,6 +896,48 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
   private def tableExistsClient(loadResult: => TableInfo): UCDeltaCatalogClientImpl =
     new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = new StubUCDeltaClient(loadResult))
 
+  private def externalCatalogTable: CatalogTable = CatalogTable(
+    identifier = TableIdentifier("tbl", Some("sch"), Some("main")),
+    tableType = CatalogTableType.EXTERNAL,
+    storage = CatalogStorageFormat.empty.copy(locationUri = Some(new URI("s3://bucket/table"))),
+    schema = new StructType().add("id", "int"))
+
+  // TableCatalog.PROP_LOCATION is a V2-only key that must not reach UC table properties.
+  private val configWithReservedKey =
+    Map("k" -> "v", TableCatalog.PROP_LOCATION -> "s3://bucket/table")
+
+  test("createTable registers an EXTERNAL table with its snapshot version") {
+    val ucClient = new RecordingCreateUCDeltaClient
+    new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = ucClient).createTable(
+      Identifier.of(Array("sch"), "tbl"),
+      externalCatalogTable,
+      Metadata(configuration = configWithReservedKey),
+      Seq.empty,
+      Protocol(1, 2),
+      lastCommitTimestampMs = 2000L,
+      lastCommitVersion = 3L)
+
+    val (tableType, metadata, version) = ucClient.created.get
+    assert(tableType === UcTableType.EXTERNAL)
+    assert(metadata.getConfiguration.asScala === Map("k" -> "v"))
+    assert(version === 3L)
+  }
+
+  test("createTable reports an existing table as Spark's TableAlreadyExistsException") {
+    val ucClient = new RecordingCreateUCDeltaClient
+    ucClient.createFailure = Some(new StorageTableAlreadyExistsException("exists"))
+    intercept[TableAlreadyExistsException] {
+      new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = ucClient).createTable(
+        Identifier.of(Array("sch"), "tbl"),
+        externalCatalogTable,
+        Metadata(),
+        Seq.empty,
+        Protocol(1, 2),
+        lastCommitTimestampMs = 2000L,
+        lastCommitVersion = 0L)
+    }
+  }
+
   test("tableExists: returns true when UC returns table info") {
     val client = tableExistsClient(existingDeltaTableInfo())
     assert(client.tableExists(Identifier.of(Array("sch"), "tbl")))
@@ -972,6 +1018,7 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       protocol: AbstractProtocol,
       domainMetadata: util.List[AbstractDomainMetadata],
       lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
       uniformMetadata: Optional[UniformMetadata]): TableInfo =
     throw new UnsupportedOperationException
   // scalastyle:off argcount
@@ -1013,6 +1060,26 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       report: UCDeltaModels.CommitReport): Unit =
     throw new UnsupportedOperationException
   override def close(): Unit = ()
+}
+
+/** Records the arguments of {@code createTable}. */
+private class RecordingCreateUCDeltaClient extends ThrowingUCDeltaClient {
+  var created: Option[(UcTableType, AbstractMetadata, Long)] = None
+  var createFailure: Option[RuntimeException] = None
+  override def createTable(
+      tableUri: URI,
+      tableIdentifier: StorageTableIdentifier,
+      tableType: UcTableType,
+      metadata: AbstractMetadata,
+      protocol: AbstractProtocol,
+      domainMetadata: util.List[AbstractDomainMetadata],
+      lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
+      uniformMetadata: Optional[UniformMetadata]): TableInfo = {
+    createFailure.foreach(e => throw e)
+    created = Some((tableType, metadata, lastCommitVersion))
+    null
+  }
 }
 
 /**

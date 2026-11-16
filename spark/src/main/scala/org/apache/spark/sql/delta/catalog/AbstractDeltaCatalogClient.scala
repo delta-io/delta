@@ -115,6 +115,9 @@ private[delta] trait AbstractDeltaCatalogClient {
    *                              `metadata` / `protocol`, used by the catalog as the
    *                              authoritative "last updated" timestamp on the registered
    *                              entry.
+   * @param lastCommitVersion     version of the snapshot being registered. It is 0 for a new
+   *                              table and can be higher when an EXTERNAL table is registered
+   *                              over an existing Delta log.
    * @param uniformMetadata       UniForm Iceberg metadata generated atomically with the initial
    *                              snapshot;
    *                              [[None]] when the table was not created with UniForm enabled.
@@ -126,6 +129,7 @@ private[delta] trait AbstractDeltaCatalogClient {
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
       uniformMetadata: Option[UniformMetadata] = None): Unit
 
   /**
