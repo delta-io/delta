@@ -97,7 +97,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pruneColumns(expectedSparkSchema);
     Scan scan = builder.build();
 
-    assertTrue(scan instanceof DeltaV2Scan);
+    assertNotNull(asDeltaV2Scan(scan));
     assertEquals(expectedSparkSchema, scan.readSchema());
   }
 
@@ -589,14 +589,14 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
   public void testPushLimit_propagatedToScan(@TempDir File tempDir) {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
     builder.pushLimit(42);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(Option.apply(42), scan.getPushedLimit());
   }
 
   @Test
   public void testPushLimit_absentByDefault(@TempDir File tempDir) {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(Option.empty(), scan.getPushedLimit());
   }
 
@@ -606,7 +606,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushLimit(10);
     builder.pushLimit(20);
     assertEquals(OptionalInt.of(20), builder.getPushedLimit());
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(Option.apply(20), scan.getPushedLimit());
   }
 
@@ -625,7 +625,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     // A data filter (on a non-partition column) becomes a post-scan residual.
     pushFilters(builder, new GreaterThan("id", 10));
     builder.pushLimit(10);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(
         Option.empty(),
         scan.getPushedLimit(),
@@ -642,7 +642,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushFilters(
         scala.jdk.javaapi.CollectionConverters.<Expression>asScala(java.util.List.of()).toList());
     assertTrue(builder.pushLimit(10));
-    assertEquals(Option.empty(), ((DeltaV2Scan) builder.build()).getPushedLimit());
+    assertEquals(Option.empty(), asDeltaV2Scan(builder.build()).getPushedLimit());
   }
 
   @Test
@@ -654,7 +654,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     pushFilters(builder, new EqualTo("dep_id", 1));
 
     builder.pushLimit(10);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(
         Option.apply(10),
         scan.getPushedLimit(),
