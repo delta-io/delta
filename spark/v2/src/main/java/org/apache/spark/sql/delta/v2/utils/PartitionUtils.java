@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
@@ -233,11 +234,11 @@ public class PartitionUtils {
             partitionValues.size(),
             numPartCols);
 
-    return getPartitionRow(partitionValues::get, caster);
+    return getPartitionRow(key -> partitionValues.get(key), caster);
   }
 
   private static InternalRow getPartitionRow(
-      java.util.function.Function<String, String> partitionValue, PartitionValueCaster caster) {
+      Function<String, String> partitionValue, PartitionValueCaster caster) {
     final int numPartCols = caster.numFields();
     final Object[] values = new Object[numPartCols];
     for (int index = 0; index < numPartCols; index++) {
@@ -463,7 +464,7 @@ public class PartitionUtils {
   public static InternalRow getPartitionRow(
       scala.collection.immutable.Map<String, String> partitionValues, PartitionValueCaster caster) {
     final Map<String, String> javaPartitionValues = CollectionConverters.asJava(partitionValues);
-    return getPartitionRow(javaPartitionValues::get, caster);
+    return getPartitionRow(key -> javaPartitionValues.get(key), caster);
   }
 
   /**
