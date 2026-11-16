@@ -2791,7 +2791,7 @@
     "message" : [
       "You are trying to read a Delta table <tableName> that does not have any columns.",
       "",
-      "Write some new data with the option `mergeSchema = true` to be able to read the table."
+      "Add at least one column to the table before reading it."
     ],
     "sqlState" : "428GU"
   },
