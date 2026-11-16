@@ -143,8 +143,15 @@ class SingleCommit private (
           commitInfo: CommitInfo, checkpointOpt: Option[Checkpoint]): Iterator[Action] =
         amtProviderFromCheckpointOpt(checkpointOpt).reconstructFileActionsIterator(
           deltaLog, commitInfo.getDataChangeOrThrow, commitInfo.getCommitTimestamp)
-      private var underlying = toLogicalActions(
-        commitJsonIter, skipNoDataChangeFileActions = false, computeTreeFileActions)
+      private var underlying =
+        try {
+          toLogicalActions(
+            commitJsonIter, skipNoDataChangeFileActions = false, computeTreeFileActions)
+        } catch {
+          case e: Throwable =>
+            commitJsonIter.close()
+            throw e
+        }
       override def hasNext: Boolean = underlying.hasNext
       override def next(): Action = underlying.next()
       override def close(): Unit = commitJsonIter.close()
