@@ -79,9 +79,9 @@ trait LogStore {
    */
   final def read(fileStatus: FileStatus, hadoopConf: Configuration): Seq[String] = {
     val iter = readAsIterator(fileStatus, hadoopConf)
-    try {
+    Utils.tryWithSafeFinally {
       iter.toIndexedSeq
-    } finally {
+    } {
       iter.close()
     }
   }
