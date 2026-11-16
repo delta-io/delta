@@ -33,9 +33,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -71,11 +68,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
-import org.apache.spark.sql.delta.v2.adapters.KernelMetadataAdapter;
-import org.apache.spark.sql.delta.v2.adapters.KernelProtocolAdapter;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.tablemanager.CachedSnapshotManager;
@@ -235,8 +229,13 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     }
 
     // ===== Test getTablePath returns Path from tablePath =====
+    // A catalog table keeps the scheme of its location; a path-based table keeps the given path.
+    Path expectedPath =
+        method == ConstructionMethod.FROM_CATALOG_TABLE
+            ? new Path(catalogTable.location())
+            : new Path(path);
     Path retrievedPath = kernelTable.getTablePath();
-    assertEquals(new Path(path), retrievedPath, "getTablePath should return Path from tablePath");
+    assertEquals(expectedPath, retrievedPath, "getTablePath should return Path from tablePath");
   }
 
   /** Enum to represent different construction methods for DeltaV2Table */
@@ -499,9 +498,9 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     URI uri = new URI("file:///data/spark%25dir%25prefix/table");
     String result = (String) getDecodedPath.invoke(null, uri);
 
-    // For file URIs, getDecodedPath returns just the path without the scheme
+    // The file scheme is kept, so the path does not resolve against the default filesystem
     assertEquals(
-        "/data/spark%dir%prefix/table",
+        "file:/data/spark%dir%prefix/table",
         result, "URL-encoded characters should be properly decoded");
   }
 
@@ -1053,7 +1052,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
    * Verifies that pre-seeded persisted metadata (older snapshot, fewer columns) overrides the
    * current snapshot schema (which has been evolved with ALTER TABLE).
    */
-  private void verifyPersistedEntryDrivesSparkTableSchema(
+  private void verifyPersistedEntryDrivesDeltaV2TableSchema(
       File tempDir, String optionKey, String tableNameSuffix, boolean usePathBasedConstructor) {
     String tablePath = new File(tempDir, "table").getAbsolutePath();
     String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
@@ -1071,13 +1070,9 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     // Capture v0 metadata BEFORE evolving the table.
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, createKernelContext());
-    SnapshotImpl snapshotV0 =
-        DeltaV2Snapshot$.MODULE$.getKernelSnapshot(
-            snapshotManager.loadSnapshotAt(
-                0L, DeltaV2QueryContext$.MODULE$.apply(Optional.empty())));
-    Metadata metadataV0 = snapshotV0.getMetadata();
-    Protocol protocolV0 = snapshotV0.getProtocol();
-    String tableId = metadataV0.getId();
+    Snapshot snapshotV0 =
+        snapshotManager.loadSnapshotAt(0L, DeltaV2QueryContext$.MODULE$.apply(Optional.empty()));
+    String tableId = snapshotV0.metadata().id();
 
     // Seed the schema log with v0's metadata (id INT data, name STRING partition).
     DeltaSourceMetadataTrackingLog trackingLog =
@@ -1095,8 +1090,8 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         PersistedMetadata.apply(
             tableId,
             0L,
-            new KernelMetadataAdapter(metadataV0),
-            new KernelProtocolAdapter(protocolV0),
+            snapshotV0.metadata(),
+            snapshotV0.protocol(),
             tablePath + "/_delta_log/_streaming_metadata");
     trackingLog.writeNewMetadata(seededEntry, false);
 
@@ -1147,7 +1142,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   /** Persisted entry overrides the snapshot schema when SCHEMA_TRACKING_LOCATION is set. */
   @Test
   public void testSchemaTracking_persistedEntryOverridesSnapshotSchema(@TempDir File tempDir) {
-    verifyPersistedEntryDrivesSparkTableSchema(
+    verifyPersistedEntryDrivesDeltaV2TableSchema(
         tempDir,
         DeltaOptions.SCHEMA_TRACKING_LOCATION(),
         "primary_key",
@@ -1158,7 +1153,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   @Test
   public void testSchemaTracking_persistedEntryOverridesSnapshotSchemaWithAliasKey(
       @TempDir File tempDir) {
-    verifyPersistedEntryDrivesSparkTableSchema(
+    verifyPersistedEntryDrivesDeltaV2TableSchema(
         tempDir,
         DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(),
         "alias_key",
@@ -1169,7 +1164,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   @Test
   public void testSchemaTracking_persistedEntryOverridesSnapshotSchemaWithPathBasedConstructor(
       @TempDir File tempDir) {
-    verifyPersistedEntryDrivesSparkTableSchema(
+    verifyPersistedEntryDrivesDeltaV2TableSchema(
         tempDir,
         DeltaOptions.SCHEMA_TRACKING_LOCATION(),
         "path_based_constructor",

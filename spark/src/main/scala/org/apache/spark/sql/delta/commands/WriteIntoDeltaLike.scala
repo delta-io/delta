@@ -489,6 +489,8 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
         queryRelation = originalQueryBeforeSchemaAdjustmentProjection,
         isByName = isInsertReplaceUsingByName,
         conf = sparkSession.sessionState.conf)
+      val castMatchingKeysEnabled = sparkSession.conf.get(
+        DeltaSQLConf.REPLACE_USING_CAST_MATCHING_KEYS_ENABLED)
 
       val uniqueTableRelationAttrs =
         replaceUsingCols.map(col => UnresolvedAttribute(Seq(options.targetAlias.get, col))).distinct
@@ -496,10 +498,40 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
       // For REPLACE USING, an internal table alias is required to ensure certain attributes
       // resolve to the target table, not the query. Without it, column resolution incorrectly
       // references all the attributes to the query.
-      val queryResolvedConditions = replaceUsingCols.map(replaceUsingCol => EqualTo(
-        left = UnresolvedAttribute(Seq(options.targetAlias.get, replaceUsingCol)),
-        right = originalQueryBeforeSchemaAdjustmentProjection.output.find(queryAttr =>
-          sparkSession.sessionState.analyzer.resolver(queryAttr.name, replaceUsingCol)).get))
+      val queryResolvedConditions = if (!castMatchingKeysEnabled) {
+        replaceUsingCols.map(replaceUsingCol => EqualTo(
+          left = UnresolvedAttribute(Seq(options.targetAlias.get, replaceUsingCol)),
+          right = originalQueryBeforeSchemaAdjustmentProjection.output.find(queryAttr =>
+            sparkSession.sessionState.analyzer.resolver(queryAttr.name, replaceUsingCol)).get))
+      } else {
+        val schemaAdjustmentProjection =
+          data.queryExecution.analyzed.asInstanceOf[Project].projectList
+        replaceUsingCols.map { replaceUsingCol =>
+          // Schema adjustment preserves source order, including for BY NAME inserts.
+          val (sourceKey, sourceColumnIndex) =
+            originalQueryBeforeSchemaAdjustmentProjection.output.zipWithIndex.find {
+              case (queryAttr, _) =>
+                sparkSession.sessionState.analyzer.resolver(queryAttr.name, replaceUsingCol)
+            }.get
+          val projectedKey = schemaAdjustmentProjection(sourceColumnIndex)
+          val matchingKey = if (sparkSession.sessionState.analyzer.resolver(
+              projectedKey.name, replaceUsingCol)) {
+            // This source key mapped to the matching target column, so reuse its conversion.
+            projectedKey
+          } else {
+            // Misaligned positional keys retain legacy matching against the original
+            // source attribute. Applying a conversion here is too messy for such a rare case.
+            sourceKey
+          }
+          val keyForMatching = matchingKey match {
+            case alias: Alias => alias.child
+            case other => other
+          }
+          EqualTo(
+            left = UnresolvedAttribute(Seq(options.targetAlias.get, replaceUsingCol)),
+            right = keyForMatching)
+        }
+      }
 
       (uniqueTableRelationAttrs, queryResolvedConditions)
     }

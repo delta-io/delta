@@ -41,7 +41,8 @@ class DeletionVectorFileSizeSuite extends QueryTest
     require(commitVersion <= deltaLog.update().version,
       "Commit version should be less than or equal to the current version")
     val changes = deltaLog.getChanges(
-      commitVersion, commitVersion, catalogTableOpt = None, failOnDataLoss = true)
+      commitVersion, commitVersion, catalogTableOpt = None, failOnDataLoss = true,
+      skipNoDataChangeFileActions = false)
     val (changesItrForAddFiles, changesItrForRemoveFiles) = changes.duplicate
     val addFiles: Seq[AddFile] =
        changesItrForAddFiles.flatMap(_._2.collect { case a: AddFile => a }).toSeq

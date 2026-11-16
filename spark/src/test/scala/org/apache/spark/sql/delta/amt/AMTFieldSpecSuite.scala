@@ -87,7 +87,8 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
    */
   private def reconstructAddFiles(
       provider: AMTCheckpointProvider, deltaLog: DeltaLog, metadata: Metadata): DataFrame =
-    new AMTCheckpointProvider(
+    AMTCheckpointProvider(
+        spark = spark,
         manifestCommitVersion = provider.manifestCommitVersion,
         checkpointAction = updateCheckpointActions(provider.checkpointAction) {
           case _: Metadata => metadata
@@ -166,8 +167,9 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       // Content-stats sub-structs are based at 10_000 + 200 * columnId, with the per-statistic
       // offsets from the Iceberg V4 column-stats proposal. The sub-struct carries the base id
       // (stats are resolved by id) and is named by the column's logical name with its field id
-      // attached (see StatsLeaf.fieldName), so the name stays unique. An array is not
-      // skipping-eligible, so it gets a null count and no bounds; a struct contributes its leaf.
+      // attached (see StatsColumn.fieldName), so the name stays unique. An array is not
+      // skipping-eligible, so it gets a null count and no bounds; a struct contributes its nested
+      // field.
       def statsIds(columnId: Int, name: String, withBounds: Boolean): Seq[(String, Int)] = {
         val base = 10000 + 200 * columnId
         val field = s"${name}_$columnId" // sub-struct field name: logical name + field id
@@ -250,8 +252,8 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
 
       // The logical name of the single `content_stats` sub-struct on the latest checkpoint's
       // manifests. Sub-structs are named `<logical name>_<field id>` (the id keeps the name unique;
-      // see StatsLeaf.fieldName), so strip the id suffix to compare the logical part that a rename
-      // refreshes.
+      // see StatsColumn.fieldName), so strip the id suffix to compare the logical part that a
+      // rename refreshes.
       def contentStatsNames(): Seq[String] = {
         val snapshot = deltaLog.update()
         val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
@@ -510,7 +512,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
               sizeInBytes = rewrittenFile.length())
           }
           val rewrittenProvider = AMTCheckpointProvider.fromCheckpoint(
-            deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
+            spark, deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
           assertLeavesEqual(rewrittenProvider.leaves, provider.leaves)
 
           // Field-id read is what makes this work: with it off, the read falls back to
@@ -521,7 +523,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
           withSQLConf(SQLConf.PARQUET_FIELD_ID_READ_ENABLED.key -> "false") {
             val error = intercept[SparkRuntimeException] {
               AMTCheckpointProvider.fromCheckpoint(
-                deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
+                spark, deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
             }
             assert(error.getCondition == "EXPRESSION_DECODING_FAILED",
               s"Expected an EXPRESSION_DECODING_FAILED error, got ${error.getCondition}.")

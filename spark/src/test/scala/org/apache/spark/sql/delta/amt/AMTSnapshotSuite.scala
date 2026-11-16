@@ -16,12 +16,13 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, Checkpoints, DeletionVectorsTestUtils, DeltaIllegalStateException, DeltaLog, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
+import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArrayFormat
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.Path
@@ -1203,6 +1204,55 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     }
   }
 
+  /** Returns `dvActions` with each [[AddFile]]'s DV replaced by an inline DV over `bitmap`. */
+  private def withInlineDv(dvActions: Seq[Action], bitmap: RoaringBitmapArray): Seq[Action] = {
+    val inlineDv = DeletionVectorDescriptor.inlineInLog(
+      bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable), bitmap.cardinality)
+    dvActions.map {
+      case a: AddFile => a.copy(deletionVector = inlineDv)
+      case other => other
+    }
+  }
+
+  for (useCommitLarge <- Seq(false, true))
+  test(s"commit rejects an inline DV on an AMT table, useCommitLarge=$useCommitLarge") {
+    withTable("amt_inline_dv") {
+      val t = "amt_inline_dv"
+      createAMTTable(t, checkpointInterval = 100)
+      Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(t)
+      val log = deltaLogForName(t)
+      val file = log.update().allFiles.collect().head
+      val bitmap = RoaringBitmapArray(0L)
+      val versionBefore = log.update().version
+
+      val ex = withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "false") {
+        intercept[DeltaIllegalStateException] {
+          val actions = withInlineDv(writeFileWithDVOnDisk(log, file, bitmap), bitmap)
+          val op = DeltaOperations.Delete(predicate = Nil)
+          if (useCommitLarge) {
+            log.startTransaction().commitLarge(
+              spark,
+              nonProtocolMetadataActions = actions.iterator,
+              newProtocolOpt = None,
+              op = op,
+              context = Map.empty,
+              metrics = Map.empty,
+              dataChange = true)
+          } else {
+            log.startTransaction().commit(actions, op)
+          }
+        }
+      }
+      checkError(
+        ex,
+        condition = "DELTA_ADAPTIVE_METADATA_INLINE_DELETION_VECTOR_DISALLOWED",
+        sqlState = "XXKDS",
+        parameters = Map("feature" -> AdaptiveMetadataTableFeature.name))
+      assert(log.update().version == versionBefore)
+      checkAnswer(spark.table(t), Seq(Row(1), Row(2)))
+    }
+  }
+
   test("reconstruction surfaces DATA entries that live directly in the root") {
     withTable("amt_root_data") {
       val name = "amt_root_data"
@@ -1228,7 +1278,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         checkpointWithSyntheticRoot(deltaLog, provider.checkpointAction, rootDataRows)
 
       val rootProvider = AMTCheckpointProvider.fromCheckpoint(
-        deltaLog, checkpoint, manifestCommitVersion = provider.manifestCommitVersion)
+        spark, deltaLog, checkpoint, manifestCommitVersion = provider.manifestCommitVersion)
       assert(rootProvider.leaves.isEmpty, "A DATA-only root must yield no leaf pointers.")
 
       val expected = rootAdds.map(_.path).toSet
@@ -1271,8 +1321,8 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       leaf.copy(manifest_info =
         leaf.manifest_info.copy(dv = Some(mdvBytesFor(deletedPos)))) +:
         base.leaves.tail
-    val provider = new AMTCheckpointProvider(
-      base.manifestCommitVersion, base.checkpointAction, patchedLeaves, base.tableRoot)
+    val provider = AMTCheckpointProvider(
+      spark, base.manifestCommitVersion, base.checkpointAction, patchedLeaves, base.tableRoot)
 
     val reconstructed = reconstructedPaths(provider, snapshot.deltaLog)
     assert(reconstructed.size == baseCount - 1,
@@ -1334,8 +1384,8 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         case _ => leaf
       }
     }
-    val provider = new AMTCheckpointProvider(
-      base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
+    val provider = AMTCheckpointProvider(
+      spark, base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
 
     val dropped =
       twoPositions.map(locs(twoLeaf)).toSet ++
@@ -1404,8 +1454,8 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
           dv = Some(mdvBytesFor(bLeafAndPos._2))))
       } else leaf
     }
-    val provider = new AMTCheckpointProvider(
-      base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
+    val provider = AMTCheckpointProvider(
+      spark, base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
 
     val survivors = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
       .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))

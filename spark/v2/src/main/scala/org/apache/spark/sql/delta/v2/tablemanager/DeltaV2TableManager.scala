@@ -15,12 +15,11 @@
  */
 package org.apache.spark.sql.delta.v2.tablemanager
 
-import java.util.Optional
-
 import org.apache.spark.sql.delta.{DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore}
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2SnapshotManager}
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 import io.delta.kernel.{CommitRange => KernelCommitRange}
 import io.delta.kernel.engine.{Engine => KernelEngine}
@@ -49,14 +48,13 @@ private[v2] trait DeltaV2TableManager {
    * @param startVersion first commit version to include.
    * @param endVersion last commit version to include, or empty to read through the
    *   latest available commit.
-   * @param catalogTableOpt catalog metadata is used to read the table's commit range.
-   * @param failOnDataLoss whether to fail when commits in the range are missing. Only false is
-   *   currently supported.
+   * @param queryContext provides catalog metadata used to read the table's commit range.
+   * @param failOnDataLoss whether to fail when commits in the range are missing.
    */
   private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
-      catalogTableOpt: Option[CatalogTable],
+      queryContext: DeltaV2QueryContext,
       failOnDataLoss: Boolean = false)
       : ClosableIterator[DeltaSingleCommit]
 
@@ -85,8 +83,7 @@ private[v2] trait DeltaV2TableManager {
   /** Gets table changes using inputs scoped to the current query. */
   def getTableChanges(
       kernelEngine: KernelEngine,
-      startVersion: Long,
-      endVersion: Optional[java.lang.Long],
+      params: GetTableChangesParam,
       queryContext: DeltaV2QueryContext): KernelCommitRange
 
   /** Retires this manager and releases any resources it owns. */

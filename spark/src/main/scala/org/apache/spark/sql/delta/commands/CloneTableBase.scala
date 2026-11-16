@@ -363,9 +363,6 @@ abstract class CloneTableBase(
       targetSnapshot: SnapshotDescriptor,
       validatedOverrides: Map[String, String]): Map[String, String] = {
     if (tableExists(targetSnapshot)) {
-      assert(validatedOverrides.isEmpty,
-        "Explicit overrides on Coordinated Commits configurations for existing tables" +
-          " are not supported, and should have been caught earlier.")
       CoordinatedCommitsUtils.getExplicitCCConfigurations(targetSnapshot.metadata.configuration)
     } else {
       if (validatedOverrides.nonEmpty) {
@@ -440,7 +437,7 @@ abstract class CloneTableBase(
         !sourceTable.isInstanceOf[CloneIcebergSource] &&
         sourceTable.metadata.columnMappingMode != IdMapping &&
         (AMTUtils.amtRequested(metadata.configuration) ||
-          AMTUtils.amtEnabled(metadata, targetSnapshot.protocol))) {
+          AMTUtils.amtSupported(targetSnapshot.protocol))) {
       throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
         AdaptiveMetadataTableFeature.name, sourceTable.metadata.columnMappingMode.name)
     }

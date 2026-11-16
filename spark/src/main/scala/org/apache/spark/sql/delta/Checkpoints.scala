@@ -635,7 +635,7 @@ trait Checkpoints extends DeltaLogging {
         val checkpoint = readCheckpointActionFromCommit(
           deltaCommitFileProvider, lastManifestCommit)
         val amtCheckpointProvider = AMTCheckpointProvider.fromCheckpoint(
-          this, checkpoint, manifestCommitVersion)
+          spark, this, checkpoint, manifestCommitVersion)
         val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
           manifestCommitVersion, contentRootVersion, checkpoint, amtCheckpointProvider.leaves)
         Some(lastCheckpointInfo) -> Some(amtCheckpointProvider)

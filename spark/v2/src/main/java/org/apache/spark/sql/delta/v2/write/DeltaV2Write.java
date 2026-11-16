@@ -39,7 +39,7 @@ import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2OptimisticTransaction;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -86,7 +86,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
   private final String tablePath;
   private final Snapshot initialSnapshot;
   private final Optional<CatalogTable> catalogTable;
-  private final DeltaV2SnapshotManager snapshotManager;
+  private final DeltaV2TableManager tableManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   /**
@@ -102,8 +102,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
    * @param initialSnapshot the batch's planned snapshot the write state is built from (and the
    *     streaming guard's schema/protocol baseline)
    * @param catalogTable the catalog table containing table metadata
-   * @param snapshotManager reloads the latest snapshot per epoch on the streaming path; unused by
-   *     the batch path (a single commit off {@code initialSnapshot})
+   * @param tableManager supplies the shared snapshot manager for batch and streaming commits
    * @param dataSchema the non-partition columns (the Parquet file body)
    * @param partitionSchema the partition columns in partition order (empty when unpartitioned)
    */
@@ -113,7 +112,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
       String tablePath,
       Snapshot initialSnapshot,
       Optional<CatalogTable> catalogTable,
-      DeltaV2SnapshotManager snapshotManager,
+      DeltaV2TableManager tableManager,
       StructType dataSchema,
       StructType partitionSchema,
       LogicalWriteInfo writeInfo,
@@ -123,7 +122,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.catalogTable = requireNonNull(catalogTable, "catalogTable is null");
-    this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
+    this.tableManager = requireNonNull(tableManager, "tableManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
@@ -143,7 +142,7 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
     DeltaV2Snapshot snapshot = (DeltaV2Snapshot) initialSnapshot;
     DeltaV2OptimisticTransaction optimisticTransaction =
         new DeltaV2OptimisticTransaction(
-            ScalaUtils.toScalaOption(catalogTable), snapshot, snapshot.kernelContext());
+            ScalaUtils.toScalaOption(catalogTable), snapshot, tableManager);
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
             engine,
@@ -175,7 +174,8 @@ class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
             partitionSchema,
             writeInfo,
             variantShreddingEnabled);
-    return new DeltaV2StreamingWrite(snapshotManager, context);
+    return new DeltaV2StreamingWrite(
+        tableManager.snapshotManager(ScalaUtils.toScalaOption(catalogTable)), context);
   }
 
   /**

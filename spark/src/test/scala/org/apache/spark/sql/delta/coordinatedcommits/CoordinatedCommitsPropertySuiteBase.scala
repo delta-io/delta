@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
-import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaLog}
 import org.apache.spark.sql.delta.DeltaConfigs.{COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.storage.commit.CommitCoordinatorClient
@@ -42,8 +42,6 @@ trait CoordinatedCommitsPropertySuiteBase extends QueryTest
     CommitCoordinatorProvider.registerBuilder(CommitCoordinatorBuilder2())
   }
 
-  protected val command: String
-
   protected val cc1: String = "commit-coordinator-1"
 
   private case class CommitCoordinatorBuilder1() extends CommitCoordinatorBuilder {
@@ -67,8 +65,6 @@ trait CoordinatedCommitsPropertySuiteBase extends QueryTest
 
   protected val coordinatorNameKey: String = COORDINATED_COMMITS_COORDINATOR_NAME.key
   protected val coordinatorConfKey: String = COORDINATED_COMMITS_COORDINATOR_CONF.key
-  protected val tableConfKey: String = COORDINATED_COMMITS_TABLE_CONF.key
-
   protected val coordinatorNameDefaultKey: String =
     COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey
   protected val coordinatorConfDefaultKey: String =
@@ -132,112 +128,10 @@ trait CoordinatedCommitsPropertyCreateTableSuiteBase extends CoordinatedCommitsP
         coordinatorConfDefaultKey -> randomCoordinatorConf),
       expectedCoordinator = Some(cc1))
   }
-
-  test("Illegal command-specified property combinations throw an exception.") {
-    var e = intercept[DeltaIllegalArgumentException] {
-      testImpl(
-        commandConfs = Seq(coordinatorNameKey -> cc1))
-    }
-    checkError(
-      exception = e,
-      "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_COMMAND",
-      sqlState = "42616",
-      parameters = Map("command" -> command, "configuration" -> coordinatorConfKey))
-
-    e = intercept[DeltaIllegalArgumentException] {
-      testImpl(
-        commandConfs = Seq(coordinatorConfKey -> randomCoordinatorConf))
-    }
-    checkError(
-      exception = e,
-      "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_COMMAND",
-      sqlState = "42616",
-      parameters = Map("command" -> command, "configuration" -> coordinatorNameKey))
-
-    e = intercept[DeltaIllegalArgumentException] {
-      testImpl(
-        commandConfs = Seq(
-          coordinatorNameKey -> cc1,
-          coordinatorConfKey -> randomCoordinatorConf,
-          tableConfKey -> randomTableConf))
-    }
-    checkError(
-      exception = e,
-      "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_COMMAND",
-      sqlState = "42616",
-      parameters = Map("command" -> command, "configuration" -> tableConfKey))
-  }
-
-  test("Illegal default property combinations throw an exception if none specified in command.") {
-    var e = intercept[DeltaIllegalArgumentException] {
-      testImpl(
-        defaultConfs = Seq(coordinatorNameDefaultKey -> cc1))
-    }
-    checkError(
-      exception = e,
-      "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION",
-      sqlState = "42616",
-      parameters = Map("command" -> command, "configuration" -> coordinatorConfDefaultKey))
-
-    e = intercept[DeltaIllegalArgumentException] {
-      testImpl(
-        defaultConfs = Seq(coordinatorConfDefaultKey -> randomCoordinatorConf))
-    }
-    checkError(
-      exception = e,
-      "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION",
-      sqlState = "42616",
-      parameters = Map("command" -> command, "configuration" -> coordinatorNameDefaultKey))
-
-    e = intercept[DeltaIllegalArgumentException] {
-      testImpl(
-        defaultConfs = Seq(
-          coordinatorNameDefaultKey -> cc1,
-          coordinatorConfDefaultKey -> randomCoordinatorConf,
-          tableConfDefaultKey -> randomTableConf))
-    }
-    checkError(
-      exception = e,
-      "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_SESSION",
-      sqlState = "42616",
-      parameters = Map("command" -> command, "configuration" -> tableConfDefaultKey))
-  }
-
-  test("Illegal default property combinations are ignored if command specifications are valid.") {
-    testImpl(
-      commandConfs = Seq(
-        coordinatorNameKey -> cc1,
-        coordinatorConfKey -> randomCoordinatorConf),
-      defaultConfs = Seq(
-        coordinatorNameDefaultKey -> cc2,
-        coordinatorConfDefaultKey -> randomCoordinatorConf,
-        tableConfDefaultKey -> randomTableConf),
-      expectedCoordinator = Some(cc1))
-  }
-  test("Illegal command-specified property combinations throw an exception even if default " +
-      "configurations are valid.") {
-    val e = intercept[DeltaIllegalArgumentException] {
-      testImpl(
-        commandConfs = Seq(
-          coordinatorNameKey -> cc1,
-          coordinatorConfKey -> randomCoordinatorConf,
-          tableConfKey -> randomTableConf),
-        defaultConfs = Seq(
-          coordinatorNameDefaultKey -> cc2,
-          coordinatorConfDefaultKey -> randomCoordinatorConf))
-    }
-    checkError(
-      exception = e,
-      "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_COMMAND",
-      sqlState = "42616",
-      parameters = Map("command" -> command, "configuration" -> tableConfKey))
-  }
 }
 
 class CoordinatedCommitsPropertyCreateTableSuite
   extends CoordinatedCommitsPropertyCreateTableSuiteBase {
-
-  override protected val command: String = "CREATE"
 
   override def testImpl(
       commandConfs: Seq[(String, String)],
@@ -256,8 +150,6 @@ class CoordinatedCommitsPropertyCreateTableSuite
 
 class CoordinatedCommitsPropertyCreateTableAsSelectSuite
   extends CoordinatedCommitsPropertyCreateTableSuiteBase {
-
-  override protected val command: String = "CREATE"
 
   override def testImpl(
       commandConfs: Seq[(String, String)],
@@ -279,8 +171,6 @@ class CoordinatedCommitsPropertyCreateTableAsSelectSuite
 
 class CoordinatedCommitsPropertyCreateTableWithShallowCloneSuite
   extends CoordinatedCommitsPropertyCreateTableSuiteBase {
-
-  override protected val command: String = "CREATE with CLONE"
 
   override def testImpl(
       commandConfs: Seq[(String, String)] = Seq(),
@@ -333,33 +223,6 @@ class CoordinatedCommitsPropertyCreateTableWithShallowCloneSuite
 
 trait CoordinatedCommitsPropertyReplaceTableSuiteBase extends CoordinatedCommitsPropertySuiteBase {
 
-  test("Any command-specified Coordinated Commits overrides throw an exception") {
-    var e = intercept[DeltaIllegalArgumentException] {
-      testImpl(
-        commandConfs = Seq(
-          coordinatorNameKey -> cc1,
-          coordinatorConfKey -> randomCoordinatorConf))
-    }
-    checkError(
-      exception = e,
-      "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
-      sqlState = "42616",
-      parameters = Map("Command" -> command))
-
-    e = intercept[DeltaIllegalArgumentException] {
-      testImpl(
-        commandConfs = Seq(
-          coordinatorNameKey -> cc1,
-          coordinatorConfKey -> randomCoordinatorConf,
-          tableConfKey -> randomTableConf))
-    }
-    checkError(
-      exception = e,
-      "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
-      sqlState = "42616",
-      parameters = Map("Command" -> command))
-  }
-
   test("Default Coordinated Commits configurations from SparkSession are ignored") {
     testImpl(
       defaultConfs = Seq(
@@ -387,8 +250,6 @@ trait CoordinatedCommitsPropertyReplaceTableSuiteBase extends CoordinatedCommits
 class CoordinatedCommitsPropertyReplaceTableSuite
   extends CoordinatedCommitsPropertyReplaceTableSuiteBase {
 
-  override protected val command: String = "REPLACE"
-
   override def testImpl(
       commandConfs: Seq[(String, String)],
       defaultConfs: Seq[(String, String)],
@@ -407,8 +268,6 @@ class CoordinatedCommitsPropertyReplaceTableSuite
 
 class CoordinatedCommitsPropertyReplaceTableAsSelectSuite
   extends CoordinatedCommitsPropertyReplaceTableSuiteBase {
-
-  override protected val command: String = "REPLACE"
 
   override def testImpl(
       commandConfs: Seq[(String, String)],
@@ -431,8 +290,6 @@ class CoordinatedCommitsPropertyReplaceTableAsSelectSuite
 
 class CoordinatedCommitsPropertyReplaceTableWithShallowCloneSuite
   extends CoordinatedCommitsPropertyReplaceTableSuiteBase {
-
-  override protected val command: String = "REPLACE with CLONE"
 
   override def testImpl(
       commandConfs: Seq[(String, String)] = Seq(),

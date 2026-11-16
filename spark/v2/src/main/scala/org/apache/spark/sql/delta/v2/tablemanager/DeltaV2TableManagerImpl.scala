@@ -15,24 +15,27 @@
  */
 package org.apache.spark.sql.delta.v2.tablemanager
 
-import java.util.{EnumSet, Optional}
 import java.util.concurrent.atomic.AtomicReference
 
-import scala.jdk.OptionConverters._
-
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaSingleCommit, Snapshot}
+import org.apache.spark.sql.delta.{DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStoreProvider}
+import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
+import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.{
   DeltaV2QueryContext,
   DeltaV2SingleCommit,
   DeltaV2SnapshotManager
 }
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 import org.apache.hadoop.fs.Path
 import io.delta.kernel.{CommitRange => KernelCommitRange}
 import io.delta.kernel.engine.{Engine => KernelEngine}
+import io.delta.kernel.exceptions.{
+  CommitRangeNotFoundException,
+  StartVersionNotFoundException
+}
 import io.delta.kernel.internal.{DeltaHistoryManager => KernelDeltaHistoryManager}
-import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -53,6 +56,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     val sessionInvariantFsOptions: Map[String, String],
     val initialCatalogTableOpt: Option[CatalogTable])
     extends DeltaV2TableManager
+    with DeltaV2Logging
     with LogStoreProvider
 {
 
@@ -68,6 +72,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
     new AtomicReference[CatalogTable](initialCatalogTableOpt.orNull)
   private val cachedSnapshotManager =
     new CachedSnapshotManager(tablePath, kernelContext, latestCatalogTable)
+  private val maxStartVersionAttempts = 3
 
   override private[v2] def snapshotManager(
       catalogTableOpt: Option[CatalogTable]): DeltaV2SnapshotManager = {
@@ -80,25 +85,42 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   override private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
-      catalogTableOpt: Option[CatalogTable],
+      queryContext: DeltaV2QueryContext,
       failOnDataLoss: Boolean)
       : ClosableIterator[DeltaSingleCommit] = {
-    if (failOnDataLoss) {
-      throw DeltaErrors.assertionFailedError(
-        "getSingleCommitIterator does not support failOnDataLoss = true")
-    }
     val kernelEngine = kernelContext.getDefaultEngine()
-    val commitRange = cachedSnapshotManager.getTableChanges(
-      kernelEngine,
-      startVersion,
-      endVersion.map(Long.box).toJava,
-      DeltaV2QueryContext(catalogTableOpt))
-    val kernelCommits = commitRange.getCommitActions(
-      kernelEngine, EnumSet.allOf(classOf[KernelDeltaAction]))
+    val hadoopConf = kernelContext.materializeHadoopConf()
+    var commitRange: KernelCommitRange = null
+    var earliestVersionToFetch = startVersion
+    var attempt = 1
+    while (commitRange == null) {
+      try {
+        commitRange = cachedSnapshotManager.getTableChanges(
+          kernelEngine,
+          GetTableChangesParam(earliestVersionToFetch, endVersion, false, failOnDataLoss),
+          queryContext)
+      } catch {
+        case e: StartVersionNotFoundException =>
+          if (failOnDataLoss || !e.getEarliestAvailableVersion.isPresent ||
+              attempt >= maxStartVersionAttempts) {
+            throw e
+          }
+          earliestVersionToFetch = e.getEarliestAvailableVersion.get()
+          logWarning(
+            s"Start version commit $startVersion no longer exists for table $tablePath " +
+              s"(attempt $attempt/$maxStartVersionAttempts). Skipping to earliest available " +
+              s"version $earliestVersionToFetch because failOnDataLoss is false.")
+        case _: CommitRangeNotFoundException =>
+          return new ClosableWrapper[DeltaSingleCommit](Iterator.empty).toClosable
+      }
+      attempt += 1
+    }
+    val kernelCommitFiles = commitRange.getCommitFiles()
     new ClosableIterator[DeltaSingleCommit] {
-      override def hasNext: Boolean = kernelCommits.hasNext
-      override def next(): DeltaSingleCommit = DeltaV2SingleCommit(kernelCommits.next())
-      override def close(): Unit = kernelCommits.close()
+      override def hasNext: Boolean = kernelCommitFiles.hasNext
+      override def next(): DeltaSingleCommit =
+        DeltaV2SingleCommit(kernelCommitFiles.next(), logStore, hadoopConf)
+      override def close(): Unit = kernelCommitFiles.close()
     }
   }
 
@@ -131,10 +153,9 @@ private[tablemanager] class DeltaV2TableManagerImpl(
 
   override def getTableChanges(
       kernelEngine: KernelEngine,
-      startVersion: Long,
-      endVersion: Optional[java.lang.Long],
+      params: GetTableChangesParam,
       queryContext: DeltaV2QueryContext): KernelCommitRange =
-    cachedSnapshotManager.getTableChanges(kernelEngine, startVersion, endVersion, queryContext)
+    cachedSnapshotManager.getTableChanges(kernelEngine, params, queryContext)
 
   override def retire(): Unit = cachedSnapshotManager.retire()
 }

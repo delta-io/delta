@@ -142,6 +142,7 @@ class DeltaV2Table private (
   requireNonNull(tablePath, "tablePath is null")
   private val catalogTableValue = catalogTable
   private val queryContext = DeltaV2QueryContext(catalogTableValue)
+  private val spark = SparkSession.active
   // Merge options: file system options from catalog + user options (user takes precedence)
   // This follows the same pattern as DeltaTableV2 in delta-spark
   private val (options, hadoopConf, kernelContext, tableManager) = {
@@ -152,10 +153,9 @@ class DeltaV2Table private (
     // User options override catalog properties
     merged.putAll(userOptions)
     val options = Collections.unmodifiableMap[String, String](merged)
-    val activeSession = SparkSession.active
-    val hadoopConf = activeSession.sessionState.newHadoopConfWithOptions(toScalaMap(options))
+    val hadoopConf = spark.sessionState.newHadoopConfWithOptions(toScalaMap(options))
     val tableManager =
-      DeltaV2TableManagerCache.forTable(activeSession, tablePath, options, catalogTableOpt)
+      DeltaV2TableManagerCache.forTable(spark, tablePath, options, catalogTableOpt)
     (options, hadoopConf, tableManager.kernelContext, tableManager)
   }
 
@@ -194,7 +194,8 @@ class DeltaV2Table private (
         initialSnapshotValue,
         options,
         tableManager.snapshotManager(queryContext.catalogTableOpt),
-        kernelEngine())
+        kernelEngine(),
+        queryContext)
 
     val (rawSchema, partitionColumnNames) = if (persistedMetadata.isPresent) {
       val persisted = persistedMetadata.get()
@@ -449,7 +450,7 @@ class DeltaV2Table private (
       initialSnapshot = initialSnapshotValue,
       kernelEngine = kernelEngine(),
       catalogTable = toScalaOption(catalogTableValue),
-      snapshotManager = getSnapshotManager(),
+      tableManager = tableManager,
       dataSchema = schemaProvider.getDataSchema(),
       partitionSchema = schemaProvider.getPartitionSchema(),
       tableSchema = schemaProvider.getRawSchema(),
@@ -479,7 +480,7 @@ class DeltaV2Table private (
       hadoopConf,
       initialSnapshotValue,
       catalogTableValue,
-      getSnapshotManager(),
+      tableManager,
       schemaProvider.getDataSchema(),
       schemaProvider.getPartitionSchema(),
       info)
@@ -560,13 +561,13 @@ private[catalog] object DeltaV2Table {
    *
    * <p>Uses Hadoop's Path class to properly handle all URI schemes (file, s3, abfss, gs, hdfs,
    * etc.), not just file:// URIs.
+   *
+   * <p>A location keeps its scheme, including `file`. A path without a scheme would resolve
+   * against the default filesystem, which need not be the filesystem that holds the table.
    */
   def getDecodedPath(location: URI): String = {
     val hadoopPath = new Path(location)
-    // For local file system paths, return just the path component without the scheme
-    // to maintain consistency with path-based table construction where tablePath is a
-    // plain filesystem path string.
-    if (location.getScheme == null || "file".equals(location.getScheme)) {
+    if (location.getScheme == null) {
       return hadoopPath.toUri.getPath
     }
     hadoopPath.toString

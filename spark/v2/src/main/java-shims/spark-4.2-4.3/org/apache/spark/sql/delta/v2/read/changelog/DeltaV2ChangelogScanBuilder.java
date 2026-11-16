@@ -1,6 +1,7 @@
 package org.apache.spark.sql.delta.v2.read.changelog;
 
 import io.delta.kernel.CommitRange;
+import scala.Option;
 import org.apache.spark.sql.delta.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -8,10 +9,10 @@ import org.apache.spark.sql.delta.RowTracking$;
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot$;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils;
 import java.util.Objects;
-import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.Scan;
@@ -52,7 +53,9 @@ class DeltaV2ChangelogScanBuilder implements ScanBuilder {
     Engine engine = KernelEngineFactory.createDefaultEngine(hadoopConf);
     DeltaV2SnapshotManager snapshotManager = deltaV2Table.getSnapshotManager();
     CommitRange commitRange =
-        snapshotManager.getTableChanges(engine, startVersion, Optional.of(endVersion));
+        snapshotManager.getTableChanges(
+            engine,
+            GetTableChangesParam$.MODULE$.apply(startVersion, Option.apply(endVersion)));
     // Boundary checks: both endpoints must already carry the schema + RT state that
     // DeltaV2ChangelogBatch will validate each in-range Metadata action against. Without these,
     // an RT-disabled boundary with no in-range toggle commit would surface as a raw

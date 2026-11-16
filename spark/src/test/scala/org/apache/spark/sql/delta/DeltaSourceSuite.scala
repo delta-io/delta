@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaS
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, OffsetSeqLog}
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.StreamingExecutionRelation
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -44,6 +45,7 @@ import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
+import org.apache.spark.sql.execution.datasources.v2.StreamingDataSourceV2ScanRelation
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.internal.SQLConf
@@ -2832,12 +2834,23 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTable("self_union_delta") {
       spark.range(10).write.format("delta").saveAsTable("self_union_delta")
       val df = spark.readStream.format("delta").table("self_union_delta")
-      val q = df.union(df).writeStream.format("noop").start()
-      try {
-        q.processAllAvailable()
-      } finally {
-        q.stop()
-      }
+      testStream(df.union(df))(
+        StartStream(),
+        ProcessAllAvailable(),
+        AssertOnQuery { q =>
+          val sources = q.logicalPlan.collect {
+            case relation: StreamingExecutionRelation => relation.source
+            case relation: StreamingDataSourceV2ScanRelation => relation.stream
+          }
+          assert(sources.size == 2, s"expected two Delta source references, got ${sources.size}")
+          val expectedSourceName = if (useDsv2) "DeltaV2MicroBatchStream" else "DeltaSource"
+          assert(
+            sources.forall(_.getClass.getSimpleName == expectedSourceName),
+            s"expected $expectedSourceName sources, got ${sources.map(_.getClass.getName)}")
+          true
+        },
+        CheckAnswer((0L until 10L).flatMap(id => Seq(id, id)): _*)
+      )
     }
   }
 

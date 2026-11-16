@@ -16,7 +16,10 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CheckpointInstance, Checkpoints, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, Snapshot}
+import scala.concurrent.duration.Duration
+
+import org.apache.spark.sql.delta.{CheckpointInstance, CheckpointProvider, Checkpoints, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.DeltaTestUtils.countSparkJobs
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, ContentRoot, LastManifestCommit}
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -25,8 +28,10 @@ import org.apache.commons.io.IOUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.util.ThreadUtils
 
@@ -141,6 +146,147 @@ class AMTSnapshotDiscoverySuite
 
         assert(CheckpointInstance(uninitializedProvider).numParts.contains(expectedNumLeaves))
         assert(CheckpointInstance(uninitializedProvider) == CheckpointInstance(lastCheckpointInfo))
+      }
+    }
+  }
+
+  for (layout <- Seq("root-only", "leaf-backed", "empty")) {
+    testAcrossAMTCheckpointScenarios(
+        s"[cold init] columnar provider reuses the prefetched root across sessions: $layout",
+        s"amt_complete_root_prefetch_${layout.replace('-', '_')}",
+        sqlConfs = Seq(
+          DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true",
+          DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> "12000") ++
+          (if (layout == "leaf-backed") leafPackingConfs else Seq(
+            DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "100")))(
+        setup = name => appendRowsAsSeparateFiles(
+          name, if (layout == "leaf-backed") leafPackedFiles + 1 else 2),
+        inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+          if (layout == "empty") s"DELETE FROM $name"
+          else s"INSERT INTO $name VALUES (100)"))) { context =>
+      val deltaLog = context.postCheckpointSnapshot.deltaLog
+      val checkpoint = context.checkpoint
+      val expectedRootFiles = AMTCheckpointProvider.readLiveRootDataEntries(deltaLog, checkpoint)
+      if (layout == "empty") {
+        assert(expectedRootFiles.isEmpty)
+      } else if (layout == "root-only") {
+        assert(expectedRootFiles.nonEmpty)
+      }
+      assert(context.provider.leaves.nonEmpty == (layout == "leaf-backed"))
+
+      // Compare against a provider with no prefetched root, including all non-file actions.
+      val uncached = AMTCheckpointProvider(
+        spark,
+        context.provider.manifestCommitVersion, checkpoint,
+        context.provider.leaves, deltaLog.dataPath)
+      val expected = uncached.loadActionsForStateReconstruction(spark, deltaLog).get.collect()
+      val uninitialized = new UninitializedAMTCheckpointProvider(
+        deltaLog, checkpoint, context.provider.manifestCommitVersion)
+      val prefetched = CheckpointProvider(
+        spark, context.postCheckpointSnapshot, None, uninitialized)
+        .asInstanceOf[LazyCompleteAMTCheckpointProvider].underlyingCheckpointProvider
+      var synchronous: AMTCheckpointProvider = null
+      val discoveryJobs = countSparkJobs(spark.sparkContext, {
+        synchronous = AMTCheckpointProvider.fromCheckpoint(
+          spark, deltaLog, checkpoint, context.provider.manifestCommitVersion)
+      })
+      assert(prefetched.isInstanceOf[ColumnarAMTCheckpointProvider])
+      assert(synchronous.isInstanceOf[ColumnarAMTCheckpointProvider])
+
+      // Removing the root after discovery makes an accidental second scan fail reliably.
+      val rootPath = checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
+      val savedRoot = new Path(rootPath.toString + ".saved")
+      val fs = rootPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+      assert(fs.rename(rootPath, savedRoot))
+      try {
+        context.postCheckpointSnapshot.uncache()
+        val otherSession = spark.newSession()
+        for {
+          session <- Seq(spark, otherSession, spark)
+          provider <- Seq(prefetched, synchronous)
+        } session.withActive {
+          val actions = provider.loadActionsForStateReconstruction(session, deltaLog).get
+          assert(actions.sparkSession eq session)
+          assert(!actions.inputFiles.map(new Path(_)).contains(rootPath))
+          checkAnswer(actions, expected.toSeq)
+          assert(new BaseAMTCheckpointActionsProvider(session, deltaLog, provider)
+            .load().fileActionsFromRoot == expectedRootFiles)
+        }
+      } finally {
+        assert(fs.rename(savedRoot, rootPath))
+      }
+    }
+  }
+
+  for (layout <- Seq("root-only", "leaf-backed", "empty")) {
+    testAcrossAMTCheckpointScenarios(
+        s"[cold init] prefetched root cache respects the entry threshold: $layout",
+        s"amt_root_cache_threshold_${layout.replace('-', '_')}",
+        sqlConfs = Seq(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true") ++
+          (if (layout == "leaf-backed") leafPackingConfs else Seq(
+            DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "100")))(
+        setup = name => appendRowsAsSeparateFiles(
+          name, if (layout == "leaf-backed") leafPackedFiles + 1 else 2),
+        inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+          if (layout == "empty") s"DELETE FROM $name"
+          else s"INSERT INTO $name VALUES (100)"))) { context =>
+      val deltaLog = context.postCheckpointSnapshot.deltaLog
+      val checkpoint = context.checkpoint
+      val rootPath = checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
+      val numRootEntries = allowReadWithinDeltaLog {
+        spark.read.parquet(rootPath.toString).count().toInt
+      }
+      val uncached = AMTCheckpointProvider(
+        spark, context.manifestCommitVersion, checkpoint,
+        context.provider.leaves, deltaLog.dataPath)
+      val expected = uncached.loadActionsForStateReconstruction(spark, deltaLog).get.collect()
+      val expectedRootFiles = uncached.readLiveRootDataEntries(spark, deltaLog)
+      assert(context.provider.leaves.nonEmpty == (layout == "leaf-backed"))
+
+      val thresholds = Seq(
+        (numRootEntries + 1, true),
+        (numRootEntries, false),
+        (math.max(0, numRootEntries - 1), false),
+        (0, false)).distinct
+      for ((threshold, shouldCache) <- thresholds) {
+        withClue(s"root entries: $numRootEntries, cache threshold: $threshold") {
+          withSQLConf(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> threshold.toString) {
+            val uninitialized = new UninitializedAMTCheckpointProvider(
+              deltaLog, checkpoint, context.manifestCommitVersion)
+            val root = uninitialized.nonFateSharingCheckpointReadFuture.get(Duration.Inf)
+            assert(root.hasCachedRows == shouldCache)
+            assert(root.toDF(spark).isDefined == shouldCache)
+            assert(root.leaves == context.provider.leaves)
+
+            val prefetched = CheckpointProvider(
+              spark, context.postCheckpointSnapshot, None, uninitialized)
+              .asInstanceOf[LazyCompleteAMTCheckpointProvider].underlyingCheckpointProvider
+            var synchronous: AMTCheckpointProvider = null
+            val queries = QueryTest.withQueryExecutionsCaptured(spark) {
+              val jobs = countSparkJobs(spark.sparkContext, {
+                synchronous = AMTCheckpointProvider.fromCheckpoint(
+                  spark, deltaLog, checkpoint, context.manifestCommitVersion)
+              })
+            }
+            val scanQueries = queries.filter(_.analyzed.exists(_.isInstanceOf[LogicalRelation]))
+            assert(scanQueries.size == (if (shouldCache) 0 else 1))
+            // Large roots filter DATA before collection instead of collecting and discarding it.
+            scanQueries.foreach { query =>
+              assert(query.analyzed.exists {
+                case Filter(condition, _) =>
+                  condition.references.exists(_.name == "content_type")
+                case _ => false
+              })
+            }
+            for (provider <- Seq(prefetched, synchronous)) {
+              assert(provider.leaves == context.provider.leaves)
+              val actions = provider.loadActionsForStateReconstruction(spark, deltaLog).get
+              assert(actions.inputFiles.map(new Path(_)).contains(rootPath) == !shouldCache)
+              checkAnswer(actions, expected.toSeq)
+              assert(provider.readLiveRootDataEntries(spark, deltaLog) == expectedRootFiles)
+            }
+          }
+        }
       }
     }
   }

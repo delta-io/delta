@@ -68,8 +68,8 @@ public final class ScalaUtils {
    * @param <T> the type of the value
    * @return the corresponding Scala Option
    */
-  public static <T> Option<T> toScalaOption(Optional<T> optional) {
-    return optional.map(Option::apply).orElse(Option.empty());
+  public static <T> Option<T> toScalaOption(Optional<? extends T> optional) {
+    return optional.isPresent() ? Option.apply(optional.get()) : Option.empty();
   }
 
   /**

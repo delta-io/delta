@@ -1617,7 +1617,8 @@ trait SnapshotManagement { self: DeltaLog =>
         }
 
         // The supplied provider is the latest checkpoint through committedVersion.
-        val shouldReconcileAMTCheckpointProvider = AMTUtils.amtEnabled(previousSnapshot) &&
+        val shouldReconcileAMTCheckpointProvider =
+          AMTUtils.amtSupported(previousSnapshot.protocol) &&
           amtCheckpointProviderForPostCommitSnapshot.isEmpty
         val newSnapshot = createSnapshotAfterCommit(
           segment,

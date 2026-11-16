@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.v2.kernel.KernelContext;
 import org.apache.spark.sql.delta.v2.snapshot.unitycatalog.UCManagedTableSnapshotManager;
 import org.apache.spark.sql.delta.v2.snapshot.unitycatalog.UCTableInfo;
 import org.apache.spark.sql.delta.v2.snapshot.unitycatalog.UCUtils;
+import scala.Option;
 
 /**
  * Factory for creating {@link DeltaV2SnapshotManager} instances.
@@ -59,9 +60,9 @@ public final class SnapshotManagerFactory {
       String tablePath, KernelContext kernelContext, Optional<CatalogTable> catalogTable) {
 
     if (catalogTable.isPresent()) {
-      Optional<UCTableInfo> ucTableInfo =
+      Option<UCTableInfo> ucTableInfo =
           UCUtils.extractTableInfo(catalogTable.get(), SparkSession.active());
-      if (ucTableInfo.isPresent()) {
+      if (ucTableInfo.isDefined()) {
         return createUCManagedSnapshotManager(ucTableInfo.get(), kernelContext);
       }
       // Catalog table without UC metadata falls back to path-based handling.

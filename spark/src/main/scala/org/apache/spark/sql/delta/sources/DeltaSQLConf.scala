@@ -670,6 +670,26 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "entriesPerLeaf must be positive.")
       .createWithDefault(50000)
 
+  val AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED =
+    buildConf("amt.columnarStateReconstruction.enabled")
+      .internal()
+      .doc("When enabled, AMT state reconstruction builds the AddFiles as column expressions " +
+        "over the persisted manifest rows instead of decoding and converting every manifest " +
+        "entry on the executors. Read when the AMT checkpoint provider is created.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val AMT_ROOT_CACHE_MAX_NUM_ENTRIES =
+    buildConf("amt.rootCache.maxNumEntries")
+      .internal()
+      .doc("Cache the persisted AMT root rows only when the entry count from the Parquet " +
+        "footer, including DATA and DATA_MANIFEST entries, is less than this threshold. " +
+        "Otherwise collect only leaf pointers during discovery and read the root again for " +
+        "reconstruction. Set to 0 to disable root row caching and skip the footer count check.")
+      .intConf
+      .checkValue(_ >= 0, "amt.rootCache.maxNumEntries must be non-negative.")
+      .createWithDefault(12000)
+
   val AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT =
     buildConf("amt.largeCommitActionsCountThresholdForInlineManifestCommit")
       .internal()
@@ -712,6 +732,43 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "without a CRC.")
       .booleanConf
       .createWithDefault(true)
+
+  val AMT_SINGLE_COMMIT_READ_ENABLED =
+    buildConf("amt.singleCommitRead.enabled")
+      .internal()
+      .doc("When enabled, DeltaLog.getChanges reads each commit through SingleCommit, which " +
+        "reconstructs the AddFile and RemoveFile actions of an inline manifest commit from its " +
+        "AMT. When disabled, it reads each commit's log file as written.")
+      .booleanConf
+      .createWithDefault(false)
+
+  final object AMTBinaryJsonCompressionPolicy {
+    final val DISABLED = "disabled"
+    final val IF_BENEFICIAL = "if-beneficial"
+    final val VALUES = Set(DISABLED, IF_BENEFICIAL)
+  }
+
+  val AMT_BINARY_JSON_COMPRESSION_POLICY =
+    buildConf("amt.binaryJson.compressionPolicy")
+      .internal()
+      .doc("Compression policy for individual AMT binary payloads encoded as JSON strings. " +
+        "'disabled' stores raw bytes. 'if-beneficial' tries ZSTD once and uses it when the " +
+        "compressed payload reduces the final Z85 size, including the header and padding. " +
+        "Ties and empty payloads use raw encoding. Encoding returns a size-limit result if " +
+        "the selected payload exceeds the length header's capacity.")
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(AMTBinaryJsonCompressionPolicy.VALUES)
+      .createWithDefault(AMTBinaryJsonCompressionPolicy.IF_BENEFICIAL)
+
+  val AMT_BINARY_JSON_FORMAT_VERSION =
+    buildConf("amt.binaryJson.formatVersion")
+      .internal()
+      .doc("Envelope format version used to write AMT binary payloads as Z85 JSON strings. " +
+        "Readers use the stored version byte, independently of this writer setting.")
+      .intConf
+      .checkValues(Set(1))
+      .createWithDefault(1)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -1734,6 +1791,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If true, Delta commit will validate the commit checksum file content before and " +
         "after each incremental commit as part of Unit Tests. Note that this overrides any " +
         s"behaviour from ${INCREMENTAL_COMMIT_VERIFY.key} config.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val INCREMENTAL_COMMIT_SKIP_CHECKSUM_ON_NEGATIVE_FIELD =
+    buildConf("incremental.commit.skipChecksumOnNegativeField.enabled")
+      .internal()
+      .doc("An incrementally computed checksum with a negative counter (file count, table " +
+        "size, DV metrics, or a histogram bin) always emits a usage log. If true, that " +
+        "checksum is also discarded, so it is never written or reused for later incremental " +
+        "commits. If false, the checksum is only logged and used as is.")
       .booleanConf
       .createWithDefault(true)
 
@@ -3142,6 +3209,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACE_USING_CAST_MATCHING_KEYS_ENABLED =
+    buildConf("replaceUsing.castMatchingKeys.enabled")
+      .internal()
+      .doc("When enabled, row-based REPLACE USING converts source matching keys to their " +
+        "corresponding destination insertion types using the insert assignment rules. When " +
+        "disabled, row-based matching uses the original source keys without insertion " +
+        "conversions. The dynamic partition overwrite path is unaffected.")
+      .booleanConf
+      .createWithDefault(true)
+
   val ALLOW_ARBITRARY_TABLE_PROPERTIES =
     buildConf("allowArbitraryProperties.enabled")
       .doc(
@@ -4109,19 +4186,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           .stripMargin)
       .booleanConf
       .createWithDefault(true)
-
-  val DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT =
-    buildConf("streaming.distributedInitialSnapshot")
-      .internal()
-      .doc(
-        "When enabled, the V2 streaming connector uses a distributed approach for " +
-        "initial snapshot loading. This avoids driver OOM for large tables by running " +
-        "Kernel log replay on an executor and sorting files via Spark's distributed sort. " +
-        "The persistence level is controlled by " +
-        "spark.databricks.delta.snapshotCache.storageLevel."
-      )
-      .booleanConf
-      .createWithDefault(false)
 
   val TABLE_PARQUET_V2_DEFAULT_TIMESTAMP_ENCODING =
     buildConf("table.parquetV2.timestampOutputType")
