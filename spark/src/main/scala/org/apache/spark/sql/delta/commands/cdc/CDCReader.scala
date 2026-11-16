@@ -389,7 +389,11 @@ trait CDCReaderImpl extends CDCReaderBase {
               metadata, v, isSchemaChange = true)
           }
         }
-        partitionSchemaTracker.ifDefined(_.processActions(actions))
+        // Only the block decision needs to know whether the range changes data; reading files with
+        // the partitioning they were written with only needs the metadata, so no file is visited.
+        if (!readFilesWithWrittenPartitioning) {
+          partitionSchemaTracker.ifDefined(_.processActions(actions))
+        }
 
         // Set up buffers for all action types to avoid multiple passes.
         val cdcActions = ListBuffer[AddCDCFile]()
