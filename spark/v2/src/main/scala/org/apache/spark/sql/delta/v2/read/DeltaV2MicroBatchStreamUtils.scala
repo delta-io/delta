@@ -17,7 +17,8 @@ package org.apache.spark.sql.delta.v2.read
 
 import java.io.IOException
 import java.nio.channels.ClosedByInterruptException
-import java.util.{List => JList, Set => JSet}
+import java.util.{Arrays, Comparator, List => JList, Optional, Set => JSet}
+import java.util.function.{Function => JFunction}
 import javax.annotation.Nullable
 
 import scala.collection.immutable.Seq
@@ -32,7 +33,7 @@ import com.google.common.collect.ImmutableSet
 import io.delta.kernel.exceptions.{UnsupportedProtocolVersionException => KernelUnsupportedProtocolVersionException}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 
-import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.spark.sql.types.{DataType, StructField, StructType}
 
 /** Helpers and constants of [[DeltaV2MicroBatchStream]]. */
 private[read] object DeltaV2MicroBatchStreamUtils {
@@ -62,12 +63,14 @@ private[read] object DeltaV2MicroBatchStreamUtils {
   /**
    * If the given exception wraps a [[ClosedByInterruptException]] as its direct cause, returns
    * it. This occurs when Spark interrupts the micro-batch thread during stream shutdown and the
-   * thread is blocked inside Kernel's DefaultJsonHandler reading delta log files via NIO channels.
+   * thread is blocked inside Kernel's `DefaultJsonHandler` reading delta log files via NIO
+   * channels.
    */
-  def findClosedByInterruptCause(t: Throwable): Option[ClosedByInterruptException] = {
-    t.getCause match {
-      case cause: ClosedByInterruptException => Some(cause)
-      case _ => None
+  def findClosedByInterruptCause(t: Throwable): Optional[ClosedByInterruptException] = {
+    val cause = t.getCause
+    cause match {
+      case interruptCause: ClosedByInterruptException => Optional.of(interruptCause)
+      case _ => Optional.empty()
     }
   }
 
@@ -76,23 +79,25 @@ private[read] object DeltaV2MicroBatchStreamUtils {
    * [[KernelUnsupportedProtocolVersionException]].
    */
   def findUnsupportedProtocolCause(
-      t: Throwable): Option[KernelUnsupportedProtocolVersionException] = {
+      t: Throwable): Optional[KernelUnsupportedProtocolVersionException] = {
     var current = t
     while (current != null) {
       current match {
-        case kernelCause: KernelUnsupportedProtocolVersionException => return Some(kernelCause)
+        case kernelCause: KernelUnsupportedProtocolVersionException =>
+          return Optional.of(kernelCause)
         case _ =>
       }
       if (current.getCause eq current) {
-        return None
+        return Optional.empty()
       }
       current = current.getCause
     }
-    None
+    Optional.empty()
   }
 
   /**
-   * Returns true if the file is strictly after the exclusive resume point (fromVersion, fromIndex).
+   * Returns true if the file is strictly after the (exclusive) resume point (fromVersion,
+   * fromIndex).
    */
   def isAfterStartBoundary(file: IndexedFile, fromVersion: Long, fromIndex: Long): Boolean = {
     file.getVersion > fromVersion ||
@@ -143,8 +148,12 @@ private[read] object DeltaV2MicroBatchStreamUtils {
       dataSchema: StructType,
       partitionSchema: StructType,
       snapshotSchema: StructType): Unit = {
-    // Reconstruct the full analysis-time table schema without modifying the original schemas.
-    val querySchema = StructType(dataSchema.fields ++ partitionSchema.fields)
+    // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
+    // StructType is immutable: add() returns a new instance without modifying the original.
+    var querySchema = dataSchema
+    for (field <- partitionSchema.fields) {
+      querySchema = querySchema.add(field)
+    }
     // Sort both sides so a partition column declared in the middle of the table doesn't
     // trip the check.
     val sortedQuery = sortFieldsByName(querySchema)
@@ -154,14 +163,24 @@ private[read] object DeltaV2MicroBatchStreamUtils {
     val typesAndNullabilityMatch =
       DataType.equalsStructurally(sortedQuery, sortedSnapshot, ignoreNullability = false)
     val namesMatch = DataType.equalsStructurallyByName(
-      sortedQuery, sortedSnapshot, (a, b) => a.equalsIgnoreCase(b))
+      sortedQuery, sortedSnapshot, CASE_INSENSITIVE_RESOLVER)
     if (!typesAndNullabilityMatch || !namesMatch) {
       throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema)
     }
   }
 
+  private val CASE_INSENSITIVE_RESOLVER: (String, String) => Boolean =
+    (a, b) => a.equalsIgnoreCase(b)
+
   private def sortFieldsByName(schema: StructType): StructType = {
-    StructType(schema.fields.sortBy(_.name))
+    val fields = Arrays.copyOf(schema.fields, schema.fields.length)
+    val fieldName: JFunction[StructField, String] = _.name
+    Arrays.sort(fields, Comparator.comparing[StructField, String](fieldName))
+    var result = new StructType()
+    for (field <- fields) {
+      result = result.add(field)
+    }
+    result
   }
 
   /** Closes the current commit's files before the owning commit iterator. */
@@ -206,8 +225,9 @@ private[read] object DeltaV2MicroBatchStreamUtils {
   }
 
   /**
-   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for `version` before and after the contents
-   * of the iterator. The contents must be the IndexedFiles that correspond to this version.
+   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for `version` before and after the
+   * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
+   * to this version.
    */
   def addBeginAndEndIndexOffsetsForVersion(
       version: Long,
@@ -224,9 +244,9 @@ private[read] object DeltaV2MicroBatchStreamUtils {
   }
 
   /** Checks if the endOffset is at BASE_INDEX for the given version (early exit condition). */
-  def isEndOffsetAtBaseIndex(endOffsetOpt: Option[DeltaSourceOffset], version: Long): Boolean = {
-    endOffsetOpt.exists { endOffset =>
-      endOffset.reservoirVersion == version && endOffset.index == DeltaSourceOffset.BASE_INDEX
-    }
+  def isEndOffsetAtBaseIndex(endOffsetOpt: Optional[DeltaSourceOffset], version: Long): Boolean = {
+    endOffsetOpt.isPresent &&
+      endOffsetOpt.get().reservoirVersion == version &&
+      endOffsetOpt.get().index == DeltaSourceOffset.BASE_INDEX
   }
 }

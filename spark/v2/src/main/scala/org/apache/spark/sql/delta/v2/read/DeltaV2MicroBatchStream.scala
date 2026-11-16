@@ -17,6 +17,7 @@ package org.apache.spark.sql.delta.v2.read
 
 import java.io.IOException
 import java.io.UncheckedIOException
+import java.nio.channels.ClosedByInterruptException
 import java.time.ZoneId
 import java.util._
 
@@ -73,6 +74,7 @@ import io.delta.kernel.CommitActions
 import io.delta.kernel.CommitRange
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.UnsupportedProtocolVersionException
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.util.Utils
 
@@ -372,14 +374,15 @@ private[read] class DeltaV2MicroBatchStream(
       // ClosedByInterruptException and UncheckedIOException but not
       // KernelEngineException. Re-wrap so Spark's isInterruptedByStop - which also
       // verifies state == TERMINATED - handles it as a clean stream shutdown.
-      val interruptCause = findClosedByInterruptCause(e)
-      if (interruptCause.isDefined) {
-        throw new UncheckedIOException(interruptCause.get)
+      val interruptCause: Optional[ClosedByInterruptException] = findClosedByInterruptCause(e)
+      if (interruptCause.isPresent()) {
+        throw new UncheckedIOException(interruptCause.get())
       }
       // Translate Kernel's protocol-version error into Delta's InvalidProtocolVersionException.
-      val protocolCause = findUnsupportedProtocolCause(e)
-      if (protocolCause.isDefined) {
-        val p = protocolCause.get
+      val protocolCause: Optional[UnsupportedProtocolVersionException] =
+          findUnsupportedProtocolCause(e)
+      if (protocolCause.isPresent()) {
+        val p: UnsupportedProtocolVersionException = protocolCause.get()
         throw DeltaErrors.invalidProtocolVersionError(
                 p.getTablePath(), p.getMinReaderVersion(), p.getMinWriterVersion())
       }
@@ -559,9 +562,9 @@ private[read] class DeltaV2MicroBatchStream(
       // Same interrupt handling as latestOffset(): Kernel wraps ClosedByInterruptException
       // in KernelEngineException (a RuntimeException). Re-wrap as UncheckedIOException so
       // Spark's isInterruptedByStop recognizes it as a clean shutdown.
-      val interruptCause = findClosedByInterruptCause(e)
-      if (interruptCause.isDefined) {
-        throw new UncheckedIOException(interruptCause.get)
+      val interruptCause: Optional[ClosedByInterruptException] = findClosedByInterruptCause(e)
+      if (interruptCause.isPresent()) {
+        throw new UncheckedIOException(interruptCause.get())
       }
       throw e
     }
@@ -1583,7 +1586,7 @@ private[read] class DeltaV2MicroBatchStream(
       val version: Long = commit.getVersion()
       val timestamp: Long = commit.getTimestamp()
 
-      if (isEndOffsetAtBaseIndex(ScalaUtils.toScalaOption(endOffsetOpt), version)) {
+      if (isEndOffsetAtBaseIndex(endOffsetOpt, version)) {
         return new ClosableWrapper(
                 CollectionConverters.asScala(
                         Arrays.asList(
