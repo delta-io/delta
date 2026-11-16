@@ -45,7 +45,7 @@ import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory, UpdateUnityCatalog}
 import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
 import org.apache.spark.sql.delta.util.CatalogTableUtils
 import org.apache.spark.sql.delta.implicits.addFileEncoder
@@ -2429,6 +2429,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
       )
 
       executionObserver.transactionCommitted()
+      // commitLarge runs no post-commit hooks, but Unity Catalog must still learn the metadata of
+      // an EXTERNAL table that it commits (e.g. RESTORE changing the schema).
+      committed.foreach { c =>
+        val committedActions: Seq[Action] = Seq(metadata) ++ newProtocol ++
+          capturedDomainMetadata.collect { case d: DomainMetadata => d }
+        c.postCommitHooks.collect { case h: UpdateUnityCatalog => h }
+          .foreach(runPostCommitHook(_, c.copy(committedActions = committedActions)))
+      }
       (attemptVersion, postCommitSnapshot)
     } catch {
       case e: Throwable =>

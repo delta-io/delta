@@ -82,6 +82,14 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   final static public String UC_TABLE_ID_KEY_OLD = "ucTableId";
 
   /**
+   * Keys under which a loaded EXTERNAL table carries the id and the etag of its Unity Catalog
+   * entry in its storage properties. An update of the entry is conditional on both. The id is not
+   * {@link #UC_TABLE_ID_KEY}, which is present only on MANAGED tables.
+   */
+  final static public String UC_EXTERNAL_TABLE_ID_KEY = "io.unitycatalog.externalTableId";
+  final static public String UC_ETAG_KEY = "io.unitycatalog.etag";
+
+  /**
    * Key for identifying Unity Catalog metastore ID in
    * `delta.coordinatedCommits.commitCoordinatorConf{-preview}`.
    */

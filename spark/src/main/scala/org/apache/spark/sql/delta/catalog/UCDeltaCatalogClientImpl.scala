@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.catalog
 
 import java.net.URI
 import java.util
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
 import scala.jdk.CollectionConverters._
@@ -28,7 +29,7 @@ import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCConfigUtils, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uniform.{UniformMetadata => StorageUniformMetadata}
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.{UC_ETAG_KEY, UC_EXTERNAL_TABLE_ID_KEY, UC_TABLE_ID_KEY}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{
   CredentialFetchFailedException,
@@ -92,11 +93,11 @@ private[catalog] class UCDeltaCatalogClientImpl(
   // DeltaCatalogClient: loadTable
   // -------------------------------------------------------------------------
 
-  override def loadTable(ident: Identifier): Table = {
+  override def loadTable(ident: Identifier, fetchCredentials: Boolean): Table = {
     UCDeltaCatalogClientImpl.loadTableInvocationsCounter.incrementAndGet()
     val tid = toStorageTableIdent(ident)
     val info =
-      try ucClient.loadTable(tid)
+      try ucClient.loadTable(tid, fetchCredentials)
       catch {
         case _: StorageNoSuchTableException => throw new NoSuchTableException(ident)
         case e: UnsupportedTableFormatException =>
@@ -513,6 +514,34 @@ private[catalog] class UCDeltaCatalogClientImpl(
   }
 
   // -------------------------------------------------------------------------
+  // DeltaCatalogClient: updateTableMetadata
+  // -------------------------------------------------------------------------
+
+  override def updateTableMetadata(
+      ct: CatalogTable,
+      oldMetadata: Metadata,
+      newMetadata: Metadata,
+      newProtocol: Option[Protocol],
+      domainMetadata: Seq[DomainMetadata],
+      commitVersion: Long,
+      commitTimestampMs: Long): Boolean = {
+    val ident = identifierFromCatalogTable(ct)
+    def required(key: String): String = ct.storage.properties.getOrElse(key,
+      throw new IllegalStateException(
+        s"${fullQualifiedTableName(ident)} carries no '$key' to condition the update on"))
+    ucClient.updateTableMetadata(
+      toStorageTableIdent(ident),
+      UUID.fromString(required(UC_EXTERNAL_TABLE_ID_KEY)),
+      required(UC_ETAG_KEY),
+      oldMetadata,
+      newMetadata,
+      newProtocol.map(p => p: AbstractProtocol).toJava,
+      domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
+      commitVersion,
+      commitTimestampMs)
+  }
+
+  // -------------------------------------------------------------------------
   // DeltaCatalogClient: reportMetrics
   // -------------------------------------------------------------------------
 
@@ -622,8 +651,17 @@ private[catalog] class UCDeltaCatalogClientImpl(
         )
       }.getOrElse(Map.empty[String, String])
     val clientMaintenanceOperations = info.getClientMaintenanceOperations.asScala
+    // An EXTERNAL table's entry is updated after commits, conditional on its table id and etag.
+    val entryProps =
+      if (info.getTableType == UCDeltaModels.TableType.EXTERNAL) {
+        Map(UC_EXTERNAL_TABLE_ID_KEY -> info.getTableId.toString) ++
+          info.getEtag.toScala.map(UC_ETAG_KEY -> _)
+      } else {
+        Map.empty[String, String]
+      }
     val mergedStorageProperties = {
-      val merged = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps
+      val merged =
+        tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps ++ entryProps
       // Only the catalog's list grants permission. A user-defined table property must not.
       if (clientMaintenanceOperations.isEmpty) {
         merged - ALLOWED_OPERATIONS_PROPERTY

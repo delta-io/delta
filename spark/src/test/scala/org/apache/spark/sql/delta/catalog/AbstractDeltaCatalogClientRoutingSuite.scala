@@ -25,13 +25,14 @@ import scala.jdk.CollectionConverters._
 import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.{UC_ETAG_KEY, UC_EXTERNAL_TABLE_ID_KEY, UC_TABLE_ID_KEY}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, TableAlreadyExistsException => StorageTableAlreadyExistsException, UnsupportedTableFormatException, NoSuchTableException => StorageNoSuchTableException}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, TableAlreadyExistsException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, V1Table}
 import org.apache.spark.sql.delta.{CatalogManagedTableMaintenanceOperation, IcebergConstants}
@@ -798,7 +799,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       val v1 = table.asInstanceOf[V1Table].catalogTable
       assert(v1.identifier.table === "tbl")
       assert(v1.storage.locationUri.map(_.toString) === Some("s3://bucket/no-creds-table"))
-      assert(v1.storage.properties.isEmpty,
+      // An EXTERNAL table carries its entry's table id; credentials would be under `fs.`.
+      assert(v1.storage.properties === Map(UC_EXTERNAL_TABLE_ID_KEY -> tableId.toString),
         s"no credentials should be set on the V1Table; got ${v1.storage.properties}")
       // The fallback path must have flipped SSP on.
       assert(spark.conf.get(sspKey) === "true",
@@ -907,7 +909,7 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     Map("k" -> "v", TableCatalog.PROP_LOCATION -> "s3://bucket/table")
 
   test("createTable registers an EXTERNAL table with its snapshot version") {
-    val ucClient = new RecordingCreateUCDeltaClient
+    val ucClient = new RecordingUCDeltaClient
     new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = ucClient).createTable(
       Identifier.of(Array("sch"), "tbl"),
       externalCatalogTable,
@@ -924,7 +926,7 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
   }
 
   test("createTable reports an existing table as Spark's TableAlreadyExistsException") {
-    val ucClient = new RecordingCreateUCDeltaClient
+    val ucClient = new RecordingUCDeltaClient
     ucClient.createFailure = Some(new StorageTableAlreadyExistsException("exists"))
     intercept[TableAlreadyExistsException] {
       new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = ucClient).createTable(
@@ -935,6 +937,99 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
         Protocol(1, 2),
         lastCommitTimestampMs = 2000L,
         lastCommitVersion = 0L)
+    }
+  }
+
+  private def tableInfoWithEtag(tableType: UCDeltaModels.TableType): TableInfo = new TableInfo(
+    UUID.fromString("00000000-0000-0000-0000-000000000003"),
+    tableType,
+    "s3://bucket/table",
+    new TestMetadata(configuration = new util.HashMap[String, String](util.Map.of("k", "v"))),
+    Collections.emptyMap(),
+    Collections.emptyList(),
+    Optional.empty(),
+    "etag-7")
+
+  private def loadedStorageProperties(info: TableInfo): Map[String, String] =
+    new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = new StubUCDeltaClient(info))
+      .loadTable(Identifier.of(Array("sch"), "tbl")).asInstanceOf[V1Table]
+      .v1Table.storage.properties
+
+  test("loadTable of an EXTERNAL table carries its table id and etag in storage.properties") {
+    val props = loadedStorageProperties(tableInfoWithEtag(UCDeltaModels.TableType.EXTERNAL))
+    assert(props(UC_EXTERNAL_TABLE_ID_KEY) === "00000000-0000-0000-0000-000000000003")
+    assert(props(UC_ETAG_KEY) === "etag-7")
+    // The marker of a MANAGED table is not set.
+    assert(!props.contains(UC_TABLE_ID_KEY))
+    assert(props("k") === "v")
+  }
+
+  test("loadTable of a MANAGED table carries no etag") {
+    val props = loadedStorageProperties(tableInfoWithEtag(UCDeltaModels.TableType.MANAGED))
+    assert(!props.contains(UC_ETAG_KEY))
+    assert(!props.contains(UC_TABLE_ID_KEY))
+  }
+
+  test("loadTable without credentials returns the table with its etag and fetches none") {
+    val ucClient = new RecordingUCDeltaClient
+    ucClient.loaded = Some(tableInfoWithEtag(UCDeltaModels.TableType.EXTERNAL))
+    val table = new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = ucClient)
+      .loadTable(Identifier.of(Array("sch"), "tbl"), fetchCredentials = false)
+      .asInstanceOf[V1Table].v1Table
+
+    assert(ucClient.loadedIdent.get.getNamespace.toSeq === Seq("main", "sch"))
+    assert(ucClient.loadedWithCredentials === Some(false))
+    assert(table.storage.properties(UC_ETAG_KEY) === "etag-7")
+    assert(table.tableType === CatalogTableType.EXTERNAL)
+  }
+
+  test("loadTable fetches credentials unless told not to") {
+    val ucClient = new RecordingUCDeltaClient
+    ucClient.loaded = Some(tableInfoWithEtag(UCDeltaModels.TableType.EXTERNAL))
+    new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = ucClient)
+      .loadTable(Identifier.of(Array("sch"), "tbl"))
+
+    assert(ucClient.loadedWithCredentials === Some(true))
+  }
+
+  test("loadTable without credentials reports a table that is gone") {
+    intercept[NoSuchTableException] {
+      new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = new RecordingUCDeltaClient)
+        .loadTable(Identifier.of(Array("sch"), "tbl"), fetchCredentials = false)
+    }
+  }
+
+  test("updateTableMetadata is conditional on the table's id and etag") {
+    val ucClient = new RecordingUCDeltaClient
+    val loadedTable = externalCatalogTable.copy(storage = externalCatalogTable.storage.copy(
+      properties = Map(
+        UC_EXTERNAL_TABLE_ID_KEY -> "00000000-0000-0000-0000-000000000003",
+        UC_ETAG_KEY -> "etag-7")))
+    val updated = new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = ucClient)
+      .updateTableMetadata(
+        loadedTable,
+        Metadata(configuration = Map("gone" -> "v")),
+        Metadata(configuration = Map("k" -> "v", "k2" -> "v2")),
+        Some(Protocol(1, 2)),
+        Seq.empty,
+        commitVersion = 5L,
+        commitTimestampMs = 6000L)
+
+    assert(updated)
+    val (ident, tableId, etag, oldMetadata, newMetadata, version) = ucClient.updated.get
+    assert(ident.getNamespace.toSeq === Seq("main", "sch") && ident.getName === "tbl")
+    assert(tableId === UUID.fromString("00000000-0000-0000-0000-000000000003"))
+    assert(etag === "etag-7")
+    assert(newMetadata.getConfiguration.asScala === Map("k" -> "v", "k2" -> "v2"))
+    assert(oldMetadata.getConfiguration.asScala === Map("gone" -> "v"))
+    assert(version === 5L)
+  }
+
+  test("updateTableMetadata refuses a table that was not loaded with its etag") {
+    intercept[IllegalStateException] {
+      new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = new RecordingUCDeltaClient)
+        .updateTableMetadata(
+          externalCatalogTable, Metadata(), Metadata(), None, Seq.empty, 5L, 6000L)
     }
   }
 
@@ -1005,7 +1100,20 @@ private class TestMetadata(
  */
 private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
   override def getMetastoreId(): String = throw new UnsupportedOperationException
-  override def loadTable(tableIdentifier: StorageTableIdentifier): TableInfo =
+  override def loadTable(
+      tableIdentifier: StorageTableIdentifier,
+      fetchCredentials: Boolean): TableInfo =
+    throw new UnsupportedOperationException
+  override def updateTableMetadata(
+      tableIdentifier: StorageTableIdentifier,
+      tableId: UUID,
+      etag: String,
+      oldMetadata: AbstractMetadata,
+      newMetadata: AbstractMetadata,
+      newProtocol: Optional[AbstractProtocol],
+      domainMetadata: util.List[AbstractDomainMetadata],
+      commitVersion: Long,
+      commitTimestampMs: Long): Boolean =
     throw new UnsupportedOperationException
   override def createStagingTable(
       tableIdentifier: StorageTableIdentifier): StagingTableInfo =
@@ -1062,10 +1170,18 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
   override def close(): Unit = ()
 }
 
-/** Records the arguments of {@code createTable}. */
-private class RecordingCreateUCDeltaClient extends ThrowingUCDeltaClient {
+/**
+ * Records the arguments of {@code createTable}, {@code loadTable} and
+ * {@code updateTableMetadata}.
+ */
+private class RecordingUCDeltaClient extends ThrowingUCDeltaClient {
   var created: Option[(UcTableType, AbstractMetadata, Long)] = None
   var createFailure: Option[RuntimeException] = None
+  var loaded: Option[TableInfo] = None
+  var loadedIdent: Option[StorageTableIdentifier] = None
+  var loadedWithCredentials: Option[Boolean] = None
+  var updated: Option[(StorageTableIdentifier, UUID, String, AbstractMetadata,
+    AbstractMetadata, Long)] = None
   override def createTable(
       tableUri: URI,
       tableIdentifier: StorageTableIdentifier,
@@ -1079,6 +1195,26 @@ private class RecordingCreateUCDeltaClient extends ThrowingUCDeltaClient {
     createFailure.foreach(e => throw e)
     created = Some((tableType, metadata, lastCommitVersion))
     null
+  }
+  override def loadTable(
+      tableIdentifier: StorageTableIdentifier,
+      fetchCredentials: Boolean): TableInfo = {
+    loadedIdent = Some(tableIdentifier)
+    loadedWithCredentials = Some(fetchCredentials)
+    loaded.getOrElse(throw new StorageNoSuchTableException("no such table"))
+  }
+  override def updateTableMetadata(
+      tableIdentifier: StorageTableIdentifier,
+      tableId: UUID,
+      etag: String,
+      oldMetadata: AbstractMetadata,
+      newMetadata: AbstractMetadata,
+      newProtocol: Optional[AbstractProtocol],
+      domainMetadata: util.List[AbstractDomainMetadata],
+      commitVersion: Long,
+      commitTimestampMs: Long): Boolean = {
+    updated = Some((tableIdentifier, tableId, etag, oldMetadata, newMetadata, commitVersion))
+    true
   }
 }
 
@@ -1094,7 +1230,9 @@ private class RecordingCreateUCDeltaClient extends ThrowingUCDeltaClient {
  * across calls, replace this with a {@code Supplier}-shaped constructor.
  */
 private class StubUCDeltaClient(loadTableResult: => TableInfo) extends ThrowingUCDeltaClient {
-  override def loadTable(tableIdentifier: StorageTableIdentifier): TableInfo = loadTableResult
+  override def loadTable(
+      tableIdentifier: StorageTableIdentifier,
+      fetchCredentials: Boolean): TableInfo = loadTableResult
 }
 
 /**

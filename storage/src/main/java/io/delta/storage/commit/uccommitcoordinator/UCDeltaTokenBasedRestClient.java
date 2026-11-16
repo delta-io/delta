@@ -457,14 +457,15 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   // ===========================
 
   @Override
-  public TableInfo loadTable(TableIdentifier tableIdentifier) throws IOException {
+  public TableInfo loadTable(TableIdentifier tableIdentifier, boolean fetchCredentials)
+      throws IOException {
     ensureOpen();
     ResolvedTableName name = requireThreePartName(tableIdentifier);
 
     try {
       return toTableInfo(
           deltaTablesApi.loadTable(name.catalog, name.schema, name.table),
-          name.catalog, name.schema, name.table, /* fetchCredentials= */ true);
+          name.catalog, name.schema, name.table, fetchCredentials);
     } catch (ApiException e) {
       if (e.getCode() == HTTP_NOT_FOUND) {
         throw new NoSuchTableException(
@@ -596,6 +597,63 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     }
   }
 
+  /**
+   * Updates the entry of an EXTERNAL table to match a Delta snapshot, without a commit, with a
+   * single {@code updateTable} request:
+   * <ul>
+   *   <li>requirements: the entry still has {@code tableId} and {@code etag};</li>
+   *   <li>updates: what differs between {@code oldMetadata} and {@code newMetadata} (columns,
+   *       partition columns, comment, properties), the protocol if one is given, the clustering
+   *       and row-tracking domains, and the snapshot's version and timestamp.</li>
+   * </ul>
+   *
+   * @return {@code true} if the entry was updated; {@code false} if the server rejected the
+   *         requirements because the entry changed since it was loaded (HTTP 409)
+   * @throws IOException on network or any other API error
+   */
+  @Override
+  public boolean updateTableMetadata(
+      TableIdentifier tableIdentifier,
+      UUID tableId,
+      String etag,
+      AbstractMetadata oldMetadata,
+      AbstractMetadata newMetadata,
+      Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> domainMetadata,
+      long commitVersion,
+      long commitTimestampMs) throws IOException {
+    ensureOpen();
+    Objects.requireNonNull(tableId, "tableId must not be null");
+    Objects.requireNonNull(etag, "etag must not be null");
+    Objects.requireNonNull(oldMetadata, "oldMetadata must not be null");
+    Objects.requireNonNull(newMetadata, "newMetadata must not be null");
+    Objects.requireNonNull(newProtocol, "newProtocol must not be null");
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
+
+    DeltaUpdateTableRequest request = new DeltaUpdateTableRequest()
+        .requirements(requirementsFor(tableId, etag));
+    addMetadataUpdates(request, oldMetadata, newMetadata);
+    if (newProtocol.isPresent()) {
+      request.addUpdatesItem(new DeltaSetProtocolUpdate()
+          .action("set-protocol")
+          .protocol(toSDKDeltaProtocol(newProtocol.get())));
+    }
+    addDomainMetadataUpdateActions(request, domainMetadata);
+    request.addUpdatesItem(snapshotVersionUpdate(commitVersion, commitTimestampMs));
+
+    try {
+      deltaTablesApi.updateTable(name.catalog, name.schema, name.table, request);
+      return true;
+    } catch (ApiException e) {
+      if (e.getCode() == HTTP_CONFLICT) {
+        return false;
+      }
+      throw new IOException(
+          String.format("Failed to update table %s (HTTP %s): %s",
+              name.fullName, e.getCode(), e.getResponseBody()), e);
+    }
+  }
+
   /** Requirements that make an update conditional on the table's UUID and etag. */
   private static List<DeltaTableRequirement> requirementsFor(UUID tableId, String etag) {
     return Arrays.asList(
@@ -706,7 +764,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           adapted,
           Collections.emptyMap(),
           clientMaintenanceOperations,
-          uniformMetadata);
+          uniformMetadata,
+          m.getEtag());
     }
     Map<String, String> storageProps;
     try {
@@ -722,7 +781,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           adapted,
           Collections.emptyMap(),
           clientMaintenanceOperations,
-          uniformMetadata);
+          uniformMetadata,
+          m.getEtag());
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
@@ -735,7 +795,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         adapted,
         storageProps,
         clientMaintenanceOperations,
-        uniformMetadata);
+        uniformMetadata,
+        m.getEtag());
   }
 
   private static Optional<UniformMetadata> toStorageUniformMetadata(

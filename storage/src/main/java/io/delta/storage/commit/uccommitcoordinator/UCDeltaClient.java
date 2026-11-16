@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Extends {@link UCClient} with Delta table lifecycle operations backed by the UC Delta API
@@ -36,14 +37,29 @@ import java.util.Optional;
 public interface UCDeltaClient extends UCClient {
 
   /**
-   * Loads a table's metadata from Unity Catalog.
+   * Loads a table's metadata from Unity Catalog, with its storage credentials.
    *
    * @param tableIdentifier catalog + schema namespace and table name
    * @return the table's {@link TableInfo}, carrying the catalog-supplied storage location and
    *         metadata
    * @throws IOException on network or API errors
    */
-  TableInfo loadTable(TableIdentifier tableIdentifier) throws IOException;
+  default TableInfo loadTable(TableIdentifier tableIdentifier) throws IOException {
+    return loadTable(tableIdentifier, /* fetchCredentials= */ true);
+  }
+
+  /**
+   * Loads a table's metadata from Unity Catalog.
+   *
+   * @param tableIdentifier  catalog + schema namespace and table name
+   * @param fetchCredentials whether to fetch the table's storage credentials. Callers that only
+   *                         need the catalog entry, such as one that updates it, can skip them.
+   * @return the table's {@link TableInfo}, carrying the catalog-supplied storage location,
+   *         metadata and the entry's etag
+   * @throws IOException on network or API errors
+   */
+  TableInfo loadTable(TableIdentifier tableIdentifier, boolean fetchCredentials)
+      throws IOException;
 
   /**
    * Reserves a staging slot for a new Delta table. The returned response contains the table ID,
@@ -96,6 +112,42 @@ public interface UCDeltaClient extends UCClient {
       long lastCommitTimestampMs,
       long lastCommitVersion,
       Optional<UniformMetadata> uniformMetadata) throws IOException;
+
+  /**
+   * Updates the catalog entry of an EXTERNAL table to match a committed Delta snapshot, without
+   * a commit. The update sets what differs between {@code oldMetadata} and {@code newMetadata}
+   * (columns, partition columns, comment, properties), sets the protocol and the domain metadata
+   * that it is given, and records {@code commitVersion} and {@code commitTimestampMs}.
+   *
+   * <p>The update is conditional on the entry still having {@code tableId} and {@code etag}, as
+   * returned by {@link #loadTable(TableIdentifier, boolean)}.
+   *
+   * @param tableIdentifier   catalog + schema namespace and table name
+   * @param tableId           UC's uuid of the entry that was loaded
+   * @param etag              etag of the entry that was loaded
+   * @param oldMetadata       what the entry holds now; only its {@code description}, {@code
+   *                          schemaString}, {@code partitionColumns}, and {@code configuration}
+   *                          are consumed. Properties that the catalog derives itself must be
+   *                          left out of {@code configuration}, or they would be removed.
+   * @param newMetadata       the Delta metadata to record; the same fields are consumed
+   * @param newProtocol       the Delta protocol to record, or empty if the entry already has it
+   * @param domainMetadata    the domain-metadata entries to set, and the removed ones to clear
+   * @param commitVersion     the Delta version the metadata belongs to
+   * @param commitTimestampMs that version's timestamp, in epoch milliseconds
+   * @return {@code true} if the entry was updated, {@code false} if UC rejected the conditions
+   *         because the entry changed since it was loaded (HTTP 409)
+   * @throws IOException on network or other API errors
+   */
+  boolean updateTableMetadata(
+      TableIdentifier tableIdentifier,
+      UUID tableId,
+      String etag,
+      AbstractMetadata oldMetadata,
+      AbstractMetadata newMetadata,
+      Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> domainMetadata,
+      long commitVersion,
+      long commitTimestampMs) throws IOException;
 
   /**
    * Reports post-commit telemetry for a table (file/row counts, byte counts, file-size

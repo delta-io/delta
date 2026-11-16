@@ -165,7 +165,7 @@ object UpdateMetricsHook {
    * receives. Returns an empty map if no entries exist (the resulting client lookup will
    * silently no-op via the `deltaRestApi.enabled=false` default).
    */
-  private[metrics] def catalogOptionsFor(
+  private[hooks] def catalogOptionsFor(
       spark: SparkSession, catalogName: String): CaseInsensitiveStringMap = {
     val prefix = s"spark.sql.catalog.$catalogName."
     val opts = spark.conf.getAll.iterator.collect {
@@ -180,7 +180,7 @@ object UpdateMetricsHook {
    * pass a throwing stub: it surfaces loudly if a future code change unexpectedly starts
    * calling it from `reportMetrics`, rather than returning a misleading `null`.
    */
-  private[metrics] val UnusedLoader: Identifier => Table =
+  private[hooks] val UnusedLoader: Identifier => Table =
     _ => throw new UnsupportedOperationException(
       "UpdateMetricsHook's per-commit client does not support loadTable")
 }
