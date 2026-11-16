@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DataFra
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.SnapshotManagement.checkpointThreadPool
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, FileAction, Metadata, Protocol, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, FileAction, LastManifestCommit, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -75,6 +75,10 @@ trait AMTCheckpointProviderBase
 
   /** The inline action describing this AMT checkpoint. */
   def checkpointAction: Checkpoint
+
+  /** The [[LastManifestCommit]] that names this tree. */
+  def lastManifestCommit: LastManifestCommit =
+    LastManifestCommit(manifestCommitVersion, checkpointAction.contentRoot.version)
 
   /** The table data path used to resolve manifest paths. */
   def tableRoot: Path
