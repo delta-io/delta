@@ -537,7 +537,11 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "S = 1, s = 'b'", where = "s = 1")
         }
-        assert(ae.message.contains("There is a conflict from these SET columns"))
+        checkError(
+          exception = ae,
+          condition = "DELTA_CONFLICT_SET_COLUMN",
+          sqlState = "42701",
+          parameters = Map("columnList" -> "[`S`, `s`]"))
       }
 
       withSQLConf(SQLConf.CASE_SENSITIVE.key -> "true") {

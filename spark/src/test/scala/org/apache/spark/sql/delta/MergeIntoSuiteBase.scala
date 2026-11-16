@@ -2748,9 +2748,13 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
           condition = "s.key1 = t.key2",
           update = "key2 = key1, t.key2 = key1",
           insert = "(key2, value) VALUES (3, 4)")
-      }.getMessage
+      }
 
-      errorContains(e, "there is a conflict from these set columns")
+      checkError(
+        exception = e,
+        condition = "DELTA_CONFLICT_SET_COLUMN",
+        sqlState = "42701",
+        parameters = Map("columnList" -> "[`key2`, `key2`]"))
     }
   }
 
