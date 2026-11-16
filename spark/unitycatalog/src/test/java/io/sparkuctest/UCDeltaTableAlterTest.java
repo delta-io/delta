@@ -174,11 +174,20 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
 
           TableInfo tableInfo = loadTableInfoViaUc(tableName);
           assertEquals("table comment", tableInfo.getComment());
+          assertEquals(
+              "table comment", loadTableViaDeltaRest(tableName).getMetadata().getComment());
 
           sql("COMMENT ON TABLE %s IS NULL", tableName);
 
           tableInfo = loadTableInfoViaUc(tableName);
           assertEquals("", tableInfo.getComment());
+          assertEquals("", loadTableViaDeltaRest(tableName).getMetadata().getComment());
+
+          sql("COMMENT ON TABLE %s IS 'table comment'", tableName);
+          sql("ALTER TABLE %s UNSET TBLPROPERTIES ('comment')", tableName);
+
+          assertEquals("", loadTableInfoViaUc(tableName).getComment());
+          assertEquals("", loadTableViaDeltaRest(tableName).getMetadata().getComment());
         });
   }
 

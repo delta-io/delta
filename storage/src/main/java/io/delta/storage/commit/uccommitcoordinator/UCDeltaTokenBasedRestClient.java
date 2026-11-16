@@ -933,7 +933,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     if (!Objects.equals(oldMetadata.getDescription(), newMetadata.getDescription())) {
       request.addUpdatesItem(new DeltaSetTableCommentUpdate()
           .action("set-table-comment")
-          .comment(newMetadata.getDescription()));
+          // A cleared comment is sent as "": the server rejects null.
+          .comment(Objects.toString(newMetadata.getDescription(), "")));
     }
 
     Map<String, String> oldConfig = oldMetadata.getConfiguration();
@@ -1068,7 +1069,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     @Override
     public String getDescription() {
-      return null;
+      return m.getComment();
     }
 
     @Override
@@ -1111,6 +1112,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       AdaptedTableMetadata that = (AdaptedTableMetadata) o;
       return Objects.equals(getId(), that.getId())
           && Objects.equals(getName(), that.getName())
+          && Objects.equals(getDescription(), that.getDescription())
           && Objects.equals(getProvider(), that.getProvider())
           && Objects.equals(getSchemaString(), that.getSchemaString())
           && Objects.equals(getPartitionColumns(), that.getPartitionColumns())
@@ -1120,7 +1122,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     @Override
     public int hashCode() {
-      return Objects.hash(getId(), getName(), getProvider(), getSchemaString(),
+      return Objects.hash(getId(), getName(), getDescription(), getProvider(), getSchemaString(),
           getPartitionColumns(), getConfiguration(), getCreatedTime());
     }
   }

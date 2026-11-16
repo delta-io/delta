@@ -83,8 +83,9 @@ set -euo pipefail
 # The pin. Bump both lines together if UC's version.sbt changed at the new SHA. build.sbt's
 # `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
 # values are the single source of truth.
-UC_PIN_SHA=a9c956e69b3ed477c918efe426e0f8766586e18c
+UC_PIN_SHA=8bfc1e23fa6180721519e2448c3e9de7e2a0c2f4
 UC_BASE_VERSION=0.8.0-SNAPSHOT
+UC_PIN_REF=refs/pull/2249/head  # TEMPORARY: unmerged UC pull request; delete once it is merged
 # ---------------------------------------------------------------------------------------------
 
 UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
@@ -152,7 +153,7 @@ git -C "$UC_DIR" init --quiet
 git -C "$UC_DIR" remote add origin "$UC_REPO"
 # Full fetch (not --depth=1) so merge-base --is-ancestor can verify the pin.
 if [[ "$UC_REF" == "$UC_PIN_SHA" || "$UC_REF" == "main" ]]; then
-  git -C "$UC_DIR" fetch --quiet origin main
+  git -C "$UC_DIR" fetch --quiet origin main $UC_PIN_REF
 else
   git -C "$UC_DIR" fetch --quiet origin "$UC_REF"
 fi
@@ -162,7 +163,7 @@ cd "$UC_DIR"
 # Safety check: the pinned SHA must be reachable from UC main. Local `merge-base --is-ancestor`
 # on the history we just fetched - no GitHub API, no token needed. Only applies when UC_REF is
 # the pinned SHA; UC_REF=main is trivially on main. Skipped in release mode.
-if [[ "$DELTA_RELEASE_MODE" != "1" && "$UC_REF" == "$UC_PIN_SHA" ]]; then
+if [[ "$DELTA_RELEASE_MODE" != "1" && "$UC_REF" == "$UC_PIN_SHA" && -z "$UC_PIN_REF" ]]; then
   if ! git merge-base --is-ancestor "$UC_PIN_SHA" origin/main 2>/dev/null; then
     echo "ERROR: UC_PIN_SHA=$UC_PIN_SHA is not reachable from unitycatalog/unitycatalog main." >&2
     echo "       Pin must reference a commit on https://github.com/unitycatalog/unitycatalog/commits/main" >&2

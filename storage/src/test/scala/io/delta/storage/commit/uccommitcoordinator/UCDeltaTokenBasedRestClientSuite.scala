@@ -223,6 +223,7 @@ class UCDeltaTokenBasedRestClientSuite
       assert(m.getConfiguration.get("key1") === "val1")
       assert(m.getPartitionColumns.get(0) === "date")
       assert(m.getCreatedTime === 1000L)
+      assert(m.getDescription === null)
       // Schema is a JSON string in Delta's wire format; parseable by Delta's schema readers.
       val parsed = objectMapper.readTree(m.getSchemaString)
       assert(parsed.get("type").asText() === "struct")
@@ -232,6 +233,34 @@ class UCDeltaTokenBasedRestClientSuite
       assert(info.getClientMaintenanceOperations.isEmpty)
       assert(!info.getStorageProperties.containsKey("delta.clientMaintenanceOperations"))
     }
+  }
+
+  private def loadMetadataWithComment(comment: Option[String]) = {
+    val response = objectMapper.readTree(loadTableJson()).asInstanceOf[ObjectNode]
+    comment.foreach(response.get("metadata").asInstanceOf[ObjectNode].put("comment", _))
+    deltaHandler = (exchange, _) => sendJson(
+      exchange,
+      HttpStatus.SC_OK,
+      objectMapper.writeValueAsString(response))
+    var loaded: AbstractMetadata = null
+    withClient(c => loaded = c.loadTable(testIdentifier).getMetadata)
+    loaded
+  }
+
+  test("loadTable returns the table comment as the metadata description") {
+    assert(loadMetadataWithComment(Some("table comment")).getDescription === "table comment")
+    // An empty comment, which is what UC stores for a cleared one, is not turned into null.
+    assert(loadMetadataWithComment(Some("")).getDescription === "")
+  }
+
+  test("loadTable metadata with the same comment is equal, with another comment is not") {
+    val a = loadMetadataWithComment(Some("c"))
+    val b = loadMetadataWithComment(Some("c"))
+    assert(a === b)
+    assert(a.hashCode === b.hashCode)
+    assert(a !== loadMetadataWithComment(Some("other")))
+    assert(a !== loadMetadataWithComment(None))
+    assert(loadMetadataWithComment(None).hashCode !== a.hashCode)
   }
 
   test("loadTable returns recognized client maintenance operations") {
@@ -427,6 +456,39 @@ class UCDeltaTokenBasedRestClientSuite
     assert(actions.contains("set-table-comment"))
     assert(actions.contains("set-properties"))
     assert(actions.contains("remove-properties"))
+
+    val updates = objectMapper.readTree(captured).get("updates")
+    val comments = (0 until updates.size()).map(updates.get)
+      .filter(_.path("action").asText() == "set-table-comment")
+    assert(comments.size === 1)
+    assert(comments.head.get("comment").textValue() === "new")
+  }
+
+  Seq(null, "").foreach { cleared =>
+    test(s"commit sends a table comment cleared to ${if (cleared == null) "null" else "\"\""} " +
+        "as an empty string") {
+      var captured: String = null
+      deltaHandler = (exchange, body) => {
+        if (exchange.getRequestMethod == "POST") {
+          captured = body
+        }
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+
+      withClient { c =>
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.of(createCommit(1L)), Optional.empty(),
+          Optional.of(metadata(desc = "old")), Optional.of(metadata(desc = cleared)),
+          Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
+      }
+
+      val updates = objectMapper.readTree(captured).get("updates")
+      val comments = (0 until updates.size()).map(updates.get)
+        .filter(_.path("action").asText() == "set-table-comment")
+      assert(comments.size === 1)
+      assert(comments.head.get("comment").textValue() === "")
+    }
   }
 
   test("commit sends SET_PROTOCOL when protocol changes") {
