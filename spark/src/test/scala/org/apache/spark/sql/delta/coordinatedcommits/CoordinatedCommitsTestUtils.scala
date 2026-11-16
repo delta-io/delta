@@ -196,6 +196,23 @@ trait CatalogOwnedTestBaseSuite
     }
   }
 
+  /** Run the test with:
+   * 1. Without catalog-managed commits
+   * 2. With catalog-managed commits at backfill batch sizes 1, 2, and 10
+   */
+  def testWithDifferentBackfillIntervalOptional(testName: String)(f: Option[Int] => Unit): Unit = {
+    test(s"$testName [Backfill batch size: None]") {
+      withoutDefaultCCTableFeature {
+        f(None)
+      }
+    }
+    testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
+      withDefaultCCTableFeature {
+        f(Some(backfillBatchSize))
+      }
+    }
+  }
+
   /**
    * Run the test against a [[TrackingCommitCoordinatorClient]] with backfill batch size =
    * `batchBackfillSize`
@@ -534,26 +551,6 @@ trait CoordinatedCommitsTestUtils
   }
 
   override def isCatalogOwnedTest: Boolean = false
-
-  /** Run the test with:
-   * 1. Without coordinated-commits
-   * 2. With coordinated-commits with different backfill batch sizes
-   */
-  def testWithDifferentBackfillIntervalOptional(testName: String)(f: Option[Int] => Unit): Unit = {
-    test(s"$testName [Backfill batch size: None]") {
-      f(None)
-    }
-    testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
-      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
-      withSQLConf(
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-            defaultCommitsCoordinatorName,
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
-            coordinatedCommitsCoordinatorJson) {
-        f(Some(backfillBatchSize))
-      }
-    }
-  }
 
   def getUpdatedActionsForZerothCommit(
       commitInfo: CommitInfo,
