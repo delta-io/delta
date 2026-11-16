@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands.cdc
 
 import java.sql.Timestamp
 
+import scala.collection.mutable.ListBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
@@ -52,6 +53,28 @@ case class ResolvedCDFVersion(version: Long, timestamp: Option[Timestamp]) {
 
 // A snapshot coupled with a schema mode that user specified
 case class SnapshotWithSchemaMode(snapshot: Snapshot, schemaMode: DeltaBatchCDFSchemaMode)
+
+/**
+ * The metadata that the files of each version of a batch CDF read were written with. A file that a
+ * version adds, and its change data files, are written with the metadata of that version. A file
+ * that a version removes was written with the metadata of the version before it: an operation that
+ * changes the partition columns removes or re-adds every file, as `partitionValues` holds a value
+ * for each partition column.
+ *
+ * @param changes the metadata in effect from each version on, by increasing version.
+ */
+case class CdfWrittenPartitioning(changes: Seq[(Long, Metadata)]) {
+  require(changes.nonEmpty)
+
+  private def metadataAt(version: Long): Metadata =
+    changes.takeWhile(_._1 <= version).lastOption.getOrElse(changes.head)._2
+
+  /** The metadata that the files a version adds, and its change data files, were written with. */
+  def ofAddedFiles(version: Long): Metadata = metadataAt(version)
+
+  /** The metadata that the files a version removes were written with. */
+  def ofRemovedFiles(version: Long): Metadata = metadataAt(version - 1)
+}
 
 /** A table schema paired with the version it describes. */
 case class SchemaWithVersion(version: Long, schema: StructType)
@@ -519,27 +542,43 @@ trait CDCReaderBase extends DeltaLogging {
     }
   }
 
-  /** Tracks whether a partition schema change happens on a non-empty table. */
+  /**
+   * Tracks the partition schema changes of a batch CDF read: whether one happens on a non-empty
+   * table, and the versions whose metadata changes the physical partition columns.
+   *
+   * @param startSnapshotHasData whether the start snapshot has files. Only evaluated when
+   *                             [[blockStartVersionPartitionSchemaCheck]] needs it.
+   */
   protected class CdfPartitionSchemaTracker(
-      startPartitionColumns: Seq[String],
-      startSnapshotHasData: Boolean) {
-    private var hasSeenData = startSnapshotHasData
+      startVersion: Long,
+      startMetadata: Metadata,
+      startSnapshotHasData: => Boolean) {
+    private val startPartitionColumns = startMetadata.partitionColumns
+    private lazy val startHasData = startSnapshotHasData
+    private var hasSeenDataInRange = false
     private var hasSeenPartitionSchemaChange = false
-    private var hadDataBeforeFirstPartitionSchemaChange = startSnapshotHasData
+    private var hadDataInRangeBeforeFirstPartitionSchemaChange = false
+    // The start version and every version whose metadata changes the physical partition columns,
+    // with the metadata in effect from that version on.
+    private val partitionColumnsChanges = ListBuffer(startVersion -> startMetadata)
 
-    def processMetadata(metadata: Metadata): Unit = {
+    def processMetadata(version: Long, metadata: Metadata): Unit = {
       if (!hasSeenPartitionSchemaChange && !SchemaUtils.isPartitionCompatible(
           newPartitionColumns = metadata.partitionColumns,
           oldPartitionColumns = startPartitionColumns)) {
         hasSeenPartitionSchemaChange = true
-        hadDataBeforeFirstPartitionSchemaChange = hasSeenData
+        hadDataInRangeBeforeFirstPartitionSchemaChange = hasSeenDataInRange
+      }
+      val previousMetadata = partitionColumnsChanges.last._2
+      if (metadata.physicalPartitionColumns != previousMetadata.physicalPartitionColumns) {
+        partitionColumnsChanges += version -> metadata
       }
     }
 
     def processActions(actions: Seq[Action]): Unit = {
       val commitInfo = actions.collectFirst { case ci: CommitInfo => ci }
       val changesData = CommitInfo.fileActionChangesData(commitInfo)
-      hasSeenData ||= actions.exists {
+      hasSeenDataInRange ||= actions.exists {
         case _: AddCDCFile => true
         case add: AddFile => changesData(add)
         case remove: RemoveFile => changesData(remove)
@@ -549,9 +588,28 @@ trait CDCReaderBase extends DeltaLogging {
 
     def blockStartVersionPartitionSchemaCheck: Boolean = {
       if (hasSeenPartitionSchemaChange) {
-        hadDataBeforeFirstPartitionSchemaChange
+        hadDataInRangeBeforeFirstPartitionSchemaChange || startHasData
       } else {
-        hasSeenData
+        hasSeenDataInRange || startHasData
+      }
+    }
+
+    /**
+     * Returns the metadata that the files of each version were written with, or None if they were
+     * all written with the physical partition columns of `readMetadata`.
+     *
+     * @param metadataBeforeStart the metadata of the version before the start version, if the start
+     *                            version removes files and has a metadata action.
+     */
+    def writtenPartitioning(
+        readMetadata: Metadata,
+        metadataBeforeStart: Option[Metadata]): Option[CdfWrittenPartitioning] = {
+      val changes = metadataBeforeStart.map(m => (startVersion - 1) -> m).toSeq ++
+        partitionColumnsChanges
+      if (changes.forall(_._2.physicalPartitionColumns == readMetadata.physicalPartitionColumns)) {
+        None
+      } else {
+        Some(CdfWrittenPartitioning(changes))
       }
     }
   }

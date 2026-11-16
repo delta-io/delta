@@ -771,6 +771,31 @@ class CDCReaderSuite
     }
   }
 
+  for (storePartitionColumns <- BOOLEAN_DOMAIN) {
+    test("CDF that starts at a partition column change reads its removed files with the " +
+        s"previous partitioning, storePartitionColumns=$storePartitionColumns") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        sql(
+          s"""
+             |CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA PARTITIONED BY (a, b)
+             |TBLPROPERTIES (
+             |  '${DeltaConfigs.WRITE_PARTITION_COLUMNS_TO_PARQUET.key}' = '$storePartitionColumns')
+             |""".stripMargin)
+        sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 2, 20)")
+        overwriteWithPartitionColumns(path, "a") // version 2
+        sql(s"INSERT INTO delta.`$path` VALUES (3, 3, 30)") // version 3
+
+        // Version 2 removes the files written with (a, b) and adds files written with (a).
+        val changesOfVersion2 = Seq((1, 1, 10), (2, 2, 20)).flatMap { case (id, a, b) =>
+          Seq(Row(id, a, b, "delete", 2L), Row(id, a, b, "insert", 2L))
+        }
+        checkAnswer(readChanges(path, 2, 2), changesOfVersion2)
+        checkAnswer(readChanges(path, 2, 3), changesOfVersion2 :+ Row(3, 3, 30, "insert", 3L))
+      }
+    }
+  }
+
   test("CDF across a partition column change is blocked when files are read with the read " +
       "schema's partitioning") {
     withTempDir { dir =>
