@@ -79,7 +79,9 @@ public class ProtocolMetadataLogReplay {
       SnapshotMetrics snapshotMetrics) {
     final Result result =
         snapshotMetrics.loadProtocolMetadataTotalDurationTimer.time(
-            () -> loadProtocolAndMetadataInternal(engine, logSegment, lazyCrcInfo));
+            () ->
+                loadProtocolAndMetadataInternal(
+                    engine, logSegment, lazyCrcInfo, false /* protocolOnly */));
 
     TableFeatures.validateKernelCanReadTheTable(result.protocol, dataPath.toString());
 
@@ -93,8 +95,34 @@ public class ProtocolMetadataLogReplay {
     return result;
   }
 
+  /**
+   * Returns whether the Protocol at the given LogSegment's version supports catalogManaged.
+   *
+   * <p>Reads log files only back to the latest Protocol, and does not validate that the Kernel can
+   * read the table at that Protocol, since the table is not read at that version.
+   */
+  public static boolean isCatalogManaged(
+      Engine engine,
+      LogSegment logSegment,
+      Lazy<Optional<CRCInfo>> lazyCrcInfo,
+      SnapshotMetrics snapshotMetrics) {
+    final Protocol protocol =
+        snapshotMetrics.loadProtocolMetadataTotalDurationTimer.time(
+                () ->
+                    loadProtocolAndMetadataInternal(
+                        engine, logSegment, lazyCrcInfo, true /* protocolOnly */))
+            .protocol;
+    return TableFeatures.isCatalogManagedSupported(protocol);
+  }
+
+  /**
+   * When {@code protocolOnly} is true, stops at the latest Protocol and may return null Metadata.
+   */
   private static Result loadProtocolAndMetadataInternal(
-      Engine engine, LogSegment logSegment, Lazy<Optional<CRCInfo>> lazyCrcInfo) {
+      Engine engine,
+      LogSegment logSegment,
+      Lazy<Optional<CRCInfo>> lazyCrcInfo,
+      boolean protocolOnly) {
     final long snapshotVersion = logSegment.getVersion();
     final Optional<FileStatus> crcFileOpt = logSegment.getLastSeenChecksum();
     final Optional<Long> crcVersionOpt =
@@ -142,8 +170,8 @@ public class ProtocolMetadataLogReplay {
             if (!protocolVector.isNullAt(i)) {
               protocol = Protocol.fromColumnVector(protocolVector, i);
 
-              if (metadata != null) {
-                // Stop since we have found the latest Protocol and Metadata.
+              if (metadata != null || protocolOnly) {
+                // Stop since we have found everything requested.
                 return new Result(protocol, metadata, numDeltaFilesRead);
               }
 
@@ -152,7 +180,7 @@ public class ProtocolMetadataLogReplay {
           }
         }
 
-        if (metadata == null) {
+        if (metadata == null && !protocolOnly) {
           if (columnarBatch == null) {
             columnarBatch = nextElem.getColumnarBatch();
             assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
@@ -201,7 +229,7 @@ public class ProtocolMetadataLogReplay {
           String.format("No protocol found at version %s", logSegment.getVersion()));
     }
 
-    if (metadata == null) {
+    if (metadata == null && !protocolOnly) {
       throw new IllegalStateException(
           String.format("No metadata found at version %s", logSegment.getVersion()));
     }
