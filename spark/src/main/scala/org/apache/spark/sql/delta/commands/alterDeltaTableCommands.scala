@@ -154,7 +154,7 @@ case class AlterTableSetPropertiesDeltaCommand(
           true
       }.toMap
 
-      // For Catalog Owned table validation
+      // For Catalog Managed table validation
       CatalogOwnedTableUtils.validatePropertiesForAlterTableSetPropertiesDeltaCommand(
         txn.snapshot, propertyOverrides = filteredConfs)
 
