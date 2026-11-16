@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.TypeWidening
 import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.actions.Metadata
@@ -57,10 +58,6 @@ import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseOp
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
-import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils
-import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory
 import org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamUtils._
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils
@@ -70,13 +67,7 @@ import org.apache.spark.sql.delta.v2.utils.StreamingHelper
 import org.apache.hadoop.conf.Configuration
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import io.delta.kernel.CommitActions
-import io.delta.kernel.CommitRange
-import io.delta.kernel.data.ColumnarBatch
-import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException
-import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
-import io.delta.kernel.internal.util.Utils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
@@ -161,17 +152,12 @@ private[read] class DeltaV2MicroBatchStream(
   Objects.requireNonNull(tableManager, "tableManager is null")
   Objects.requireNonNull(originalStreamingQueryContext, "originalStreamingQueryContext is null")
   Objects.requireNonNull(snapshotAtSourceInit, "snapshotAtSourceInit is null")
-  private val snapshotManager: DeltaV2SnapshotManager =
-      Objects.requireNonNull(
-          tableManager.snapshotManager(originalStreamingQueryContext.catalogTableOpt),
-          "snapshotManager is null")
   /** The Delta log operations that compute offsets. */
   private val streamingBackend: DeltaStreamingBackend =
       new DeltaV2StreamingBackend(
           tableManager, originalStreamingQueryContext, snapshotAtSourceInit.version)
   Objects.requireNonNull(hadoopConf, "hadoopConf is null")
   Objects.requireNonNull(spark, "spark is null")
-  private val engine: Engine = KernelEngineFactory.createDefaultEngine(hadoopConf)
   Objects.requireNonNull(options, "options is null")
   private val ignoreFileDeletion: Boolean = this.options.ignoreFileDeletion
   // Deprecated. Please use `skipChangeCommits` from now on.
@@ -960,10 +946,15 @@ private[read] class DeltaV2MicroBatchStream(
       lastProcessedIndex: Long,
       limits: Optional[DeltaSource.AdmissionLimits],
       endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
-    // TODO: Use streamingBackend.getSingleCommitIterator once CDC consumes DeltaSingleCommit,
-    // then delete getCommitsFromRange.
-    var commits: ClosableIterator[CommitActions] =
-        getCommitsFromRange(startVersion, endOffset, CDC_ACTION_SET)
+    // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
+    require(
+      options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+      "Using schema from schema tracking log cannot tolerate missing commit files.")
+    var commits: ClosableIterator[DeltaSingleCommit] =
+        streamingBackend.getSingleCommitIterator(
+            startVersion,
+            options.failOnDataLoss,
+            ScalaUtils.toScalaOption(endOffset))
 
     // Stop processing further commits once the budget is spent.
     if (limits.isPresent()) {
@@ -971,15 +962,7 @@ private[read] class DeltaV2MicroBatchStream(
           new IteratorCloseOps(commits)
               .withClose(
                   iterator =>
-                      iterator.takeWhile(
-                          commit => {
-                            if (limits.get().hasCapacity) {
-                              true
-                            } else {
-                              Utils.closeCloseables(commit)
-                              false
-                            }
-                          }))
+                      iterator.takeWhile(_ => limits.get().hasCapacity))
     }
 
     val files: ClosableIterator[IndexedFile] =
@@ -994,101 +977,6 @@ private[read] class DeltaV2MicroBatchStream(
                         lastProcessedVersion,
                         lastProcessedIndex))
     wrapIteratorWithCommitIteratorClose(files, commits)
-  }
-
-  /** Resolves the version range and returns commit actions from delta logs. */
-  // TODO: Delete this entire helper once CDC consumes DeltaSingleCommit and uses
-  // streamingBackend.getSingleCommitIterator.
-  private def getCommitsFromRange(
-      startVersion: Long,
-      endOffset: Optional[DeltaSourceOffset],
-      actionSet: Set[DeltaAction]): ClosableIterator[CommitActions] = {
-    // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
-    require(
-      options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
-      "Using schema from schema tracking log cannot tolerate missing commit files.")
-
-    var endVersionOpt: Option[Long] = ScalaUtils.toScalaOption(endOffset).map(_.reservoirVersion)
-
-    if (endVersionOpt.isDefined) {
-      // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
-      // endVersion to be an actual existing version or empty.
-      val latestVersion: Long = snapshotAtSourceInit.version
-      if (endVersionOpt.get > latestVersion) {
-        // This could happen because:
-        // 1. data could be added after snapshotAtSourceInit was captured.
-        // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
-        // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
-        // TODO(#5318): kernel should ideally relax this constraint.
-        endVersionOpt = Some(streamingBackend.update().version)
-      }
-
-      // After capping, check if startVersion is beyond the endVersion.
-      // This can happen when all files in the batch come from the initial snapshot
-      // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
-      if (startVersion > endVersionOpt.get) {
-        return new ClosableWrapper[CommitActions](Iterator.empty).toClosable
-      }
-    } else {
-      // When endOffset is empty (offset discovery), check if startVersion exceeds the current
-      // latest version. We must load the current latest (not snapshotAtSourceInit) because new
-      // commits may have arrived since stream initialization.
-      val currentLatestVersion: Long = streamingBackend.update().version
-      if (startVersion > currentLatestVersion) {
-        return new ClosableWrapper[CommitActions](Iterator.empty).toClosable
-      }
-    }
-
-    // Start commit may be missing (e.g. due to log retention). When failOnDataLoss=false, skip
-    // to the earliest available version. Mid-log gaps still throw regardless of failOnDataLoss -
-    // stricter than DSv1.
-    var commitRange: CommitRange = null
-    var earliestVersionToFetch: Long = startVersion
-    var attempt: Int = 1
-    var fetched: Boolean = false
-    while (!fetched && attempt <= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS) {
-      try {
-        commitRange =
-            snapshotManager.getTableChanges(
-                engine,
-                GetTableChangesParam.apply(earliestVersionToFetch, endVersionOpt),
-                originalStreamingQueryContext)
-        fetched = true
-      } catch {
-      case e: io.delta.kernel.exceptions.StartVersionNotFoundException =>
-        if (options.failOnDataLoss
-            || !e.getEarliestAvailableVersion().isPresent()
-            || attempt >= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS) {
-          throw e
-        }
-        earliestVersionToFetch = e.getEarliestAvailableVersion().get()
-        logger.warn(
-            "Start version commit {} no longer exists for table {} (attempt {}/{}). "
-                + "Skipping to earliest available version {} because failOnDataLoss is false.",
-            Long.box(startVersion),
-            tablePath,
-            Int.box(attempt),
-            Int.box(FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS),
-            Long.box(earliestVersionToFetch))
-      case e: io.delta.kernel.exceptions.CommitRangeNotFoundException =>
-        return new ClosableWrapper[CommitActions](Iterator.empty).toClosable
-      }
-      attempt += 1
-    }
-
-    // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:
-    // 1. CommitRange.getCommitActions() requires a snapshot at exactly the startVersion, but when
-    //    startingVersion option is used, we may not be able to recreate that exact snapshot
-    //    (e.g., if log files have been cleaned up after checkpointing).
-    // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
-    //    AddFile actions and performs per-commit protocol validation.
-    ScalaUtils.toClosableIterator(
-        StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine,
-            commitRange.asInstanceOf[
-                io.delta.kernel.internal.commitrange.CommitRangeImpl],
-            snapshotAtSourceInit.dataPath.toString,
-            actionSet))
   }
 
   /**
@@ -1576,15 +1464,15 @@ private[read] class DeltaV2MicroBatchStream(
    * <p>Package-private for testing.
    */
   private[read] def processCommitToIndexedFilesForCDC(
-      commit: CommitActions,
+      commit: DeltaSingleCommit,
       startVersion: Long,
       limits: Optional[DeltaSource.AdmissionLimits],
       endOffsetOpt: Optional[DeltaSourceOffset],
       lastProcessedVersion: Long,
       lastProcessedIndex: Long): ClosableIterator[IndexedFile] = {
     try {
-      val version: Long = commit.getVersion()
-      val timestamp: Long = commit.getTimestamp()
+      val version: Long = commit.version
+      val timestamp: Long = commit.timestamp
 
       if (isEndOffsetAtBaseIndex(endOffsetOpt, version)) {
         return new ClosableWrapper(
@@ -1615,9 +1503,7 @@ private[read] class DeltaV2MicroBatchStream(
       }
       new ClosableWrapper(CollectionConverters.asScala(result).iterator).toClosable
     } catch { case e: IOException =>
-      throw new RuntimeException(e)
-    } finally {
-      Utils.closeCloseables(commit)
+      throw new RuntimeException(s"Failed to process CDC commit at version ${commit.version}", e)
     }
   }
 
@@ -1631,7 +1517,7 @@ private[read] class DeltaV2MicroBatchStream(
    * IndexedChangeFileSeq.filterFiles (short-circuit); V2 collapses both here.
    */
   private def collectAndBuildCDCIndexedFiles(
-      commit: CommitActions,
+      commit: DeltaSingleCommit,
       version: Long,
       timestamp: Long,
       startVersion: Long,
@@ -1647,22 +1533,15 @@ private[read] class DeltaV2MicroBatchStream(
     var metadataAction: Metadata = null
     var protocolAction: Protocol = null
 
-    // TODO: Remove this adapter when CDC reads V1 actions through DeltaSingleCommit.
-    Using.resource(
-        ScalaUtils.toClosableIterator(commit.getActions())) { actionsIter =>
+    Using.resource(commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) { actionsIter =>
       while (actionsIter.hasNext) {
-        val batch: ColumnarBatch = actionsIter.next()
-        for (rowId <- 0 until batch.getSize()) {
-          // Metadata: check schema changes + CDF still enabled. Skip the read-compat check when
-          // tracking - the barrier protocol below handles divergence.
-          val metadataOpt: Optional[io.delta.kernel.internal.actions.Metadata] =
-              StreamingHelper.getMetadata(batch, rowId)
-          // TODO: Read CDC commits as V1 actions instead of Kernel batches to remove
-          // this Metadata conversion.
-          if (metadataOpt.isPresent()) {
+        actionsIter.next() match {
+          case metadata: Metadata =>
+            // Metadata: check schema changes + CDF still enabled. Skip the read-compat check when
+            // tracking - the barrier protocol below handles divergence.
             metadataAction =
                 validateMetadata(
-                    KernelActionUtils.metadataFromKernel(metadataOpt.get()),
+                    metadata,
                     metadataAction,
                     version,
                     startVersion,
@@ -1675,54 +1554,24 @@ private[read] class DeltaV2MicroBatchStream(
                       startVersion,
                       endOffsetOpt.map[java.lang.Long](_.reservoirVersion).orElse(version)))
             }
-          }
-
-          // Protocol: captured so the barrier fires on protocol-only changes.
-          val protocolOpt: Optional[io.delta.kernel.internal.actions.Protocol] =
-              StreamingHelper.getProtocol(batch, rowId)
-          if (protocolOpt.isPresent()) {
+          case protocol: Protocol =>
+            // Capture protocol-only changes so they also trigger a schema barrier.
             assert(
               protocolAction == null,
               s"Should not encounter two protocol actions in the same commit of version $version")
-            // TODO: Read CDC commits as V1 actions instead of Kernel batches to remove
-            // this Protocol conversion.
-            protocolAction = KernelActionUtils.protocolFromKernel(protocolOpt.get())
-          }
-
-          // CommitInfo: detect no-op MERGEs where the operation rewrites files without
-          // changing logical data. These produce file actions that cancel out; inferred CDC
-          // actions will be discarded after the scan to avoid emitting spurious changes.
-          val commitInfoOpt: Optional[
-              io.delta.kernel.internal.actions.CommitInfo] =
-              StreamingHelper.getCommitInfo(batch, rowId)
-          if (commitInfoOpt.isPresent()) {
-            // TODO: Read CDC commits as V1 actions instead of Kernel batches to remove
-            // this CommitInfo conversion.
-            shouldSkip =
-                CDCReader.shouldSkipFileActionsInCommit(
-                    KernelActionUtils.commitInfoFromKernel(commitInfoOpt.get()))
-          }
-
-          // Explicit CDC files
-          val cdcOpt: Optional[CDCDataFile] = StreamingHelper.getCDCFile(batch, rowId, timestamp)
-          if (cdcOpt.isPresent()) {
-            explicitCdcFiles.add(cdcOpt.get())
-          } else {
-            // RemoveFile (dataChange=true): collect for inferred CDC
-            val removeOpt: Optional[io.delta.kernel.internal.actions.RemoveFile] =
-                StreamingHelper.getDataChangeRemove(batch, rowId)
-            if (removeOpt.isPresent()) {
-              // scalastyle:off removeFile // Converts a Kernel RemoveFile; does not create one.
-              inferredCdcFiles.add(CDCDataFile.fromRemoveFile(removeOpt.get(), timestamp))
-              // scalastyle:on removeFile
-            } else {
-              // AddFile(dataChange=true)
-              val addOpt: Optional[AddFile] = StreamingHelper.getAddFileWithDataChange(batch, rowId)
-              if (addOpt.isPresent()) {
-                inferredCdcFiles.add(CDCDataFile.fromAddFile(addOpt.get(), timestamp))
-              }
-            }
-          }
+            protocolAction = protocol
+          case commitInfo: CommitInfo =>
+            // No-op MERGE commits rewrite files without changing logical data.
+            shouldSkip = CDCReader.shouldSkipFileActionsInCommit(commitInfo)
+          case cdcFile: AddCDCFile =>
+            explicitCdcFiles.add(CDCDataFile.fromAddCDCFile(cdcFile, timestamp))
+          case remove: RemoveFile if remove.dataChange =>
+            // scalastyle:off removeFile // Wraps a RemoveFile; does not create one.
+            inferredCdcFiles.add(CDCDataFile.fromRemoveFile(remove, timestamp))
+            // scalastyle:on removeFile
+          case add: AddFile if add.dataChange =>
+            inferredCdcFiles.add(CDCDataFile.fromAddFile(add, timestamp))
+          case _ =>
         }
       }
     }
@@ -1765,25 +1614,23 @@ private[read] class DeltaV2MicroBatchStream(
       // Bucket AddFile and RemoveFile by path to detect same-path pairs.
       // DV-based deletes reuse the same parquet file (marking rows in the DV instead of rewriting),
       // so both the Remove and Add reference the same path.
-      val addByPath: Map[String, io.delta.kernel.internal.actions.AddFile] =
-          new HashMap[String, io.delta.kernel.internal.actions.AddFile]()
-      val removeByPath: Map[String, io.delta.kernel.internal.actions.RemoveFile] =
-          new HashMap[String, io.delta.kernel.internal.actions.RemoveFile]()
+      val addByPath: Map[String, AddFile] = new HashMap[String, AddFile]()
+      val removeByPath: Map[String, RemoveFile] = new HashMap[String, RemoveFile]()
       for (cdc <- CollectionConverters.asScala(inferredCdcFiles)) {
         if (cdc.getAddFile() != null) {
-          val prev: io.delta.kernel.internal.actions.AddFile =
-              addByPath.put(cdc.getAddFile().getPath(), cdc.getAddFile())
+          val prev: AddFile =
+              addByPath.put(cdc.getAddFile().path, cdc.getAddFile())
           require(
             prev == null,
-            s"Unexpected duplicate AddFile at path ${cdc.getAddFile().getPath()} " +
+            s"Unexpected duplicate AddFile at path ${cdc.getAddFile().path} " +
               "in a single commit")
-        // scalastyle:off removeFile // Reads Kernel RemoveFiles; does not create any.
+        // scalastyle:off removeFile // Reads RemoveFiles; does not create any.
         } else if (cdc.getRemoveFile() != null) {
-          val prev: io.delta.kernel.internal.actions.RemoveFile =
-              removeByPath.put(cdc.getRemoveFile().getPath(), cdc.getRemoveFile())
+          val prev: RemoveFile =
+              removeByPath.put(cdc.getRemoveFile().path, cdc.getRemoveFile())
           require(
             prev == null,
-            s"Unexpected duplicate RemoveFile at path ${cdc.getRemoveFile().getPath()} " +
+            s"Unexpected duplicate RemoveFile at path ${cdc.getRemoveFile().path} " +
               "in a single commit")
         }
         // scalastyle:on removeFile
@@ -1804,9 +1651,9 @@ private[read] class DeltaV2MicroBatchStream(
           fileIndex += 1
         } else if (emittedPairs.add(path)) {
           // First occurrence of a same-path pair: emit the consolidated pair entries.
-          val add: io.delta.kernel.internal.actions.AddFile = addByPath.get(path)
-          val remove: io.delta.kernel.internal.actions.RemoveFile = removeByPath.get(path)
-          if (add.getDeletionVector().isPresent() || remove.getDeletionVector().isPresent()) {
+          val add: AddFile = addByPath.get(path)
+          val remove: RemoveFile = removeByPath.get(path)
+          if (add.deletionVector != null || remove.deletionVector != null) {
             // DV-based delete/restore: compute the bitmap diff and emit one CDC file per diff
             // entry. Path.toString() avoids percent-encoding that breaks DV file resolution.
             val dataPath: String = snapshotAtSourceInit.dataPath.toString()
@@ -1821,7 +1668,7 @@ private[read] class DeltaV2MicroBatchStream(
             result.add(
                 IndexedFile.cdc(version, fileIndex, CDCDataFile.fromAddFile(add, timestamp)))
             fileIndex += 1
-            // scalastyle:off removeFile // Converts a Kernel RemoveFile; does not create one.
+            // scalastyle:off removeFile // Wraps a RemoveFile; does not create one.
             result.add(
                 IndexedFile.cdc(
                     version, fileIndex, CDCDataFile.fromRemoveFile(remove, timestamp)))

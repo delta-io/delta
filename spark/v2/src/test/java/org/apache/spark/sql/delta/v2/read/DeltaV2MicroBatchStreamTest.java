@@ -702,7 +702,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
         dsv2AddPath = kernelFile.getAddFile().path();
       } else if (kernelFile.getCDCDataFile() != null
           && kernelFile.getCDCDataFile().getAddFile() != null) {
-        dsv2AddPath = kernelFile.getCDCDataFile().getAddFile().getPath();
+        dsv2AddPath = kernelFile.getCDCDataFile().getAddFile().path();
       }
       assertEquals(
           dsv1AddPath,
@@ -714,7 +714,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       String dsv2RemovePath = null;
       if (kernelFile.getCDCDataFile() != null
           && kernelFile.getCDCDataFile().getRemoveFile() != null) {
-        dsv2RemovePath = kernelFile.getCDCDataFile().getRemoveFile().getPath();
+        dsv2RemovePath = kernelFile.getCDCDataFile().getRemoveFile().path();
       }
       assertEquals(
           dsv1RemovePath,

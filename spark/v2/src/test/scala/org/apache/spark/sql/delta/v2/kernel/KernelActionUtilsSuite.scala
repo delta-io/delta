@@ -16,14 +16,17 @@
 
 package org.apache.spark.sql.delta.v2.kernel
 
+import java.lang.reflect.{InvocationHandler, Method, Proxy}
 import java.util.Optional
+import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, DeletionVectorDescriptor, DomainMetadata, SetTransaction}
 import org.apache.spark.sql.delta.v2.utils.KernelCommitActionsTestUtil.createCommitActions
+import io.delta.kernel.data.{ColumnVector => KernelColumnVector}
+import io.delta.kernel.data.{MapValue => KernelMapValue}
 import io.delta.kernel.data.{Row => KernelRow}
-import io.delta.kernel.data.MapValue
 import io.delta.kernel.defaults.internal.json.{JsonUtils => KernelJsonUtils}
 import io.delta.kernel.internal.DeltaLogActionUtils.{DeltaAction => KernelDeltaAction}
 import io.delta.kernel.internal.actions.{AddCDCFile => KernelAddCDCFile}
@@ -167,8 +170,8 @@ class KernelActionUtilsSuite extends SparkFunSuite {
     assert(commitInfo.txnId === Some("txn-123"))
   }
 
-  private def optionalMapValue(values: Map[String, String]): Optional[MapValue] = {
-    if (values.isEmpty) Optional.empty[MapValue]()
+  private def optionalMapValue(values: Map[String, String]): Optional[KernelMapValue] = {
+    if (values.isEmpty) Optional.empty[KernelMapValue]()
     else Optional.of(VectorUtils.stringStringMapValue(values.asJava))
   }
 
@@ -543,6 +546,58 @@ class KernelActionUtilsSuite extends SparkFunSuite {
         createCommitActions(Seq(KernelDeltaAction.CDC.colName -> kernelColumn)))
         .processAndClose(_.toVector) === Seq(expected))
     }
+  }
+
+  test("readActions CDC partition values survive source release") {
+    val testCases = Seq(
+      """{"country":"US","empty":"","nullable":null}""" ->
+        Map("country" -> "US", "empty" -> "", "nullable" -> null),
+      "{}" -> Map.empty[String, String])
+
+    testCases.foreach { case (partitionJson, expected) =>
+      val released = new AtomicBoolean()
+      val kernelRow = KernelJsonUtils.rowFromJson(
+        s"""{"path":"cdc.parquet","partitionValues":$partitionJson,"size":10}""",
+        KernelAddCDCFile.FULL_SCHEMA)
+      val kernelColumn = releaseAware(
+        classOf[KernelColumnVector],
+        new GenericColumnVector(Seq(kernelRow).asJava, KernelAddCDCFile.FULL_SCHEMA),
+        released)
+      val actions = KernelActionUtils.readActions(
+        createCommitActions(Seq(KernelDeltaAction.CDC.colName -> kernelColumn)))
+        .processAndClose(_.toVector)
+      released.set(true)
+
+      intercept[IllegalStateException] {
+        kernelColumn.getChild(KernelAddCDCFile.FULL_SCHEMA.indexOf("partitionValues"))
+      }
+      assert(actions === Seq(AddCDCFile("cdc.parquet", expected, 10L)))
+    }
+  }
+
+  // Model native batch release without dereferencing freed memory. Guard child vectors and maps
+  // too, so retaining them instead of copying their contents cannot pass the regression test.
+  private def releaseAware[T <: AnyRef](
+      interface: Class[T],
+      value: T,
+      released: AtomicBoolean): T = {
+    interface.cast(Proxy.newProxyInstance(
+      interface.getClassLoader,
+      Array[Class[_]](interface),
+      new InvocationHandler {
+        override def invoke(proxy: AnyRef, method: Method, args: Array[AnyRef]): AnyRef = {
+          if (released.get()) {
+            throw new IllegalStateException("Source batch has been released")
+          }
+          method.invoke(value, args: _*) match {
+            case kernelColumn: KernelColumnVector =>
+              releaseAware(classOf[KernelColumnVector], kernelColumn, released)
+            case kernelMap: KernelMapValue =>
+              releaseAware(classOf[KernelMapValue], kernelMap, released)
+            case result => result
+          }
+        }
+      }))
   }
 
 }
