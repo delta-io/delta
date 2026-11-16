@@ -72,6 +72,11 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   private PathBasedSnapshotManager snapshotManager;
   private final DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.empty();
 
+  @Override
+  protected boolean clearTableManagerCacheAfterEach() {
+    return true;
+  }
+
   @Test
   public void testGetAddFileWithDataChange() {
     ColumnVector adds =

@@ -55,6 +55,11 @@ import scala.collection.immutable.Seq$;
 /** Unit tests for {@link MetadataEvolutionHandler}. */
 public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
+  @Override
+  protected boolean clearTableManagerCacheAfterEach() {
+    return true;
+  }
+
   // ---------------------------------------------------------------------------
   // Shared test fixtures
   // ---------------------------------------------------------------------------

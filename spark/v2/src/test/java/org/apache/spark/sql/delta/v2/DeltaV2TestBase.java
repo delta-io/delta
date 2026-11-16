@@ -86,9 +86,19 @@ public abstract class DeltaV2TestBase {
     }
   }
 
+  /**
+   * Opt-in hook: suites that return {@code true} get the shared {@code DeltaV2TableManagerCache}
+   * cleared after each test. Defaults to {@code false}, which leaves the cache untouched.
+   */
+  protected boolean clearTableManagerCacheAfterEach() {
+    return false;
+  }
+
   @AfterEach
   public void afterEach() {
-    DeltaV2TableManagerCache$.MODULE$.clearCache();
+    if (clearTableManagerCacheAfterEach()) {
+      DeltaV2TableManagerCache$.MODULE$.clearCache();
+    }
   }
 
   /** Returns a fresh, unique table directory path under the JVM temp dir. */
