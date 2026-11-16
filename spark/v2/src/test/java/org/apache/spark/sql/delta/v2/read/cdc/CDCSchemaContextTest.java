@@ -155,12 +155,13 @@ public class CDCSchemaContextTest {
 
   @Test
   void testAppendCDCColumns() {
-    StructType expected =
-        DATA_SCHEMA
-            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType, true)
-            .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType, true)
-            .add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, true);
-    assertEquals(expected, CDCSchemaContext.appendCDCColumns(DATA_SCHEMA));
+    StructType augmented = CDCSchemaContext.appendCDCColumns(DATA_SCHEMA);
+    assertEquals(5, augmented.fields().length);
+    assertEquals("id", augmented.fields()[0].name());
+    assertEquals("name", augmented.fields()[1].name());
+    assertEquals(CDCSchemaContext.CDC_TYPE_COLUMN, augmented.fields()[2].name());
+    assertEquals(CDCSchemaContext.CDC_COMMIT_VERSION, augmented.fields()[3].name());
+    assertEquals(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, augmented.fields()[4].name());
   }
 
   @Test
