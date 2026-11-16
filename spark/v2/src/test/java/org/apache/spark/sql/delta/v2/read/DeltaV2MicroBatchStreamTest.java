@@ -4614,18 +4614,18 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     // KernelEngineException wrapping ClosedByInterruptException -> present
     ClosedByInterruptException cbie = new ClosedByInterruptException();
     assertEquals(
-        Optional.of(cbie),
+        Option.apply(cbie),
         DeltaV2MicroBatchStreamUtils.findClosedByInterruptCause(
             new io.delta.kernel.exceptions.KernelEngineException("readJsonFile", cbie)));
 
     // Plain RuntimeException -> empty
     assertEquals(
-        Optional.empty(),
+        Option.empty(),
         DeltaV2MicroBatchStreamUtils.findClosedByInterruptCause(new RuntimeException("unrelated")));
 
     // KernelEngineException wrapping a different IOException -> empty
     assertEquals(
-        Optional.empty(),
+        Option.empty(),
         DeltaV2MicroBatchStreamUtils.findClosedByInterruptCause(
             new io.delta.kernel.exceptions.KernelEngineException(
                 "readJsonFile", new java.io.FileNotFoundException("missing"))));
