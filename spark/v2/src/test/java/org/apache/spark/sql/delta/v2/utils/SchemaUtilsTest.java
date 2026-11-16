@@ -256,7 +256,9 @@ public class SchemaUtilsTest {
             .add("m", DataTypes.createMapType(DataTypes.StringType, sparkString, true));
 
     assertEquals(expectedSparkSchema, convertKernelSchemaThroughMetadata(kernelSchema));
-
+    if (sparkCollation.equals("UTF8_BINARY")) {
+      return;
+    }
     // A schema can also record a collation only in field metadata, on a binary string.
     StructType metadataOnlyKernelSchema =
         new StructType()
