@@ -545,8 +545,11 @@ trait GeneratedColumnSuiteBase
     val f2 = withGenerationExpression(StructField("c2", IntegerType), "c10 + 10")
     val schema = StructType(f1 :: f2 :: Nil)
     val e = intercept[DeltaAnalysisException](validateGeneratedColumns(spark, schema))
-    errorContains(e.getMessage,
-      "A generated column cannot use a non-existent column or another generated column")
+    checkError(
+      exception = e,
+      condition = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES",
+      sqlState = "42621",
+      parameters = Map.empty[String, String])
   }
 
   test("validateGeneratedColumns: no generated columns") {
@@ -569,8 +572,11 @@ trait GeneratedColumnSuiteBase
     val f3 = withGenerationExpression(StructField("c3", IntegerType), "c2 + 10")
     val schema = StructType(f1 :: f2 :: f3 :: Nil)
     val e = intercept[DeltaAnalysisException](validateGeneratedColumns(spark, schema))
-    errorContains(e.getMessage,
-      "A generated column cannot use a non-existent column or another generated column")
+    checkError(
+      exception = e,
+      condition = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES",
+      sqlState = "42621",
+      parameters = Map.empty[String, String])
   }
 
   test("validateGeneratedColumns: supported expressions") {
@@ -586,19 +592,25 @@ trait GeneratedColumnSuiteBase
 
   test("validateGeneratedColumns: unsupported expressions") {
     spark.udf.register("myudf", (s: Array[Int]) => s)
-    for ((exprString, error) <- Seq(
-      "myudf(foo)" -> "Found myudf(foo). A generated column cannot use a user-defined function",
-      "rand()" ->
-        "Found rand(). A generated column cannot use a non deterministic expression",
-      "max(foo)" -> "Found max(foo). A generated column cannot use an aggregate expression",
-      "explode(foo)" -> "explode(foo) cannot be used in a generated column",
-      "current_timestamp" -> "current_timestamp() cannot be used in a generated column"
+    for ((exprString, condition, parameters) <- Seq(
+      ("myudf(foo)", "DELTA_UDF_IN_GENERATED_COLUMN", Map("udfExpr" -> "myudf(foo)")),
+      ("rand()", "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_GENERATED_COLUMN",
+        Map("expr" -> "rand()")),
+      ("max(foo)", "DELTA_AGGREGATE_IN_GENERATED_COLUMN", Map("sqlExpr" -> "max(foo)")),
+      ("explode(foo)", "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN",
+        Map("expression" -> "explode(foo)")),
+      ("current_timestamp", "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN",
+        Map("expression" -> "current_timestamp()"))
     )) {
       val f1 = StructField("foo", ArrayType(IntegerType, true))
       val f2 = withGenerationExpression(StructField("bar", IntegerType), exprString)
       val schema = StructType(f1 :: f2 :: Nil)
       val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
-      errorContains(e.getMessage, error)
+      checkError(
+        exception = e,
+        condition = condition,
+        sqlState = "42621",
+        parameters = parameters)
     }
   }
 
