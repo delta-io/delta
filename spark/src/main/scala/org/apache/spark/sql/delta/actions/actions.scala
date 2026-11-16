@@ -2228,6 +2228,9 @@ object Checkpoint {
  * Info of last AMT manifest commit. Persisted in every [[CommitInfo]] and [[VersionChecksum]]
  * as the source-of-truth of the last manifest commit up to the current commit version.
  *
+ * It also names an AMT tree. Two manifest commits can write trees with the same
+ * `contentRootVersion`, so code that compares two trees compares the whole [[LastManifestCommit]].
+ *
  * @param version version of the manifest commit
  * @param contentRootVersion version of the content root recorded in the manifest commit
  */
