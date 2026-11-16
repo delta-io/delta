@@ -15,8 +15,6 @@
  */
 package org.apache.spark.sql.delta.util
 
-import java.util.Locale
-
 import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -31,17 +29,23 @@ import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 object DeltaFileSystemOptions {
 
   /**
+   * Unwraps [[CaseInsensitiveMap]] to its underlying case-sensitive `originalMap` so that
+   * iterating or filtering the map does not lowercase keys.
+   */
+  private[delta] def toCaseSensitiveMap(options: Map[String, String]): Map[String, String] = {
+    options match {
+      case ci: CaseInsensitiveMap[String @unchecked] => ci.originalMap
+      case other => other
+    }
+  }
+
+  /**
    * Retains only entries whose key starts with a recognised Hadoop filesystem
    * prefix ([[DeltaTableUtils.validDeltaTableHadoopPrefixes]]).
    */
   private[delta] def filterHadoopOptions(options: Map[String, String]): Map[String, String] = {
-    val caseSensitiveOptions = options match {
-      case ci: CaseInsensitiveMap[String @unchecked] => ci.originalMap
-      case other => other
-    }
-    caseSensitiveOptions.filter { case (k, _) =>
-      val lowerKey = k.toLowerCase(Locale.ROOT)
-      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(lowerKey.startsWith)
+    toCaseSensitiveMap(options).filter { case (k, _) =>
+      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
     }
   }
 

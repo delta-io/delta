@@ -42,7 +42,6 @@ import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
@@ -121,11 +120,7 @@ class DeltaTableV2 private(
         val fileSystemOptions = catalogTable.get.storage.properties.filter { case (k, _) =>
           DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
         }
-        val caseSensitiveOptions = options match {
-          case ci: CaseInsensitiveMap[String @unchecked] => ci.originalMap
-          case other => other
-        }
-        fileSystemOptions ++ caseSensitiveOptions
+        fileSystemOptions ++ options
       } else {
         options
       }

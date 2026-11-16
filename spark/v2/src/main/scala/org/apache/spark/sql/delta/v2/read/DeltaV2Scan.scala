@@ -124,7 +124,7 @@ private[read] class DeltaV2Scan(
   Objects.requireNonNull(catalogStats, "catalogStats is null")
   Objects.requireNonNull(options, "options is null")
   Objects.requireNonNull(pushedLimit, "pushedLimit is null")
-  private val scalaOptions: Map[String, String] = ScalaUtils.toScalaMap(options)
+  private val scalaOptions: Map[String, String] = ScalaUtils.toScalaMap(options.asCaseSensitiveMap)
   private val hadoopConf: Configuration =
     SparkSession.active.sessionState.newHadoopConfWithOptions(scalaOptions)
   private val sqlConf: SQLConf = SQLConf.get

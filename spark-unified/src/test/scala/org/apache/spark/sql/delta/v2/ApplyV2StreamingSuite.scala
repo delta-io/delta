@@ -28,6 +28,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTableType}
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
 import org.apache.spark.sql.delta.test.shims.StreamingRelationV2Shim
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -137,6 +138,31 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
               assert(result == plan)
             }
           }
+        }
+      }
+    }
+  }
+
+  test("ApplyV2Streaming preserves mixed-case option keys from CaseInsensitiveMap") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createDeltaTable(path)
+      val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
+      val mixedCaseKey = "fs.azure.skipUserGroupMetadataDuringInitialization"
+      val dataSource = DataSource(
+        sparkSession = spark,
+        userSpecifiedSchema = None,
+        className = "delta",
+        options = CaseInsensitiveMap(Map("path" -> path, mixedCaseKey -> "true")),
+        catalogTable = Some(catalogTable))
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        applyRule(StreamingRelation(dataSource)) match {
+          case StreamingRelationV2Shim(_, _, table: DeltaV2Table, extraOptions, _, _, _, _) =>
+            assert(table.getOptions.get(mixedCaseKey) == "true")
+            assert(extraOptions.asCaseSensitiveMap().get(mixedCaseKey) == "true")
+          case other =>
+            fail(s"Expected StreamingRelationV2, got $other")
         }
       }
     }

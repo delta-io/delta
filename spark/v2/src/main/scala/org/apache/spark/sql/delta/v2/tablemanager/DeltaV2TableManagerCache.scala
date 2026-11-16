@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Per-instance [[DeltaV2TableManager]] cache configured through constructor parameters. The
@@ -180,8 +181,12 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
         options: java.util.Map[String, String],
         catalogTableOpt: Option[CatalogTable] = None
     ): CacheKey = {
+      val caseSensitiveOptions = options match {
+        case ci: CaseInsensitiveStringMap => ci.asCaseSensitiveMap()
+        case other => other
+      }
       val sessionInvariantFsOptions = DeltaFileSystemOptions.buildFsOptions(
-        spark, options.asScala.toMap, catalogTableOpt)
+        spark, caseSensitiveOptions.asScala.toMap, catalogTableOpt)
       val rawLogPath = DeltaTableUtils.safeConcatPaths(new Path(dataPath), "_delta_log")
       // Snapshot the session's Hadoop config with fs options overlaid.
       // Used only for qualification; not retained in the key.

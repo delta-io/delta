@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.commands.{
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.{PartitionUtils, Utils}
+import org.apache.spark.sql.delta.util.{DeltaFileSystemOptions, PartitionUtils, Utils}
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
 import org.json4s.jackson.Serialization
@@ -329,14 +329,10 @@ class DeltaDataSource
             DeltaDataSource.CDC_END_TIMESTAMP_KEY)
         }
       }
-      val caseSensitiveParams = parameters match {
-        case ci: CaseInsensitiveMap[String @unchecked] => ci.originalMap
-        case other => other
-      }
       val dfOptions: Map[String, String] =
         if (sqlContext.sparkSession.sessionState.conf.getConf(
             DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-          caseSensitiveParams ++ cdcOptions
+          DeltaFileSystemOptions.toCaseSensitiveMap(parameters) ++ cdcOptions
         } else {
           cdcOptions.toMap
         }
