@@ -22,8 +22,9 @@ import org.apache.spark.sql.delta.sources.DeltaSource
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.delta.test.shims.GridTestShim
 
-abstract class LineClosableIteratorSuiteBase extends SparkFunSuite {
+abstract class LineClosableIteratorSuiteBase extends SparkFunSuite with GridTestShim {
 
   protected def createIter(_reader: Reader): ClosableIterator[String]
 
