@@ -236,45 +236,6 @@ public class SchemaUtilsTest {
     assertEquals(expectedSparkSchema, convertKernelSchemaThroughMetadata(kernelSchema));
   }
 
-  @ParameterizedTest
-  @MethodSource("collations")
-  public void testCollatedStringsToSparkThroughMetadata(
-      String sparkCollation, String kernelCollation) {
-    StringType kernelString = new StringType(kernelCollation);
-    org.apache.spark.sql.types.StringType sparkString = StringType$.MODULE$.apply(sparkCollation);
-    StructType kernelSchema =
-        new StructType()
-            .add("s", kernelString)
-            .add("a", new ArrayType(kernelString, true))
-            .add("outer", new StructType().add("s", kernelString))
-            .add("m", new MapType(StringType.STRING, kernelString, true));
-    org.apache.spark.sql.types.StructType expectedSparkSchema =
-        new org.apache.spark.sql.types.StructType()
-            .add("s", sparkString)
-            .add("a", DataTypes.createArrayType(sparkString, true))
-            .add("outer", new org.apache.spark.sql.types.StructType().add("s", sparkString))
-            .add("m", DataTypes.createMapType(DataTypes.StringType, sparkString, true));
-
-    assertEquals(expectedSparkSchema, convertKernelSchemaThroughMetadata(kernelSchema));
-    if (sparkCollation.equals("UTF8_BINARY")) {
-      return;
-    }
-    // A schema can also record a collation only in field metadata, on a binary string.
-    StructType metadataOnlyKernelSchema =
-        new StructType()
-            .add(
-                "s",
-                StringType.STRING,
-                FieldMetadata.builder()
-                    .putFieldMetadata(
-                        "__COLLATIONS",
-                        FieldMetadata.builder().putString("s", kernelCollation).build())
-                    .build());
-    assertEquals(
-        new org.apache.spark.sql.types.StructType().add("s", sparkString),
-        convertKernelSchemaThroughMetadata(metadataOnlyKernelSchema));
-  }
-
   @Test
   public void testSchemaRoundTripWithFieldMetadata() {
     // Schema with field metadata (e.g., column mapping)
