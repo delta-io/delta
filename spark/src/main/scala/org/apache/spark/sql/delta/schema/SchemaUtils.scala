@@ -181,7 +181,12 @@ object SchemaUtils extends DeltaLogging {
     }
   }
 
-  /** Turns the data types to nullable in a recursive manner for nested columns. */
+  /**
+   * Turns the data type nullable inside structs, and one level into arrays and into maps with
+   * struct keys or values. Unlike [[typeAsFullyNullable]], it leaves maps without struct keys or
+   * values, and the types nested in array elements or map values other than structs, as they are,
+   * which [[removeUnenforceableNotNullConstraints]] relies on.
+   */
   def typeAsNullable(dt: DataType): DataType = dt match {
     case s: StructType => s.asNullable
     case a @ ArrayType(s: StructType, _) => a.copy(s.asNullable, containsNull = true)
@@ -192,6 +197,17 @@ object SchemaUtils extends DeltaLogging {
       m.copy(keyType = s1.asNullable, valueContainsNull = true)
     case m @ MapType(_, s2: StructType, _) =>
       m.copy(valueType = s2.asNullable, valueContainsNull = true)
+    case other => other
+  }
+
+  /**
+   * Turns the data type nullable at every nesting level: struct fields, array elements, and map
+   * values, including those of primitive type, which [[typeAsNullable]] leaves as they are.
+   */
+  def typeAsFullyNullable(dt: DataType): DataType = dt match {
+    case s: StructType => s.toNullable
+    case a: ArrayType => a.toNullable
+    case m: MapType => m.toNullable
     case other => other
   }
 
