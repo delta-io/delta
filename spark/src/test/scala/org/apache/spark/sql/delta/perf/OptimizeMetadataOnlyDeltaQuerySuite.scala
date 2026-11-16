@@ -1010,6 +1010,34 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     }
   }
 
+  test("distinct partition values - type widening with overlapping values") {
+    val tableName = "TestDistinctPartitionsTypeWidening"
+    withTable(tableName) {
+      spark.sql(s"CREATE TABLE $tableName (id INT, p DECIMAL(5, 1)) USING DELTA" +
+        " PARTITIONED BY (p) TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
+      spark.sql(s"INSERT INTO $tableName VALUES (1, 1.0), (2, 2.5)")
+      spark.sql(s"ALTER TABLE $tableName ALTER COLUMN p TYPE DECIMAL(6, 2)")
+      // The same value is now serialized as "1.00" in the log, next to the older "1.0".
+      spark.sql(s"INSERT INTO $tableName VALUES (3, 1.00), (4, 3.25)")
+
+      checkDistinctPartitionsOptimized(s"SELECT DISTINCT p FROM $tableName")
+      withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
+        checkAnswer(spark.sql(s"SELECT DISTINCT p FROM $tableName"),
+          Seq(Row(BigDecimal("1.00")), Row(BigDecimal("2.50")), Row(BigDecimal("3.25"))))
+      }
+    }
+  }
+
+  test("distinct partition values - backtick in partition column name") {
+    val tableName = "TestDistinctPartitionsBacktick"
+    withTable(tableName) {
+      spark.sql(s"CREATE TABLE $tableName (id INT, `p``x` INT) USING DELTA PARTITIONED BY (`p``x`)")
+      spark.sql(s"INSERT INTO $tableName VALUES (1, 1), (2, 2), (3, 1)")
+
+      checkDistinctPartitionsOptimized(s"SELECT DISTINCT `p``x` FROM $tableName")
+    }
+  }
+
   test("optimization not supported - distinct partition values missing stats") {
     val tableName = "TestDistinctPartitionsNoStats"
     withTable(tableName) {

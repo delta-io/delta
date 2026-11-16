@@ -17,13 +17,17 @@
 package org.apache.spark.sql.delta.perf
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.catalyst.CatalystTypeConverters.createToCatalystConverter
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable, Snapshot}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
@@ -127,8 +131,9 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
    * Replaces an [[Aggregate]] grouping only by partition columns with a [[LocalRelation]] holding
    * the distinct partition values of the files that contain at least one row, and a [[Project]]
    * on top evaluating the aggregate output expressions.
-   * Partition values are converted the same way [[TahoeLogFileIndex]] does it during a scan, so
-   * the results are identical to the non-optimized query.
+   * Partition values are cast to the column type the same way [[TahoeLogFileIndex]] does it during
+   * a scan, before grouping, so that different serializations of the same value (e.g. "1.0" and
+   * "1.00" after widening a DECIMAL partition column) produce a single row.
    */
   private def createDistinctPartitionValuesPlan(
       plan: Aggregate,
@@ -141,14 +146,19 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     if (partitionColumns.exists(_.isEmpty)) {
       return plan
     }
-    val physicalNames = partitionColumns.map(c => DeltaColumnMapping.getPhysicalName(c.get))
 
     // A file can have no rows (e.g. AddFile with numRecords = 0, or all rows deleted by a
     // deletion vector), and its partition value must not be returned in that case.
     val dvCardinality = coalesce(col("deletionVector.cardinality"), lit(0))
     val numLogicalRecords = col("stats.numRecords") - dvCardinality
-    val partitionValueColumns = physicalNames.zipWithIndex.map { case (physicalName, i) =>
-      col(s"partitionValues.`$physicalName`").as(s"partition_$i")
+    val timeZone = Option(SQLConf.get.sessionLocalTimeZone)
+    val partitionValueColumns = partitionColumns.map(_.get).zipWithIndex.map { case (field, i) =>
+      val partitionValue = ElementAt(
+        UnresolvedAttribute.quotedString("partitionValues"),
+        Literal(DeltaColumnMapping.getPhysicalName(field)),
+        failOnError = false)
+      Column(Cast(partitionValue, field.dataType, timeZone, ansiEnabled = false))
+        .as(s"partition_$i")
     }
     val partitions = getDeltaScanGenerator(tahoeLogFileIndex).filesWithStatsForScan(Nil)
       .groupBy(partitionValueColumns: _*)
@@ -162,13 +172,12 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       return plan
     }
 
-    val timeZone = Option(SQLConf.get.sessionLocalTimeZone)
+    val converters = groupingAttributes.map(a => createToCatalystConverter(a.dataType))
     val rows = partitions
       .filter(_.getAs[Long]("maxNumLogicalRecords") > 0)
       .map { partition =>
-        InternalRow.fromSeq(groupingAttributes.zipWithIndex.map { case (attr, i) =>
-          Cast(Literal(partition.getString(i)), attr.dataType, timeZone, ansiEnabled = false)
-            .eval()
+        InternalRow.fromSeq(converters.zipWithIndex.map { case (convert, i) =>
+          convert(partition.get(i))
         })
       }.toSeq
 
