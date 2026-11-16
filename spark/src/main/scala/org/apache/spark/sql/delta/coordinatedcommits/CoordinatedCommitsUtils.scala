@@ -87,7 +87,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   def populateTableCommitCoordinatorFromCatalog(
       spark: SparkSession,
       catalogTableOpt: Option[CatalogTable],
-      snapshot: Snapshot): Option[TableCommitCoordinatorClient] = {
+      snapshot: Snapshot
+  ): Option[TableCommitCoordinatorClient] = {
     if (!snapshot.isCatalogOwned) {
       return None
     }
