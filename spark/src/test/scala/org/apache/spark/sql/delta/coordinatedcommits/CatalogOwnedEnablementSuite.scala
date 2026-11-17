@@ -49,12 +49,12 @@ class CatalogOwnedEnablementSuite
   private val ICT_ENABLED_KEY = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key
 
   /**
-   * Validate that the table has the expected enablement of Catalog-Owned table feature.
+   * Validate that the table has the expected enablement of Catalog-Managed table feature.
    * Specifically, [[CatalogOwnedTableFeature]] and its dependent features should be present
    * in the table protocol.
    *
    * @param tableName The name of the table to validate.
-   * @param expectEnabled Whether the Catalog-Owned table feature should be enabled or not.
+   * @param expectEnabled Whether the Catalog-Managed table feature should be enabled or not.
    */
   private def validateCatalogOwnedCompleteEnablement(
       tableName: String,
@@ -96,10 +96,10 @@ class CatalogOwnedEnablementSuite
 
   /**
    * Helper function to set up and validate the initial table to be tested
-   * for Catalog Owned enablement.
+   * for Catalog Managed enablement.
    *
    * @param tableName The name of the table to be created for the test.
-   * @param createCatalogOwnedTableAtInit Whether to enable Catalog-Owned table feature
+   * @param createCatalogOwnedTableAtInit Whether to enable Catalog-Managed table feature
    *                                      at the time of table creation.
    */
   private def testCatalogOwnedEnablementSetup(
@@ -294,7 +294,7 @@ class CatalogOwnedEnablementSuite
     }
 
     // QoL features should also be enabled w/ other additional features enablement
-    // during CatalogOwned creation.
+    // during CatalogManaged creation.
     withTable("t1") {
       // Enable [[ClusteringTableFeature]] and [[ChangeDataFeedTableFeature]] during CO creation.
       createTable("t1", clusterBy = Seq("id"), properties = Map(
@@ -368,7 +368,7 @@ class CatalogOwnedEnablementSuite
 
   test("Upgrade should be blocked since it is not supported yet") {
     withRandomTable(
-      // Do not enable Catalog-Owned at the beginning when creating table
+      // Do not enable Catalog-Managed at the beginning when creating table
       createCatalogOwnedTableAtInit = false
     ) { tableName =>
       val error = intercept[NotImplementedException] {

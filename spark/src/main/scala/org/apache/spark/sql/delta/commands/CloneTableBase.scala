@@ -319,7 +319,7 @@ abstract class CloneTableBase(
       // ICT enablement provenance info refers to the source's log. The commit re-derives it for
       // the target (see InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo).
       .filterKeys(!InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(_))
-      // Catalog-Owned enabled table's UC table ID property is never copied over to the
+      // Catalog-Managed enabled table's UC table ID property is never copied over to the
       // target table.
       .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
       .toMap
@@ -418,9 +418,9 @@ abstract class CloneTableBase(
         validatedConfigurationsWithoutCoordinatedCommits ++
         finalCatalogOwnedMetadata)
     // An AMT source makes a new target AMT only through the protocol, which the defaults applied
-    // while creating its metadata (e.g. the catalog-owned QoL features) do not see. Request AMT in
-    // the configuration too, so that they skip the features AMT is incompatible with. An existing
-    // target gets none of those defaults.
+    // while creating its metadata (e.g. the catalog-managed QoL features) do not see. Request AMT
+    // in the configuration too, so that they skip the features AMT is incompatible with. An
+    // existing target gets none of those defaults.
     if (!tableExists(targetSnapshot)) {
       AdaptiveMetadataTableFeatureBase.supportedBy(sourceTable.protocol).foreach { amtFeature =>
         metadata = metadata.copy(configuration = metadata.configuration +
@@ -454,7 +454,7 @@ abstract class CloneTableBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       opName: String): Protocol = {
-    // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table.
+    // Catalog-Managed: Do not copy over [[CatalogOwnedTableFeature]] from source table.
     val sourceProtocol =
       sourceTable.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
     // Pre-transaction version of the target table.
@@ -465,14 +465,14 @@ abstract class CloneTableBase(
     // the table property overrides as table features set by it won't be in the transaction
     // metadata anymore.
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
-    // For CREATE CLONE, check the default spark configuration for Catalog-Owned.
+    // For CREATE CLONE, check the default spark configuration for Catalog-Managed.
     val catalogOwnedEnabledByDefaultConf =
       if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
           && !tableExists(txn.snapshot)) {
         // Append [[CatalogOwnedTableFeature]] to the `configWithOverrides` below if table
-        // does not exist, to ensure the final target protocol contains CatalogOwned
+        // does not exist, to ensure the final target protocol contains CatalogManaged
         // if enabled by default.
-        // Note: We need this because CatalogOwned is enabled through single protocol
+        // Note: We need this because CatalogManaged is enabled through single protocol
         //       without auxiliary metadata.
         Map(s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported")
       } else {
