@@ -204,7 +204,8 @@ public class SnapshotManager {
         engine,
         versionToLoadOpt,
         Collections.emptyList() /* parsedLogDatas */,
-        Optional.empty() /* maxCatalogVersionOpt */);
+        Optional.empty() /* maxCatalogVersionOpt */,
+        Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE);
   }
 
   /**
@@ -216,19 +217,6 @@ public class SnapshotManager {
    * @param maxCatalogVersionOpt the maximum version ratified by the catalog for catalog managed
    *     tables. Empty for file-system managed tables.
    */
-  public LogSegment getLogSegmentForVersion(
-      Engine engine,
-      Optional<Long> timeTravelVersionOpt,
-      List<ParsedLogData> parsedLogDatas,
-      Optional<Long> maxCatalogVersionOpt) {
-    return getLogSegmentForVersion(
-        engine,
-        timeTravelVersionOpt,
-        parsedLogDatas,
-        maxCatalogVersionOpt,
-        Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE);
-  }
-
   public LogSegment getLogSegmentForVersion(
       Engine engine,
       Optional<Long> timeTravelVersionOpt,

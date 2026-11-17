@@ -25,7 +25,7 @@ import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException, VersionToLoadAfterLatestCommitException, VersionTruncatedException}
 import io.delta.kernel.expressions.Predicate
-import io.delta.kernel.internal.checkpoints.{CheckpointInstance, CheckpointMetaData, SidecarFile}
+import io.delta.kernel.internal.checkpoints.{Checkpointer, CheckpointInstance, CheckpointMetaData, SidecarFile}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
@@ -931,8 +931,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       createMockFSListFromEngine(deltas ++ checkpoints),
       Optional.empty(), // timeTravelVersionOpt
       Collections.emptyList(), // parsedLogDatas
-      Optional.of(15L) // maxCatalogVersionOpt
-    )
+      Optional.of(15L), // maxCatalogVersionOpt
+      Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE)
 
     checkLogSegment(
       logSegment,
@@ -952,8 +952,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       createMockFSListFromEngine(deltas ++ checkpoints),
       Optional.empty(), // timeTravelVersionOpt
       Collections.emptyList(), // parsedLogDatas
-      Optional.of(20L) // maxCatalogVersionOpt
-    )
+      Optional.of(20L), // maxCatalogVersionOpt
+      Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE)
 
     // Should find checkpoint at version 10 by searching backwards from version 20
     checkLogSegment(
@@ -994,8 +994,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       mockedEngine,
       Optional.empty(), // timeTravelVersionOpt
       Collections.emptyList(), // parsedLogDatas
-      Optional.of(30L) // maxCatalogVersionOpt
-    )
+      Optional.of(30L), // maxCatalogVersionOpt
+      Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE)
 
     checkLogSegment(
       logSegment,
@@ -1024,8 +1024,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))),
       Optional.empty(), // timeTravelVersionOpt
       Collections.emptyList(), // parsedLogDatas
-      Optional.of(24L) // maxCatalogVersionOpt is 24, which is < 25
-    )
+      Optional.of(24L), // maxCatalogVersionOpt is 24, which is < 25
+      Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE)
 
     // Should use checkpoint at version 20 not 25, and should load maxCatalogVersion
     checkLogSegment(
@@ -1067,8 +1067,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))),
       Optional.of(15L), // timeTravelVersionOpt = 15
       Collections.emptyList(), // parsedLogDatas
-      Optional.of(30L) // maxCatalogVersionOpt
-    )
+      Optional.of(30L), // maxCatalogVersionOpt
+      Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE)
 
     // Should use checkpoint at version 10 for time travel to version 15
     checkLogSegment(
