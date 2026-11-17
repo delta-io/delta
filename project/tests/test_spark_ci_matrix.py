@@ -31,11 +31,21 @@ class FullMatrixTriggerTest(unittest.TestCase):
     TRIGGERS = [
         "build.sbt",
         "version.sbt",
+        ".sbtopts",
+        ".jvmopts",
         "project/CrossSparkVersions.scala",
+        "project/plugins.sbt",
+        "project/build.properties",
+        "project/scripts/get_spark_version_info.py",
+        "project/scripts/setup_unitycatalog_main.sh",
         "project/scripts/spark_ci_matrix.py",
         "build/sbt",
         "build/sbt-config/repositories",
+        "build/sbt-launch-lib.bash",
         "spark/src/main/scala-shims/spark-4.0/Shim.scala",
+        "spark/src/main/scala-shims/spark-4.0-4.2/DeltaSqlParserShims.scala",
+        "spark-unified/src/test/scala-shims/spark-4.2-4.3/a/b/Suite.java",
+        "sharing/src/test/scala-shims/spark-4.0/SharingStreamingTestShims.scala",
         "spark/src/test/scala-shims/spark-4.3/Shim.scala",
         "spark/v2/src/main/java-shims/spark-4.0/Shim.java",
         "spark/src/main/scala-spark-4.0/Old.scala",
@@ -53,11 +63,13 @@ class FullMatrixTriggerTest(unittest.TestCase):
         "python/requirements.txt",
         "python/delta/requirements-dev.txt",
         "python/environment.yml",
+        ".github/ci-requirements/spark-python/spark4.0.in",
         "dev/requirements.lock",
         "docker-build-requirements.lock",
         ".github/ci-requirements/spark-python/spark4.0.lock",
         "docs/pnpm-lock.yaml",
         "web/package-lock.json",
+        "web/yarn-lock.yml",
         "uv.lock",
         "benchmarks/infrastructure/aws/terraform/.terraform.lock.hcl",
     ]
@@ -74,6 +86,22 @@ class FullMatrixTriggerTest(unittest.TestCase):
         "README.md",
         "projects.txt",
         "builder/foo.scala",
+        "projectx/foo.scala",
+        "spark/project/notes.scala",
+        "examples/scala/build.sbt",
+        "benchmarks/build.sbt",
+        "kernel/version.sbt",
+        "scalastyle-config.xml",
+        ".scalafmt.conf",
+        "dev/kernel-checkstyle.xml",
+        "dev/spark_structured_logging_style.py",
+        "run-integration-tests.py",
+        "Dockerfile",
+        "docker-build-requirements.in",
+        "spark-shared-tests/src/test/scala-shared/Shared.scala",
+        "connectors/golden-tables/src/main/resources/golden/x/_delta_log/0.json",
+        "spark/src/main/scala/lock.scala",
+        "spark/src/main/scala-shimsx/Foo.scala",
         "spark/src/main/scala/scala-shims-notes.txt",
         # Only directory segments match shim patterns, not file names.
         "spark/src/main/scala/scala-shims",
@@ -89,6 +117,35 @@ class FullMatrixTriggerTest(unittest.TestCase):
         for path in self.NON_TRIGGERS:
             with self.subTest(path=path):
                 self.assertFalse(m.full_matrix_trigger(path))
+
+
+class GlobTest(unittest.TestCase):
+    def test_glob_semantics(self):
+        cases = [
+            ("a/*.lock", "a/x.lock", True),
+            ("a/*.lock", "a/b/x.lock", False),
+            ("**/x", "x", True),
+            ("**/x", "a/b/x", True),
+            ("a/**", "a/b/c", True),
+            ("a/**", "ab/c", False),
+            ("a?c", "abc", True),
+            ("a?c", "a/c", False),
+            ("a.b", "aXb", False),
+        ]
+        for pattern, path, expected in cases:
+            with self.subTest(pattern=pattern, path=path):
+                regex = "^" + m._glob_to_regex(pattern) + "$"
+                self.assertEqual(bool(m.re.match(regex, path)), expected)
+
+    def test_every_pattern_matches_something(self):
+        # Guards against typos that make a pattern dead.
+        examples = {
+            p: p.replace("**/", "x/").replace("**", "y/z").replace("*", "w")
+            for p in m.FULL_MATRIX_PATTERNS
+        }
+        for pattern, example in examples.items():
+            with self.subTest(pattern=pattern):
+                self.assertTrue(m.full_matrix_trigger(example), example)
 
 
 class SplitVersionsTest(unittest.TestCase):
@@ -196,6 +253,63 @@ class DecideTest(unittest.TestCase):
     def test_full_lists_are_sorted(self):
         self.assertFull(m.decide("push", ["4.3", "4.1", "4.0", "4.2"]))
 
+    def test_no_source_build_versions(self):
+        for d in [m.decide("pull_request", VERSIONS, [], files(SRC), 1),
+                  m.decide("push", VERSIONS)]:
+            with self.subTest(mode=d.mode):
+                self.assertEqual(d.source_test_spark_versions, [])
+
+
+class SourceBuildTest(unittest.TestCase):
+    """Source-build versions are always tested, in both modes."""
+
+    def reduced(self, release, source):
+        return m.decide("pull_request", release, [], files(SRC), 1, None, source)
+
+    def test_reduced_one_source_build_version(self):
+        d = self.reduced(VERSIONS, ["master"])
+        self.assertEqual(d.mode, "reduced")
+        self.assertEqual(d.test_spark_versions, ["4.0", "4.3"])
+        self.assertEqual(d.compile_spark_versions, ["4.1", "4.2"])
+        self.assertEqual(d.source_test_spark_versions, ["master"])
+
+    def test_reduced_two_source_build_versions(self):
+        d = self.reduced(VERSIONS, ["master", "4.4"])
+        self.assertEqual(d.test_spark_versions, ["4.0", "4.3"])
+        self.assertEqual(d.compile_spark_versions, ["4.1", "4.2"])
+        self.assertEqual(d.source_test_spark_versions, ["4.4", "master"])
+
+    def test_source_build_newer_than_newest_release_does_not_shift_split(self):
+        # The newest *published* version is still tested by the regular test job.
+        d = self.reduced(["4.0", "4.1", "4.2"], ["4.3"])
+        self.assertEqual(d.test_spark_versions, ["4.0", "4.2"])
+        self.assertEqual(d.compile_spark_versions, ["4.1"])
+        self.assertEqual(d.source_test_spark_versions, ["4.3"])
+
+    def test_source_build_equal_to_newest_release_is_source_only(self):
+        # A version in both lists needs source-built Spark, so it only runs as source-build,
+        # and the next-newest published version becomes the newest tested release.
+        d = self.reduced(VERSIONS, ["4.3"])
+        self.assertEqual(d.test_spark_versions, ["4.0", "4.2"])
+        self.assertEqual(d.compile_spark_versions, ["4.1"])
+        self.assertEqual(d.source_test_spark_versions, ["4.3"])
+
+    def test_full_mode_with_source_build(self):
+        for d in [m.decide("push", VERSIONS, source_build_versions=["master"]),
+                  m.decide("pull_request", VERSIONS, ["full-ci"], files(SRC), 1, None, ["master"]),
+                  m.decide("pull_request", VERSIONS, [], files("build.sbt"), 1, None, ["master"]),
+                  m.decide("pull_request", VERSIONS, [], None, None, "boom", ["master"])]:
+            with self.subTest(reason=d.reason):
+                self.assertEqual(d.mode, "full")
+                self.assertEqual(d.test_spark_versions, VERSIONS)
+                self.assertEqual(d.compile_spark_versions, [])
+                self.assertEqual(d.source_test_spark_versions, ["master"])
+
+    def test_only_source_build_versions(self):
+        d = self.reduced([], ["master"])
+        self.assertEqual((d.test_spark_versions, d.compile_spark_versions,
+                          d.source_test_spark_versions), ([], [], ["master"]))
+
 
 class MainTest(unittest.TestCase):
     def run_main(self, *argv, file_lines=None):
@@ -263,6 +377,23 @@ class MainTest(unittest.TestCase):
     def test_empty_versions_rejected(self):
         with self.assertRaises(ValueError):
             self.run_main("--event-name", "push", "--spark-versions", "[]")
+
+    def test_non_list_versions_rejected(self):
+        with self.assertRaises(ValueError):
+            self.run_main("--event-name", "push", "--spark-versions", "{}")
+
+    def test_source_build_outputs(self):
+        for event in ["pull_request", "push"]:
+            with self.subTest(event=event):
+                out = self.run_main(
+                    "--event-name", event, "--spark-versions", json.dumps(VERSIONS),
+                    "--source-build-spark-versions", '["master"]',
+                    "--expected-changed-files", "1", file_lines=[SRC])
+                self.assertEqual(json.loads(out["source_test_spark_versions"]), ["master"])
+
+    def test_source_build_default_is_empty(self):
+        out = self.run_main("--event-name", "push", "--spark-versions", json.dumps(VERSIONS))
+        self.assertEqual(json.loads(out["source_test_spark_versions"]), [])
 
 
 if __name__ == "__main__":

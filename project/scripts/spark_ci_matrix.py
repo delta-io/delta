@@ -3,13 +3,20 @@
 Decide which Spark versions the "Delta Spark" workflow (.github/workflows/spark_test.yaml)
 runs sharded tests on, and which it only compiles.
 
+Spark versions come in two kinds (see get_spark_version_info.py):
+  * non-source-build: published Spark artifacts, tested by the `test` job;
+  * source-build: Spark built from a source ref (e.g. Spark master), tested by the
+    `source_spark_test` job.
+
 Policy:
-  * Full matrix (sharded tests on every configured Spark version) when the event is not a
-    pull_request, when the PR has the `full-ci` label, when the PR changes build, shim,
-    CI or dependency files (see FULL_MATRIX_* below), or when the changed files can't be
-    determined (fail safe).
-  * Otherwise (reduced PR matrix): sharded tests on the oldest and newest Spark versions,
-    and a main+test compile on every version in between.
+  * Source-build versions: always tested, in every mode. They track unreleased Spark, so
+    they are the most likely to break.
+  * Full matrix: sharded tests on every non-source-build version. Used when the event is
+    not a pull_request, when the PR has the `full-ci` label, when the PR changes a file
+    matching FULL_MATRIX_PATTERNS, or when the changed files can't be determined (fail
+    safe).
+  * Otherwise (reduced PR matrix): sharded tests on the oldest and newest non-source-build
+    versions, and a main+test compile on the non-source-build versions in between.
 
 Most version-specific PR failures show up on the oldest Spark version (APIs missing in
 4.0, SQL syntax and exception classes that differ in 4.0/4.1). The newest version covers
@@ -20,6 +27,7 @@ Usage (from the workflow):
     python3 project/scripts/spark_ci_matrix.py \
       --event-name pull_request \
       --spark-versions '["4.0", "4.1", "4.2", "4.3"]' \
+      --source-build-spark-versions '["master"]' \
       --labels '["full-ci"]' \
       --changed-files-file /tmp/changed_files.tsv \
       --expected-changed-files 12
@@ -39,48 +47,67 @@ from typing import Iterable, List, Optional, Sequence
 
 FULL_CI_LABEL = "full-ci"
 
-# Exact repo-relative paths that force the full matrix.
-FULL_MATRIX_FILES = {
+# A PR that changes any file matching one of these globs runs the full matrix. Globs are
+# matched against the whole repo-relative path: `*` matches within one path segment, `**`
+# matches any number of segments (including none), and `?` matches one character.
+FULL_MATRIX_PATTERNS = (
+    # sbt build definition, plugins, launcher and JVM options. project/** includes
+    # CrossSparkVersions.scala, the Spark version metadata scripts and the Unity Catalog pin.
     "build.sbt",
     "version.sbt",
-    "run-tests.py",
+    ".sbtopts",
+    ".jvmopts",
+    "project/**",
+    "build/**",
+    # Spark-version-specific source roots, picked per Spark version by CrossSparkVersions.scala.
+    "**/scala-shims/**",
+    "**/java-shims/**",
+    "**/scala-spark-*/**",
+    "**/java-spark-*/**",
+    "**/spark-master/**",
+    # This workflow, its composite actions and its test runner.
     ".github/workflows/spark_test.yaml",
+    ".github/actions/**",
+    "run-tests.py",
+    # Dependency definitions, including the per-Spark-version CI requirement pins.
+    "**/setup.py",
+    "**/pyproject.toml",
+    "python/**/requirements*.txt",
     "python/environment.yml",
-}
-
-# Repo-relative directory prefixes that force the full matrix.
-FULL_MATRIX_PREFIXES = (
-    "project/",
-    "build/",
-    ".github/actions/",
+    ".github/ci-requirements/**",
+    # Lock files anywhere (foo.lock, .terraform.lock.hcl, pnpm-lock.yaml, ...).
+    "**/*.lock",
+    "**/*.lock.*",
+    "**/*-lock.json",
+    "**/*-lock.yaml",
+    "**/*-lock.yml",
 )
 
-# File names (anywhere in the repo) that force the full matrix.
-FULL_MATRIX_BASENAMES = {
-    "setup.py",
-    "pyproject.toml",
-}
 
-# Directory names (any path segment except the file name) that force the full matrix:
-# Spark version-specific source roots.
-FULL_MATRIX_DIR_PATTERNS = (
-    re.compile(r"^scala-shims$"),
-    re.compile(r"^java-shims$"),
-    re.compile(r"^scala-spark-.+$"),
-    re.compile(r"^java-spark-.+$"),
-    re.compile(r"^spark-master$"),
-)
+def _glob_to_regex(pattern: str) -> str:
+    out = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return "".join(out)
 
-# Other full-matrix path patterns (matched against the full repo-relative path).
-FULL_MATRIX_PATH_PATTERNS = (
-    # python/**/requirements*.txt
-    re.compile(r"^python/(.+/)?requirements[^/]*\.txt$"),
-    # Lock files anywhere: foo.lock, uv.lock, pnpm-lock.yaml, package-lock.json,
-    # .terraform.lock.hcl, ...
-    re.compile(r"(^|/)[^/]*\.lock$"),
-    re.compile(r"(^|/)[^/]*\.lock\.[^/]+$"),
-    re.compile(r"(^|/)[^/]*-lock\.(json|yaml|yml)$"),
-)
+
+_FULL_MATRIX_RE = re.compile(
+    "^(?:" + "|".join(_glob_to_regex(p) for p in FULL_MATRIX_PATTERNS) + ")$")
 
 
 @dataclass
@@ -89,6 +116,7 @@ class Decision:
     reason: str
     test_spark_versions: List[str]
     compile_spark_versions: List[str]
+    source_test_spark_versions: List[str]
     full_matrix_files: List[str] = field(default_factory=list)
 
     def outputs(self):
@@ -97,6 +125,7 @@ class Decision:
             "reason": self.reason,
             "test_spark_versions": json.dumps(self.test_spark_versions),
             "compile_spark_versions": json.dumps(self.compile_spark_versions),
+            "source_test_spark_versions": json.dumps(self.source_test_spark_versions),
         }
 
 
@@ -105,19 +134,7 @@ def full_matrix_trigger(path: str) -> bool:
     path = path.strip()
     if path.startswith("./"):
         path = path[2:]
-    if not path:
-        return False
-    if path in FULL_MATRIX_FILES:
-        return True
-    if path.startswith(FULL_MATRIX_PREFIXES):
-        return True
-    segments = path.split("/")
-    if segments[-1] in FULL_MATRIX_BASENAMES:
-        return True
-    for segment in segments[:-1]:
-        if any(p.match(segment) for p in FULL_MATRIX_DIR_PATTERNS):
-            return True
-    return any(p.search(path) for p in FULL_MATRIX_PATH_PATTERNS)
+    return bool(path) and _FULL_MATRIX_RE.match(path) is not None
 
 
 def _version_sort_key(version: str):
@@ -160,16 +177,21 @@ def decide(
     changed_files: Optional[List[List[str]]] = None,
     expected_changed_files: Optional[int] = None,
     detection_error: Optional[str] = None,
+    source_build_versions: Sequence[str] = (),
 ) -> Decision:
     """Compute the matrix decision.
 
-    `changed_files` is a list of per-file path lists (current name, then the previous name
-    for renames). `None` means change detection failed.
+    `spark_versions` are the non-source-build versions and `source_build_versions` the
+    source-build ones. A version in both lists is treated as source-build only, because
+    it needs the source-built Spark artifacts. `changed_files` is a list of per-file path
+    lists (current name, then the previous name for renames). `None` means change
+    detection failed.
     """
-    all_versions = sort_spark_versions(spark_versions)
+    source_versions = sort_spark_versions(source_build_versions)
+    release_versions = [v for v in sort_spark_versions(spark_versions) if v not in source_versions]
 
     def full(reason, files=None):
-        return Decision("full", reason, all_versions, [], files or [])
+        return Decision("full", reason, release_versions, [], source_versions, files or [])
 
     if event_name != "pull_request":
         return full(f"event '{event_name}' is not pull_request")
@@ -191,12 +213,13 @@ def decide(
         shown = ", ".join(triggers[:5]) + (", ..." if len(triggers) > 5 else "")
         return full(f"PR changes build/shim/CI/dependency files: {shown}", triggers)
 
-    test_versions, compile_versions = split_versions(all_versions)
+    test_versions, compile_versions = split_versions(release_versions)
     return Decision(
         "reduced",
         "PR changes no full-matrix files; testing oldest and newest Spark versions",
         test_versions,
         compile_versions,
+        source_versions,
     )
 
 
@@ -210,11 +233,20 @@ def write_outputs(outputs, github_output_path: Optional[str]):
                 f.write(line + "\n")
 
 
+def _parse_version_list(flag, value):
+    versions = json.loads(value)
+    if not isinstance(versions, list) or not all(isinstance(v, str) for v in versions):
+        raise ValueError(f"{flag} must be a JSON array of strings: {value}")
+    return versions
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--event-name", required=True)
     parser.add_argument("--spark-versions", required=True,
                         help="JSON array of non-source-build Spark versions")
+    parser.add_argument("--source-build-spark-versions", default="[]",
+                        help="JSON array of source-build Spark versions (always tested)")
     parser.add_argument("--labels", default="[]", help="JSON array of PR label names")
     parser.add_argument("--changed-files-file",
                         help="File with one '<filename>[\\t<previous_filename>]' line per file")
@@ -224,9 +256,12 @@ def main(argv=None):
                         help="Non-empty when fetching the changed files failed")
     args = parser.parse_args(argv)
 
-    spark_versions = json.loads(args.spark_versions)
-    if not isinstance(spark_versions, list) or not spark_versions:
-        raise ValueError(f"--spark-versions must be a non-empty JSON array: {args.spark_versions}")
+    spark_versions = _parse_version_list("--spark-versions", args.spark_versions)
+    source_versions = _parse_version_list(
+        "--source-build-spark-versions", args.source_build_spark_versions or "[]")
+    if not spark_versions and not source_versions:
+        raise ValueError("no Spark versions configured: --spark-versions and "
+                         "--source-build-spark-versions are both empty")
 
     detection_error = args.changed_files_error or None
     labels = []
@@ -252,7 +287,8 @@ def main(argv=None):
                 detection_error = detection_error or f"could not read changed files: {e}"
 
     decision = decide(
-        args.event_name, spark_versions, labels, changed_files, expected, detection_error)
+        args.event_name, spark_versions, labels, changed_files, expected, detection_error,
+        source_versions)
     write_outputs(decision.outputs(), os.environ.get("GITHUB_OUTPUT"))
     if decision.full_matrix_files:
         print("Full-matrix files:", file=sys.stderr)
