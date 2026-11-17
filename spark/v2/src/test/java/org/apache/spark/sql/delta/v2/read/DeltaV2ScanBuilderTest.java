@@ -548,17 +548,18 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     DeltaV2TableManager tableManager =
         DeltaV2TableManagerCache$.MODULE$.forTable(
             spark, path, Collections.emptyMap(), Option.empty());
-    return DeltaV2ScanBuilder.create(
-        tableName,
-        snapshot,
-        engine,
-        Option.empty(),
-        tableManager,
-        dataSchema,
-        partitionSchema,
-        tableSchema,
-        Option.empty(),
-        CaseInsensitiveStringMap.empty());
+    return (DeltaV2ScanBuilder)
+        DeltaV2ScanUtils.newScanBuilder(
+            tableName,
+            snapshot,
+            engine,
+            Option.empty(),
+            tableManager,
+            dataSchema,
+            partitionSchema,
+            tableSchema,
+            Option.empty(),
+            CaseInsensitiveStringMap.empty());
   }
 
   // Limit Pushdown Tests
