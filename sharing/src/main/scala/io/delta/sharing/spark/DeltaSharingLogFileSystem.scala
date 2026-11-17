@@ -380,11 +380,11 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
    */
   def tryToCleanUpDeltaLog(deltaLogPath: String): Unit = {
     val legacyPrefix = LEGACY_BLOCK_ID_PREFIX + deltaLogPath
-    val prefix = blockIdPrefix(deltaLogPath)
+    val flatPrefix = blockIdPrefix(deltaLogPath)
     def shouldCleanUp(blockId: BlockId): Boolean = {
       // deltaLogPath is constructed per query with credential scope id as prefix and a uuid as
       // suffix, which is very unique to the query and won't interfere with other queries.
-      blockId.name.startsWith(legacyPrefix) || blockId.name.startsWith(prefix)
+      blockId.name.startsWith(legacyPrefix) || blockId.name.startsWith(flatPrefix)
     }
 
     val blockManager = SparkEnv.get.blockManager
@@ -486,13 +486,13 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     }
 
     val legacyPrefix = LEGACY_BLOCK_ID_PREFIX + deltaLogPath
-    val prefix = blockIdPrefix(deltaLogPath)
+    val flatPrefix = blockIdPrefix(deltaLogPath)
     def shouldCleanUp(blockId: BlockId): Boolean = {
       if (blockId.name.startsWith(legacyPrefix)) {
         FileNames.getFileVersionOpt(new Path(blockId.name.stripPrefix(LEGACY_BLOCK_ID_PREFIX)))
           .exists(_ <= maxVersion)
-      } else if (blockId.name.startsWith(prefix)) {
-        val relativePath = blockId.name.stripPrefix(prefix)
+      } else if (blockId.name.startsWith(flatPrefix)) {
+        val relativePath = blockId.name.stripPrefix(flatPrefix)
         FileNames.getFileVersionOpt(new Path(deltaLogPath, relativePath)).exists(_ <= maxVersion)
       } else {
         false

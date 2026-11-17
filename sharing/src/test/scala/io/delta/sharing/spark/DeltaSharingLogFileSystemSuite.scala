@@ -136,6 +136,8 @@ class DeltaSharingLogFileSystemSuite extends SparkFunSuite with SharedSparkConte
           assert(blockManager.getStatus(ids.head).isEmpty)
           assert(blockManager.getStatus(ids.last).isDefined)
           assert(blockManager.getStatus(otherId).isDefined)
+          assert(blockManager.getStatus(listingId).isDefined)
+          assert(blockManager.getStatus(lastCheckpointId).isDefined)
 
           tryToCleanUpDeltaLog(logPath.toString)
           Seq(ids.last, listingId, lastCheckpointId).foreach { id =>
