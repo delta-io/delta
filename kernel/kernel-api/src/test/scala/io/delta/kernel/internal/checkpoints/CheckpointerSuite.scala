@@ -163,6 +163,38 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }
   }
 
+  test("findLastCompleteCheckpointBefore - closes listing iterators across batches") {
+    val files = deltaFileStatuses(0L until 25L) ++ singularCheckpointFileStatuses(Seq(10L))
+    var events = Seq.empty[String]
+    val fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files)) {
+      override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+        events = events :+ s"open $filePath"
+        val delegate = super.listFrom(filePath)
+        new CloseableIterator[FileStatus] {
+          override def hasNext: Boolean = delegate.hasNext
+          override def next(): FileStatus = delegate.next()
+          override def close(): Unit = {
+            events = events :+ s"close $filePath"
+            delegate.close()
+          }
+        }
+      }
+    }
+
+    val result = findLastCompleteCheckpointBeforeHelper(
+      mockEngine(fileSystemClient = fileSystemClient),
+      logPath,
+      25L,
+      5)
+
+    assert(result._1.isPresent && result._1.get().version == 10L)
+    val expectedEvents = Seq(20L, 15L, 10L).flatMap { version =>
+      val prefix = FileNames.listingPrefix(logPath, version)
+      Seq(s"open $prefix", s"close $prefix")
+    }
+    assert(events === expectedEvents)
+  }
+
   test("findLastCompleteCheckpointBefore - single checkpoint") {
     // 25 delta files and 1 checkpoint file = total 26 files.
     val files = deltaFileStatuses(Seq.range(0, 25)) ++ singularCheckpointFileStatuses(Seq(10))

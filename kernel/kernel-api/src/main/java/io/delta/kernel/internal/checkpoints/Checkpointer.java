@@ -198,16 +198,15 @@ public class Checkpointer {
     // starting from the given version. If a batch has no complete checkpoint, search the
     // previous batch until a checkpoint is found or there are no more delta commits.
     while (currentVersion >= 0) {
-      try {
-        long searchLowerBound = Math.max(0, currentVersion - batchSize);
-        CloseableIterator<FileStatus> deltaLogFileIter =
-            wrapEngineExceptionThrowsIO(
-                () ->
-                    engine
-                        .getFileSystemClient()
-                        .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound)),
-                "Listing from %s",
-                FileNames.listingPrefix(tableLogPath, searchLowerBound));
+      long searchLowerBound = Math.max(0, currentVersion - batchSize);
+      try (CloseableIterator<FileStatus> deltaLogFileIter =
+          wrapEngineExceptionThrowsIO(
+              () ->
+                  engine
+                      .getFileSystemClient()
+                      .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound)),
+              "Listing from %s",
+              FileNames.listingPrefix(tableLogPath, searchLowerBound))) {
 
         List<CheckpointInstance> checkpoints = new ArrayList<>();
         while (deltaLogFileIter.hasNext()) {
