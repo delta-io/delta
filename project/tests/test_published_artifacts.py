@@ -115,7 +115,7 @@ class FlinkVersionSpec:
 # skipSparkSuffix=true removes the suffix (used during release for backward compat)
 # These should mirror CrossSparkVersions.scala
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=True),
+    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=False),
     "4.2.0": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False),
     "4.3.0": SparkVersionSpec(
         suffix="_4.3", support_iceberg=False, support_hudi=False
