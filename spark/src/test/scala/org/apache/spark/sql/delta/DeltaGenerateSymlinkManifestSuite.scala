@@ -726,7 +726,9 @@ trait DeltaGenerateSymlinkManifestSuiteBase
   }
 }
 
-trait DeltaGenerateSymlinkManifestTestHelper extends DeltaSQLCommandTest {
+trait DeltaGenerateSymlinkManifestTestHelper
+  extends QueryTest
+    with DeltaSQLCommandTest {
   import deltaImplicits._
 
   protected def assertManifest(
