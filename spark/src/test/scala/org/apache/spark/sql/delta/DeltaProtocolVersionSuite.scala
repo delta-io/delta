@@ -4044,6 +4044,25 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("drop InCommitTimestamp keeps a schema change committed after the table was resolved") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`$path` (id bigint) USING delta" +
+        s" TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      val table = DeltaTableV2(spark, deltaLog.dataPath)
+      // The analyzer of ALTER TABLE DROP FEATURE takes this snapshot before the ADD COLUMNS.
+      table.initialSnapshot
+      spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMNS (c INT)")
+
+      AlterTableDropFeatureDeltaCommand(table, InCommitTimestampTableFeature.name).run(spark)
+
+      val snapshot = deltaLog.update()
+      assert(!snapshot.protocol.writerFeatureNames.contains(InCommitTimestampTableFeature.name))
+      assert(snapshot.schema.fieldNames.toSeq === Seq("id", "c"))
+    }
+  }
+
   // ---- Coordinated Commits Drop Feature Tests ----
   private def setUpCoordinatedCommitsTable(dir: File, mcBuilder: CommitCoordinatorBuilder): Unit = {
     CommitCoordinatorProvider.clearNonDefaultBuilders()
