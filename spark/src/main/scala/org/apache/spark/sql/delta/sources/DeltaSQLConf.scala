@@ -4123,6 +4123,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  // Named modes used by [[V2_ENABLE_MODE]].
+  val V2_ENABLE_MODE_NONE: String = "NONE"
+  val V2_ENABLE_MODE_AUTO: String = "AUTO"
+  val V2_ENABLE_MODE_STRICT: String = "STRICT"
+
   /**
    * Controls which connector implementation to use for Delta table operations.
    *
@@ -4149,8 +4154,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           "NONE (use v1 connector for all cases), AUTO (use v2 only for v2 " +
           "supported operations, default), STRICT (should ONLY be enabled for testing).")
       .stringConf
-      .checkValues(Set("AUTO", "NONE", "STRICT"))
-      .createWithDefault("AUTO")
+      .checkValues(Set(V2_ENABLE_MODE_AUTO, V2_ENABLE_MODE_NONE, V2_ENABLE_MODE_STRICT))
+      .createWithDefault(V2_ENABLE_MODE_AUTO)
 
   val V2_TRANSACTIONS_ENABLED =
     buildConf("v2.transactions.enabled")
