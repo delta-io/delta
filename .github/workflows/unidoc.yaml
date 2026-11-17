@@ -4,6 +4,12 @@
       branches: [master, branch-*]
     pull_request:
       branches: [master, branch-*]
+
+  # Cancel previous runs when new commits are pushed
+  concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
   jobs:
     build:
       name: "U: Scala ${{ matrix.scala }}"
