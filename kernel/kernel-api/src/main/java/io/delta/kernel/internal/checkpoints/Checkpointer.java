@@ -252,6 +252,9 @@ public class Checkpointer {
               latestCheckpoint.get());
           return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
         }
+        if (searchLowerBound == 0) {
+          break;
+        }
         currentVersion -= batchSize;
       } catch (IOException e) {
         String msg =

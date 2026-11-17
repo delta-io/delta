@@ -27,9 +27,10 @@ import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.test.{BaseMockFileSystemClient, BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.test.{BaseMockFileSystemClient, BaseMockJsonHandler, MockFileSystemClientUtils, MockListFromFileSystemClient, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
@@ -140,6 +141,25 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     Seq((0, 0), (10, 10), (20, 20), (27, 25 /* no delta log files after version 24 */ )).foreach {
       case (beforeVersion, expNumFilesListed) =>
         assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
+    }
+  }
+
+  test("findLastCompleteCheckpointBefore - small batches list zero prefix once") {
+    val deltas = deltaFileStatuses(0L until 25L)
+    val incompleteCheckpoint = multiCheckpointFileStatuses(Seq(10L), 3).take(2)
+
+    Seq(Seq.empty[FileStatus], incompleteCheckpoint).foreach { checkpoints =>
+      val fileSystemClient = new MockListFromFileSystemClient(
+        listFromProvider(deltas ++ checkpoints))
+      val result = findLastCompleteCheckpointBeforeHelper(
+        mockEngine(fileSystemClient = fileSystemClient),
+        logPath,
+        25L,
+        5)
+
+      assert(!result._1.isPresent)
+      assert(fileSystemClient.getListFromCalls === Seq(20L, 15L, 10L, 5L, 0L)
+        .map(version => FileNames.listingPrefix(logPath, version)))
     }
   }
 
