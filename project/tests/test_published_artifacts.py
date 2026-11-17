@@ -30,8 +30,8 @@ from typing import List, Set, Dict
 
 
 # Spark-related modules (requiresCrossSparkBuild := true)
-# These modules get a Spark version suffix (e.g., _4.0) for non-default versions
-# Template format: {suffix} = short Spark version suffix (e.g., "", "_4.0")
+# These modules get a Spark version suffix (e.g., _4.1) for non-default versions
+# Template format: {suffix} = short Spark version suffix (e.g., "", "_4.1")
 #                  {version} = full Delta version (e.g., "3.4.0-SNAPSHOT")
 SPARK_RELATED_JAR_TEMPLATES = [
     "delta-spark{suffix}_2.13-{version}.jar",
@@ -42,7 +42,7 @@ SPARK_RELATED_JAR_TEMPLATES = [
 ]
 
 # Iceberg-related modules - only built for Spark versions with supportIceberg=true
-# delta-iceberg has no Spark suffix (always delta-iceberg_2.13) because it only supports Spark 4.0
+# delta-iceberg has no Spark suffix (always delta-iceberg_2.13) because it only supports Spark 4.1
 DELTA_ICEBERG_JAR_TEMPLATES = [
     "delta-iceberg_2.13-{version}.jar",
 ]
@@ -111,12 +111,11 @@ class FlinkVersionSpec:
 
 
 # Spark versions to test (key = full version string, value = spec with suffix)
-# By default, ALL versions get a Spark suffix (e.g., delta-spark_4.0_2.13)
+# By default, ALL versions get a Spark suffix (e.g., delta-spark_4.1_2.13)
 # skipSparkSuffix=true removes the suffix (used during release for backward compat)
 # These should mirror CrossSparkVersions.scala
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True, support_hudi=True),
-    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=False),
+    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=True),
     "4.2.0": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False),
     "4.3.0": SparkVersionSpec(
         suffix="_4.3", support_iceberg=False, support_hudi=False
@@ -279,7 +278,7 @@ class PublishedArtifactsTest:
         ):
             return False
 
-        # Default behavior: all Spark-dependent modules have suffix (e.g., delta-spark_4.0_2.13)
+        # Default behavior: all Spark-dependent modules have suffix (e.g., delta-spark_4.2_2.13)
         expected = substitute_xversion(spark_spec.all_jars, self.delta_version)
         expected.add(FLINK_VERSIONS[DEFAULT_FLINK].jar_template.format(version=self.delta_version))
         return self.validate_jars(expected, "Default publishM2 (with suffix)")
@@ -303,7 +302,7 @@ class PublishedArtifactsTest:
         ):
             return False
 
-        # Expect artifacts WITHOUT suffix (e.g., delta-spark_2.13 instead of delta-spark_4.0_2.13)
+        # Expect artifacts WITHOUT suffix (e.g., delta-spark_2.13 instead of delta-spark_4.2_2.13)
         expected = substitute_xversion(spark_spec_no_suffix.all_jars, self.delta_version)
         expected.add(FLINK_VERSIONS[DEFAULT_FLINK].jar_template.format(version=self.delta_version))
         return self.validate_jars(expected, "skipSparkSuffix=true (backward compat)")

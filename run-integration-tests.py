@@ -52,7 +52,7 @@ def set_spark_env(spark_version):
     Resets PATH to its original value first to avoid accumulation.
 
     This must override any existing SPARK_HOME because the multi-variant loop tests
-    different Spark versions in sequence (e.g., 4.0.1 then 4.1.0).
+    different Spark versions in sequence (e.g., 4.1.0 then 4.2.0).
     """
     os.environ["PATH"] = _original_path
 
@@ -129,20 +129,20 @@ def get_spark_variants(spark_specs):
     Builds the list of artifact variants to test from the Spark version specs.
 
     Each variant is a dict with:
-      - suffix: Maven artifact suffix, e.g. "" (unsuffixed), "_4.0", "_4.1", "_4.2"
-      - spark_version: full Spark version, e.g. "4.0.1", "4.1.0", "4.2.0"
+      - suffix: Maven artifact suffix, e.g. "" (unsuffixed), "_4.1", "_4.2", "_4.3"
+      - spark_version: full Spark version, e.g. "4.1.0", "4.2.0", "4.3.0"
       - support_iceberg: "true" or "false"
       - support_hudi: "true" or "false"
 
     The first variant is always unsuffixed (backward compat) using the DEFAULT spec's metadata.
     Remaining variants are suffixed, one per non-master Spark version.
 
-    Example return value (given Spark 4.0, 4.1, and 4.2 specs, with 4.2 as default):
+    Example return value (given Spark 4.1, 4.2, and 4.3 specs, with 4.2 as default):
       [
         {"suffix": "",     "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
-        {"suffix": "_4.0", "spark_version": "4.0.1", "support_iceberg": "true",  "support_hudi": "true"},
-        {"suffix": "_4.1", "spark_version": "4.1.0", "support_iceberg": "true",  "support_hudi": "false"},
+        {"suffix": "_4.1", "spark_version": "4.1.0", "support_iceberg": "true",  "support_hudi": "true"},
         {"suffix": "_4.2", "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
+        {"suffix": "_4.3", "spark_version": "4.3.0", "support_iceberg": "false", "support_hudi": "false"},
       ]
     """
     variants = []
@@ -201,8 +201,8 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
                     if f.endswith(".scala") and not f.startswith("_")]
 
     # Set env vars that examples/scala/build.sbt reads to resolve dependencies:
-    # SPARK_PACKAGE_SUFFIX -> artifact suffix (e.g., "_4.0")
-    # SPARK_VERSION -> Spark version for spark-sql/spark-hive deps (e.g., "4.0.1")
+    # SPARK_PACKAGE_SUFFIX -> artifact suffix (e.g., "_4.1")
+    # SPARK_VERSION -> Spark version for spark-sql/spark-hive deps (e.g., "4.1.0")
     # SUPPORT_ICEBERG -> whether to include Iceberg deps and compile IcebergCompat examples
     env = {"DELTA_VERSION": str(version), "SCALA_VERSION": scala_version}
     if suffix:
@@ -268,7 +268,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
     repo = extra_maven_repo if extra_maven_repo else ""
 
     # Build Maven coordinate with the variant's suffix
-    # e.g., "io.delta:delta-spark_2.13:4.0.0" or "io.delta:delta-spark_4.0_2.13:4.0.0"
+    # e.g., "io.delta:delta-spark_2.13:4.1.0" or "io.delta:delta-spark_4.1_2.13:4.1.0"
     artifact_name = get_artifact_name(version)
     package = "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version)
     print("Package: %s" % package)
@@ -470,7 +470,7 @@ def run_iceberg_integration_tests(root_dir, version, iceberg_version, extra_mave
     variant: dict with suffix, spark_version, support_iceberg, support_hudi.
              See get_spark_variants() for the format and example.
              spark_version is used to derive the iceberg-spark-runtime artifact name
-             (e.g., "4.0.1" -> iceberg-spark-runtime-4.0_2.13).
+             (e.g., "4.1.0" -> iceberg-spark-runtime-4.1_2.13).
     """
     suffix = variant["suffix"]
     spark_version = variant["spark_version"]
@@ -491,7 +491,7 @@ def run_iceberg_integration_tests(root_dir, version, iceberg_version, extra_mave
     artifact_name = get_artifact_name(version)
 
     # Derive major.minor Spark version for iceberg-spark-runtime artifact name
-    # e.g., "4.0.1" -> "4.0", or "4.0" stays "4.0"
+    # e.g., "4.1.0" -> "4.1", or "4.1" stays "4.1"
     parts = spark_version.split(".")
     iceberg_spark_ver = "%s.%s" % (parts[0], parts[1]) if len(parts) >= 2 else spark_version
 
@@ -523,7 +523,7 @@ def run_uniform_hudi_integration_tests(root_dir, version, hudi_version, extra_ma
     variant: dict with suffix, spark_version, support_iceberg, support_hudi.
              See get_spark_variants() for the format and example.
              spark_version is used to derive the hudi-spark-bundle artifact name
-             (e.g., "4.0.1" -> hudi-spark4.0-bundle_2.13).
+             (e.g., "4.1.0" -> hudi-spark4.1-bundle_2.13).
     """
     suffix = variant["suffix"]
     spark_version = variant["spark_version"]
@@ -546,7 +546,7 @@ def run_uniform_hudi_integration_tests(root_dir, version, hudi_version, extra_ma
     artifact_name = get_artifact_name(version)
 
     # Derive major.minor Spark version for hudi-spark-bundle artifact name
-    # e.g., "4.0.1" -> "4.0", or "4.0" stays "4.0"
+    # e.g., "4.1.0" -> "4.1", or "4.1" stays "4.1"
     parts = spark_version.split(".")
     hudi_spark_ver = "%s.%s" % (parts[0], parts[1]) if len(parts) >= 2 else spark_version
 
@@ -835,7 +835,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--iceberg-spark-version",
         required=False,
-        default="4.0",
+        default="4.1",
         help="Spark version for the Iceberg library (used in non-local mode)")
     parser.add_argument(
         "--iceberg-lib-version",
@@ -845,7 +845,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hudi-spark-version",
         required=False,
-        default="4.0",
+        default="4.1",
         help="Spark version for the Hudi library (used in non-local mode)")
     parser.add_argument(
         "--hudi-version",

@@ -27,12 +27,12 @@ import Unidoc._
  *   - set in the Delta master branch to a Spark released or snapshot version .
  *   - not set in the Delta release branches as we want to avoid building against Spark unreleased version.
  *   If MASTER is defined, then it can be selected by setting the sparkVersion property to "master".
- *   Spark-dependent artifacts for this version HAVE a Spark version suffix in their artifact names (e.g., delta-spark_4.0_2.13 if MASTER is defined as Spark 4.0 branch).
+ *   Spark-dependent artifacts for this version HAVE a Spark version suffix in their artifact names (e.g., delta-spark_4.3_2.13 if MASTER is defined as Spark 4.3 branch).
  *
  * - OTHER VERSIONS: Any non-default Spark version specified in ALL_SPECS.
  *   Spark-dependent artifacts of all non-default versions get a Spark version suffix in their artifact names (e.g., delta-spark_4.1_2.13 if one of the other versions is defined as Spark 4.1 branch).
  *
- * To configure versions, update the SparkVersionSpec values (e.g., spark35, spark40, etc.) below.
+ * To configure versions, update the SparkVersionSpec values (e.g., spark41, spark42, etc.) below.
  *
  * ========================================================
  * The sparkVersion Property
@@ -41,19 +41,18 @@ import Unidoc._
  * The sparkVersion system property controls which Spark version to build against.
  * It accepts the following formats:
  *
- * 1. Full version string (e.g., "3.5.7", "4.0.2-SNAPSHOT")
- * 2. Short version string (e.g., "3.5", "4.0")
+ * 1. Full version string (e.g., "4.1.0", "4.3.0-SNAPSHOT")
+ * 2. Short version string (e.g., "4.1", "4.2")
  * 3. Aliases:
  *    - "default" -> maps to DEFAULT version (e.g., spark35)
- *    - "master" -> maps to MASTER version (e.g., spark40), if configured
+ *    - "master" -> maps to MASTER version (e.g., spark43), if configured
  *
  * If not specified, it defaults to the DEFAULT version.
  *
  * Examples:
  *   build/sbt                                    # Uses default version
- *   build/sbt -DsparkVersion=4.0                 # Uses Spark 4.0.x
- *   build/sbt -DsparkVersion=4.0.1               # Uses Spark 4.0.1 only if this version is defined in ALL_SPECS
  *   build/sbt -DsparkVersion=4.1                 # Uses Spark 4.1.x whatever it is defined in ALL_SPECS
+ *   build/sbt -DsparkVersion=4.1.0               # Uses Spark 4.1.0 only if this version is defined in ALL_SPECS
  *   build/sbt -DsparkVersion=default             # Uses default version
  *   build/sbt -DsparkVersion=master              # Uses master version (if defined)
  *   USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true \
@@ -109,9 +108,9 @@ import Unidoc._
  * ========================================================
  * 
  * By default, Spark-dependent modules ALWAYS include the Spark version suffix:
- *   io.delta:delta-spark_4.0_2.13:4.1.0
  *   io.delta:delta-spark_4.1_2.13:4.1.0
- *   io.delta:delta-connect-server_4.0_2.13:4.1.0
+ *   io.delta:delta-spark_4.2_2.13:4.1.0
+ *   io.delta:delta-connect-server_4.1_2.13:4.1.0
  *   io.delta:delta-storage:4.1.0  (Spark-independent, no suffix)
  *
  * During release, backward-compatible artifacts are ALSO published (without suffix):
@@ -133,10 +132,10 @@ import Unidoc._
  *   # Publishes: delta-spark_2.13, delta-storage, delta-kernel-api, etc.
  *
  * Step 2: Publish Spark-dependent modules WITH suffix for each non-master Spark version
- *   build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishSigned"
  *   build/sbt -DsparkVersion=4.1 "runOnlyForReleasableSparkModules publishSigned"
  *   build/sbt -DsparkVersion=4.2 "runOnlyForReleasableSparkModules publishSigned"
- *   # Publishes: delta-spark_4.0_2.13, delta-spark_4.1_2.13, delta-spark_4.2_2.13, etc.
+ *   build/sbt -DsparkVersion=4.3 "runOnlyForReleasableSparkModules publishSigned"
+ *   # Publishes: delta-spark_4.1_2.13, delta-spark_4.2_2.13, delta-spark_4.3_2.13, etc.
  *
  * This workflow is automated via crossSparkReleaseSteps() in the release process.
  * See releaseProcess in build.sbt for integration.
@@ -148,13 +147,13 @@ import Unidoc._
  * - Spark-dependent modules are built for each Spark version
  *
  * For manual testing during development:
- *   build/sbt publishM2  # Publishes delta-spark_4.0_2.13 (default, with suffix)
+ *   build/sbt publishM2  # Publishes delta-spark_4.2_2.13 (default, with suffix)
  *
  * For manual release testing:
  *   build/sbt -DskipSparkSuffix=true publishM2  # Without suffix (backward compat)
- *   build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishM2"
  *   build/sbt -DsparkVersion=4.1 "runOnlyForReleasableSparkModules publishM2"
  *   build/sbt -DsparkVersion=4.2 "runOnlyForReleasableSparkModules publishM2"
+ *   build/sbt -DsparkVersion=4.3 "runOnlyForReleasableSparkModules publishM2"
  *   # Verify JARs in ~/.m2/repository/io/delta/
  *
  * ========================================================
@@ -170,7 +169,7 @@ import Unidoc._
  *   Used for publishing Spark-dependent modules for non-default Spark versions.
  *
  *   Example:
- *     build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishM2"
+ *     build/sbt -DsparkVersion=4.1 "runOnlyForReleasableSparkModules publishM2"
  *
  * showSparkVersions
  *   Lists all configured Spark versions (for testing/debugging).
@@ -185,22 +184,22 @@ import Unidoc._
  *   - CI/CD scripts (for version-specific configuration)
  *
  *   The JSON is an array where each element contains:
- *   - fullVersion: Full version string (e.g., "4.0.1", "4.1.0")
- *   - shortVersion: Short version string (e.g., "4.0", "4.1")
+ *   - fullVersion: Full version string (e.g., "4.1.0", "4.2.0")
+ *   - shortVersion: Short version string (e.g., "4.1", "4.2")
  *   - isMaster: Whether this is the master/snapshot version
  *   - isDefault: Whether this is the default Spark version
  *   - targetJvm: Target JVM version (e.g., "17")
- *   - packageSuffix: Maven artifact suffix for this version (e.g., "_4.0", "_4.1")
+ *   - packageSuffix: Maven artifact suffix for this version (e.g., "_4.1", "_4.2")
  *   - sourceBuildDefaultRef: Default Spark source ref to build for source-built lanes, if any
  *
  *   Example:
  *     build/sbt exportSparkVersionsJson
  *     # Generates: target/spark-versions.json
- *     # Output: [{"fullVersion": "4.0.1", ...}, ..., {"fullVersion": "4.2.0", "isDefault": true, ...}]
+ *     # Output: [{"fullVersion": "4.1.0", ...}, ..., {"fullVersion": "4.2.0", "isDefault": true, ...}]
  *
  *   Use with Python utilities to extract specific fields:
  *     python3 project/scripts/get_spark_version_info.py --all-spark-versions
- *     python3 project/scripts/get_spark_version_info.py --get-field "4.0" targetJvm
+ *     python3 project/scripts/get_spark_version_info.py --get-field "4.1" targetJvm
  *     python3 project/scripts/get_spark_version_info.py --get-field "master" targetJvm
  *
  *   This ensures GitHub Actions always uses the versions defined here,
@@ -213,12 +212,12 @@ import Unidoc._
 /**
  * Specification for a Spark version with all its build configuration.
  *
- * @param fullVersion The full Spark version (e.g., "3.5.7", "4.0.2-SNAPSHOT")
+ * @param fullVersion The full Spark version (e.g., "4.1.0", "4.3.0-SNAPSHOT")
  * @param targetJvm Target JVM version (e.g., "11", "17")
  * @param additionalSourceDirs Shim source directory suffixes compiled for this Spark version, in
  *                             any order. These include the version's private shim dir (e.g.
  *                             "scala-shims/spark-4.1") and any cross-version shim dirs shared with
- *                             adjacent versions (e.g. "scala-shims/spark-4.0-4.1"). A file in a
+ *                             adjacent versions (e.g. "scala-shims/spark-4.1-4.2"). A file in a
  *                             shared dir is compiled for every version that lists it, so identical
  *                             shims are written once instead of copied per version. Non-existent
  *                             dirs are ignored by sbt, so listing a dir a module doesn't use is
@@ -240,7 +239,7 @@ case class SparkVersionSpec(
   additionalResolvers: Seq[Resolver] = Seq.empty,
   sourceBuildDefaultRef: Option[String] = None
 ) {
-  /** Returns the Spark short version (e.g., "3.5", "4.0") */
+  /** Returns the Spark short version (e.g., "4.1", "4.2") */
   def shortVersion: String = {
     Mima.getMajorMinorPatch(fullVersion) match {
       case (maj, min, _) => s"$maj.$min"
@@ -295,7 +294,6 @@ object SparkVersionSpec {
         "scala-shims/spark-4.1-4.2",
         "scala-shims/spark-4.1-4.3"),
     supportIceberg = true,
-    supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
@@ -426,7 +424,7 @@ object CrossSparkVersions extends AutoPlugin {
    * Returns module name with Spark version suffix.
    * 
    * By default, ALL Spark-dependent modules include the Spark version suffix:
-   *   delta-spark_4.0_2.13, delta-spark_4.1_2.13, etc.
+   *   delta-spark_4.1_2.13, delta-spark_4.2_2.13, etc.
    *
    * During release, the `skipSparkSuffix=true` property is used to also publish
    * backward-compatible artifacts without the suffix (e.g., delta-spark_2.13).
@@ -531,10 +529,10 @@ object CrossSparkVersions extends AutoPlugin {
    * 1. Publishes non-Flink modules WITHOUT Spark suffix (backward compatibility)
    * 2. Publishes Spark-dependent modules WITH Spark suffix for each non-master version
    *
-   * For example, with Spark versions 4.0, 4.1, and 4.2 (default):
+   * For example, with Spark versions 4.1, 4.2 (default), and 4.3:
    * - Step 1 publishes: delta-spark_2.13, delta-storage, delta-kernel-api, etc. (no suffix)
-   * - Step 2 publishes: delta-spark_4.0_2.13, delta-spark_4.1_2.13,
-   *   delta-spark_4.2_2.13, etc. (with suffix)
+   * - Step 2 publishes: delta-spark_4.1_2.13, delta-spark_4.2_2.13,
+   *   delta-spark_4.3_2.13, etc. (with suffix)
    *
    * Each step runs as a separate SBT subprocess so the build reloads with
    * the correct sparkVersion/skipSparkSuffix settings (SBT settings like
@@ -581,7 +579,7 @@ object CrossSparkVersions extends AutoPlugin {
     }
 
     // Step 2+: Publish Spark-dependent modules WITH suffix for each non-master Spark version
-    // This gives users versioned artifacts like delta-spark_4.0_2.13, delta-spark_4.1_2.13
+    // This gives users versioned artifacts like delta-spark_4.1_2.13, delta-spark_4.2_2.13
     val suffixedSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
       .filterNot(_.isSnapshot)
       .map { spec =>
@@ -672,7 +670,7 @@ object CrossSparkVersions extends AutoPlugin {
           val comma = if (idx < SparkVersionSpec.ALL_SPECS.size - 1) "," else ""
           val isMaster = SparkVersionSpec.MASTER.contains(spec)
           val isDefault = spec == SparkVersionSpec.DEFAULT
-          // Package suffix always includes Spark version (e.g., "_4.0", "_4.1")
+          // Package suffix always includes Spark version (e.g., "_4.1", "_4.2")
           val packageSuffix = s"_${spec.shortVersion}"
           writer.println(s"""  {""")
           writer.println(s"""    "fullVersion": "${spec.fullVersion}",""")
