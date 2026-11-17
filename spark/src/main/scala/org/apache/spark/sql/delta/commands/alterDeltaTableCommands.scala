@@ -728,7 +728,11 @@ case class AlterTableDropColumnsDeltaCommand(
       }
       // Disallow dropping clustering columns.
       val clusteringCols = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
-      val droppingClusteringCols = clusteringCols.filter(droppedColumnSet.contains(_))
+      // Dropping a struct drops the clustering columns nested in it.
+      val droppingClusteringCols = clusteringCols.filter { clusteringCol =>
+        val clusteringColParts = UnresolvedAttribute.parseAttributeName(clusteringCol)
+        columnsToDrop.exists(clusteringColParts.startsWith(_))
+      }
       if (droppingClusteringCols.nonEmpty) {
         throw DeltaErrors.dropClusteringColumnNotSupported(droppingClusteringCols)
       }

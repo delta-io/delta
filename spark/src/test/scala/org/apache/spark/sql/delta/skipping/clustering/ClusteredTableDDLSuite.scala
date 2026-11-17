@@ -567,6 +567,7 @@ trait ClusteredTableDDLWithColumnMapping
     "validate dropping clustering column is not allowed: multiple clustering columns",
     "validate dropping clustering column is not allowed: clustering column + " +
       "non-clustering column",
+    "validate dropping clustering column is not allowed: struct of a nested clustering column",
     "validate RESTORE on clustered table"
   )
 
@@ -612,6 +613,27 @@ trait ClusteredTableDDLWithColumnMapping
         "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
         parameters = Map("columnList" -> "col1")
       )
+    }
+  }
+
+  test("validate dropping clustering column is not allowed: struct of a nested clustering column") {
+    val testTable = this.testTable
+    withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "true") {
+      withClusteredTable(testTable, "id INT, a STRUCT<b INT, c INT>", "a.b") {
+        Seq("a", "A", "a.b").foreach { droppedColumn =>
+          val e = intercept[DeltaAnalysisException] {
+            sql(s"ALTER TABLE $testTable DROP COLUMNS ($droppedColumn)")
+          }
+          checkError(
+            e,
+            "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+            parameters = Map("columnList" -> "a.b")
+          )
+        }
+        sql(s"ALTER TABLE $testTable DROP COLUMNS (a.c)")
+        val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTable))
+        verifyClusteringColumnsInDomainMetadata(snapshot, Seq("a.b"))
+      }
     }
   }
 }
