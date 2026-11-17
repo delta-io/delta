@@ -41,7 +41,7 @@ import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, Row, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.expressions.{KnownNotNull, KnownNullable, Literal}
 import org.apache.spark.sql.catalyst.optimizer.ConvertToLocalRelation
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -418,14 +418,20 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * @param baseRowId The entry's first row ID; leaf entries may inherit it from their parent.
    */
   private def addFileStruct(spark: SparkSession, baseRowId: Column): Column = {
-    val fields = struct(Action.addFileSchema.fields.toIndexedSeq.map { field =>
-      addFileColumn(spark, field, baseRowId).as(field.name)
+    val checks = entryChecks
+    struct(Action.addFileSchema.fields.toIndexedSeq.map { field =>
+      // Each field carries its own checks, so the optimizer can drop the fields a query does
+      // not read.
+      val checked = checks.foldRight(addFileColumn(spark, field, baseRowId)) {
+        case ((malformed, error), value) => when(malformed, error).otherwise(value)
+      }
+      // Each field sets its own nullability and metadata instead of a cast of the whole struct to
+      // the AddFile schema. The metadata keeps the Parquet field ids of the manifest column out of
+      // the type when the optimizer drops a no-op field cast.
+      val normalized =
+        if (field.nullable) KnownNullable(checked.expr) else KnownNotNull(checked.expr)
+      Column(normalized).as(field.name, field.metadata)
     }: _*)
-    // Casting the whole struct keeps its type fixed when the optimizer drops a no-op field cast,
-    // which would otherwise expose the manifest column's Parquet field-id metadata in the type.
-    entryChecks.foldRight(fields) { case ((malformed, error), checked) =>
-      when(malformed, error).otherwise(checked)
-    }.cast(Action.addFileSchema)
   }
 
   /**
@@ -467,8 +473,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       case "stats" =>
         AMTContentStats.addFileStatsJson(spark, metadata, checkpointAction.protocol)
       case "tags" => col("tags")
-      case "deletionVector" =>
-        ColumnarAMTCheckpointProvider.toDescriptor(tableRoot)(col("deletion_vector"))
+      case "deletionVector" => deletionVectorColumn(col("deletion_vector"))
       case "baseRowId" => baseRowId
       case "defaultRowCommitVersion" =>
         inheritedTrackingField(
@@ -483,6 +488,10 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     }
     value.cast(field.dataType)
   }
+
+  /** An AMT deletion vector struct -> Delta's descriptor, as [[DeletionVector.toDescriptor]]. */
+  protected def deletionVectorColumn(deletionVector: Column): Column =
+    ColumnarAMTCheckpointProvider.toDescriptor(tableRoot)(deletionVector)
 
   /**
    * The tracking field `name` of a DATA entry row, as [[Tracking.resolve]] resolves it: an `ADDED`
