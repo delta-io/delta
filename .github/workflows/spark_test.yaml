@@ -16,6 +16,13 @@ on:
         description: Optional suffix to force a distinct Spark Maven cache key
         required: false
         type: string
+
+# Cancel previous runs when new commits are pushed. The group includes the event name so
+# manual workflow_dispatch runs don't cancel, or get cancelled by, push runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 # Source-build jobs are commented out while all supported Spark versions use releases.
 # With no snapshot versions, enabled source-build jobs appear as skipped.
 # The merge bot can report these checks as failures and confuse contributors.
