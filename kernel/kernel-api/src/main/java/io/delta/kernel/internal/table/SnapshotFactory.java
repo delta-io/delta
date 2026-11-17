@@ -208,8 +208,7 @@ public class SnapshotFactory {
       metadata = result.metadata;
     }
 
-    // We require maxCatalogVersion to be provided for catalogManaged tables. We cannot validate
-    // this earlier since we need to first load the protocol.
+    // Latest queries only learn whether the table is catalogManaged after loading the protocol.
     validateMaxCatalogVersionPresence(protocol);
 
     // TODO: When LogReplay becomes static utilities, we can create it inside of SnapshotImpl
@@ -276,8 +275,8 @@ public class SnapshotFactory {
   }
 
   /**
-   * Requires maxCatalogVersion when a latest query resolves to a catalogManaged snapshot, or a
-   * timestamp query's latest snapshot is catalogManaged.
+   * Requires maxCatalogVersion when a latest query resolves to a catalogManaged snapshot. Timestamp
+   * queries are validated against their latest snapshot before any I/O.
    *
    * <p>maxCatalogVersion is accepted with a file-system managed result, since a catalog-ratified
    * downgrade cannot be distinguished from an ordinary file-system managed commit by protocol
@@ -286,12 +285,12 @@ public class SnapshotFactory {
    * responsible for providing it in that case.
    */
   private void validateMaxCatalogVersionPresence(Protocol protocol) {
-    if (ctx.versionOpt.isPresent() || ctx.maxCatalogVersion.isPresent()) {
+    if (ctx.versionOpt.isPresent()
+        || ctx.timestampQueryContextOpt.isPresent()
+        || ctx.maxCatalogVersion.isPresent()) {
       return;
     }
-    final Protocol latestProtocol =
-        ctx.timestampQueryContextOpt.map(x -> x._1.getProtocol()).orElse(protocol);
-    if (TableFeatures.isCatalogManagedSupported(latestProtocol)) {
+    if (TableFeatures.isCatalogManagedSupported(protocol)) {
       throw DeltaErrors.maxCatalogVersionError(
           "Must provide maxCatalogVersion for catalogManaged tables");
     }

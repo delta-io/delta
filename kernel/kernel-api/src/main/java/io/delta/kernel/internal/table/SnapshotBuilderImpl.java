@@ -133,6 +133,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
     validateMaxCatalogVersionProvidedWithLogData();
+    validateMaxCatalogVersionProvidedForCatalogManagedLatestSnapshot();
     validateMaxCatalogVersionCompatibleWithTimeTravelParams();
     validateLogTailEndsWithMaxCatalogVersionOrVersionToLoad();
   }
@@ -185,6 +186,22 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
       throw DeltaErrors.maxCatalogVersionError(
           "Must provide maxCatalogVersion when providing catalog commits");
     }
+  }
+
+  /**
+   * A timestamp query's latest snapshot already determines whether the table is catalogManaged.
+   * Validating it before resolving the timestamp keeps unpublished catalog versions, which cannot
+   * be found without catalog commits, from failing the query with a different error first.
+   */
+  private void validateMaxCatalogVersionProvidedForCatalogManagedLatestSnapshot() {
+    ctx.timestampQueryContextOpt.ifPresent(
+        x -> {
+          if (!ctx.maxCatalogVersion.isPresent()
+              && TableFeatures.isCatalogManagedSupported(x._1.getProtocol())) {
+            throw DeltaErrors.maxCatalogVersionError(
+                "Must provide maxCatalogVersion for catalogManaged tables");
+          }
+        });
   }
 
   /**

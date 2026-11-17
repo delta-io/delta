@@ -865,6 +865,16 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           }
           assert(e.getMessage === "Must provide maxCatalogVersion for catalogManaged tables")
         }
+        // Rejected before resolving the timestamp, which would fail to find version 5 if it is
+        // unpublished
+        val latestTimestampError = intercept[MaxCatalogVersionException] {
+          TableManager
+            .loadSnapshot(tablePath)
+            .atTimestamp(latestSnapshot.getTimestamp(defaultEngine), latestSnapshot)
+            .build(defaultEngine)
+        }
+        assert(latestTimestampError.getMessage ===
+          "Must provide maxCatalogVersion for catalogManaged tables")
 
         // Version time travel does not load the latest protocol to require maxCatalogVersion, so
         // published versions can be read by path even though the table is catalogManaged again
