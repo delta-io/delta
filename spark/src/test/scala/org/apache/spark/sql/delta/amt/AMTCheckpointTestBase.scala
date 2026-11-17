@@ -300,40 +300,51 @@ trait AMTCheckpointTestBase
   }
 
   /**
-   * The per-leaf cap tests use to get a deterministic, multi-entry leaf layout.
+   * Target entries per leaf used by tests that need a multi-entry leaf layout.
    *
    * A test that needs a leaf-resident entry cannot just write a file or two. For example, a back
    * reference or a manifest deletion vector both need an entry that actually lives in a leaf. But a
-   * full rewrite spreads the live files over cap-sized partitions by hash of path and skips the
+   * full rewrite spreads the live files over partitions by hash of path and skips the
    * empty ones, and if there is only a single leaf produced, that leaf is promoted to be a root, so
    * a small table can end up with no leaf at all.
    */
   protected val entriesPerLeaf: Int = 10
 
   /**
-   * File count that packs into whole [[entriesPerLeaf]]-sized leaves.
+   * File count targeting three leaves at [[entriesPerLeaf]] entries per leaf.
    */
   protected val leafPackedFiles: Int = 3 * entriesPerLeaf
 
-  /** Session conf that puts [[entriesPerLeaf]] entries in each leaf. */
+  /** Session conf targeting [[entriesPerLeaf]] entries per leaf. */
   protected def leafPackingConfs: Seq[(String, String)] =
     Seq(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> entriesPerLeaf.toString)
 
-  /** Leaves that `numFiles` live files pack into at [[entriesPerLeaf]] entries per leaf. */
+  /** Target leaf count for `numFiles` live files at [[entriesPerLeaf]] entries per leaf. */
   protected def expectedLeafCount(numFiles: Int): Int =
     math.ceil(numFiles.toDouble / entriesPerLeaf).toInt
 
   /**
-   * Asserts `leaves` holds exactly the leaves `numFiles` live files pack into. Fails with the
-   * arithmetic spelled out, so a count mismatch reads as a packing problem rather than a bare
-   * number comparison.
+   * Asserts the leaves contain all `numFiles` live files. Full rewrites skip empty hash
+   * partitions, so their leaf count can be below the target. Incremental spills pack files
+   * deterministically and can require the exact count.
    */
   protected def assertLeafCount(
-      leaves: Seq[DataManifestEntry], numFiles: Int = leafPackedFiles): Unit = {
+      leaves: Seq[DataManifestEntry],
+      numFiles: Int = leafPackedFiles,
+      exact: Boolean = false): Unit = {
     val expected = expectedLeafCount(numFiles)
-    assert(leaves.size == expected,
-      s"$numFiles files at $entriesPerLeaf per leaf must pack into $expected leaves; " +
-        s"got ${leaves.size}.")
+    assert(leaves.nonEmpty, s"Expected leaves for $numFiles live files.")
+    if (exact) {
+      assert(leaves.size == expected,
+        s"$numFiles files must pack into $expected leaves; got ${leaves.size}.")
+    } else {
+      assert(leaves.size <= expected,
+        s"$numFiles files must pack into at most $expected leaves; got ${leaves.size}.")
+    }
+    val liveFileCounts = leaves.map(_.manifest_info.liveFilesCount)
+    assert(liveFileCounts.forall(_ > 0), s"Leaves must be nonempty: $liveFileCounts")
+    assert(liveFileCounts.sum == numFiles,
+      s"Leaves must contain all $numFiles live files; got $liveFileCounts.")
   }
 
   /** Asserts two leaf sequences are field-by-field equal. */

@@ -734,7 +734,7 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val leaves = context.provider.leaves
-    assertLeafCount(leaves)
+    assertLeafCount(leaves, exact = context.scenario.isIncremental)
     val expectedFirstRowId =
       AMTWriteHelper.firstRowIdAfter(RowId.extractHighWatermark(context.postCheckpointSnapshot))
     leaves.foreach { leaf =>
