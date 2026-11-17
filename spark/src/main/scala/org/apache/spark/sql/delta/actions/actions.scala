@@ -1008,6 +1008,15 @@ object FileAction {
         action.pathAsUri,
         Option(action.deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity)))
   }
+
+  /**
+   * Whether `action` is an [[AddFile]] or a [[RemoveFile]], the file actions an AMT manifest
+   * commit reads from its tree rather than from its log file.
+   */
+  private[delta] def isAddOrRemove(action: Action): Boolean = action match {
+    case _: AddFile | _: RemoveFile => true
+    case _ => false
+  }
 }
 
 case class ParsedStatsFields(
@@ -1768,6 +1777,26 @@ case class CommitInfo(
   override def getTimestamp: Long = timestamp.getTime
   @JsonIgnore
   override def getVersion: Long = version.get
+
+  /**
+   * Whether this is the CommitInfo of an AMT manifest commit whose tree describes the commit's own
+   * version.
+   *
+   * @param commitVersion the version of the commit this CommitInfo belongs to.
+   */
+  @JsonIgnore
+  def isAMTInlineManifestCommit(commitVersion: Long): Boolean =
+    lastManifestCommit.contains(
+      LastManifestCommit(version = commitVersion, contentRootVersion = commitVersion))
+
+  /**
+   * The commit-level `dataChange`, which must be present for AMT tables.
+   */
+  @JsonIgnore
+  def getDataChangeOrThrow: Boolean =
+    dataChange.getOrElse(throw new IllegalStateException(
+      s"Commit ${version.map(_.toString).getOrElse("unknown")} does not have a dataChange flag " +
+        "in its CommitInfo."))
 
 }
 
