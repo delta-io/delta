@@ -63,12 +63,6 @@ object DeltaTestUtilsBase {
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
 
   /**
-   * Whether the running Spark version supports NullType (VOID) columns in Delta tables.
-   * Used to gate NullType tests so they run on Spark 4.1+ and are skipped on Spark 4.0.
-   */
-  def nullTypeColumnsSupported: Boolean = !org.apache.spark.SPARK_VERSION.startsWith("4.0")
-
-  /**
    * Collects `t` and every throwable in its cause chain (cycle-guarded) and asserts that at
    * least one of them satisfies `f`.
    */
@@ -192,16 +186,14 @@ trait DeltaTestUtilsBase {
   // Re-define here to avoid the need to import it before using
   final def BOOLEAN_DOMAIN: Seq[Boolean] = DeltaTestUtilsBase.BOOLEAN_DOMAIN
 
-  /** Spark version bucket ("4.0", "4.1", "4.2+") that version-dependent behavior keys off. */
+  /** Spark version bucket ("4.1", "4.2+") that version-dependent behavior keys off. */
   def sparkVersionBucket(spark: SparkSession): String = {
     // Parse major and minor numerically so the bucket stays correct once Spark reaches 4.10,
     // where a lexicographic string compare would wrongly rank "4.10" below "4.2".
     val versionParts = spark.version.split('.')
     val major = versionParts(0).toInt
     val minor = versionParts(1).toInt
-    if (major > 4 || (major == 4 && minor >= 2)) "4.2+"
-    else if (major == 4 && minor >= 1) "4.1"
-    else "4.0"
+    if (major > 4 || (major == 4 && minor >= 2)) "4.2+" else "4.1"
   }
 
   class PlanCapturingListener() extends QueryExecutionListener {

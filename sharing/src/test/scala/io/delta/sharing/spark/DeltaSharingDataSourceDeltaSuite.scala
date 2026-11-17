@@ -21,7 +21,7 @@ package io.delta.sharing.spark
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase, VariantShreddingPreviewTableFeature, VariantShreddingTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, VariantShreddingPreviewTableFeature, VariantShreddingTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -133,7 +133,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
    */
   test("DeltaSharingDataSource able to read simple data") {
     // The shared table has VOID columns (c5, c6.b) that are read back.
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
       withTempDir { tempDir =>
         val deltaTableName = "delta_table_simple"

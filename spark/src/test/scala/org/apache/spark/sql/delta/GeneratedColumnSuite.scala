@@ -105,7 +105,6 @@ trait GeneratedColumnSuiteBase
       isStreaming: Boolean = false)(updateFunc: (String, String) => Seq[Row]): Unit = {
     def testBody(): Unit = {
       // The default test table has a Void column.
-      assume(isStreaming || DeltaTestUtilsBase.nullTypeColumnsSupported)
       val table = testName
       withTempDir { path =>
         withTable(table) {
@@ -1183,7 +1182,6 @@ trait GeneratedColumnSuiteBase
 
   test("creating a table with a different schema should fail") {
     // Uses the default test table schema, which has a Void column.
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withTempPath { path =>
       // Currently SQL is the only way to define a table using generated columns. So we create a
       // temp table and drop it to get a path for such table.

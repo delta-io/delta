@@ -140,7 +140,7 @@ def get_spark_variants(spark_specs):
     Example return value (given Spark 4.1, 4.2, and 4.3 specs, with 4.2 as default):
       [
         {"suffix": "",     "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
-        {"suffix": "_4.1", "spark_version": "4.1.0", "support_iceberg": "true",  "support_hudi": "true"},
+        {"suffix": "_4.1", "spark_version": "4.1.0", "support_iceberg": "true",  "support_hudi": "false"},
         {"suffix": "_4.2", "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
         {"suffix": "_4.3", "spark_version": "4.3.0", "support_iceberg": "false", "support_hudi": "false"},
       ]
@@ -872,6 +872,18 @@ if __name__ == "__main__":
     if args.use_local and (args.version != default_version):
         raise Exception("Cannot specify --use-local with a --version different than in version.sbt")
 
+    # Hudi support is declared per Spark version (supportHudi in CrossSparkVersions.scala). When no
+    # version supports Hudi, skip the Hudi integration tests in both local and non-local mode,
+    # before publishing or building anything.
+    hudi_spark_versions = []
+    if args.run_uniform_hudi_integration_tests:
+        hudi_spark_versions = [spec["fullVersion"] for spec in load_spark_version_specs(root_dir)
+                               if spec.get("supportHudi", "false") == "true"]
+        if not hudi_spark_versions:
+            print("No Spark version supports Hudi (supportHudi in CrossSparkVersions.scala) - "
+                  "skipping Hudi integration tests")
+            quit()
+
     # When --use-local, publish all artifact variants once upfront and build the variant list
     # from CrossSparkVersions.scala. In non-local mode, use a single default (unsuffixed) variant.
     default_variant = {
@@ -909,27 +921,16 @@ if __name__ == "__main__":
         quit()
 
     if args.run_uniform_hudi_integration_tests:
-        # Build hudi assembly once before running tests (needs specific Spark version)
+        # Build hudi assembly once before running tests, using the first Spark version that
+        # supports Hudi (hudi_spark_versions is non-empty here, see the check above).
         if args.use_local:
-            hudi_spark_ver = None
-            if spark_specs:
-                for spec in spark_specs:
-                    if spec.get("supportHudi", "false") == "true":
-                        hudi_spark_ver = spec["fullVersion"]
-                        break
-            if hudi_spark_ver:
-                run_cmd(["build/sbt", "-DsparkVersion=%s" % hudi_spark_ver, "hudi/assembly"],
-                        stream_output=True)
-            else:
-                run_cmd(["build/sbt", "hudi/assembly"], stream_output=True)
+            run_cmd(["build/sbt", "-DsparkVersion=%s" % hudi_spark_versions[0], "hudi/assembly"],
+                    stream_output=True)
 
         # In local mode, only test variants that support Hudi.
         # In non-local mode, run once with --hudi-spark-version from CLI args.
         if spark_specs:
             hudi_variants = [v for v in variants if v["support_hudi"] == "true"]
-            if not hudi_variants:
-                print("No Spark variants support Hudi - skipping Hudi integration tests")
-                quit()
         else:
             hudi_variants = [{
                 "suffix": "", "spark_version": args.hudi_spark_version,

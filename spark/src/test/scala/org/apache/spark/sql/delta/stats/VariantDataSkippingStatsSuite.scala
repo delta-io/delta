@@ -22,7 +22,6 @@ import scala.util.Random
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.shims.VariantStatsShims
-import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.Codec
@@ -200,7 +199,7 @@ class VariantDataSkippingStatsSuite
       case _: BigDecimal =>
         assert(expectedDecimalType != -1)
         assert(typeInfo == expectedDecimalType)
-        VariantShreddingTestShims.getDecimalWithOriginalScale(field)
+        field.getDecimalWithOriginalScale()
       case _ => fail(s"Unexpected value type: $expectedValue")
     }
 

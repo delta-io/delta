@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.test.shims
 
 /**
  * Shim indicating whether the running Spark supports the `SELECT ... CHANGES` clause used by the
- * V2 changelog read path. Spark 4.0 and 4.1 lack the parser support, so this variant returns
+ * V2 changelog read path. Spark 4.1 lacks the parser support, so this variant returns
  * false, letting changelog tests cancel. The spark-4.2 variant returns true.
  */
 trait ChangelogSyntaxSupportedShim {
