@@ -61,7 +61,7 @@ class DeltaSuite extends QueryTest
   with DeltaSQLCommandTest
   with CatalogOwnedTestBaseSuite {
 
-  import testImplicits._
+  import deltaImplicits._
 
   private def tryDeleteNonRecursive(fs: FileSystem, path: Path): Boolean = {
     try fs.delete(path, false) catch {
@@ -3159,7 +3159,7 @@ class DeltaSuite extends QueryTest
 class DeltaNameColumnMappingSuite extends DeltaSuite
   with DeltaColumnMappingEnableNameMode {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override protected def runOnlyTests = Seq(
     "handle partition filters and data filters",

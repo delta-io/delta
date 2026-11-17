@@ -32,18 +32,16 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.DeltaAnalysisException
 import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.scalatest.Ignore
 
 class DeltaVariantSuite
   extends QueryTest
-    with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaSQLTestUtils
     with TestsStatistics {
 
-  import testImplicits._
+  import deltaImplicits._
 
   private def assertVariantTypeTableFeatures(
     tableName: String,

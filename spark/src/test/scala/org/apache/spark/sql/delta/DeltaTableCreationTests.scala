@@ -45,16 +45,15 @@ import org.apache.spark.sql.catalyst.util.ResolveDefaultColumnsUtils
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, DataType, IntegerType, MapType, MetadataBuilder, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 trait DeltaTableCreationTests
   extends QueryTest
-  with SharedSparkSession
+  with DeltaSQLCommandTest
   with DeltaColumnMappingTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   val format = "delta"
 
@@ -2181,7 +2180,7 @@ class DeltaTableCreationSuite
   }
 
   test("Create an empty table without schema - unsupported cases") {
-    import testImplicits._
+    import deltaImplicits._
 
     withSQLConf(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE.key -> "true") {
       val emptySchemaTableName = "t1"
@@ -2321,7 +2320,7 @@ class DeltaTableCreationSuite
   }
 
   test("Create an empty table without schema - supported cases") {
-    import testImplicits._
+    import deltaImplicits._
 
     withSQLConf(DeltaSQLConf.DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE.key -> "true") {
       val emptyTableName = "t1"

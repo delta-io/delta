@@ -38,7 +38,7 @@ trait CatalogManagedStreamingSuiteBase
   with StreamTest {
 
 
-  import testImplicits._
+  import deltaImplicits._
   import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
   protected def assertNumCommitsCalled(expectedNumCommits: Int): Unit = {

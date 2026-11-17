@@ -192,7 +192,7 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest with DeltaSQLCommandTest {
 trait MergeIntoSchemaEvolutionCoreTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   testEvolution("new column with only insert *")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -261,7 +261,7 @@ trait MergeIntoSchemaEvolutionCoreTests extends MergeIntoSchemaEvolutionMixin {
 trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Schema evolution with UPDATE SET alone
   testEvolution("new column with update set")(
@@ -803,7 +803,7 @@ trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutio
 trait MergeIntoSchemaEvolutionBaseExistingColumnTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // No schema evolution
   testEvolution("old column updated from new column")(
@@ -1039,7 +1039,7 @@ trait MergeIntoSchemaEvolutionBaseExistingColumnTests extends MergeIntoSchemaEvo
 
 trait MergeIntoSchemaEvoStoreAssignmentPolicyTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
-  import testImplicits._
+  import deltaImplicits._
 
   // Upcasting is always allowed.
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
@@ -1163,7 +1163,7 @@ trait MergeIntoSchemaEvoStoreAssignmentPolicyTests extends MergeIntoSchemaEvolut
 trait MergeIntoSchemaEvolutionNotMatchedBySourceTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Test schema evolution with NOT MATCHED BY SOURCE clauses.
   testEvolution("new column with insert * and conditional update not matched by source")(
@@ -1230,7 +1230,7 @@ trait MergeIntoSchemaEvolutionNotMatchedBySourceTests extends MergeIntoSchemaEvo
 trait MergeIntoNestedStructInMapEvolutionTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // scalastyle:off line.size.limit
   // Struct evolution inside of map values.
@@ -1582,7 +1582,7 @@ trait MergeIntoNestedStructInMapEvolutionTests extends MergeIntoSchemaEvolutionM
 trait MergeIntoNestedStructEvolutionInsertTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Nested Schema evolution with INSERT alone
   testNestedStructsEvolution("new nested source field added when inserting top-level column")(
@@ -2785,7 +2785,7 @@ trait MergeIntoNestedStructEvolutionInsertTests extends MergeIntoSchemaEvolution
 trait MergeIntoNestedStructEvolutionUpdateOnlyTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Nested Schema evolution with UPDATE alone
   testNestedStructsEvolution("new nested source field not in update is ignored")(

@@ -406,7 +406,7 @@ class DeltaLogSuite extends QueryTest
     testDifferentCheckpoints(s"state reconstruction from checkpoint with" +
         s" missing $action should fail", quiet = true) { (_, _) =>
       withTempDir { tempDir =>
-        import testImplicits._
+        import deltaImplicits._
         val staleLog = DeltaLog.forTable(spark, tempDir)
         DeltaLog.clearCache()
 

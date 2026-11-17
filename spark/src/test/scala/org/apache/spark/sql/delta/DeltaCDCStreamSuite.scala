@@ -46,7 +46,7 @@ trait DeltaCDCStreamSuiteBase
   with DeltaSourceSuiteBase
   with StreamTest {
 
-  import testImplicits._
+  import deltaImplicits._
   import io.delta.implicits._
 
   /**
@@ -1271,7 +1271,7 @@ trait DeltaCDCStreamSuiteBase
 trait DeltaCDCStreamDeletionVectorMixin extends DeletionVectorsTestUtils {
   self: DeltaCDCStreamSuiteBase =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   override def beforeAll(): Unit = {
     super.beforeAll()

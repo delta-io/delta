@@ -414,7 +414,7 @@ class DeltaIncrementalSetTransactionsSuite
 
   /** Drops one [[SetTransaction]] operation from checkpoint - the one with max appId */
   private def dropOneSetTransactionFromCheckpoint(log: DeltaLog): Unit = {
-    import testImplicits._
+    import deltaImplicits._
     val checkpointPath = log.update().checkpointProvider.topLevelFiles.head.getPath
     val checkpointPathStr = checkpointPath.toString
     // Get the checkpoint file format to read and write. Specify format to be compatible

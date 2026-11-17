@@ -33,7 +33,6 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQueryException
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 sealed trait SaveOperation {
@@ -51,7 +50,7 @@ case class SaveAsTable(tableName: String) extends SaveOperation {
 }
 
 sealed trait SchemaEnforcementSuiteBase extends QueryTest
-    with SharedSparkSession {
+    with DeltaSQLCommandTest {
   protected def enableAutoMigration(f: => Unit): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
       f
@@ -65,7 +64,7 @@ sealed trait SchemaEnforcementSuiteBase extends QueryTest
   }
 }
 
-sealed trait BatchWriterTest extends SchemaEnforcementSuiteBase with SharedSparkSession {
+sealed trait BatchWriterTest extends SchemaEnforcementSuiteBase with DeltaSQLCommandTest {
 
   def saveOperation: SaveOperation
 
@@ -90,7 +89,7 @@ sealed trait BatchWriterTest extends SchemaEnforcementSuiteBase with SharedSpark
 }
 
 trait AppendSaveModeNullTests extends BatchWriterTest {
-  import testImplicits._
+  import deltaImplicits._
 
   equivalenceTest("JSON ETL workflow, NullType being only data column") {
     enableAutoMigration {
@@ -204,7 +203,7 @@ trait AppendSaveModeNullTests extends BatchWriterTest {
 }
 
 trait AppendSaveModeTests extends BatchWriterTest {
-  import testImplicits._
+  import deltaImplicits._
 
   equivalenceTest("reject schema changes by default") {
     disableAutoMigration {
@@ -304,9 +303,9 @@ trait AppendSaveModeTests extends BatchWriterTest {
   }
 }
 
-trait AppendOutputModeTests extends SchemaEnforcementSuiteBase with SharedSparkSession
+trait AppendOutputModeTests extends SchemaEnforcementSuiteBase with DeltaSQLCommandTest
   with DeltaSQLTestUtils {
-  import testImplicits._
+  import deltaImplicits._
 
   testQuietly("reject schema changes by default - streaming") {
     withTempDir { dir =>
@@ -465,7 +464,7 @@ trait AppendOutputModeTests extends SchemaEnforcementSuiteBase with SharedSparkS
 }
 
 trait OverwriteSaveModeTests extends BatchWriterTest {
-  import testImplicits._
+  import deltaImplicits._
 
   equivalenceTest("reject schema overwrites by default") {
     disableAutoMigration {
@@ -730,9 +729,9 @@ trait OverwriteSaveModeTests extends BatchWriterTest {
   }
 }
 
-trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with SharedSparkSession
+trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with DeltaSQLCommandTest
   with DeltaSQLTestUtils {
-  import testImplicits._
+  import deltaImplicits._
 
   testQuietly("reject complete mode with new schema by default") {
     disableAutoMigration {

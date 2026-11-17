@@ -24,7 +24,7 @@ import org.apache.spark.sql.types._
  * Trait collecting supported and unsupported type change test cases.
  */
 trait TypeWideningTestCases extends SQLTestUtils {
-  import testImplicits._
+  import deltaImplicits._
 
   /**
    * Represents the input of a type change test.

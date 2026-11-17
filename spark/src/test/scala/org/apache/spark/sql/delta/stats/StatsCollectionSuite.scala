@@ -52,7 +52,7 @@ class StatsCollectionSuite
     with DeletionVectorsTestUtils
     with DeltaExceptionTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
 
   test("on write") {

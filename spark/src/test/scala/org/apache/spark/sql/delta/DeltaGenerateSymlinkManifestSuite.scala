@@ -36,7 +36,6 @@ import org.apache.spark.SparkThrowable
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.test.SharedSparkSession
 // scalastyle:on import.ordering.noEmptyLine
 
 class DeltaGenerateSymlinkManifestSuite
@@ -49,7 +48,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("basic case: SQL command - path-based table") {
     withTempDir { tablePath =>
@@ -727,11 +726,8 @@ trait DeltaGenerateSymlinkManifestSuiteBase
   }
 }
 
-trait DeltaGenerateSymlinkManifestTestHelper
-  extends QueryTest
-  with SharedSparkSession {
-
-  import testImplicits._
+trait DeltaGenerateSymlinkManifestTestHelper extends DeltaSQLCommandTest {
+  import deltaImplicits._
 
   protected def assertManifest(
     tablePath: File,
@@ -786,10 +782,9 @@ trait DeltaGenerateSymlinkManifestTestHelper
         DeltaFileOperations.absolutePath(tablePath.toString, addFile.path).toString
       }
       .toSeq
-      .toDF("file")
 
     if (expectSameFiles) {
-      checkAnswer(filesInManifest, filesInLog)
+      checkAnswer(filesInManifest, filesInLog.map(Row(_)))
 
       // Validate that each file in the manifest is actually present in table. This mainly checks
       // whether the file names in manifest are not escaped and therefore are readable directly
@@ -800,7 +795,7 @@ trait DeltaGenerateSymlinkManifestTestHelper
         assert(fs.exists(new Path(p)), s"path $p in manifest not found in file system")
       }
     } else {
-      assert(filesInManifest.as[String].collect().toSet != filesInLog.as[String].collect().toSet)
+      assert(filesInManifest.as[String].collect().toSet != filesInLog.toSet)
     }
 
     // If there are partitioned files, make sure the partitions values read from them are the
@@ -811,7 +806,7 @@ trait DeltaGenerateSymlinkManifestTestHelper
         .selectExpr(partitionCols: _*).distinct()
       val partitionsInData = spark.read.format("delta").load(tablePath.toString)
         .selectExpr(partitionCols: _*).distinct()
-      checkAnswer(partitionsInManifest, partitionsInData)
+      checkAnswer(partitionsInManifest, partitionsInData.collect())
     }
   }
 

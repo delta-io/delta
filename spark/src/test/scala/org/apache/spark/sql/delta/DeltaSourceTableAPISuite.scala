@@ -37,7 +37,7 @@ class DeltaSourceTableAPISuite
   with CatalogOwnedTestBaseSuite
   with StreamTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   /** Runs batch writes that prepare data for a streaming source test through V1. */
   protected def withV1Mode(f: => Unit): Unit = f

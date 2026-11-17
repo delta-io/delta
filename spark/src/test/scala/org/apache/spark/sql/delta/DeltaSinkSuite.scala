@@ -51,7 +51,7 @@ abstract class DeltaSinkTest
   with StreamTest {
 
   override val streamingTimeout = 60.seconds
-  import testImplicits._
+  import deltaImplicits._
 
   // Before we start running the tests in this suite, we should let Spark perform all necessary set
   // up that needs to be done for streaming. Without this, the first test in the suite may be flaky
@@ -84,7 +84,7 @@ class DeltaSinkSuite
   with CatalogOwnedTestBaseSuite
   with DeltaSQLTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   /**
    * When true, reads and writes route through the V2 Kernel connector (DeltaV2Table) instead of V1
@@ -1090,7 +1090,7 @@ class DeltaSinkWithCatalogManagedBatch100Suite extends DeltaSinkSuite {
 
 abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite
   with DeltaColumnMappingSelectedTestMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   override protected def runOnlyTests = Seq(
     "append mode",

@@ -189,8 +189,10 @@ class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
 }
 
 
-abstract class DeltaDDLTestBase extends QueryTest with DeltaSQLTestUtils {
-  import testImplicits._
+abstract class DeltaDDLTestBase
+  extends DeltaSQLCommandTest
+  with DeltaSQLTestUtils {
+  import deltaImplicits._
 
   protected def verifyDescribeTable(tblName: String): Unit = {
     val res = sql(s"DESCRIBE TABLE $tblName").collect()

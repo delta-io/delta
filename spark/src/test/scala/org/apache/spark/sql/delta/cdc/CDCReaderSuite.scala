@@ -423,7 +423,7 @@ class CDCReaderSuite
   }
 
   test("for CDC add backtick in column name with dot [.] ") {
-    import testImplicits._
+    import deltaImplicits._
 
     withTempDir { dir =>
       withSQLConf((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {

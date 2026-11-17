@@ -956,7 +956,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  import testImplicits._
+  import deltaImplicits._
   /** Creates a Delta table and checks the expected protocol version */
   private def testCreation(tableName: String, writerVersion: Int, tableInitialized: Boolean = false)
                           (fn: String => Unit): Unit = {

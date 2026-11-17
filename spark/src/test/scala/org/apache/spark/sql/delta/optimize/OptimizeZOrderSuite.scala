@@ -45,7 +45,7 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
   with SharedSparkSession
   with DeltaSQLTestUtils
   with DeltaColumnMappingTestUtils {
-  import testImplicits._
+  import deltaImplicits._
 
 
   def executeOptimizeTable(table: String, zOrderBy: Seq[String],
@@ -347,7 +347,7 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
  */
 class OptimizeZOrderSQLSuite extends OptimizeZOrderSuiteBase
   with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   def executeOptimizeTable(table: String, zOrderBy: Seq[String],
       condition: Option[String] = None): DataFrame = {

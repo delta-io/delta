@@ -37,7 +37,7 @@ class CaseSensitivitySuite extends QueryTest
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   private def testWithCaseSensitivity(name: String)(f: => Unit): Unit = {
     testQuietly(name) {
