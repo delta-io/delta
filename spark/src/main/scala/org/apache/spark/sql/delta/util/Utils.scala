@@ -51,10 +51,13 @@ object Utils {
 
   /**
    * Returns the length of the random prefix directory under which new data files of a Delta
-   * table are written, or None to write them without one. Column mapping modes always use
-   * random prefixes.
+   * table are written, or None to write them without one. Callers use it to decide the
+   * directory prefix of the new data files they write.
+   *
+   * Unlike [[getRandomPrefixLength]], which only honors `delta.randomizeFilePrefixes`, this
+   * method also forces a random prefix when column mapping is enabled.
    */
-  def getRandomPrefixLengthOpt(metadata: Metadata): Option[Int] = {
+  private[delta] def getRandomPrefixLengthOpt(metadata: Metadata): Option[Int] = {
     getRandomPrefixLengthOpt(
       randomizeFilePrefixes = DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(metadata),
       columnMappingMode = metadata.columnMappingMode,
@@ -66,7 +69,7 @@ object Utils {
    * properties. `columnMappingMode` is evaluated only when `randomizeFilePrefixes` is false, and
    * `randomPrefixLength` only when a random prefix is used.
    */
-  def getRandomPrefixLengthOpt(
+  private[delta] def getRandomPrefixLengthOpt(
       randomizeFilePrefixes: Boolean,
       columnMappingMode: => DeltaColumnMappingMode,
       randomPrefixLength: => Int): Option[Int] = {
