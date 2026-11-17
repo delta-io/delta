@@ -238,7 +238,7 @@ class CatalogOwnedEnablementSuite
         "path" -> log.logPath.toString,
         "version" -> expectedVersion,
         "stackTrace" ->
-          ("org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils$" +
+          ("org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTableUtils$" +
             ".recordCommitCoordinatorPopulationUsageLog"),
         "latestCheckpointVersion" -> -1,
         // Only check for certain fields of `checksumOpt` since the entire map

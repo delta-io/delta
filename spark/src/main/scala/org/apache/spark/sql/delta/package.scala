@@ -36,4 +36,7 @@ package object delta {
    * concrete [[Snapshot]] implementation to `SnapshotV1`.
    */
   type SnapshotV1 = Snapshot
+
+  // The old name, kept until its callers use the new one.
+  val CatalogOwnedTableFeature: CatalogManagedTableFeature.type = CatalogManagedTableFeature
 }
