@@ -61,13 +61,8 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
 
   private static final Logger LOG = LoggerFactory.getLogger(DeltaCommitter.class);
 
-  // All committables should have the same job id as the committer.
-  // For simplicity, we get the job id from constructor.
-  private final String jobId;
   // The task prefix attached to checkpoint id when multiple sink instances presents
   private final int taskIndex;
-  // Uniquely identify the committer in DeltaLog transaction identifier
-  private final String committerId;
 
   private final DeltaTable deltaTable;
   private final DeltaSinkConf conf;
@@ -76,14 +71,11 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
   private volatile long lastCommitDurationMs;
 
   private DeltaCommitter(
-      String jobId,
       int taskIndex,
       DeltaTable deltaTable,
       DeltaSinkConf conf,
       SinkCommitterMetricGroup metricGroup) {
-    this.jobId = jobId;
     this.taskIndex = taskIndex;
-    this.committerId = String.format("%s-%d", jobId, taskIndex);
 
     this.deltaTable = deltaTable;
     this.conf = conf;
@@ -96,7 +88,17 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
   public void commit(Collection<CommitRequest<DeltaCommittable>> committables)
       throws IOException, InterruptedException {
     LOG.debug("Starting commit");
-    sortCommittablesByCheckpointId(committables).forEach(this::commitForSingleCheckpointId);
+    committables.stream()
+        .collect(
+            Collectors.groupingBy(
+                request -> request.getCommittable().getJobId(),
+                LinkedHashMap::new,
+                Collectors.toList()))
+        .values()
+        .forEach(
+            requests ->
+                sortCommittablesByCheckpointId(requests)
+                    .forEach(this::commitForSingleCheckpointId));
   }
 
   @Override
@@ -111,6 +113,9 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
     if (committables.isEmpty()) {
       return;
     }
+    // Restored work must keep the transaction identity of the job that created it.
+    String committerId =
+        String.format("%s-%d", committables.get(0).getCommittable().getJobId(), taskIndex);
     LOG.debug("Committing {} committables on checkpoint {}", committables.size(), checkpointId);
     metricGroup.getNumCommittablesTotalCounter().inc(committables.size());
 
@@ -242,7 +247,7 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
       Objects.requireNonNull(metricGroup, "metricGroup must not be null");
       Objects.requireNonNull(conf, "conf must not be null");
 
-      return new DeltaCommitter(jobId, taskIndex, deltaTable, conf, metricGroup);
+      return new DeltaCommitter(taskIndex, deltaTable, conf, metricGroup);
     }
   }
 }

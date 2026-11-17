@@ -21,18 +21,25 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.delta.flink.TestHelper;
 import io.delta.flink.table.HadoopTable;
 import io.delta.flink.table.LocalFileSystemTable;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.CloseableIterable;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.StreamSupport;
 import org.apache.flink.api.connector.sink2.Committer;
 import org.apache.flink.api.connector.sink2.mocks.MockCommitRequest;
 import org.apache.flink.runtime.metrics.groups.InternalSinkCommitterMetricGroup;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /** JUnit test suite for {@link DeltaCommitter}. */
 class DeltaCommitterTest extends TestHelper {
@@ -99,6 +106,98 @@ class DeltaCommitterTest extends TestHelper {
                 assertEquals(Set.of("p0", "p1", "p2", "p3", "p4"), partitions);
                 assertEquals(60, actionList.stream().mapToLong(a -> a.getNumRecords().get()).sum());
               });
+        });
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false, false", "true, false", "true, true"})
+  void testRestoreWithNewJobId(boolean alreadyCommitted, boolean removed) {
+    withTempDir(
+        dir -> {
+          StructType schema = new StructType().add("id", IntegerType.INTEGER);
+          HadoopTable table = new HadoopTable(dir.toURI(), Map.of(), schema, List.of());
+          table.open();
+          try {
+            DeltaSinkConf conf = new DeltaSinkConf(schema, Map.of());
+            DeltaCommitter original =
+                new DeltaCommitter.Builder()
+                    .withDeltaTable(table)
+                    .withJobId("original-job")
+                    .withMetricGroup(metricGroup)
+                    .withConf(conf)
+                    .build();
+            DeltaCommittable pending =
+                new DeltaCommittable(
+                    "original-job",
+                    "test-operator",
+                    1L,
+                    List.of(dummyAddFileRow(schema, 1, Map.of())),
+                    new WriterResultContext());
+            DeltaCommittable.Serializer serializer = new DeltaCommittable.Serializer();
+            byte[] checkpoint = serializer.serialize(pending);
+            if (alreadyCommitted) {
+              original.commit(List.of(new MockCommitRequest<>(pending)));
+            }
+            if (removed) {
+              List<Row> removes = new ArrayList<>();
+              verifyTableContent(
+                  dir.toString(),
+                  (version, files, props) ->
+                      files.forEach(
+                          file ->
+                              removes.add(
+                                  SingleAction.createRemoveFileSingleAction(
+                                      file.toRemoveFileRow(true, Optional.empty())))));
+              table.commit(
+                  CloseableIterable.inMemoryIterable(Utils.toCloseableIterator(removes.iterator())),
+                  "maintenance",
+                  1L,
+                  Map.of());
+            }
+
+            DeltaCommitter restored =
+                new DeltaCommitter.Builder()
+                    .withDeltaTable(table)
+                    .withJobId("restored-job")
+                    .withMetricGroup(metricGroup)
+                    .withConf(conf)
+                    .build();
+            DeltaCommittable recovered =
+                serializer.deserialize(serializer.getVersion(), checkpoint);
+            restored.commit(List.of(new MockCommitRequest<>(recovered)));
+            long expectedVersion = removed ? 2L : 1L;
+            int expectedFiles = removed ? 0 : 1;
+            verifyTableContent(
+                dir.toString(),
+                (version, files, props) -> {
+                  assertEquals(expectedVersion, version);
+                  assertEquals(
+                      expectedFiles, StreamSupport.stream(files.spliterator(), false).count());
+                });
+
+            // Recovered and new work can have the same checkpoint number but different job IDs.
+            DeltaCommittable fresh =
+                new DeltaCommittable(
+                    "restored-job",
+                    "test-operator",
+                    1L,
+                    List.of(dummyAddFileRow(schema, 1, Map.of())),
+                    new WriterResultContext());
+            for (int attempt = 0; attempt < 2; attempt++) {
+              restored.commit(
+                  List.of(new MockCommitRequest<>(recovered), new MockCommitRequest<>(fresh)));
+              verifyTableContent(
+                  dir.toString(),
+                  (version, files, props) -> {
+                    assertEquals(expectedVersion + 1, version);
+                    assertEquals(
+                        expectedFiles + 1,
+                        StreamSupport.stream(files.spliterator(), false).count());
+                  });
+            }
+          } finally {
+            table.close();
+          }
         });
   }
 
