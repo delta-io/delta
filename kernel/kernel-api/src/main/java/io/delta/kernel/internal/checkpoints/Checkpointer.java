@@ -57,6 +57,7 @@ public class Checkpointer {
 
   private static final int READ_LAST_CHECKPOINT_FILE_MAX_RETRIES = 3;
 
+  /** Default number of versions searched per batch when finding a checkpoint. */
   public static final int DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE = 1000;
 
   /** The name of the last checkpoint file */
@@ -194,9 +195,8 @@ public class Checkpointer {
     long numberOfFilesSearched = 0;
     long currentVersion = version;
 
-    // Some cloud storage APIs fetch 1000 files at a time. Search in batches of versions,
-    // starting from the given version. If a batch has no complete checkpoint, search the
-    // previous batch until a checkpoint is found or there are no more delta commits.
+    // Multipart checkpoints can add many files per version. Start each pass at most batchSize
+    // versions before currentVersion, and search earlier if no complete checkpoint is found.
     while (currentVersion >= 0) {
       long searchLowerBound = Math.max(0, currentVersion - batchSize);
       try (CloseableIterator<FileStatus> deltaLogFileIter =

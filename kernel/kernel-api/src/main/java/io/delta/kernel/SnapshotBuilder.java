@@ -53,8 +53,10 @@ public interface SnapshotBuilder {
   /**
    * Sets the number of versions searched per batch when finding a checkpoint for a snapshot.
    *
-   * <p>If a batch has no complete checkpoint, Kernel continues searching older batches. The default
-   * batch size is 1000 versions.
+   * <p>Smaller batches can reduce listing work for tables with frequent or multipart checkpoints.
+   * Larger batches can avoid extra listing calls when checkpoints are sparse. If a batch has no
+   * complete checkpoint, Kernel continues searching older batches. The default batch size is 1000
+   * versions.
    *
    * @param batchSize the number of versions per search batch; must be positive
    * @return this builder configured with the search batch size
