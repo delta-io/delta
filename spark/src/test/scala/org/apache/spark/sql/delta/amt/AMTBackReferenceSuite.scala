@@ -89,8 +89,11 @@ class AMTBackReferenceSuite
   }
 
   /** The back references stamped on every live file reconstructed from an AMT checkpoint. */
-  private def stampedBackRefs(snapshot: Snapshot): Map[String, Option[BackReference]] = {
-    val byPath = liveAddFiles(snapshot).map(add => add.path -> add.backReference).toMap
+  private def stampedBackRefs(snapshot: Snapshot): Map[String, Option[BackReference]] =
+    stampedBackRefs(liveAddFiles(snapshot))
+
+  private def stampedBackRefs(adds: Seq[AddFile]): Map[String, Option[BackReference]] = {
+    val byPath = adds.map(add => add.path -> add.backReference).toMap
     assert(byPath.nonEmpty && byPath.values.forall(_.isDefined),
       "all emitted files must be reconstructed from the leaves with a back reference.")
     byPath
@@ -181,7 +184,7 @@ class AMTBackReferenceSuite
         "Removing a file that never entered a leaf must produce an empty back reference.")
     }
 
-    val backRefByPath = adds.map(add => add.path -> add.backReference).toMap
+    val backRefByPath = stampedBackRefs(adds)
     val twoRowFile = adds.find(_.numPhysicalRecords.contains(2L))
       .getOrElse(fail("expected the two-row file to be reconstructed from the leaves."))
 
