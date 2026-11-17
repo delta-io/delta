@@ -1,15 +1,12 @@
 name: "Delta Spark Publishing and Examples"
 on:
-  push:
-    branches: [master, branch-*]
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
+  workflow_call:
   pull_request:
     branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
+
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This workflow tests against released versions only (no snapshots)

@@ -1,0 +1,142 @@
+name: "Master CI"
+
+on:
+  push:
+    branches: [master, branch-*]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+# Finish the running push, then retain only the newest pending push on each branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && format('push-{0}', github.ref) || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    name: "Choose tests from changes since the last successful run"
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.select.outputs.build }}
+      changelog_tests_spark42: ${{ steps.select.outputs.changelog_tests_spark42 }}
+      flink_test: ${{ steps.select.outputs.flink_test }}
+      iceberg_test: ${{ steps.select.outputs.iceberg_test }}
+      kernel_test: ${{ steps.select.outputs.kernel_test }}
+      kernel_unitycatalog_test: ${{ steps.select.outputs.kernel_unitycatalog_test }}
+      spark_examples_test: ${{ steps.select.outputs.spark_examples_test }}
+      spark_python_test: ${{ steps.select.outputs.spark_python_test }}
+      spark_test: ${{ steps.select.outputs.spark_test }}
+      unidoc: ${{ steps.select.outputs.unidoc }}
+      base_sha: ${{ steps.select.outputs.base_sha }}
+    steps:
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+        with:
+          fetch-depth: 0
+      - name: Select workflows
+        id: select
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/master_ci_changes.py
+
+  build:
+    name: "Delta Build"
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    uses: ./.github/workflows/build.yaml
+
+  changelog_tests_spark42:
+    name: "V2 Changelog Tests (Spark 4.2)"
+    needs: changes
+    if: needs.changes.outputs.changelog_tests_spark42 == 'true'
+    uses: ./.github/workflows/changelog_tests_spark42.yaml
+
+  flink_test:
+    name: "Delta Flink"
+    needs: changes
+    if: needs.changes.outputs.flink_test == 'true'
+    uses: ./.github/workflows/flink_test.yaml
+
+  iceberg_test:
+    name: "Delta Iceberg Latest"
+    needs: changes
+    if: needs.changes.outputs.iceberg_test == 'true'
+    uses: ./.github/workflows/iceberg_test.yaml
+
+  kernel_test:
+    name: "Delta Kernel"
+    needs: changes
+    if: needs.changes.outputs.kernel_test == 'true'
+    uses: ./.github/workflows/kernel_test.yaml
+
+  kernel_unitycatalog_test:
+    name: "Kernel Unity Catalog"
+    needs: changes
+    if: needs.changes.outputs.kernel_unitycatalog_test == 'true'
+    uses: ./.github/workflows/kernel_unitycatalog_test.yaml
+
+  spark_examples_test:
+    name: "Delta Spark Publishing and Examples"
+    needs: changes
+    if: needs.changes.outputs.spark_examples_test == 'true'
+    uses: ./.github/workflows/spark_examples_test.yaml
+
+  spark_python_test:
+    name: "Delta Spark Python"
+    needs: changes
+    if: needs.changes.outputs.spark_python_test == 'true'
+    uses: ./.github/workflows/spark_python_test.yaml
+
+  spark_test:
+    name: "Delta Spark"
+    needs: changes
+    if: needs.changes.outputs.spark_test == 'true'
+    uses: ./.github/workflows/spark_test.yaml
+
+  unidoc:
+    name: "Unidoc"
+    needs: changes
+    if: needs.changes.outputs.unidoc == 'true'
+    uses: ./.github/workflows/unidoc.yaml
+
+  all_tests_passed:
+    name: "Master CI: all tests passed"
+    if: always()
+    needs:
+      - changes
+      - build
+      - changelog_tests_spark42
+      - flink_test
+      - iceberg_test
+      - kernel_test
+      - kernel_unitycatalog_test
+      - spark_examples_test
+      - spark_python_test
+      - spark_test
+      - unidoc
+    runs-on: ubuntu-24.04
+    env:
+      NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - name: Verify every selected workflow passed
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS"])
+          if needs["changes"]["result"] != "success":
+              sys.exit("The changes job did not succeed")
+
+          selected = needs["changes"]["outputs"]
+          for job, state in needs.items():
+              if job == "changes":
+                  continue
+              expected = "success" if selected[job] == "true" else "skipped"
+              if state["result"] != expected:
+                  sys.exit(
+                      f"{job}: expected {expected}, got {state['result']}"
+                  )
+          PY

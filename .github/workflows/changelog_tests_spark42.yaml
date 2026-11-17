@@ -9,10 +9,11 @@ name: "V2 Changelog Tests (Spark 4.2)"
 # incompatibilities (UCProxy bytecode against Spark 4.0's
 # CatalogStorageFormat.copy) that are not in scope for these PRs.
 #
-# This workflow exists on the fork-CI branches only and is meant as
-# proof that the changelog tests pass against a real Spark 4.2 release.
+# Standalone pushes exist only for the fork-CI branches. Master CI also calls
+# this workflow on master and branch-* with the other test workflows.
 
 on:
+  workflow_call:
   push:
     branches: [fix-changelog-fork-ci, auto-cdf-dv-fork-ci]
     paths-ignore:

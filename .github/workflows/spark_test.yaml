@@ -1,10 +1,6 @@
 name: "Delta Spark"
 on:
-  push:
-    branches: [master, branch-*]
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
+  workflow_call:
   pull_request:
     branches: [master, branch-*]
     paths-ignore:
@@ -17,12 +13,10 @@ on:
         required: false
         type: string
 
-# Cancel superseded runs on the same PR when new commits are pushed. Non-PR runs (pushes to
-# master / branch-*, manual dispatches) fall back to the unique run_id, so they are never
-# cancelled and every commit to master gets its own full CI result.
+# Cancel superseded PR runs; use a unique group for calls from Master CI.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.event.pull_request.number) || format('spark-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Source-build jobs are commented out while all supported Spark versions use releases.
 # With no snapshot versions, enabled source-build jobs appear as skipped.

@@ -1,15 +1,6 @@
 name: "Kernel Unity Catalog"
 on:
-  push:
-    branches: [master, branch-*]
-    paths:
-      - 'build.sbt'
-      - 'version.sbt'
-      - 'kernel/**/*.scala'
-      - 'kernel/**/*.java'
-      - 'storage/**/*.scala'
-      - 'storage/**/*.java'
-      - '.github/workflows/kernel_unitycatalog_test.yaml'
+  workflow_call:
   pull_request:
     branches: [master, branch-*]
     paths:
@@ -20,6 +11,7 @@ on:
       - 'storage/**/*.scala'
       - 'storage/**/*.java'
       - '.github/workflows/kernel_unitycatalog_test.yaml'
+
 jobs:
   test:
     name: "Kernel Unity Catalog Tests"
