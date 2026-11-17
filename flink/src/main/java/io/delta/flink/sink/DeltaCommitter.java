@@ -208,7 +208,6 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
   }
 
   public static final class Builder {
-    private String jobId;
     private int taskIndex;
     private DeltaTable deltaTable;
     private DeltaSinkConf conf;
@@ -216,8 +215,9 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
 
     public Builder() {}
 
+    /** @deprecated The job ID is read from each committable. This method has no effect. */
+    @Deprecated
     public Builder withJobId(String jobId) {
-      this.jobId = jobId;
       return this;
     }
 
@@ -242,7 +242,6 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
     }
 
     public DeltaCommitter build() {
-      Objects.requireNonNull(jobId, "jobId must not be null");
       Objects.requireNonNull(deltaTable, "deltaTable must not be null");
       Objects.requireNonNull(metricGroup, "metricGroup must not be null");
       Objects.requireNonNull(conf, "conf must not be null");

@@ -21,8 +21,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.delta.flink.TestHelper;
 import io.delta.flink.table.HadoopTable;
 import io.delta.flink.table.LocalFileSystemTable;
+import io.delta.kernel.TableManager;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.util.Utils;
@@ -122,6 +124,7 @@ class DeltaCommitterTest extends TestHelper {
             DeltaCommitter original =
                 new DeltaCommitter.Builder()
                     .withDeltaTable(table)
+                    .withTaskIndex(3)
                     .withJobId("original-job")
                     .withMetricGroup(metricGroup)
                     .withConf(conf)
@@ -158,13 +161,21 @@ class DeltaCommitterTest extends TestHelper {
             DeltaCommitter restored =
                 new DeltaCommitter.Builder()
                     .withDeltaTable(table)
-                    .withJobId("restored-job")
+                    .withTaskIndex(3)
                     .withMetricGroup(metricGroup)
                     .withConf(conf)
                     .build();
             DeltaCommittable recovered =
                 serializer.deserialize(serializer.getVersion(), checkpoint);
             restored.commit(List.of(new MockCommitRequest<>(recovered)));
+            SnapshotImpl snapshot =
+                (SnapshotImpl) TableManager.loadSnapshot(dir.toString()).build(table.getEngine());
+            assertEquals(
+                Optional.of(1L),
+                snapshot.getLatestTransactionVersion(table.getEngine(), "original-job-3"));
+            assertEquals(
+                Optional.empty(),
+                snapshot.getLatestTransactionVersion(table.getEngine(), "restored-job-3"));
             long expectedVersion = removed ? 2L : 1L;
             int expectedFiles = removed ? 0 : 1;
             verifyTableContent(
@@ -175,7 +186,8 @@ class DeltaCommitterTest extends TestHelper {
                       expectedFiles, StreamSupport.stream(files.spliterator(), false).count());
                 });
 
-            // Recovered and new work can have the same checkpoint number but different job IDs.
+            // Defensive coverage: submit different job IDs with the same checkpoint number.
+            // Flink 2.3 normally commits each checkpoint manager separately.
             DeltaCommittable fresh =
                 new DeltaCommittable(
                     "restored-job",
@@ -186,6 +198,14 @@ class DeltaCommitterTest extends TestHelper {
             for (int attempt = 0; attempt < 2; attempt++) {
               restored.commit(
                   List.of(new MockCommitRequest<>(recovered), new MockCommitRequest<>(fresh)));
+              snapshot =
+                  (SnapshotImpl) TableManager.loadSnapshot(dir.toString()).build(table.getEngine());
+              assertEquals(
+                  Optional.of(1L),
+                  snapshot.getLatestTransactionVersion(table.getEngine(), "original-job-3"));
+              assertEquals(
+                  Optional.of(1L),
+                  snapshot.getLatestTransactionVersion(table.getEngine(), "restored-job-3"));
               verifyTableContent(
                   dir.toString(),
                   (version, files, props) -> {
