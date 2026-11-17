@@ -131,10 +131,13 @@ class AMTBackReferenceSuite
   }
 
   testAcrossAMTCheckpointScenarios(
-      "reconstructed AddFiles are stamped with a back reference matching the leaf layout",
+      "leaf back references match their positions and propagate through file mutations",
       "amt_back_ref_stamped",
       sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
+      setup = name => {
+        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name)
+        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 2, startId = 100)
+      },
       inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
         s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
     val groundTruth = leafLocationByBackRef(context.postCheckpointSnapshot)
@@ -153,6 +156,83 @@ class AMTBackReferenceSuite
       // The back-ref must point at exactly the leaf entry describing this data file.
       assert(groundTruth.get((br.manifest, br.pos.toLong)).contains(add.path),
         s"Back-ref (${br.manifest}, ${br.pos}) must resolve to the entry for ${add.path}.")
+    }
+
+    // A log-only file can be added and removed without changing the checkpointed files.
+    locally {
+      val stampedPaths = adds.map(_.path).toSet
+
+      // This file is added off a checkpoint boundary, so it never enters a leaf.
+      sql(s"INSERT INTO ${context.tableName} VALUES ($leafPackedFiles)")
+      val deltaLog = context.postCheckpointSnapshot.deltaLog
+      val newFile = deltaLog.update().allFiles.collect()
+        .find(add => !stampedPaths.contains(add.path))
+        .getOrElse(fail("expected a newly added, non-leaf file."))
+      assert(newFile.backReference.isEmpty,
+        "A file added after the emit (not yet in a leaf) must not carry a back reference.")
+
+      // Removing the unstamped file must produce an unstamped tombstone.
+      val vBefore = deltaLog.update().version
+      sql(s"DELETE FROM ${context.tableName} WHERE id = $leafPackedFiles")
+      val remove = actionsAfter(deltaLog, vBefore).collect { case r: RemoveFile => r }
+        .find(_.path == newFile.path)
+        .getOrElse(fail(s"expected a RemoveFile for the post-emit file ${newFile.path}."))
+      assert(remove.backReference.isEmpty,
+        "Removing a file that never entered a leaf must produce an empty back reference.")
+    }
+
+    val backRefByPath = adds.map(add => add.path -> add.backReference).toMap
+    val twoRowFile = adds.find(_.numPhysicalRecords.contains(2L))
+      .getOrElse(fail("expected the two-row file to be reconstructed from the leaves."))
+
+    // removeRows does not commit; the command below still reads the original file.
+    locally {
+      // Mark row 0 deleted via a persistent DV, exercising the removeRows narrow waist.
+      val dv = writeDV(context.postCheckpointSnapshot.deltaLog, RoaringBitmapArray(0L))
+      val (supersedingAdd, removeFile) =
+        twoRowFile.removeRows(
+          deletionVector = dv, updateStats = false)
+
+      assert(supersedingAdd.backReference.isEmpty,
+        "The superseding AddFile (new DV) is a net-new root entry and must carry " +
+          "no back reference.")
+      assert(removeFile.backReference == twoRowFile.backReference,
+        "The paired RemoveFile must inherit the source file's back reference.")
+    }
+
+    withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+      // Deleting one of the two rows emits a superseding AddFile and paired RemoveFile.
+      val deltaLog = context.postCheckpointSnapshot.deltaLog
+      sql(s"DELETE FROM ${context.tableName} WHERE id = 1")
+      val actions = actionsAfter(deltaLog, context.manifestCommitVersion)
+      val supersedingAdd = actions.collectFirst {
+        case a: AddFile if a.path == twoRowFile.path => a
+      }.getOrElse(fail("expected a superseding AddFile (DV update) for the two-row file."))
+      val removed = actions.collectFirst {
+        case r: RemoveFile if r.path == twoRowFile.path => r
+      }.getOrElse(fail("expected a paired RemoveFile for the two-row file."))
+      assert(supersedingAdd.deletionVector != null, "the superseding AddFile must carry the DV.")
+      assert(supersedingAdd.backReference.isEmpty,
+        "the superseding AddFile must not claim the source file's leaf position.")
+      assert(removed.backReference == backRefByPath(twoRowFile.path),
+        "the paired RemoveFile must inherit the source file's back reference.")
+    }
+
+    // A fresh version isolates this removal from the earlier DV and log-only removals.
+    locally {
+      val deltaLog = context.postCheckpointSnapshot.deltaLog
+      val vBefore = deltaLog.update().version
+      sql(s"DELETE FROM ${context.tableName} WHERE id = 100")
+
+      val removes = actionsAfter(deltaLog, vBefore)
+        .collect { case r: RemoveFile => r }
+      assert(removes.size == 1, "The single-row file for id=100 must be removed whole.")
+      val remove = removes.head
+      val expected = backRefByPath.getOrElse(remove.path,
+        fail(s"Removed file ${remove.path} was not among the leaf-reconstructed files."))
+      assert(expected.isDefined, "The removed file must have carried a back reference.")
+      assert(remove.backReference == expected,
+        s"RemoveFile back-ref ${remove.backReference} must equal the source AddFile's $expected.")
     }
   }
 
@@ -184,123 +264,6 @@ class AMTBackReferenceSuite
     assert(removes.head.backReference.isEmpty,
       s"Removing a root-resident file must emit an empty back reference, " +
         s"but was ${removes.head.backReference}.")
-  }
-
-  testAcrossAMTCheckpointScenarios(
-      "DELETE emits a RemoveFile carrying the removed file's back reference",
-      "amt_back_ref_delete",
-      sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
-      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
-    val backRefByPath = stampedBackRefs(context.postCheckpointSnapshot)
-    val deltaLog = context.postCheckpointSnapshot.deltaLog
-    sql(s"DELETE FROM ${context.tableName} WHERE id = 1")
-
-    val removes = actionsAfter(deltaLog, context.manifestCommitVersion)
-      .collect { case r: RemoveFile => r }
-    assert(removes.size == 1, "The single-row file for id=1 must be removed whole.")
-    val remove = removes.head
-    val expected = backRefByPath.getOrElse(remove.path,
-      fail(s"Removed file ${remove.path} was not among the leaf-reconstructed files."))
-    assert(expected.isDefined, "The removed file must have carried a back reference.")
-    assert(remove.backReference == expected,
-      s"RemoveFile back-ref ${remove.backReference} must equal the source AddFile's $expected.")
-  }
-
-  testAcrossAMTCheckpointScenarios(
-      "a file added after the emit and removed before the next emit has no back reference",
-      "amt_back_ref_post_emit",
-      sqlConfs = leafPackingConfs)(
-      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
-      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
-    val stamped = liveAddFiles(context.postCheckpointSnapshot)
-    val stampedPaths = stamped.map(_.path).toSet
-    assert(stamped.size == leafPackedFiles && stamped.forall(_.backReference.isDefined),
-      s"all $leafPackedFiles emitted files must be stamped from the leaves.")
-
-    // This file is added off a checkpoint boundary, so it never enters a leaf.
-    sql(s"INSERT INTO ${context.tableName} VALUES ($leafPackedFiles)")
-    val deltaLog = context.postCheckpointSnapshot.deltaLog
-    val newFile = deltaLog.update().allFiles.collect()
-      .find(add => !stampedPaths.contains(add.path))
-      .getOrElse(fail("expected a newly added, non-leaf file."))
-    assert(newFile.backReference.isEmpty,
-      "A file added after the emit (not yet in a leaf) must not carry a back reference.")
-
-    // Removing the unstamped file must produce an unstamped tombstone.
-    val vBefore = deltaLog.update().version
-    sql(s"DELETE FROM ${context.tableName} WHERE id = $leafPackedFiles")
-    val remove = actionsAfter(deltaLog, vBefore).collect { case r: RemoveFile => r }
-      .find(_.path == newFile.path)
-      .getOrElse(fail(s"expected a RemoveFile for the post-emit file ${newFile.path}."))
-    assert(remove.backReference.isEmpty,
-      "Removing a file that never entered a leaf must produce an empty back reference.")
-  }
-
-  testAcrossAMTCheckpointScenarios(
-      "removeRows keeps the back reference on the RemoveFile and drops it from the AddFile",
-      "amt_back_ref_remove_rows",
-      sqlConfs = leafPackingConfs)(
-      setup = name => {
-        // A single file holding two rows.
-        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name)
-        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 2, startId = 100)
-      },
-      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) {
-      context =>
-    val twoRowFile = liveAddFiles(context.postCheckpointSnapshot)
-      .find(_.numPhysicalRecords.contains(2L))
-      .getOrElse(fail("expected the two-row file to be reconstructed from the leaves."))
-    assert(twoRowFile.backReference.isDefined)
-
-    // Mark row 0 deleted via a persistent DV, exercising the removeRows narrow waist.
-    val dv = writeDV(context.postCheckpointSnapshot.deltaLog, RoaringBitmapArray(0L))
-    val (supersedingAdd, removeFile) =
-      twoRowFile.removeRows(
-        deletionVector = dv, updateStats = false)
-
-    assert(supersedingAdd.backReference.isEmpty,
-      "The superseding AddFile (new DV) is a net-new root entry and must carry no back reference.")
-    assert(removeFile.backReference == twoRowFile.backReference,
-      "The paired RemoveFile must inherit the source file's back reference.")
-  }
-
-  testAcrossAMTCheckpointScenarios(
-      "DELETE via a persistent DV (removeRows) propagates through a real command",
-      "amt_back_ref_dv_delete",
-      sqlConfs = leafPackingConfs)(
-      setup = name => {
-        // A single file holding two rows.
-        Seq(1, 2).toDF("id").coalesce(1).write.mode("append").insertInto(name)
-        appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 2, startId = 100)
-      },
-      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) {
-      context =>
-    val backRefByPath =
-      liveAddFiles(context.postCheckpointSnapshot).map(add => add.path -> add.backReference).toMap
-    val twoRowPath = liveAddFiles(context.postCheckpointSnapshot)
-      .find(_.numPhysicalRecords.contains(2L))
-      .getOrElse(fail("expected the two-row file to be reconstructed from the leaves.")).path
-
-    // Deleting one of the two rows emits a superseding AddFile and paired RemoveFile.
-    val deltaLog = context.postCheckpointSnapshot.deltaLog
-    sql(s"DELETE FROM ${context.tableName} WHERE id = 1")
-    val actions = actionsAfter(deltaLog, context.manifestCommitVersion)
-    val supersedingAdd = actions.collectFirst {
-      case a: AddFile if a.path == twoRowPath => a
-    }.getOrElse(fail("expected a superseding AddFile (DV update) for the two-row file."))
-    val removed = actions.collectFirst {
-      case r: RemoveFile if r.path == twoRowPath => r
-    }.getOrElse(fail("expected a paired RemoveFile for the two-row file."))
-    assert(supersedingAdd.deletionVector != null, "the superseding AddFile must carry the DV.")
-    assert(supersedingAdd.backReference.isEmpty,
-      "the superseding AddFile must not claim the source file's leaf position.")
-    assert(removed.backReference == backRefByPath(twoRowPath),
-      "the paired RemoveFile must inherit the source file's back reference.")
   }
 
   /**
@@ -397,57 +360,57 @@ class AMTBackReferenceSuite
     log.startTransaction().commit(actions, DeltaOperations.ManualUpdate)
   }
 
-  test("commit accepts a RemoveFile carrying the correct back reference") {
-    withTable("amt_commit_ok") {
-      val adds = emitStampedAddFiles("amt_commit_ok")
-      // Tombstoning a leaf-derived file keeps its (correct) back reference: the commit must pass.
-      commitActions("amt_commit_ok", Seq(adds.head.removeWithTimestamp()))
-    }
-  }
+  test("commit validates back references and rejects invalid actions atomically") {
+    withTable("amt_commit_validation") {
+      val name = "amt_commit_validation"
+      val adds = emitStampedAddFiles(name)
+      val deltaLog = deltaLogForName(name)
+      val initialVersion = deltaLog.update().version
+      val initialBackRefs = adds.map(add => add.path -> add.backReference).toMap
 
-  test("commit accepts a fresh file that carries no back reference") {
-    withTable("amt_commit_fresh") {
-      val adds = emitStampedAddFiles("amt_commit_fresh")
-      // A brand-new file not present in the tree legitimately carries no back reference.
+      def assertUnchanged(): Unit = {
+        val snapshot = deltaLog.update()
+        assert(snapshot.version == initialVersion,
+          "a rejected transaction must not advance the table version.")
+        assert(liveAddFiles(snapshot).map(add => add.path -> add.backReference).toMap ==
+          initialBackRefs, "a rejected transaction must not change the live file references.")
+      }
+
+      locally {
+        val stripped = adds.head.removeWithTimestamp().copy(backReference = None)
+        val ex = intercept[IllegalStateException] {
+          commitActions(name, Seq(stripped))
+        }
+        assert(ex.getMessage.contains("does not match the AMT"))
+        assert(ex.getMessage.contains(stripped.path))
+        assertUnchanged()
+      }
+
+      locally {
+        val spurious = adds.head.copy(path = "brand-new-file.parquet")
+        val ex = intercept[IllegalStateException] {
+          commitActions(name, Seq(spurious))
+        }
+        assert(ex.getMessage.contains("not present in the AMT"))
+        assertUnchanged()
+      }
+
+      locally {
+        val wrongBr = adds.head.backReference.get.copy(pos = adds.head.backReference.get.pos + 1000)
+        val wrong = adds.head.removeWithTimestamp().copy(backReference = Some(wrongBr))
+        val ex = intercept[IllegalStateException] {
+          commitActions(name, Seq(wrong))
+        }
+        assert(ex.getMessage.contains("does not match the AMT"))
+        assertUnchanged()
+      }
+
+      // Fresh transactions must still accept valid actions after the rejected attempts.
+      commitActions(name, Seq(adds.head.removeWithTimestamp()))
       val fresh = adds.head.copy(path = "brand-new-file.parquet", backReference = None)
-      commitActions("amt_commit_fresh", Seq(fresh))
-    }
-  }
-
-  test("commit fails when a leaf-derived file's tombstone is missing its back reference") {
-    withTable("amt_commit_missing") {
-      val adds = emitStampedAddFiles("amt_commit_missing")
-      // Strip the back reference off a tombstone for a file the tree says should carry one.
-      val stripped = adds.head.removeWithTimestamp().copy(backReference = None)
-      val ex = intercept[IllegalStateException] {
-        commitActions("amt_commit_missing", Seq(stripped))
-      }
-      assert(ex.getMessage.contains("does not match the AMT"))
-      assert(ex.getMessage.contains(stripped.path))
-    }
-  }
-
-  test("commit fails when a fresh file carries a spurious back reference") {
-    withTable("amt_commit_spurious") {
-      val adds = emitStampedAddFiles("amt_commit_spurious")
-      // A file not in the tree must not carry a back reference.
-      val spurious = adds.head.copy(path = "brand-new-file.parquet")
-      val ex = intercept[IllegalStateException] {
-        commitActions("amt_commit_spurious", Seq(spurious))
-      }
-      assert(ex.getMessage.contains("not present in the AMT"))
-    }
-  }
-
-  test("commit fails when a present file's tombstone carries the wrong back reference") {
-    withTable("amt_commit_wrong") {
-      val adds = emitStampedAddFiles("amt_commit_wrong")
-      val wrongBr = adds.head.backReference.get.copy(pos = adds.head.backReference.get.pos + 1000)
-      val wrong = adds.head.removeWithTimestamp().copy(backReference = Some(wrongBr))
-      val ex = intercept[IllegalStateException] {
-        commitActions("amt_commit_wrong", Seq(wrong))
-      }
-      assert(ex.getMessage.contains("does not match the AMT"))
+      commitActions(name, Seq(fresh))
+      val expectedPaths = initialBackRefs.keySet - adds.head.path + fresh.path
+      assert(liveAddFiles(deltaLog.update()).map(_.path).toSet == expectedPaths)
     }
   }
 
@@ -789,59 +752,58 @@ class AMTBackReferenceSuite
     assert(fs.exists(compactedDeltaPath), "Compaction must allow a content root within the window.")
   }
 
-  /**
-   * Builds an AMT source with stamped files, runs `clone(src, tgt)`, then asserts every AddFile
-   * committed to the target carries no back reference.
-   */
-  private def testCloneDropsBackRefs(
-      testName: String)(clone: (String, String) => Unit): Unit = {
-    testAcrossAMTCheckpointScenarios(
-        testName,
-        "amt_clone_src",
-        sqlConfs = leafPackingConfs)(
-        setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
-        inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-          s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
-      val src = context.tableName
-      // Derive the clone target from the scenario-unique source, so the scenarios do not share a
-      // table directory (see the naming note in `testAcrossAMTCheckpointScenarios`).
-      val tgt = s"${src}_clone_tgt"
-      val srcBackRefByPath = stampedBackRefs(context.postCheckpointSnapshot)
-      val srcSnapshotIds = liveAddFiles(context.postCheckpointSnapshot).flatMap(_.snapshotId).toSet
+  testAcrossAMTCheckpointScenarios(
+      "CLONE variants drop the source table's back references",
+      "amt_clone_src",
+      sqlConfs = leafPackingConfs)(
+      setup = name => appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles - 1),
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES (${leafPackedFiles - 1})"))) { context =>
+    val src = context.tableName
+    val srcBackRefByPath = stampedBackRefs(context.postCheckpointSnapshot)
+    val srcSnapshotIds = liveAddFiles(context.postCheckpointSnapshot).flatMap(_.snapshotId).toSet
+    val srcLog = context.postCheckpointSnapshot.deltaLog
+    val srcVersion = context.postCheckpointSnapshot.version
 
-      withTable(tgt) {
-        clone(src, tgt)
+    // Each clone reads the same immutable source and owns a separate target and cleanup scope.
+    def checkClone(variant: String)(clone: (String, String) => Unit): Unit = {
+      val tgt = s"${src}_${variant}_tgt"
+      withClue(s"$variant: ") {
+        withTable(tgt) {
+          clone(src, tgt)
 
-        val tgtLog = deltaLogForName(tgt)
-        val latest = tgtLog.update().version
-        val addsBySnapshotId = (0L to latest)
-          .flatMap(v => actionsAt(tgtLog, v))
-          .collect { case add: AddFile => add }
-          .groupBy(_.snapshotId)
-        val cloneGroups = addsBySnapshotId.collect {
-          case (Some(snapshotId), adds) if adds.size >= srcBackRefByPath.size => snapshotId -> adds
-        }
-        assert(cloneGroups.size == 1,
-          s"expected one CLONE snapshot with at least ${srcBackRefByPath.size} files, " +
-            s"got ${cloneGroups.map { case (id, adds) => id -> adds.size }}.")
-        val (cloneSnapshotId, clonedSourceAdds) = cloneGroups.head
-        clonedSourceAdds.foreach { a =>
-          assert(a.backReference.isEmpty,
-            s"Cloned AddFile ${a.path} must not carry the source table's back reference.")
-          assert(!srcSnapshotIds.contains(cloneSnapshotId),
-            s"Cloned AddFile ${a.path} must start a new snapshot lifecycle.")
-          assert(a.modifiedSnapshotId.isEmpty)
+          val tgtLog = deltaLogForName(tgt)
+          val latest = tgtLog.update().version
+          val addsBySnapshotId = (0L to latest)
+            .flatMap(v => actionsAt(tgtLog, v))
+            .collect { case add: AddFile => add }
+            .groupBy(_.snapshotId)
+          val cloneGroups = addsBySnapshotId.collect {
+            case (Some(snapshotId), adds) if adds.size >= srcBackRefByPath.size =>
+              snapshotId -> adds
+          }
+          assert(cloneGroups.size == 1,
+            s"expected one CLONE snapshot with at least ${srcBackRefByPath.size} files, " +
+              s"got ${cloneGroups.map { case (id, adds) => id -> adds.size }}.")
+          val (cloneSnapshotId, clonedSourceAdds) = cloneGroups.head
+          clonedSourceAdds.foreach { a =>
+            assert(a.backReference.isEmpty,
+              s"Cloned AddFile ${a.path} must not carry the source table's back reference.")
+            assert(!srcSnapshotIds.contains(cloneSnapshotId),
+              s"Cloned AddFile ${a.path} must start a new snapshot lifecycle.")
+            assert(a.modifiedSnapshotId.isEmpty)
+          }
+          assert(srcLog.update().version == srcVersion, "CLONE must leave its source unchanged.")
         }
       }
     }
-  }
 
-  Seq("SHALLOW").foreach { cloneType =>
-    testCloneDropsBackRefs(
-        s"$cloneType CLONE drops the source table's back references") { (src, tgt) =>
-      sql(s"CREATE TABLE $tgt $cloneType CLONE $src")
+    Seq("SHALLOW").foreach { cloneType =>
+      checkClone(s"${cloneType}_create") { (src, tgt) =>
+        sql(s"CREATE TABLE $tgt $cloneType CLONE $src")
+      }
+
     }
-
   }
 
   testAcrossAMTCheckpointScenarios(
