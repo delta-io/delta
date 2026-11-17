@@ -39,7 +39,7 @@ trait OptimisticTransactionLegacyTests
   private val addB = createTestAddFile(encodedPath = "b")
   private val addC = createTestAddFile(encodedPath = "c")
 
-  import deltaImplicits._
+  import testImplicits._
 
   test("block append against metadata change") {
     withTempDir { tempDir =>

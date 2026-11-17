@@ -29,7 +29,7 @@ import org.apache.spark.sql.test.SharedSparkSession
  * A trait for tests that are testing a fully set up SparkSession with all of Delta's requirements,
  * such as the configuration of the DeltaCatalog and the addition of all Delta extensions.
  */
-trait DeltaSQLCommandTest extends SharedSparkSession {
+trait DeltaSQLCommandTest extends SharedSparkSession with QueryTest {
 
   /** Executes DDL and DML; connector-specific suites can override the execution mode. */
   protected def executeDml(sqlText: String): Unit = sql(sqlText)
