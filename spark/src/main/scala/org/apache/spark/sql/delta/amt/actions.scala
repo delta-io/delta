@@ -719,7 +719,7 @@ object AMTSnapshotId {
       actions: Iterator[Action],
       snapshotId: Long): Iterator[Action] = {
     require(snapshotId >= 0L, s"AMT snapshot ID must be non-negative: $snapshotId.")
-    if (!AMTUtils.amtEnabled(metadata, protocol)) {
+    if (!AMTUtils.amtEnabled(metadata, protocol, isPreviewCompatible = true)) {
       return actions
     }
 

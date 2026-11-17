@@ -385,7 +385,7 @@ trait Checkpoints extends DeltaLogging {
       snapshotToCheckpoint: Snapshot,
       catalogTableOpt: Option[CatalogTable],
       amtTriggerModeOpt: Option[AMTTriggerMode] = None): Unit = {
-    if (AMTUtils.amtEnabled(snapshotToCheckpoint)) {
+    if (AMTUtils.amtEnabled(snapshotToCheckpoint, isPreviewCompatible = true)) {
       // Note: This also takes care of writing the last checkpoint file via optimistic transaction
       AMTWriterManager.emitAMTCheckpoint(snapshotToCheckpoint, catalogTableOpt, amtTriggerModeOpt)
       return
@@ -800,7 +800,7 @@ trait Checkpoints extends DeltaLogging {
    * root makes snapshot discovery reject the table.
    */
   protected def assertNonAMTCheckpointAllowed(snapshot: Snapshot): Unit = {
-    if (AMTUtils.amtEnabled(snapshot)) {
+    if (AMTUtils.amtEnabled(snapshot, isPreviewCompatible = true)) {
       throw new IllegalStateException(
         s"Cannot write a non-AMT checkpoint at version ${snapshot.version} for AMT table " +
           s"$logPath.")

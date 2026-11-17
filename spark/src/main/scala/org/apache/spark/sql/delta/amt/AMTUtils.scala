@@ -39,26 +39,37 @@ object AMTUtils extends DeltaLogging {
   /**
    * Whether AMT is **supported** as per the protocol. Code that reads or keeps AMT state (trees,
    * back references, `r` DVs) checks this, because that state stays while AMT writes are off.
+   *
+   * `isPreviewCompatible` says whether the caller also handles private-preview AMT tables, that
+   * is, tables with [[AdaptiveMetadataPreviewTableFeature]]. Only code paths that predate
+   * [[AdaptiveMetadataTableFeature]] may treat preview tables as AMT tables; those callers pass
+   * `true`. New code paths pass `false` and only see tables with [[AdaptiveMetadataTableFeature]].
    */
-  def amtSupported(protocol: Protocol): Boolean =
-    AdaptiveMetadataTableFeatureBase.isSupportedBy(protocol)
+  def amtSupported(protocol: Protocol, isPreviewCompatible: Boolean): Boolean =
+    AdaptiveMetadataTableFeatureBase.supportedBy(protocol) match {
+      case Some(AdaptiveMetadataPreviewTableFeature) => isPreviewCompatible
+      case Some(AdaptiveMetadataTableFeature) => true
+      case None => false
+    }
 
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
-   * `metadata`.
+   * `metadata`. See [[amtSupported]] for `isPreviewCompatible`.
    */
-  def amtEnabled(metadata: Metadata, protocol: Protocol): Boolean =
+  def amtEnabled(metadata: Metadata, protocol: Protocol, isPreviewCompatible: Boolean): Boolean =
     AdaptiveMetadataTableFeatureBase.supportedBy(protocol) match {
       // Preview tables were created before the AMT property existed.
-      case Some(AdaptiveMetadataPreviewTableFeature) => true
+      case Some(AdaptiveMetadataPreviewTableFeature) => isPreviewCompatible
       case Some(AdaptiveMetadataTableFeature) =>
         DeltaConfigs.ADAPTIVE_METADATA_ENABLED.fromMetaData(metadata)
       case None => false
     }
 
-  /** Whether AMT writes are enabled for `snapshot`. */
-  def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
-    amtEnabled(snapshot.metadata, snapshot.protocol)
+  /**
+   * Whether AMT writes are enabled for `snapshot`. See [[amtSupported]] for `isPreviewCompatible`.
+   */
+  def amtEnabled(snapshot: SnapshotDescriptor, isPreviewCompatible: Boolean): Boolean =
+    amtEnabled(snapshot.metadata, snapshot.protocol, isPreviewCompatible)
 
   /**
    * Whether `amtCheckpointOpt` holds a ROOT-ONLY tree (no leaf manifests). A root-only tree keeps
@@ -111,7 +122,7 @@ object AMTUtils extends DeltaLogging {
     amtFeatures.foreach { amtFeature =>
       // Adding AMT to an existing table is an unsupported upgrade. `updateMetadata` already rejects
       // it, but CLONE adds the source's protocol after that, so REPLACE CLONE is caught here.
-      if (snapshot.version >= 0 && !amtSupported(snapshot.protocol)) {
+      if (snapshot.version >= 0 && !amtSupported(snapshot.protocol, isPreviewCompatible = true)) {
         throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeature.name)
       }
       val creationConf = AdaptiveMetadataTableFeatureBase.creationConf(amtFeature)
