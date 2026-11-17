@@ -17,9 +17,9 @@ on:
         required: false
         type: string
 
-# Cancel previous runs when new commits are pushed
+# Cancel superseded PR runs; preserve post-merge runs for regression evidence.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 # Source-build jobs are commented out while all supported Spark versions use releases.
