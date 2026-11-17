@@ -51,6 +51,17 @@ public interface SnapshotBuilder {
   SnapshotBuilder atVersion(long version);
 
   /**
+   * Sets the number of versions searched per batch when finding a checkpoint for a snapshot.
+   *
+   * <p>If a batch has no complete checkpoint, Kernel continues searching older batches. The default
+   * batch size is 1000 versions.
+   *
+   * @param batchSize the number of versions per search batch; must be positive
+   * @return this builder configured with the search batch size
+   */
+  SnapshotBuilder withCheckpointSearchBatchSize(int batchSize);
+
+  /**
    * Configures the builder to resolve the table at a specific timestamp.
    *
    * <p>This returns a Snapshot for the latest version of the table that was committed before or at

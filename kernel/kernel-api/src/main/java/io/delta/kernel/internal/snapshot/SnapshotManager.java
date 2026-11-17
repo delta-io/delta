@@ -221,6 +221,20 @@ public class SnapshotManager {
       Optional<Long> timeTravelVersionOpt,
       List<ParsedLogData> parsedLogDatas,
       Optional<Long> maxCatalogVersionOpt) {
+    return getLogSegmentForVersion(
+        engine,
+        timeTravelVersionOpt,
+        parsedLogDatas,
+        maxCatalogVersionOpt,
+        Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE);
+  }
+
+  public LogSegment getLogSegmentForVersion(
+      Engine engine,
+      Optional<Long> timeTravelVersionOpt,
+      List<ParsedLogData> parsedLogDatas,
+      Optional<Long> maxCatalogVersionOpt,
+      int checkpointSearchBatchSize) {
     // This is the actual version we want to load. For "latest" (aka non-time-travel) queries for
     // catalogManaged tables we want to load the maxCatalogVersion
     final Optional<Long> versionToLoadOpt =
@@ -236,7 +250,8 @@ public class SnapshotManager {
     ///////////////////////////////////////////////////////////////////////////////////////////
 
     final Optional<Long> startCheckpointVersionOpt =
-        getStartCheckpointVersion(engine, timeTravelVersionOpt, maxCatalogVersionOpt);
+        getStartCheckpointVersion(
+            engine, timeTravelVersionOpt, maxCatalogVersionOpt, checkpointSearchBatchSize);
 
     // Primary attempt to build the log segment
     Optional<LogSegment> result =
@@ -700,7 +715,10 @@ public class SnapshotManager {
    * backwards for a checkpoint).
    */
   private Optional<Long> getStartCheckpointVersion(
-      Engine engine, Optional<Long> timeTravelVersionOpt, Optional<Long> maxCatalogVersionOpt) {
+      Engine engine,
+      Optional<Long> timeTravelVersionOpt,
+      Optional<Long> maxCatalogVersionOpt,
+      int checkpointSearchBatchSize) {
     // This is a "latest" query, let's try to use the _last_checkpoint file if possible
     if (!timeTravelVersionOpt.isPresent()) {
       logger.info("Reading the _last_checkpoint file for 'latest' query");
@@ -747,7 +765,8 @@ public class SnapshotManager {
                                 + "is empty we should always have returned earlier")));
     logger.info("Finding last complete checkpoint at or before version {}", versionToLoad);
     final long startTimeMillis = System.currentTimeMillis();
-    return Checkpointer.findLastCompleteCheckpointBefore(engine, logPath, versionToLoad + 1)
+    return Checkpointer.findLastCompleteCheckpointBefore(
+            engine, logPath, versionToLoad + 1, checkpointSearchBatchSize)
         .map(checkpointInstance -> checkpointInstance.version)
         .map(
             checkpointVersion -> {

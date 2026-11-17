@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
 import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.CHECKPOINT_PROTECTION_W_FEATURE;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -55,6 +56,8 @@ public class Checkpointer {
   private static final Logger logger = LoggerFactory.getLogger(Checkpointer.class);
 
   private static final int READ_LAST_CHECKPOINT_FILE_MAX_RETRIES = 3;
+
+  public static final int DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE = 1000;
 
   /** The name of the last checkpoint file */
   public static final String LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint";
@@ -174,7 +177,13 @@ public class Checkpointer {
   /** Find the last complete checkpoint before (strictly less than) a given version. */
   public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
       Engine engine, Path tableLogPath, long version) {
-    return findLastCompleteCheckpointBeforeHelper(engine, tableLogPath, version)._1;
+    return findLastCompleteCheckpointBefore(
+        engine, tableLogPath, version, DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE);
+  }
+
+  public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
+      Engine engine, Path tableLogPath, long version, int batchSize) {
+    return findLastCompleteCheckpointBeforeHelper(engine, tableLogPath, version, batchSize)._1;
   }
 
   /**
@@ -183,6 +192,13 @@ public class Checkpointer {
    */
   public static Tuple2<Optional<CheckpointInstance>, Long> findLastCompleteCheckpointBeforeHelper(
       Engine engine, Path tableLogPath, long version) {
+    return findLastCompleteCheckpointBeforeHelper(
+        engine, tableLogPath, version, DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE);
+  }
+
+  public static Tuple2<Optional<CheckpointInstance>, Long> findLastCompleteCheckpointBeforeHelper(
+      Engine engine, Path tableLogPath, long version, int batchSize) {
+    checkArgument(batchSize > 0, "checkpoint search batch size must be > 0");
     CheckpointInstance upperBoundCheckpoint = new CheckpointInstance(version);
     logger.info("Try to find the last complete checkpoint before version {}", version);
 
@@ -190,14 +206,12 @@ public class Checkpointer {
     long numberOfFilesSearched = 0;
     long currentVersion = version;
 
-    // Some cloud storage APIs make a calls to fetch 1000 at a time.
-    // To make use of that observation and to avoid making more listing calls than
-    // necessary, list 1000 at a time (backwards from the given version). Search
-    // within that list if a checkpoint is found. If found stop, otherwise list the previous
-    // 1000 entries. Repeat until a checkpoint is found or there are no more delta commits.
+    // Some cloud storage APIs fetch 1000 files at a time. Search in batches of versions,
+    // starting from the given version. If a batch has no complete checkpoint, search the
+    // previous batch until a checkpoint is found or there are no more delta commits.
     while (currentVersion >= 0) {
       try {
-        long searchLowerBound = Math.max(0, currentVersion - 1000);
+        long searchLowerBound = Math.max(0, currentVersion - batchSize);
         CloseableIterator<FileStatus> deltaLogFileIter =
             wrapEngineExceptionThrowsIO(
                 () ->
@@ -250,7 +264,7 @@ public class Checkpointer {
               latestCheckpoint.get());
           return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
         }
-        currentVersion -= 1000; // search for checkpoint in previous 1000 entries
+        currentVersion -= batchSize;
       } catch (IOException e) {
         String msg =
             String.format(
