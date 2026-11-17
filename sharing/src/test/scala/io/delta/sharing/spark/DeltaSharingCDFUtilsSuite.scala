@@ -197,6 +197,7 @@ class DeltaSharingCDFUtilsSuite
   import org.apache.spark.sql.execution.datasources.HadoopFsRelation
   import org.apache.spark.sql.types.TimestampType
 
+
   private val shareName = "share"
   private val schemaName = "default"
   private val sharedTableName = "table"
@@ -209,7 +210,6 @@ class DeltaSharingCDFUtilsSuite
       .set("spark.delta.sharing.driver.accessThresholdToExpireMs", "60000")
   }
 
-  // Spark 4.0 does not support gridTest, so OSS registers each test with a loop.
   for (empty <- Seq(false, true); cache <- Seq(false, true)) test(
     "versionless CDF reads a native Delta snapshot with column mapping " +
       s"(empty=$empty, cache=$cache)") {
@@ -289,32 +289,32 @@ class DeltaSharingCDFUtilsSuite
             "readChangeFeed" -> "true",
             "startingTimestamp" -> "2026-01-01T00:00:00Z",
             "endingTimestamp" -> "2026-01-01T00:00:03Z"))
-          val relation = DeltaSharingCDFUtils.prepareCDFRelation(
-            spark.sqlContext,
-            options,
-            Table(share = shareName, schema = schemaName, name = sharedTableName),
-            client)
-          assert(relation.schema.fieldNames.toSeq ==
-            Seq("value", "_change_type", "_commit_timestamp"))
-          assert(relation.schema("_commit_timestamp").dataType == TimestampType)
-          val firstRead = spark.sqlContext.baseRelationToDataFrame(relation)
-          checkAnswer(firstRead, expected)
-          assert(client.numGetFileCalls == 1)
-          if (!empty) {
-            sql(s"""INSERT OVERWRITE $materializedTable VALUES
-                   |('third', 'update_postimage', TIMESTAMP '2026-01-01 00:00:03')
-                   |""".stripMargin)
-            response = snapshotResponse()
-            val nextRelation = DeltaSharingCDFUtils.prepareCDFRelation(
+            val relation = DeltaSharingCDFUtils.prepareCDFRelation(
               spark.sqlContext,
               options,
               Table(share = shareName, schema = schemaName, name = sharedTableName),
               client)
-            checkAnswer(spark.sqlContext.baseRelationToDataFrame(nextRelation),
-              Seq(Row("third", "update_postimage", sqlTimestamp("2026-01-01 00:00:03"))))
+            assert(relation.schema.fieldNames.toSeq ==
+              Seq("value", "_change_type", "_commit_timestamp"))
+            assert(relation.schema("_commit_timestamp").dataType == TimestampType)
+            val firstRead = spark.sqlContext.baseRelationToDataFrame(relation)
             checkAnswer(firstRead, expected)
-            assert(client.numGetFileCalls == 2)
-          }
+            assert(client.numGetFileCalls == 1)
+            if (!empty) {
+              sql(s"""INSERT OVERWRITE $materializedTable VALUES
+                     |('third', 'update_postimage', TIMESTAMP '2026-01-01 00:00:03')
+                     |""".stripMargin)
+              response = snapshotResponse()
+              val nextRelation = DeltaSharingCDFUtils.prepareCDFRelation(
+                spark.sqlContext,
+                options,
+                Table(share = shareName, schema = schemaName, name = sharedTableName),
+                client)
+              checkAnswer(spark.sqlContext.baseRelationToDataFrame(nextRelation),
+                Seq(Row("third", "update_postimage", sqlTimestamp("2026-01-01 00:00:03"))))
+              checkAnswer(firstRead, expected)
+              assert(client.numGetFileCalls == 2)
+            }
         }
       }
     }
