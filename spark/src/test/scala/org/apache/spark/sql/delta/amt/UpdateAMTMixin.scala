@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.amt
 import scala.util.Try
 
 import org.apache.spark.sql.delta.UpdateBaseMixin
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider, CatalogOwnedTableUtils, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
 import org.apache.spark.sql.delta.rowid.RowTrackingUpdateSuiteBase
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -78,7 +78,7 @@ trait UpdateAMTMixin extends UpdateBaseMixin with UpdateAMTTestBase {
     val logPathOpt = Try(deltaLog.logPath).toOption
     super.dropTable()
     val catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING
-    val coordinatorOpt = CatalogOwnedCommitCoordinatorProvider.getBuilder(catalogName)
+    val coordinatorOpt = CatalogManagedCommitCoordinatorProvider.getBuilder(catalogName)
       .map(_.buildForCatalog(spark, catalogName))
       .map {
         case tracking: TrackingCommitCoordinatorClient => tracking.delegatingCommitCoordinatorClient
