@@ -37,7 +37,8 @@ import org.apache.spark.sql.types.{LongType, StringType, StructType}
 // These tests are copied from Apache Spark (minus partition by expressions) and should work exactly
 // the same with Delta minus some writer options
 trait OpenSourceDataFrameWriterV2Tests
-  extends DeltaSQLCommandTest
+  extends QueryTest
+    with DeltaSQLCommandTest
     with BeforeAndAfter
     with DeltaTableProvider {
 
@@ -537,7 +538,6 @@ trait OpenSourceDataFrameWriterV2Tests
 
 class DeltaDataFrameWriterV2Suite
   extends OpenSourceDataFrameWriterV2Tests
-  with QueryTest
   with DeltaSQLCommandTest {
 
   import deltaImplicits._
