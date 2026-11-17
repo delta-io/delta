@@ -924,7 +924,10 @@ object DeletionVectorsTableFeature
    */
   override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = {
     val dvsWritable = DeletionVectorUtils.deletionVectorsWritable(snapshot)
-    val dvsExist = snapshot.numDeletionVectorsOpt.getOrElse(0L) > 0
+    // Log replay counts DVs only while DVs are writable. After DROP FEATURE turns DVs off, the DV
+    // count is known only from a checksum, and a RESTORE commit can have none.
+    val dvsExist = snapshot.numDeletionVectorsOpt.map(_ > 0)
+      .getOrElse(!DeletionVectorUtils.isTableDVFree(snapshot))
 
     !(dvsWritable || dvsExist)
   }
