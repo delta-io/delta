@@ -720,6 +720,27 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedLastCommitTimestamp = 200L)
   }
 
+  test("getLogSegmentForVersion: stale checkpoint fallback uses checkpointSearchBatchSize") {
+    val files = deltaFileStatuses(0L until 25L) ++ singularCheckpointFileStatuses(Seq(10L))
+    val fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))
+    val engine = mockEngine(
+      fileSystemClient = fileSystemClient,
+      jsonHandler = new MockReadLastCheckpointFileJsonHandler(
+        s"$logPath/_last_checkpoint",
+        20L))
+
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      engine,
+      Optional.empty(),
+      Collections.emptyList(),
+      Optional.empty(),
+      5)
+
+    assert(logSegment.getCheckpointVersionOpt.get() === 10L)
+    assert(fileSystemClient.getListFromCalls === Seq(20L, 15L, 10L, 10L)
+      .map(version => FileNames.listingPrefix(logPath, version)))
+  }
+
   test("getLogSegmentForVersion: corrupted incomplete multi-part checkpoint with no" +
     "_last_checkpoint or a valid _last_checkpoint provided") {
     val cases: Seq[(Long, Seq[Long], Seq[Long], Optional[java.lang.Long])] = Seq(

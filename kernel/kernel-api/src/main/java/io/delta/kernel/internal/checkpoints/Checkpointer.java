@@ -176,12 +176,6 @@ public class Checkpointer {
 
   /** Find the last complete checkpoint before (strictly less than) a given version. */
   public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
-      Engine engine, Path tableLogPath, long version) {
-    return findLastCompleteCheckpointBefore(
-        engine, tableLogPath, version, DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE);
-  }
-
-  public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
       Engine engine, Path tableLogPath, long version, int batchSize) {
     return findLastCompleteCheckpointBeforeHelper(engine, tableLogPath, version, batchSize)._1;
   }
@@ -190,12 +184,6 @@ public class Checkpointer {
    * Helper method for `findLastCompleteCheckpointBefore` which also return the number of files
    * searched. This helps in testing
    */
-  public static Tuple2<Optional<CheckpointInstance>, Long> findLastCompleteCheckpointBeforeHelper(
-      Engine engine, Path tableLogPath, long version) {
-    return findLastCompleteCheckpointBeforeHelper(
-        engine, tableLogPath, version, DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE);
-  }
-
   public static Tuple2<Optional<CheckpointInstance>, Long> findLastCompleteCheckpointBeforeHelper(
       Engine engine, Path tableLogPath, long version, int batchSize) {
     checkArgument(batchSize > 0, "checkpoint search batch size must be > 0");

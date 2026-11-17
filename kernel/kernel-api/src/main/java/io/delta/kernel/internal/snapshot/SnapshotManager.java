@@ -273,7 +273,8 @@ public class SnapshotManager {
           tablePath,
           startCheckpointVersionOpt.get());
       Optional<Long> fallbackStart =
-          findFallbackCheckpointVersion(engine, startCheckpointVersionOpt.get());
+          findFallbackCheckpointVersion(
+              engine, startCheckpointVersionOpt.get(), checkpointSearchBatchSize);
       try {
         Optional<LogSegment> fallbackResult =
             buildLogSegmentFromStartCheckpointVersion(
@@ -640,10 +641,10 @@ public class SnapshotManager {
    * fallback when the primary checkpoint (from _last_checkpoint or backwards search) is stale.
    */
   private Optional<Long> findFallbackCheckpointVersion(
-      Engine engine, long maxExclusiveCheckpointVersion) {
+      Engine engine, long maxExclusiveCheckpointVersion, int checkpointSearchBatchSize) {
     Optional<Long> fallbackVersion =
         Checkpointer.findLastCompleteCheckpointBefore(
-                engine, logPath, maxExclusiveCheckpointVersion)
+                engine, logPath, maxExclusiveCheckpointVersion, checkpointSearchBatchSize)
             .map(cp -> cp.version);
     logger.info(
         "{}: Fallback: Searched for earlier checkpoint before version {}. Found: {}.",

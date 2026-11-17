@@ -279,7 +279,11 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expCheckpointVersion: Long,
       expNumFilesListed: Long): Unit = {
     val engine = createMockFSListFromEngine(deltaLogFiles)
-    val result = findLastCompleteCheckpointBeforeHelper(engine, logPath, beforeVersion)
+    val result = findLastCompleteCheckpointBeforeHelper(
+      engine,
+      logPath,
+      beforeVersion,
+      Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE)
     assert(result._1.isPresent, s"Checkpoint should be found for version=$beforeVersion")
     assert(
       result._1.get().version === expCheckpointVersion,
@@ -292,7 +296,11 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       beforeVersion: Long,
       expNumFilesListed: Long): Unit = {
     val engine = createMockFSListFromEngine(deltaLogFiles)
-    val result = findLastCompleteCheckpointBeforeHelper(engine, logPath, beforeVersion)
+    val result = findLastCompleteCheckpointBeforeHelper(
+      engine,
+      logPath,
+      beforeVersion,
+      Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE)
     assert(!result._1.isPresent, s"No checkpoint should be found for version=$beforeVersion")
     assert(result._2 == expNumFilesListed, s"Invalid number of files listed: $beforeVersion")
   }
