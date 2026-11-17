@@ -33,7 +33,8 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 trait DeltaDDLUsingPathTests
-  extends DeltaSQLCommandTest
+  extends QueryTest
+    with DeltaSQLCommandTest
     with DeltaColumnMappingTestUtils {
 
   import deltaImplicits._
