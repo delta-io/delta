@@ -7,6 +7,11 @@ on:
       - '**.txt'
   pull_request:
     branches: [master, branch-*]
+    # The default types plus labeled/unlabeled, so adding or removing the `full-ci` label
+    # re-runs the workflow with the matching matrix (see "PR matrix policy" below).
+    # Other label changes also re-run it. They are not skipped: the concurrency block below
+    # cancels the PR's in-flight run, so a skipped run would drop that run's results.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths-ignore:
       - '**.md'
       - '**.txt'
@@ -28,15 +33,35 @@ concurrency:
 # With no snapshot versions, enabled source-build jobs appear as skipped.
 # The merge bot can report these checks as failures and confuse contributors.
 # Uncomment both source-build jobs below when adding the next Spark snapshot.
+#
+# PR matrix policy (decided by project/scripts/spark_ci_matrix.py in generate-matrix):
+#   * Full matrix: sharded tests on every published Spark version. Used for pushes to
+#     master / branch-*, workflow_dispatch, PRs with the `full-ci` label, PRs that change
+#     build, Spark shim, CI or dependency files (build.sbt, project/**, build/**,
+#     **/scala-shims/**, **/java-shims/**, this workflow, .github/actions/**, run-tests.py,
+#     setup.py, lock files, ...), and whenever the PR's changed files can't be fetched.
+#   * Reduced matrix (all other PRs): sharded tests on the oldest and newest Spark versions,
+#     plus a main+test compile (no tests) on each version in between.
+#   Why: over a 30-day window, real version-specific PR failures were almost all on the
+#   oldest Spark version: compile errors from APIs missing in 4.0, and runtime differences
+#   on 4.0/4.1 (SQL syntax only in 4.2+, different exception classes). Testing oldest +
+#   newest and compiling the rest would have caught all of them, at about half the runners.
+#   Because job names depend on the matrix, branch protection should require the stable
+#   "DS: Spark tests summary" job rather than individual shards.
+#
 # Workflow jobs:
 # 1. generate-matrix: split Spark versions (from CrossSparkVersions.scala) into published
-#    vs source-build lists.
+#    vs source-build lists, and pick the PR test / compile versions (policy above).
 # 2. prepare_spark_source_cache: for each source-build Spark version, build Spark once and
 #    save the Maven cache (via the prepare-spark-env action with build-on-miss). This job is
 #    non-blocking; any source Spark build/cache failure is reported through source_spark_test.
 # 3. test: published Spark shards without waiting on step 2.
 # 4. source_spark_test: source-built Spark shards after step 2. It still runs if
 #    prepare_spark_source_cache fails, so the source-built Spark signal stays non-blocking.
+# 5. compile: main+test compile of the Spark test projects (sparkGroup) for the Spark
+#    versions that the reduced PR matrix doesn't test. Skipped when there are none.
+# 6. summary: one stable check that passes only if every test and compile job that should
+#    have run succeeded.
 #
 # test and source_spark_test share two composite actions:
 #   - .github/actions/prepare-spark-env: installs the JDK and, for source-build rows,
@@ -51,10 +76,17 @@ jobs:
   generate-matrix:
     name: "Generate Spark Versions Matrix"
     runs-on: ubuntu-24.04
+    # pull-requests: read lets the job list the PR's changed files.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       spark_versions: ${{ steps.generate.outputs.spark_versions }}
       source_build_spark_versions: ${{ steps.generate.outputs.source_build_spark_versions }}
       non_source_build_spark_versions: ${{ steps.generate.outputs.non_source_build_spark_versions }}
+      matrix_mode: ${{ steps.decide.outputs.mode }}
+      test_spark_versions: ${{ steps.decide.outputs.test_spark_versions }}
+      compile_spark_versions: ${{ steps.decide.outputs.compile_spark_versions }}
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: install java
@@ -75,6 +107,40 @@ jobs:
           echo "Generated Spark versions: $SPARK_VERSIONS"
           echo "Generated source-build Spark versions: $SOURCE_BUILD_SPARK_VERSIONS"
           echo "Generated non-source-build Spark versions: $NON_SOURCE_BUILD_SPARK_VERSIONS"
+      - name: Test PR matrix decision script
+        run: python3 -m unittest discover -s project/tests -p 'test_spark_ci_matrix.py'
+      - name: Get PR changed files
+        id: changed-files
+        if: github.event_name == 'pull_request'
+        # A failure here must not fail the job: the decision step falls back to the full matrix.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # One line per file: "<filename>" or "<filename>\t<previous_filename>" for renames.
+          gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[] | [.filename, (.previous_filename // empty)] | join("\t")' \
+            > "$RUNNER_TEMP/changed_files.tsv"
+          echo "Fetched $(wc -l < "$RUNNER_TEMP/changed_files.tsv") changed files"
+      - name: Decide PR test and compile Spark versions
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SPARK_VERSIONS: ${{ steps.generate.outputs.non_source_build_spark_versions }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          # changed_files in the event payload; the script checks the fetched list is complete.
+          EXPECTED_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+          CHANGED_FILES_ERROR: ${{ github.event_name == 'pull_request' && steps.changed-files.outcome != 'success' && 'fetching PR files failed' || '' }}
+        run: |
+          python3 project/scripts/spark_ci_matrix.py \
+            --event-name "$EVENT_NAME" \
+            --spark-versions "$SPARK_VERSIONS" \
+            --labels "$PR_LABELS" \
+            --changed-files-file "$RUNNER_TEMP/changed_files.tsv" \
+            --expected-changed-files "$EXPECTED_CHANGED_FILES" \
+            --changed-files-error "$CHANGED_FILES_ERROR"
 
   # Builds ~/.m2/repository/org/apache/spark once per source-build Spark version so the
   # sharded source_spark_test jobs all restore the same cache instead of rebuilding 8x.
@@ -106,12 +172,14 @@ jobs:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
     needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.test_spark_versions != '[]' }}
     strategy:
       fail-fast: false
       matrix:
         # Spark versions are dynamically generated from CrossSparkVersions.scala
-        # DO NOT hardcode versions here - they are automatically loaded from the build configuration
-        spark_version: ${{ fromJson(needs.generate-matrix.outputs.non_source_build_spark_versions) }}
+        # DO NOT hardcode versions here - they are automatically loaded from the build configuration.
+        # All non-source-build versions for the full matrix; oldest + newest on reduced PRs.
+        spark_version: ${{ fromJson(needs.generate-matrix.outputs.test_spark_versions) }}
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
@@ -130,6 +198,88 @@ jobs:
           shard: ${{ matrix.shard }}
           # Important: This must be the same as the length of shards in matrix
           num-shards: '8'
+
+  # Reduced PR matrix only: compile main and test sources of the sparkGroup projects (the
+  # projects the test shards build and test) for the Spark versions that aren't tested.
+  # Catches shim / API compile breaks on those versions without running tests.
+  compile:
+    name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Compile"
+    runs-on: ubuntu-24.04
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.compile_spark_versions != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        spark_version: ${{ fromJson(needs.generate-matrix.outputs.compile_spark_versions) }}
+        # Must match the Scala versions of the test job.
+        scala: [2.13.16]
+    steps:
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - name: Prepare Spark environment
+        uses: ./.github/actions/prepare-spark-env
+        with:
+          spark-version: ${{ matrix.spark_version }}
+      # Same cache key as run-delta-spark-tests; restore only (master test runs save it).
+      - name: Restore SBT cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
+      # sparkUnityCatalog (in sparkGroup) needs the pinned unreleased UC build to resolve.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
+      - name: Compile main and test sources
+        env:
+          SPARK_VERSION: ${{ matrix.spark_version }}
+          SCALA_VERSION: ${{ matrix.scala }}
+        run: |
+          # Same sbt flags as run-tests.py, with Test/compile instead of test.
+          build/sbt -DsparkVersion="$SPARK_VERSION" "++ $SCALA_VERSION" sparkGroup/Test/compile \
+            -J-XX:+UseG1GC -J-Xmx6G
+
+  # Single stable check for branch protection: the test/compile job names depend on the
+  # matrix, so require this job instead. It fails if the matrix couldn't be generated or
+  # any test shard or compile job that should have run didn't succeed.
+  summary:
+    name: "DS: Spark tests summary"
+    runs-on: ubuntu-24.04
+    needs: [generate-matrix, test, compile]
+    if: ${{ always() }}
+    steps:
+      - name: Check Spark test and compile results
+        env:
+          GENERATE_RESULT: ${{ needs.generate-matrix.result }}
+          MATRIX_MODE: ${{ needs.generate-matrix.outputs.matrix_mode }}
+          TEST_VERSIONS: ${{ needs.generate-matrix.outputs.test_spark_versions }}
+          COMPILE_VERSIONS: ${{ needs.generate-matrix.outputs.compile_spark_versions }}
+          TEST_RESULT: ${{ needs.test.result }}
+          COMPILE_RESULT: ${{ needs.compile.result }}
+        run: |
+          echo "Matrix mode: $MATRIX_MODE; tested: $TEST_VERSIONS; compiled: $COMPILE_VERSIONS"
+          echo "generate-matrix: $GENERATE_RESULT, test: $TEST_RESULT, compile: $COMPILE_RESULT"
+          if [[ "$GENERATE_RESULT" != "success" ]]; then
+            echo "::error::generate-matrix did not succeed ($GENERATE_RESULT)"
+            exit 1
+          fi
+          # A job may only be skipped when its version list is empty.
+          check() {
+            local job="$1" result="$2" versions="$3"
+            if [[ "$result" == "success" ]]; then
+              return 0
+            fi
+            if [[ "$result" == "skipped" && "$versions" == "[]" ]]; then
+              return 0
+            fi
+            echo "::error::$job job result is '$result' (versions: $versions)"
+            return 1
+          }
+          status=0
+          check test "$TEST_RESULT" "$TEST_VERSIONS" || status=1
+          check compile "$COMPILE_RESULT" "$COMPILE_VERSIONS" || status=1
+          exit "$status"
 
   # Validates source-built Spark for every PR using the SHA in this branch's metadata.
   # source_spark_test:
