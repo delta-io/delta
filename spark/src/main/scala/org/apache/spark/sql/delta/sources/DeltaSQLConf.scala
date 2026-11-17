@@ -3053,11 +3053,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
     buildConf("createDataFrame.dropNullColumns")
       .internal()
-      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame. Defaults to " +
-        "dropping (no NullType column support) on Spark 4.0, which lacks the Parquet read " +
-        "support for materializing NullType columns, and to keeping them on Spark 4.1+.")
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
       .booleanConf
-      .createWithDefault(org.apache.spark.SPARK_VERSION.startsWith("4.0"))
+      .createWithDefault(false)
 
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
@@ -3932,18 +3930,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
     .booleanConf
     .createWithDefault(true)
-
-  val DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 =
-    buildConf("variant.disableVariantTableFeatureForSpark40")
-    .internal()
-    .doc(
-      """
-        | If true, disables support for the 'variantType' and 'variantType-preview' table
-        | features on Spark 4.0 clients. Spark 4.0 does not support the parquet variant
-        | logical type annotation, which causes interoperability issues with Spark 4.1+.
-        |""".stripMargin)
-    .booleanConf
-    .createWithDefault(false)
 
   val COLLECT_VARIANT_DATA_SKIPPING_STATS =
     buildConf("variantShredding.collectVariantDataSkippingStats")
