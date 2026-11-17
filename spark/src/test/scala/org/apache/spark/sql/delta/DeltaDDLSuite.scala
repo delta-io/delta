@@ -191,6 +191,7 @@ class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
 
 abstract class DeltaDDLTestBase
   extends QueryTest
+    with DeltaSQLCommandTest
     with DeltaSQLTestUtils {
   import deltaImplicits._
 
