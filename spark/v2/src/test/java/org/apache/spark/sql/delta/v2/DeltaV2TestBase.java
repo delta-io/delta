@@ -26,8 +26,10 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.AttributeReference;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.Literal;
+import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.delta.storage.LogStore;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
+import org.apache.spark.sql.delta.v2.read.DeltaV2Scan;
 import org.apache.spark.sql.delta.v2.read.DeltaV2ScanBuilder;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.sources.And;
@@ -213,6 +215,20 @@ public abstract class DeltaV2TestBase {
     scala.collection.immutable.Seq<Expression> expressionSeq =
         scala.jdk.javaapi.CollectionConverters.asScala(Arrays.asList(expressions)).toList();
     builder.pushFilters(expressionSeq);
+  }
+
+  /**
+   * Returns the Delta V2 scan that a scan builder built. Example: {@code
+   * asDeltaV2Scan(builder.build()).getPushedLimit()}.
+   *
+   * @param scan the scan that a Delta V2 scan builder built
+   * @return the {@link DeltaV2Scan} that selects the files of the read
+   */
+  protected static DeltaV2Scan asDeltaV2Scan(Scan scan) {
+    if (!(scan instanceof DeltaV2Scan)) {
+      throw new AssertionError("expected a DeltaV2Scan, got " + scan.getClass().getName());
+    }
+    return (DeltaV2Scan) scan;
   }
 
   protected static Expression toCatalystFilter(DeltaV2ScanBuilder builder, Filter filter) {
