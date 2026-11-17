@@ -23,7 +23,6 @@ import java.nio.charset.StandardCharsets
 import scala.collection.JavaConverters._
 import scala.collection.mutable.{ArrayBuffer, Builder}
 import scala.reflect.ClassTag
-import scala.util.Try
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, DeletionVectorDescriptor, RemoveFile, SingleAction}
@@ -249,7 +248,6 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
   val DELTA_SHARING_LOG_BLOCK_ID_PREFIX = "test_delta-sharing-log:"
 
   private val DELTA_LOG_MARKER = "/_delta_log"
-  private val VERSIONED_BLOCK_SUFFIX = "v([0-9]+)_.+".r
 
   private def hashPath(path: String): String = {
     Hashing.sha256().hashString(path, StandardCharsets.UTF_8).toString
@@ -272,9 +270,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     val suffix = if (relativePath.isEmpty) {
       "listing"
     } else {
-      val version = FileNames.getFileVersionOpt(new Path(path))
-      val versionTag = version.map(v => s"v$v").getOrElse("other")
-      s"${versionTag}_${hashPath(relativePath)}"
+      relativePath.stripPrefix("/")
     }
     BlockId(blockIdPrefix(scope) + suffix)
   }
@@ -496,11 +492,8 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
         FileNames.getFileVersionOpt(new Path(blockId.name.stripPrefix(LEGACY_BLOCK_ID_PREFIX)))
           .exists(_ <= maxVersion)
       } else if (blockId.name.startsWith(prefix)) {
-        blockId.name.stripPrefix(prefix) match {
-          case VERSIONED_BLOCK_SUFFIX(version) =>
-            Try(version.toLong).toOption.exists(_ <= maxVersion)
-          case _ => false
-        }
+        val relativePath = blockId.name.stripPrefix(prefix)
+        FileNames.getFileVersionOpt(new Path(deltaLogPath, relativePath)).exists(_ <= maxVersion)
       } else {
         false
       }
