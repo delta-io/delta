@@ -17,10 +17,11 @@ on:
         required: false
         type: string
 
-# Cancel previous runs when new commits are pushed. The group includes the event name so
-# manual workflow_dispatch runs don't cancel, or get cancelled by, push runs on the same ref.
+# Cancel superseded runs on the same PR when new commits are pushed. Non-PR runs (pushes to
+# master / branch-*, manual dispatches) fall back to the unique run_id, so they are never
+# cancelled and every commit to master gets its own full CI result.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 # Source-build jobs are commented out while all supported Spark versions use releases.
