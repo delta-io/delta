@@ -34,29 +34,29 @@ class CatalogOwnedPropertySuite extends QueryTest
   with CatalogOwnedTestBaseSuite {
 
   // Register the mock commit coordinator builder for testing, but don't enable
-  // CatalogOwned by default (tests explicitly enable it when needed).
+  // CatalogManaged by default (tests explicitly enable it when needed).
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(3)
   override def catalogOwnedDefaultCreationEnabledInTests: Boolean = false
 
   /**
-   * Validate if the table is catalog owned or not by checking the following:
+   * Validate if the table is catalog managed or not by checking the following:
    * 1) [[Snapshot.isCatalogOwned]] === expected
    * 2) [[Metadata.configuration]] contains [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]]
    * 3) [[Protocol.readerAndWriterFeatureNames]] contains [[CatalogOwnedTableFeature.name]]
    *    and its dependent features.
    *
    * @param tableName The name of the table to validate.
-   * @param expected The expected value of whether the table is catalog owned or not.
+   * @param expected The expected value of whether the table is catalog managed or not.
    */
   private def validateCatalogOwnedAndUCTableId(tableName: String, expected: Boolean): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(tableName))
     assert(snapshot.isCatalogOwned === expected)
     assert(snapshot.metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
       === expected)
-    // CatalogOwned enabled table should have the protocol version of (3, 7),
+    // CatalogManaged enabled table should have the protocol version of (3, 7),
     // since the table can't have a [[ReaderWriterTableFeature]] w/o this version.
     if (expected) {
-      // Only verify protocol version for expected CatalogOwned table.
+      // Only verify protocol version for expected CatalogManaged table.
       validateProtocolMinReaderWriterVersion(
         tableName,
         expectedMinReaderVersion = 3,
@@ -152,7 +152,7 @@ class CatalogOwnedPropertySuite extends QueryTest
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
       val ucTableId1 = getUCTableIdFromTable(tableName = "t1")
 
-      // Target table should remain a catalog-owned table with same `ucTableId`
+      // Target table should remain a catalog-managed table with same `ucTableId`
       sql("REPLACE TABLE t1 (id LONG) USING delta")
       val ucTableId2 = getUCTableIdFromTable(tableName = "t1")
       validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
@@ -486,7 +486,7 @@ class CatalogOwnedPropertySuite extends QueryTest
   }
   test("[CREATE LIKE] Specifying table UUID should be blocked") {
     withTable("t1", "t2", "t3") {
-      // Source catalog-owned table
+      // Source catalog-managed table
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
 
       val error1 = intercept[UnsupportedOperationException] {

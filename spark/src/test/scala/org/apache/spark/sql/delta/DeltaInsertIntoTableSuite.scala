@@ -1079,7 +1079,8 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
         """.stripMargin)
       val currentCatalog = spark.sessionState.catalogManager.currentCatalog.name()
       val stringTypeSql =
-        if (org.apache.spark.SPARK_VERSION.startsWith("4.2")) {
+        if (org.apache.spark.SPARK_VERSION.startsWith("4.2") ||
+            org.apache.spark.SPARK_VERSION.startsWith("4.3")) {
           "STRING COLLATE UTF8_BINARY"
         } else {
           "STRING"

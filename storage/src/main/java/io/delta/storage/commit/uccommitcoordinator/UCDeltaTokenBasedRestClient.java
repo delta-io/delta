@@ -342,8 +342,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
               actualTableId));
     }
 
-    Path basePath = CoordinatedCommitsUtils.commitDirPath(
-        CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
+    Path logPath = CoordinatedCommitsUtils.logDirPath(new Path(tableUri));
     List<Commit> commits = new ArrayList<>();
     if (response.getCommits() != null) {
       for (DeltaCommit deltaCommit : response.getCommits()) {
@@ -354,7 +353,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         if (endVersion.isPresent() && version > endVersion.get()) {
           continue;
         }
-        commits.add(fromDeltaCommit(deltaCommit, basePath));
+        commits.add(fromDeltaCommit(deltaCommit, logPath));
       }
     }
 
@@ -364,15 +363,19 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return new UCDeltaGetCommitsResponse(commits, latestTableVersion, storageUniform);
   }
 
-  /** Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. */
-  private Commit fromDeltaCommit(DeltaCommit deltaCommit, Path basePath) {
+  /**
+   * Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. The commit may be staged or
+   * already published.
+   */
+  private Commit fromDeltaCommit(DeltaCommit deltaCommit, Path logPath) {
     FileStatus fileStatus = new FileStatus(
         deltaCommit.getFileSize(),
         false /* isdir */,
         0 /* block_replication */,
         0 /* blocksize */,
         deltaCommit.getFileModificationTimestamp(),
-        new Path(basePath, deltaCommit.getFileName()));
+        CoordinatedCommitsUtils.catalogCommitPath(
+            logPath, deltaCommit.getVersion(), deltaCommit.getFileName()));
     return new Commit(deltaCommit.getVersion(), fileStatus, deltaCommit.getTimestamp());
   }
 

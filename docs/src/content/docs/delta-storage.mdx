@@ -592,6 +592,39 @@ For shared key authentication:
   </TabItem>
 </Tabs>
 
+## GooseFS
+
+Delta Lake uses `io.delta.storage.GooseFSLogStore` for paths with the `gfs` scheme. Parquet data files go through the GooseFS Hadoop `FileSystem`. Each commit file is created in full and published with a same-directory rename. `delta-storage` does not compile against the GooseFS client.
+
+### Requirements (GooseFS)
+
+- A GooseFS 1.6.3 or 2.0.0 cluster. The Hadoop client JAR must be the same version as that cluster.
+- Delta Lake with `GooseFSLogStore` on the classpath. No extra Delta connector JAR is required.
+
+### Configuration (GooseFS)
+
+1. Put the GooseFS Hadoop client JAR on the classpath.
+
+2. Register the `gfs` filesystem implementation:
+
+```ini
+spark.hadoop.fs.gfs.impl=com.qcloud.cos.goosefs.hadoop.FileSystem
+spark.hadoop.fs.AbstractFileSystem.gfs.impl=com.qcloud.cos.goosefs.hadoop.GooseFileSystem
+```
+
+Keep the GooseFS client defaults: `goosefs.user.file.writetype.default=CACHE_THROUGH`, `goosefs.user.metadata.cache.enabled=false`, `goosefs.user.client.cache.enabled=false`, and `goosefs.user.read.fallback.enable=false`. Do not set `spark.delta.logStore.class`; that disables scheme delegation. `spark.delta.logStore.gfs.impl` can still override the LogStore class. The class name is `com.qcloud.cos.goosefs.hadoop.GooseFileSystem`, with the `hadoop` package.
+
+#### Usage (GooseFS)
+
+<Tabs>
+  <TabItem label="Scala">
+    ```scala
+    spark.range(5).write.format("delta").save("gfs://<master-host>:9200/<mount>/<path-to-delta-table>")
+    spark.read.format("delta").load("gfs://<master-host>:9200/<mount>/<path-to-delta-table>").show()
+    ```
+  </TabItem>
+</Tabs>
+
 ## HDFS
 
 Delta Lake has built-in support for HDFS with full transactional guarantees for concurrent reads and writes from multiple clusters. No additional configuration is required.

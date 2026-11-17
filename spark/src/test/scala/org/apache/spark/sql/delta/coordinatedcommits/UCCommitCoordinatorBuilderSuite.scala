@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier
-import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo
+import org.apache.spark.sql.delta.v2.snapshot.unitycatalog.UCTableInfo
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCConfigUtils}
 import io.unitycatalog.client.auth.TokenProvider
 import org.mockito.{Mock, Mockito}

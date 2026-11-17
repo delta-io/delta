@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.amt
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, DeltaLog}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, DeltaLog}
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.actions.Checkpoint
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._

@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{ContentRoot, Metadata}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -87,9 +87,12 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
    */
   private def reconstructAddFiles(
       provider: AMTCheckpointProvider, deltaLog: DeltaLog, metadata: Metadata): DataFrame =
-    new AMTCheckpointProvider(
+    AMTCheckpointProvider(
+        spark = spark,
         manifestCommitVersion = provider.manifestCommitVersion,
-        checkpointAction = provider.checkpointAction.copy(metaData = metadata),
+        checkpointAction = updateCheckpointActions(provider.checkpointAction) {
+          case _: Metadata => metadata
+        },
         leaves = provider.leaves,
         tableRoot = provider.tableRoot)
       .loadActionsForStateReconstruction(spark, deltaLog)
@@ -164,20 +167,20 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       // Content-stats sub-structs are based at 10_000 + 200 * columnId, with the per-statistic
       // offsets from the Iceberg V4 column-stats proposal. The sub-struct carries the base id
       // (stats are resolved by id) and is named by the column's logical name with its field id
-      // attached (see StatsLeaf.fieldName), so the name stays unique. An array is not
-      // skipping-eligible, so it gets a null count and no bounds; a struct contributes its leaf.
+      // attached (see StatsColumn.fieldName), so the name stays unique. An array is not
+      // skipping-eligible, so it gets a null count and no bounds; a struct contributes its nested
+      // field.
       def statsIds(columnId: Int, name: String, withBounds: Boolean): Seq[(String, Int)] = {
         val base = 10000 + 200 * columnId
         val field = s"${name}_$columnId" // sub-struct field name: logical name + field id
-        // Iceberg V4 offsets: lower_bound=1, upper_bound=2, tight_bounds=3, null_value_count=5.
+        // Iceberg V4 offsets: lower_bound=1, upper_bound=2, null_value_count=4.
         Seq(
           s"content_stats.$field" -> base,
-          s"content_stats.$field.null_value_count" -> (base + 5)) ++
+          s"content_stats.$field.null_value_count" -> (base + 4)) ++
           (if (!withBounds) Nil
            else Seq(
              s"content_stats.$field.lower_bound" -> (base + 1),
-             s"content_stats.$field.upper_bound" -> (base + 2),
-             s"content_stats.$field.tight_bounds" -> (base + 3)))
+             s"content_stats.$field.upper_bound" -> (base + 2)))
       }
       // Partition fields take Iceberg ids from 1000 in partition-spec order, whatever their type.
       val expected = AMTSingleAction.allFieldIdByName ++ Map("partition" -> 102) ++
@@ -188,11 +191,12 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
         // d_double=12, d_binary=13, d_arr=14, d_nested=15 (inner=16).
         Seq(
           (1, "d_int"), (2, "d_long"), (3, "d_short"), (4, "d_byte"), (5, "d_str"),
-          (6, "d_date"), (7, "d_ts"), (8, "d_ts_ntz"), (9, "d_dec"),
+          (6, "d_date"), (9, "d_dec"),
           (11, "d_float"), (12, "d_double"), (16, "d_nested_inner"))
           .flatMap { case (id, name) => statsIds(id, name, withBounds = true) } ++
-        // Boolean, array, and binary are not skipping-eligible (no min/max): null count only.
-        Seq((10, "d_bool"), (13, "d_binary"), (14, "d_arr"))
+        // Boolean, array, and binary are not skipping-eligible (no min/max), and timestamp bounds
+        // are not persisted yet (see `AMTContentStats.isSupportedBoundType`): null count only.
+        Seq((7, "d_ts"), (8, "d_ts_ntz"), (10, "d_bool"), (13, "d_binary"), (14, "d_arr"))
           .flatMap { case (id, name) => statsIds(id, name, withBounds = false) }
       assert(
         stamped == expected,
@@ -248,8 +252,8 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
 
       // The logical name of the single `content_stats` sub-struct on the latest checkpoint's
       // manifests. Sub-structs are named `<logical name>_<field id>` (the id keeps the name unique;
-      // see StatsLeaf.fieldName), so strip the id suffix to compare the logical part that a rename
-      // refreshes.
+      // see StatsColumn.fieldName), so strip the id suffix to compare the logical part that a
+      // rename refreshes.
       def contentStatsNames(): Seq[String] = {
         val snapshot = deltaLog.update()
         val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
@@ -447,11 +451,11 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
             fail(s"'$name' should carry a timestamp annotation, got $other in ${file.getName}")
         }
       }
-      // TimestampType -> adjust-to-utc; TimestampNTZType -> not. content_stats keys each
-      // sub-struct by `<column>_<field id>`; partition keys by logical name.
-      assertTimestampMicros(s"${cs("d_ts")}.lower_bound", adjustToUtc = true)
-      assertTimestampMicros(s"${cs("d_ts")}.upper_bound", adjustToUtc = true)
-      assertTimestampMicros(s"${cs("d_ts_ntz")}.lower_bound", adjustToUtc = false)
+      // TimestampType -> adjust-to-utc; TimestampNTZType -> not. Partition values are keyed by
+      // logical name. content_stats persists no timestamp bounds yet (see
+      // `AMTContentStats.isSupportedBoundType`), so only the partition values carry timestamps.
+      assert(!primitives.contains(s"${cs("d_ts")}.lower_bound"),
+        s"content_stats must not persist timestamp bounds in ${file.getName}")
       assertTimestampMicros("partition.p_ts", adjustToUtc = true)
       assertTimestampMicros("partition.p_ts_ntz", adjustToUtc = false)
     }
@@ -502,12 +506,13 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
           // Reading the rewritten root through the production path recovers every leaf pointer
           // unchanged: `manifest_info` is resolved by its Iceberg field id, not its name. (If it
           // were not, the DATA_MANIFEST rows would unwrap with a missing `manifest_info`.)
-          val rewrittenCheckpoint = checkpoint.copy(
-            contentRoot = checkpoint.contentRoot.copy(
+          val rewrittenCheckpoint = updateCheckpointActions(checkpoint) {
+            case root: ContentRoot => root.copy(
               path = rewrittenFile.getAbsolutePath,
-              sizeInBytes = rewrittenFile.length()))
+              sizeInBytes = rewrittenFile.length())
+          }
           val rewrittenProvider = AMTCheckpointProvider.fromCheckpoint(
-            deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
+            spark, deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
           assertLeavesEqual(rewrittenProvider.leaves, provider.leaves)
 
           // Field-id read is what makes this work: with it off, the read falls back to
@@ -518,7 +523,7 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
           withSQLConf(SQLConf.PARQUET_FIELD_ID_READ_ENABLED.key -> "false") {
             val error = intercept[SparkRuntimeException] {
               AMTCheckpointProvider.fromCheckpoint(
-                deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
+                spark, deltaLog, rewrittenCheckpoint, provider.manifestCommitVersion)
             }
             assert(error.getCondition == "EXPRESSION_DECODING_FAILED",
               s"Expected an EXPRESSION_DECODING_FAILED error, got ${error.getCondition}.")

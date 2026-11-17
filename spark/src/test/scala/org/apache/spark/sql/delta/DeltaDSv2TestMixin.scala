@@ -70,7 +70,7 @@ case object DSv2DMLSchemaEvolution extends org.scalatest.Tag("DSv2DMLSchemaEvolu
 /**
  * Shared skip logic for tests that cannot run against the DSv2 connector, used by both
  * [[InMemoryTestTableMixin]] (STRICT + in-memory test table) and [[DSv2TestMixin]] (AUTO + real
- * [[io.delta.spark.internal.v2.catalog.DeltaV2Table]]). Centralizes every skip reason
+ * [[org.apache.spark.sql.delta.v2.catalog.DeltaV2Table]]). Centralizes every skip reason
  * so both mixins skip the same set of DSv2-incompatible tests.
  */
 trait DSv2IncompatibilityTagging extends SharedSparkSession with InMemoryTestTableMixinShims {

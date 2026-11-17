@@ -39,14 +39,18 @@ import org.apache.spark.sql.types.{BooleanType, ByteType, DataType, DateType, De
  * as the Parquet `field_id`. We use that Iceberg table column field id to compute the stats
  * sub-struct's field ids.
  *
- * Only the statistics Delta actually collects get a slot: `null_value_count`, `lower_bound`,
- * `upper_bound` and `tight_bounds`. The remaining spec-optional statistics (`value_count`,
- * `nan_value_count`, `avg_value_size`, `max_value_size`) are omitted.
+ * Only the statistics Delta actually collects get a slot: `null_value_count`, `lower_bound` and
+ * `upper_bound`. The remaining spec-optional statistics (`value_count`, `nan_value_count`,
+ * `total_bytes`) are omitted.
  */
 private[amt] object AMTContentStats {
 
-  /** Name of the [[AMTSingleAction]] field this object shapes. */
+  /** Names of the [[AMTSingleAction]] fields this object shapes. */
   private val CONTENT_STATS_FIELD = "content_stats"
+  private val TIGHT_STATS_FIELD = "tight_stats"
+
+  /** Temporary column [[forWrite]] parses an entry's stats JSON into; dropped before it returns. */
+  private val PARSED_STATS_COLUMN = "__amt_parsed_stats"
 
   /**
    * Start of the Iceberg stats field-id space, and the number of ids reserved per table field.
@@ -63,17 +67,15 @@ private[amt] object AMTContentStats {
    */
   private val LOWER_BOUND_ID_OFFSET: Long = 1L
   private val UPPER_BOUND_ID_OFFSET: Long = 2L
-  private val TIGHT_BOUNDS_ID_OFFSET: Long = 3L
-  private val NULL_VALUE_COUNT_ID_OFFSET: Long = 5L
+  private val NULL_VALUE_COUNT_ID_OFFSET: Long = 4L
 
   /** Names of the per-column statistics, as defined by the Iceberg V4 spec. */
   private val LOWER_BOUND = "lower_bound"
   private val UPPER_BOUND = "upper_bound"
-  private val TIGHT_BOUNDS = "tight_bounds"
   private val NULL_VALUE_COUNT = "null_value_count"
 
   /**
-   * One statistics-collected leaf column:
+   * One column Delta collects statistics for:
    *  - `fieldId`: the id Delta column mapping assigned to the column. Delta stamps it as the
    *    Parquet `field_id` and Iceberg resolves fields by id, so this one value is both the Delta
    *    column-mapping id and the column's Iceberg field id.
@@ -84,10 +86,10 @@ private[amt] object AMTContentStats {
    *  - `boundType`: the column's Iceberg bound type, or None.
    *
    * `boundType` is None for a column Delta counts nulls for but collects no min/max on (an array
-   * or map, say, or a type with no Iceberg bound representation). Such a leaf still gets a
+   * or map, say, or a type with no Iceberg bound representation). Such a column still gets a
    * `null_value_count`; its bound fields are simply omitted.
    */
-  private case class StatsLeaf(
+  private case class StatsColumn(
       fieldId: Long,
       name: String,
       path: Seq[String],
@@ -130,12 +132,12 @@ private[amt] object AMTContentStats {
   }
 
   /**
-   * The statistics-collected leaf columns that each get a `content_stats` entry, taken from
-   * `statCollectionPhysicalSchema` and ordered by field id so the persisted schema is stable across
-   * writes. That schema is Delta's set of columns it collects per-file statistics for.
-   * This method recurses into structs (a struct column contributes its scalar leaves, not itself)
-   * and sets `boundType` only for types with an Iceberg bound; a boundless leaf (an array, say)
-   * gets a `null_value_count` only.
+   * The columns that each get a `content_stats` entry, taken from `statCollectionPhysicalSchema`
+   * and ordered by field id so the persisted schema is stable across writes. That schema is Delta's
+   * set of columns it collects per-file statistics for.
+   * This method recurses into structs (a struct column contributes its non-struct fields, not
+   * itself) and sets `boundType` only for types with an Iceberg bound; a column without bounds (an
+   * array, say) gets a `null_value_count` only.
    *
    * Example `statCollectionPhysicalSchema`:
    *   name     type                          {id, physical name}
@@ -145,18 +147,18 @@ private[amt] object AMTContentStats {
    *   d_arr    array<string>                 {5, col-5}
    *
    * The physical names form the path into a parsed Delta stats struct; the logical names name the
-   * sub-structs. This yields (d_nested contributes only its scalar leaf `inner`, not itself):
-   *   StatsLeaf(1, "d_long",         ["col-1"],         Some(LongType))
-   *   StatsLeaf(2, "d_str",          ["col-2"],         Some(StringType))
-   *   StatsLeaf(4, "d_nested_inner", ["col-3","col-4"], Some(IntegerType))  // struct leaf
-   *   StatsLeaf(5, "d_arr",          ["col-5"],         None)               // array: null count
+   * sub-structs. This yields (d_nested contributes only its non-struct field `inner`, not itself):
+   *   StatsColumn(1, "d_long",         ["col-1"],         Some(LongType))
+   *   StatsColumn(2, "d_str",          ["col-2"],         Some(StringType))
+   *   StatsColumn(4, "d_nested_inner", ["col-3","col-4"], Some(IntegerType))  // nested field
+   *   StatsColumn(5, "d_arr",          ["col-5"],         None)               // array: null count
    *
    * `name` is the field's full logical name. It names the sub-struct (informational, per the spec)
-   * while the field id is what a reader resolves by; using the full path rather than the bare leaf
-   * name reduces name clashes when two structs share a leaf name.
+   * while the field id is what a reader resolves by; using the full path rather than the bare field
+   * name reduces name clashes when two structs share a field name.
    */
-  private def statsLeafColumns(statCollectionPhysicalSchema: StructType): Seq[StatsLeaf] = {
-    def collect(schema: StructType, prefix: Seq[String], names: Seq[String]): Seq[StatsLeaf] =
+  private def statsColumns(statCollectionPhysicalSchema: StructType): Seq[StatsColumn] = {
+    def collect(schema: StructType, prefix: Seq[String], names: Seq[String]): Seq[StatsColumn] =
       schema.fields.toSeq.flatMap { field =>
         val path = prefix :+ DeltaColumnMapping.getPhysicalName(field)
         val namePath = names :+ field.name
@@ -164,7 +166,7 @@ private[amt] object AMTContentStats {
           case nested: StructType => collect(nested, path, namePath)
           case dt =>
             val boundType = if (isSupportedBoundType(dt)) Some(dt) else None
-            Some(StatsLeaf(
+            Some(StatsColumn(
               fieldId = DeltaColumnMapping.getColumnId(field).toLong,
               name = namePath.mkString("_"),
               path = path,
@@ -182,30 +184,23 @@ private[amt] object AMTContentStats {
    * `scala-bazel` source tree and pulls in the shaded Iceberg library, neither of which this
    * package can depend on. Types outside this set are left out of `content_stats`, matching that
    * converter's behavior of ignoring unsupported stats.
+   *
+   * Timestamps are deliberately excluded, unlike in that converter. Delta serializes timestamp
+   * stats at millisecond precision, so its max can sit below the file's true max (Delta's data
+   * skipping compensates by widening the max by 1ms on read), and persisting it as-is would give
+   * Iceberg an `upper_bound` smaller than values in the file. Until the bound is converted
+   * soundly, a timestamp column carries only its null count.
    */
   private def isSupportedBoundType(dataType: DataType): Boolean =
     SkippingEligibleDataType(dataType) && (dataType match {
       case _: StringType | _: IntegerType | _: FloatType | _: DoubleType | _: DecimalType |
-          _: BooleanType | _: DateType | _: TimestampType | _: TimestampNTZType | _: LongType |
-          _: ByteType | _: ShortType => true
+          _: BooleanType | _: DateType | _: LongType | _: ByteType | _: ShortType => true
+      case _: TimestampType | _: TimestampNTZType => false
       case _ => false
     })
 
   /**
-   * Whether the type's stored bound is truncated. Delta prefix-truncates string bounds and rounds
-   * timestamp bounds down to milliseconds, so for those types the stored bound is a valid superset
-   * endpoint but not the exact min/max. Iceberg's `tight_bounds` (bounds equal the min/max) must
-   * therefore be false for them even when Delta's file-level `tightBounds` is true. That flag
-   * describes only the non-truncated columns (everything except String/Timestamp/TimestampNTZ);
-   * the truncated columns are never tight regardless of it.
-   */
-  private def isTruncatedType(dataType: DataType): Boolean = dataType match {
-    case _: StringType | _: TimestampType | _: TimestampNTZType => true
-    case _ => false
-  }
-
-  /**
-   * The persisted `content_stats` struct for a table: one sub-struct per statistics-collected leaf
+   * The persisted `content_stats` struct for a table: one sub-struct per statistics-collected
    * column, named by that column's logical name. Empty when the table collects no per-column stats,
    * in which case `AMTSingleAction.persistedSchema` drops the whole `content_stats` field (a struct
    * with no fields is not Parquet-writable) -- the same way it drops `partition` when the table is
@@ -214,23 +209,23 @@ private[amt] object AMTContentStats {
   def persistedSchema(metadata: Metadata, protocol: Protocol): StructType = {
     val physicalSchema =
       statisticsCollection(SparkSession.active, metadata, protocol).statCollectionPhysicalSchema
-    val perColumn = statsLeafColumns(physicalSchema).map { leaf =>
-      val baseId = STATS_ID_START + STATS_IDS_PER_FIELD * leaf.fieldId
-      // A leaf with no bounds gets only its null count; omitting the bound fields keeps them out
+    val perColumn = statsColumns(physicalSchema).map { column =>
+      val baseId = STATS_ID_START + STATS_IDS_PER_FIELD * column.fieldId
+      // A column with no bounds gets only its null count; omitting the bound fields keeps them out
       // of the Parquet schema rather than persisting columns that are always null. Fields are
-      // ordered by ascending id (bounds 1-3, then null count 5).
-      val boundFields = leaf.boundType.toSeq.flatMap { boundType =>
+      // ordered by ascending id (bounds 1-2, then null count 4).
+      val boundFields = column.boundType.toSeq.flatMap { boundType =>
         Seq(
           statField(LOWER_BOUND, boundType, baseId + LOWER_BOUND_ID_OFFSET),
-          statField(UPPER_BOUND, boundType, baseId + UPPER_BOUND_ID_OFFSET),
-          statField(TIGHT_BOUNDS, BooleanType, baseId + TIGHT_BOUNDS_ID_OFFSET))
+          statField(UPPER_BOUND, boundType, baseId + UPPER_BOUND_ID_OFFSET))
       }
       val nullCountField =
         statField(NULL_VALUE_COUNT, LongType, baseId + NULL_VALUE_COUNT_ID_OFFSET)
       // The sub-struct is named by the column's logical name with its field id attached (see
-      // StatsLeaf.fieldName) and stamped with the base id. Per the spec, stats are resolved by id;
-      // the name is informational, but the id suffix keeps it unique for Spark's name-based access.
-      statField(leaf.fieldName, StructType(boundFields :+ nullCountField), baseId)
+      // StatsColumn.fieldName) and stamped with the base id. Per the spec, stats are resolved by
+      // id; the name is informational, but the id suffix keeps it unique for Spark's name-based
+      // access.
+      statField(column.fieldName, StructType(boundFields :+ nullCountField), baseId)
     }
     StructType(perColumn)
   }
@@ -256,42 +251,33 @@ private[amt] object AMTContentStats {
   def forWrite(df: DataFrame, metadata: Metadata, protocol: Protocol): DataFrame = {
     val stats = statisticsCollection(df.sparkSession, metadata, protocol)
     val statsSchema = stats.statsSchema // Delta's stats_parsed schema
-    val leaves = statsLeafColumns(stats.statCollectionPhysicalSchema)
+    val columns = statsColumns(stats.statCollectionPhysicalSchema)
+    // `content_stats` holds the raw Delta stats JSON string (the `Option[String]` encoder shape).
+    val rawJson = col(CONTENT_STATS_FIELD)
     // No per-column stats -> `content_stats` is dropped from the persisted schema (an empty struct
     // is not Parquet-writable), so drop the column here too. Mirrors `AMTPartitionValues.forWrite`
     // for an unpartitioned table.
-    if (leaves.isEmpty) return df.drop(CONTENT_STATS_FIELD)
-    // `content_stats` holds the raw Delta stats JSON string (the `Option[String]` encoder shape).
-    val rawJson = col(CONTENT_STATS_FIELD)
-    val statsParsedExpression = from_json(rawJson, statsSchema)
+    if (columns.isEmpty) return df.drop(CONTENT_STATS_FIELD)
+    // Parse stats once in a separate projection so all statistics reuse the result.
+    val withParsedStats = df.withColumn(PARSED_STATS_COLUMN, from_json(rawJson, statsSchema))
+    val statsParsed = col(PARSED_STATS_COLUMN)
 
-    // Delta's `tightBounds` is a per-file flag; Iceberg's `tight_bounds` is per column and asserts
-    // the bounds equal the min/max. The Delta spec treats an absent `tightBounds` as tight, so
-    // the default is true.
-    val fileTightBounds =
-      coalesce(statsParsedExpression.getField(DeltaStatistics.TIGHT_BOUNDS), lit(true))
-
-    val perColumn = leaves.map { leaf =>
+    val perColumn = columns.map { column =>
       // Ordered by ascending id (bounds, then null count) to match the persisted schema.
-      val boundColumns = leaf.boundType.toSeq.flatMap { boundType =>
-        // A column's bounds are exact only when the file is tight AND the type is not truncated, so
-        // a truncated column (string/timestamp) is never `tight_bounds = true`.
-        val columnTightBounds =
-          if (isTruncatedType(boundType)) lit(false) else fileTightBounds
+      val boundColumns = column.boundType.toSeq.flatMap { _ =>
         Seq(
-          statPath(statsParsedExpression, DeltaStatistics.MIN, leaf.path).as(LOWER_BOUND),
-          statPath(statsParsedExpression, DeltaStatistics.MAX, leaf.path).as(UPPER_BOUND),
-          columnTightBounds.as(TIGHT_BOUNDS))
+          statPath(statsParsed, DeltaStatistics.MIN, column.path).as(LOWER_BOUND),
+          statPath(statsParsed, DeltaStatistics.MAX, column.path).as(UPPER_BOUND))
       }
-      val nullValueCount = statPath(statsParsedExpression, DeltaStatistics.NULL_COUNT, leaf.path)
+      val nullValueCount = statPath(statsParsed, DeltaStatistics.NULL_COUNT, column.path)
         .cast(LongType).as(NULL_VALUE_COUNT)
-      struct(boundColumns :+ nullValueCount: _*).as(leaf.fieldName)
+      struct(boundColumns :+ nullValueCount: _*).as(column.fieldName)
     }
 
     val contentStatsSchema = AMTContentStats.persistedSchema(metadata, protocol)
     val contentStats = when(rawJson.isNull, lit(null).cast(contentStatsSchema))
       .otherwise(struct(perColumn: _*))
-    replaceContentStats(df, contentStats)
+    replaceContentStats(withParsedStats, contentStats).drop(PARSED_STATS_COLUMN)
   }
 
   /**
@@ -301,47 +287,11 @@ private[amt] object AMTContentStats {
    * `numRecords` is not persisted in `content_stats` (the entry carries it as Iceberg field 103
    * `record_count`); for an entry that has per-column stats it is folded back in here. An entry
    * with no per-column stats (a table that collects none, a data file written without stats, or
-   * a manifest pointer) reconstructs to `null`; [[toStatsJson]] supplies its record count.
+   * a manifest pointer) reconstructs to `null`; [[toStatsJson]] supplies its record count and
+   * `tightBounds`.
    */
   def forRead(df: DataFrame, metadata: Metadata, protocol: Protocol): DataFrame = {
-    val stats = statisticsCollection(df.sparkSession, metadata, protocol)
-    val leaves = statsLeafColumns(stats.statCollectionPhysicalSchema)
-    val numRecords = col("record_count").cast(LongType).as(DeltaStatistics.NUM_RECORDS)
-    val jsonStats = if (leaves.isEmpty) {
-      // No per-column stats were persisted (`content_stats` was dropped from the schema); the
-      // encoder decodes `None` and `toStatsJson` supplies the record count.
-      lit(null).cast(StringType)
-    } else {
-      val typedStats = col(CONTENT_STATS_FIELD)
-
-      // Rebuild the nested minValues/maxValues/nullCount shape from each leaf's recorded path, then
-      // serialize it back to the JSON string Delta expects. minValues/maxValues cover only the
-      // leaves that carry bounds, matching the sub-schemas Delta itself builds.
-      val boundLeaves = leaves.filter(_.hasBounds)
-      // Recover Delta's file-level `tightBounds`. On write each untruncated column carries
-      // `tight_bounds = fileTightBounds`; truncated columns are forced to `false` for Iceberg's
-      // exact-bounds semantics. So AND only the untruncated columns; if a file has none, fall back
-      // to `false` conservatively.
-      val tightBoundLeaves = boundLeaves.filter(_.boundType.exists(bt => !isTruncatedType(bt)))
-      val recoveredTightBounds =
-        if (tightBoundLeaves.nonEmpty) {
-          tightBoundLeaves
-            .map(leaf => coalesce(statOf(typedStats, leaf, TIGHT_BOUNDS), lit(false)))
-            .reduce(_ && _)
-        } else {
-          lit(false)
-        }
-      val statsFields =
-        boundLeaves.headOption.toSeq.flatMap { _ =>
-          Seq(
-            nestByPath(boundLeaves, statOf(typedStats, _, LOWER_BOUND)).as(DeltaStatistics.MIN),
-            nestByPath(boundLeaves, statOf(typedStats, _, UPPER_BOUND)).as(DeltaStatistics.MAX))
-        } ++ leaves.headOption.toSeq.map { _ =>
-          nestByPath(leaves, statOf(typedStats, _, NULL_VALUE_COUNT)).as(DeltaStatistics.NULL_COUNT)
-        } :+ recoveredTightBounds.as(DeltaStatistics.TIGHT_BOUNDS)
-      val statsJson = to_json(struct(numRecords +: statsFields: _*))
-      when(typedStats.isNull, lit(null).cast(StringType)).otherwise(statsJson)
-    }
+    val jsonStats = statsJson(df.sparkSession, metadata, protocol)
     if (df.columns.contains(CONTENT_STATS_FIELD)) {
       replaceContentStats(df, jsonStats)
     } else {
@@ -349,9 +299,55 @@ private[amt] object AMTContentStats {
     }
   }
 
+  /** The `AddFile.stats` JSON of a persisted data entry row, as [[toStatsJson]] derives it. */
+  def addFileStatsJson(spark: SparkSession, metadata: Metadata, protocol: Protocol): Column =
+    coalesce(
+      statsJson(spark, metadata, protocol),
+      to_json(struct(numRecords, tightBounds)))
+
+  private def numRecords: Column =
+    col("record_count").cast(LongType).as(DeltaStatistics.NUM_RECORDS)
+
+  /** The persisted `content_stats` of an entry row as the JSON that [[forRead]] decodes it to. */
+  private def statsJson(spark: SparkSession, metadata: Metadata, protocol: Protocol): Column = {
+    val stats = statisticsCollection(spark, metadata, protocol)
+    val columns = statsColumns(stats.statCollectionPhysicalSchema)
+    if (columns.isEmpty) {
+      // No per-column stats were persisted (`content_stats` was dropped from the schema); the
+      // encoder decodes `None` and `toStatsJson` supplies the record count and `tightBounds`.
+      lit(null).cast(StringType)
+    } else {
+      val typedStats = col(CONTENT_STATS_FIELD)
+
+      // Rebuild the nested minValues/maxValues/nullCount shape from each column's recorded path,
+      // then serialize it back to the JSON string Delta expects. minValues/maxValues cover only the
+      // columns that carry bounds, matching the sub-schemas Delta itself builds.
+      val bounded = columns.filter(_.hasBounds)
+      val statsFields =
+        bounded.headOption.toSeq.flatMap { _ =>
+          Seq(
+            nestByPath(bounded, statOf(typedStats, _, LOWER_BOUND)).as(DeltaStatistics.MIN),
+            nestByPath(bounded, statOf(typedStats, _, UPPER_BOUND)).as(DeltaStatistics.MAX))
+        } ++ columns.headOption.toSeq.map { _ =>
+          nestByPath(columns, statOf(typedStats, _, NULL_VALUE_COUNT))
+            .as(DeltaStatistics.NULL_COUNT)
+        } :+ tightBounds
+      val encoded = to_json(struct(numRecords +: statsFields: _*))
+      when(typedStats.isNull, lit(null).cast(StringType)).otherwise(encoded)
+    }
+  }
+
   /**
-   * Projects one statistic of one leaf column out of a parsed Delta stats struct (used on write),
-   * following the leaf's nested physical-name path.
+   * Delta's `tightBounds` is the entry's `tight_stats` as-is. The Delta spec treats an absent
+   * `tightBounds` as tight, whereas Iceberg treats an absent `tight_stats` as not tight, so an
+   * absent flag reads back as `false`.
+   */
+  private def tightBounds: Column =
+    coalesce(col(TIGHT_STATS_FIELD), lit(false)).as(DeltaStatistics.TIGHT_BOUNDS)
+
+  /**
+   * Projects one statistic of one column out of a parsed Delta stats struct (used on write),
+   * following the column's nested physical-name path.
    *
    * Example: statPath(parsed, "minValues", ["col-3","col-4"]) => parsed.minValues.col-3.col-4.
    */
@@ -359,26 +355,26 @@ private[amt] object AMTContentStats {
     path.foldLeft(parsed.getField(statName))((column, name) => column.getField(name))
 
   /**
-   * Reads one statistic out of a leaf's typed, flat `content_stats` sub-struct (used on read) --
-   * the inverse shape of [[statPath]]. The sub-struct is keyed by the leaf's unique `fieldName`.
+   * Reads one statistic out of a column's typed, flat `content_stats` sub-struct (used on read) --
+   * the inverse shape of [[statPath]]. The sub-struct is keyed by the column's unique `fieldName`.
    *
-   * Example: statOf(typed, leaf(fieldName="d_nested_inner_4"), "lower_bound") reads the
+   * Example: statOf(typed, column(fieldName="d_nested_inner_4"), "lower_bound") reads the
    * `lower_bound` of the sub-struct field named "d_nested_inner_4".
    */
-  private def statOf(typed: Column, leaf: StatsLeaf, statName: String): Column =
-    typed.getField(leaf.fieldName).getField(statName)
+  private def statOf(typed: Column, column: StatsColumn, statName: String): Column =
+    typed.getField(column.fieldName).getField(statName)
 
   /**
-   * Rebuilds Delta's nested stats shape from the flat leaves, grouping by each leaf's recorded path
-   * so a struct column's per-field statistics land back under that struct.
+   * Rebuilds Delta's nested stats shape from the flat columns, grouping by each column's recorded
+   * path so a struct column's per-field statistics land back under that struct.
    *
-   * Example -- rebuilding `minValues` from the three bound leaves below, where `value` reads
-   * each leaf's `lower_bound` out of the typed `content_stats` sub-struct (e.g. value of leaf id 1
+   * Example -- rebuilding `minValues` from the three bounded columns below, where `value` reads
+   * each column's `lower_bound` out of the typed `content_stats` sub-struct (e.g. value of id 1
    * = typed.`1`.lower_bound):
    *
-   *   StatsLeaf(1, ["col-1"])
-   *   StatsLeaf(2, ["col-2"])
-   *   StatsLeaf(4, ["col-3","col-4"])
+   *   StatsColumn(1, ["col-1"])
+   *   StatsColumn(2, ["col-2"])
+   *   StatsColumn(4, ["col-3","col-4"])
    *
    * Group by the first path segment -> col-1, col-2, col-3. col-1 and col-2 have a length-1 path so
    * they take their value directly; col-3 has no length-1 entry, so it recurses on the remaining
@@ -392,21 +388,21 @@ private[amt] object AMTContentStats {
    * which `to_json`s to {"col-1":.., "col-2":.., "col-3":{"col-4":..}} -- the physical-keyed,
    * nested shape Delta writes minValues/maxValues/nullCount in, with col-4 back under col-3.
    */
-  private def nestByPath(leaves: Seq[StatsLeaf], value: StatsLeaf => Column): Column = {
-    def build(entries: Seq[(Seq[String], StatsLeaf)]): Column = {
+  private def nestByPath(columns: Seq[StatsColumn], value: StatsColumn => Column): Column = {
+    def build(entries: Seq[(Seq[String], StatsColumn)]): Column = {
       val fields = entries
         .groupBy(_._1.head)
         .toSeq
         .sortBy { case (_, group) => group.map(_._2.fieldId).min }
         .map { case (name, group) =>
           group.find(_._1.length == 1) match {
-            case Some((_, leaf)) => value(leaf).as(name)
-            case None => build(group.map { case (path, leaf) => (path.tail, leaf) }).as(name)
+            case Some((_, column)) => value(column).as(name)
+            case None => build(group.map { case (path, column) => (path.tail, column) }).as(name)
           }
         }
       struct(fields: _*)
     }
-    build(leaves.map(leaf => (leaf.path, leaf)))
+    build(columns.map(column => (column.path, column)))
   }
 
   private def replaceContentStats(df: DataFrame, contentStats: Column): DataFrame =
@@ -423,9 +419,16 @@ private[amt] object AMTContentStats {
 
   /**
    * The `AddFile.stats` JSON for a data entry. [[forRead]] rebuilds `content_stats` as the complete
-   * stats JSON (including `numRecords`), so it is returned as-is; the fallback covers an entry with
-   * no `content_stats` by emitting the record count alone. The inverse of [[fromStatsJson]].
+   * stats JSON (including `numRecords` and `tightBounds`), so it is returned as-is; the fallback
+   * covers an entry with no `content_stats` by emitting the record count and `tightBounds` alone.
+   * `tightBounds` is spelled out from `tightStats` as [[forRead]] does -- an absent flag as `false`
+   * -- since Delta would read an absent `tightBounds` as tight. The inverse of [[fromStatsJson]].
    */
-  def toStatsJson(contentStats: Option[String], recordCount: Long): String =
-    contentStats.getOrElse(s"""{"${DeltaStatistics.NUM_RECORDS}":$recordCount}""")
+  def toStatsJson(
+      contentStats: Option[String],
+      recordCount: Long,
+      tightStats: Option[Boolean]): String =
+    contentStats.getOrElse(
+      s"""{"${DeltaStatistics.NUM_RECORDS}":$recordCount,""" +
+        s""""${DeltaStatistics.TIGHT_BOUNDS}":${tightStats.getOrElse(false)}}""")
 }

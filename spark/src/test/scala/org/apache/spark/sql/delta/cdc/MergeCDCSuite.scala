@@ -95,11 +95,17 @@ trait MergeCDCTests extends QueryTest
     test(s"merge CDC - $name") {
       withSQLConf(confs: _*) {
         targetTableSchema.foreach { schema =>
-          io.delta.tables.DeltaTable.create(spark)
+          val tableBuilder = io.delta.tables.DeltaTable.create(spark)
             .tableName(tableSQLIdentifier)
-            .location(deltaLog.dataPath.toUri.getPath)
             .addColumns(schema)
-            .execute()
+          // Only path-based tables pin the location: name-based tables use the catalog's default
+          // location, and catalog-managed tables reject an explicit one.
+          DeltaTestUtils.getTableIdentifierOrPath(tableSQLIdentifier) match {
+            case DeltaTestUtils.TableIdentifierOrPath.Path(_, _) =>
+              tableBuilder.location(deltaLog.dataPath.toUri.getPath).execute()
+            case DeltaTestUtils.TableIdentifierOrPath.Identifier(_, _) =>
+              tableBuilder.execute()
+          }
         }
         append(target)
         withTempView("source") {
@@ -119,7 +125,7 @@ trait MergeCDCTests extends QueryTest
               expectedTableData)
 
             // Craft expected CDC data
-            val latestVersion = deltaLog.snapshot.version
+            val latestVersion = getLatestOperationVersion("MERGE")
             val expectedCdcData = expectedCdcDataWithoutVersion
               .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(latestVersion))
 

@@ -159,9 +159,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val log = createTableWithProtocol(Protocol(1, 1), path)
       assert(log.snapshot.protocol === Protocol(1, 1))
       log.upgradeProtocol(Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)))
+        featuresToExclude =
+          Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features))
       assert(log.snapshot.protocol === Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)))
+        featuresToExclude =
+          Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features))
     }
   }
 
@@ -3796,7 +3798,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       featureExpectedAtTheEnd: Boolean = false): Unit = {
     val featureName = VacuumProtocolCheckTableFeature.name
     withTempTable(createTable = false) { tableName =>
-      // Register a temporary InMemory-CC builder to support CatalogOwned table creation.
+      // Register a temporary InMemory-CC builder to support CatalogManaged table creation.
       CatalogOwnedCommitCoordinatorProvider.clearBuilders()
       CatalogOwnedCommitCoordinatorProvider.registerBuilder(
         catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,

@@ -2158,7 +2158,8 @@ class DeltaSuite extends QueryTest
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(
-      featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+      featuresToExclude =
+        Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
       newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),

@@ -50,7 +50,7 @@ trait OptimisticTransactionSuiteBase
    */
   protected def testDefaultMetadata(): Metadata = Metadata()
   protected def testDefaultProtocol(): Protocol = Action.supportedProtocolVersion(
-    featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))
+    featuresToExclude = Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features)
 
   /**
    * Check whether the test transaction conflict with the concurrent writes by executing the

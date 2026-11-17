@@ -96,14 +96,17 @@ case class DeletionVectorDescriptor(
   @transient
   lazy val legacyUniqueId: String = {
     offset match {
-      case Some(offset) => s"$uniqueFileId@$offset"
-      case None => uniqueFileId
+      case Some(offset) => s"$legacyUniqueFileId@$offset"
+      case None => legacyUniqueFileId
     }
   }
 
+  /**
+   * The legacy unique id of the file storing the DV.
+   */
   @JsonIgnore
   @transient
-  lazy val uniqueFileId: String = s"$storageType$pathOrInlineDv"
+  private lazy val legacyUniqueFileId: String = s"$storageType$pathOrInlineDv"
 
   /**
    * Unique identifier for this DV.
@@ -118,6 +121,20 @@ case class DeletionVectorDescriptor(
    */
   def uniqueId(tableRoot: Path, useObjectIdentity: Boolean): String = {
     if (useObjectIdentity) normalizedTableRelativeObjectId(tableRoot) else legacyUniqueId
+  }
+
+  /**
+   * Unique identifier for the file storing this DV, i.e. [[uniqueId]] without the offset. Use this
+   * when grouping by DV file rather than by individual DV, since several DVs can be stored in one
+   * file at different offsets. See [[uniqueId]] for the `useObjectIdentity` semantics.
+   */
+  def uniqueFileId(tableRoot: Path, useObjectIdentity: Boolean): String = {
+    if (useObjectIdentity) {
+      val (normalizedStorageType, normalizedPath) = normalizedTableRelativeObjectFile(tableRoot)
+      formatIdentity(normalizedStorageType, normalizedPath, offset = None)
+    } else {
+      legacyUniqueFileId
+    }
   }
 
   @JsonIgnore

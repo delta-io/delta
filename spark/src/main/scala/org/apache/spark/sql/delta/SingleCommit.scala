@@ -16,10 +16,15 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.FileStatus
+
+import org.apache.spark.sql.SparkSession
 
 /**
  * A handle to a single commit in the Delta log, standing in for the raw commit log file that
@@ -28,20 +33,56 @@ import org.apache.hadoop.fs.FileStatus
  */
 class SingleCommit private (
     private val deltaLog: DeltaLog,
-    val version: Long,
+    override val version: Long,
     private val fileStatus: FileStatus
-) {
+) extends DeltaSingleCommit {
+  // Read the persisted ICT for this version, so commits before ICT enablement still use mtime.
+  override lazy val timestamp: Long = getActionsIterator().processAndClose { actions =>
+    actions.collectFirst { case commitInfo: CommitInfo => commitInfo }
+      .flatMap(_.inCommitTimestamp)
+      .getOrElse(fileModificationTimestamp)
+  }
+
   /**
-   * Open a fresh iterator over all of this commit's actions.
+   * Open a fresh iterator over all of this commit's logical actions. For an inline AMT commit,
+   * inline AddFile and RemoveFile actions are replaced by actions reconstructed from the tree.
+   * Every other inline action is preserved. The AMT does not record a metadata-only re-add of
+   * an already-live file (e.g. a stats backfill), so such AddFiles are omitted.
    *
    * @param maxInMemoryFileSizeBytes commits whose log file is smaller than this are read into
-   *        memory once and replayed on every `rewind()`; larger commits are re-read on each pass.
-   *        Defaults to 0, i.e. always stream via `readAsIterator` -- callers that want the
-   *        in-memory/rewind fast path opt in by passing a threshold.
+   *        memory once and replayed on every `rewind()`.
    */
-  def getActionsIterator(
-      maxInMemoryFileSizeBytes: Long = 0): ClosableIterator[Action] with SupportsRewinding[Action] =
-    SingleCommit.createRewindableActionIterator(deltaLog, fileStatus, maxInMemoryFileSizeBytes)
+  override def getActionsIterator(
+      maxInMemoryFileSizeBytes: Long = 0)
+      : ClosableIterator[Action] with SupportsRewinding[Action] = {
+    if (SparkSession.active.sessionState.conf.getConf(
+        DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)) {
+      getAMTAwareActionsIterator(maxInMemoryFileSizeBytes)
+    } else {
+      getJsonActionsIterator(maxInMemoryFileSizeBytes)
+    }
+  }
+
+  /**
+   * Get this commit's logical actions, the same actions in the same order as
+   * [[getActionsIterator]] with single-commit read on.
+   *
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions with
+   *                                    `dataChange = false`.
+   */
+  def getActions(skipNoDataChangeFileActions: Boolean = false): Seq[Action] = {
+    val commitJsonActions =
+      getJsonActionsIterator(maxInMemoryFileSizeBytes = 0).processAndClose(_.toList)
+    def computeTreeFileActions(
+        commitInfo: CommitInfo, checkpointOpt: Option[Checkpoint]): Iterator[Action] = {
+      amtProviderFromCheckpointOpt(checkpointOpt)
+        .reconstructFileActions(
+          deltaLog, commitInfo.getDataChangeOrThrow, commitInfo.getCommitTimestamp)
+        .iterator
+    }
+    toLogicalActions(
+      commitJsonActions.iterator, skipNoDataChangeFileActions, computeTreeFileActions).toList
+  }
 
   /**
    * Like [[getActionsIterator]], but asserts this commit is a log commit.
@@ -51,8 +92,7 @@ class SingleCommit private (
   private[delta] def getLogCommitActionsIteratorUnsafe(
       maxInMemoryFileSizeBytes: Long = 0)
       : ClosableIterator[Action] with SupportsRewinding[Action] = {
-    val underlying =
-      SingleCommit.createRewindableActionIterator(deltaLog, fileStatus, maxInMemoryFileSizeBytes)
+    val underlying = getJsonActionsIterator(maxInMemoryFileSizeBytes)
     new ClosableIterator[Action] with SupportsRewinding[Action] {
       override def hasNext: Boolean = underlying.hasNext
       override def next(): Action = underlying.next() match {
@@ -75,17 +115,130 @@ class SingleCommit private (
    * The size of this commit's log file, in bytes.
    */
   private[delta] def commitFileSizeInBytes: Long = fileStatus.getLen
+
+  //////////////////////
+  // Helper functions //
+  //////////////////////
+
+  /**
+   * The actions in this commit's log file, as written.
+   *
+   * @param maxInMemoryFileSizeBytes see [[getActionsIterator]].
+   */
+  private def getJsonActionsIterator(
+      maxInMemoryFileSizeBytes: Long): ClosableIterator[Action] with SupportsRewinding[Action] =
+    SingleCommit.createRewindableActionIterator(deltaLog, fileStatus, maxInMemoryFileSizeBytes)
+
+  /**
+   * The actions in this commit's log file, with an inline AMT commit's AddFile and RemoveFile
+   * actions read from its tree instead (see [[toLogicalActions]]).
+   *
+   * @param maxInMemoryFileSizeBytes see [[getActionsIterator]].
+   */
+  private def getAMTAwareActionsIterator(
+      maxInMemoryFileSizeBytes: Long): ClosableIterator[Action] with SupportsRewinding[Action] = {
+    val commitJsonIter = getJsonActionsIterator(maxInMemoryFileSizeBytes)
+    new ClosableIterator[Action] with SupportsRewinding[Action] {
+      private def computeTreeFileActions(
+          commitInfo: CommitInfo, checkpointOpt: Option[Checkpoint]): Iterator[Action] =
+        amtProviderFromCheckpointOpt(checkpointOpt).reconstructFileActionsIterator(
+          deltaLog, commitInfo.getDataChangeOrThrow, commitInfo.getCommitTimestamp)
+      private var underlying =
+        try {
+          toLogicalActions(
+            commitJsonIter, skipNoDataChangeFileActions = false, computeTreeFileActions)
+        } catch {
+          case e: Throwable =>
+            commitJsonIter.close()
+            throw e
+        }
+      override def hasNext: Boolean = underlying.hasNext
+      override def next(): Action = underlying.next()
+      override def close(): Unit = commitJsonIter.close()
+      override def rewind(): Unit = {
+        commitJsonIter.rewind()
+        underlying = toLogicalActions(
+          commitJsonIter, skipNoDataChangeFileActions = false, computeTreeFileActions)
+      }
+    }
+  }
+
+  /**
+   * Wrap the Json commit iterator with AMT specific handling. This includes:
+   * 1. Skip all Add and Removes if skipNoDataChangeFileActions is set and dataChange is false.
+   * 2. Returns iterator immediately for non inline manifest commits.
+   * 3. Reconstruct file actions from the tree if the commit is an inline manifest commit.
+   * Reconstruction happens after log commit is exhausted.
+   *
+   * @param commitJsonIter the actions in this commit's log file, as written.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions with
+   *                                    `dataChange = false`.
+   * @param computeTreeFileActions reads the tree's file actions, given the commit's CommitInfo
+   *                               and Checkpoint action.
+   */
+  private def toLogicalActions(
+      commitJsonIter: Iterator[Action],
+      skipNoDataChangeFileActions: Boolean,
+      computeTreeFileActions: (CommitInfo, Option[Checkpoint]) => Iterator[Action])
+      : Iterator[Action] = {
+    val bufferedIter = commitJsonIter.buffered
+    val amtCommitInfoOpt = bufferedIter.headOption.collect {
+      case commitInfo: CommitInfo if commitInfo.isAMTInlineManifestCommit(version) => commitInfo
+    }
+    amtCommitInfoOpt match {
+      case None =>
+        // No AMT tree is present. Log commit actions are filtered if skipNoDataChangeFileActions.
+        if (skipNoDataChangeFileActions) {
+          bufferedIter.filter {
+            case add: AddFile => add.dataChange
+            case remove: RemoveFile => remove.dataChange
+            case _ => true
+          }
+        } else {
+          bufferedIter
+        }
+      case Some(commitInfo) =>
+        // Always take tree actions when present.
+        var checkpointOpt: Option[Checkpoint] = None
+        val logFileActionsIter = bufferedIter.filter(!FileAction.isAddOrRemove(_)).map {
+          case checkpoint: Checkpoint if checkpointOpt.isEmpty =>
+            checkpointOpt = Some(checkpoint)
+            checkpoint
+          case action => action
+        }
+        // `++` takes the tree's actions by name and opens them only once the log file's actions
+        // run out, so the Checkpoint has been read by then.
+        logFileActionsIter ++ {
+          if (skipNoDataChangeFileActions && !commitInfo.getDataChangeOrThrow) {
+            // A commit that changed no data has no data-changing file actions, so skip its tree.
+            Iterator.empty
+          } else {
+            computeTreeFileActions(commitInfo, checkpointOpt)
+          }
+        }
+    }
+  }
+
+  /** The tree of this manifest commit, which its Checkpoint action locates. */
+  private def amtProviderFromCheckpointOpt(
+      checkpointOpt: Option[Checkpoint]): AMTCheckpointProvider = {
+    val checkpoint = checkpointOpt.filter(_.contentRoot.version == version).getOrElse(
+      throw new IllegalStateException(
+        s"Commit $version's CommitInfo makes it a manifest commit at its own version, but it " +
+          s"has no Checkpoint action whose content root is at that version."))
+    AMTCheckpointProvider.fromCheckpoint(SparkSession.active, deltaLog, checkpoint, version)
+  }
 }
 
 object SingleCommit {
   /**
-   * Wrap a commit's log file into a [[SingleCommit]] handle. The raw [[FileStatus]] stays hidden
-   * inside the handle so the log's physical layout is not exposed to callers.
+   * Wrap a commit's log file into a [[DeltaSingleCommit]] handle. The raw [[FileStatus]] stays
+   * hidden inside the handle so the log's physical layout is not exposed to callers.
    */
   private[delta] def apply(
       deltaLog: DeltaLog,
       version: Long,
-      fileStatus: FileStatus): SingleCommit =
+      fileStatus: FileStatus): DeltaSingleCommit =
     new SingleCommit(deltaLog, version, fileStatus)
 
   /**
@@ -93,9 +246,6 @@ object SingleCommit {
    * constraints. If the commit's log file is smaller than `maxInMemoryFileSizeBytes`, its actions
    * are read into memory once and replayed on every `rewind()`; otherwise the file is re-read on
    * each pass.
-   *
-   * TODO(AMT): This needs AMT support for manifest commits, whose file actions live in the content
-   * tree rather than the commit JSON.
    */
   private def createRewindableActionIterator(
       deltaLog: DeltaLog,
@@ -124,5 +274,30 @@ object SingleCommit {
         delegatedIterator = createClosableIterator()
       }
     }
+  }
+}
+
+/**
+ * A commit reader paired with the inclusive version range its actions cover.
+ *
+ * Compacted files omit CommitInfo, so `commit.timestamp` is the compacted file's modification
+ * time, not the timestamp of any individual source commit. The reader is used only for actions;
+ * `commit.version` identifies the end of the range.
+ */
+private[delta] class RangedSingleCommit private (
+  val commit: DeltaSingleCommit,
+  val startVersion: Long,
+  val endVersion: Long)
+
+private[delta] object RangedSingleCommit {
+  def apply(deltaLog: DeltaLog, file: FileStatus): RangedSingleCommit = {
+    val (startVersion, endVersion) = file match {
+      case FileNames.CompactedDeltaFile(_, start, end) => (start, end)
+      case _ =>
+        val version = FileNames.deltaVersion(file)
+        (version, version)
+    }
+    val commit = SingleCommit(deltaLog, endVersion, file)
+    new RangedSingleCommit(commit, startVersion, endVersion)
   }
 }

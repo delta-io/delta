@@ -627,6 +627,17 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
 
+  /**
+   * Whether writers write AMT state and new checkpoints are AMT trees, on a table that has the
+   * `adaptiveMetadata-dev` feature in its protocol. CREATE of such a table sets it to true.
+   */
+  val ADAPTIVE_METADATA_ENABLED = buildConfig[Boolean](
+    key = "enableAdaptiveMetadata",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
   /*
    * This is the table property that determines which Parquet format version should be used when
    * writing new Parquet files on the table.
@@ -981,27 +992,32 @@ trait DeltaConfigsBase extends DeltaLogging {
 
   /**
    * This table property is used to track the version of the table at which
-   * inCommitTimestamps were enabled.
+   * inCommitTimestamps were enabled. Internal property that cannot be set by users: a
+   * user-specified value (e.g. copied from another table) can point to a version that is not in
+   * this table's log and break later commits and ICT-based time travel.
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION = buildConfig[Option[Long]](
     "inCommitTimestampEnablementVersion",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
-    "needs to be a long."
+    "needs to be a long.",
+    userConfigurable = false
   )
 
   /**
    * This table property is used to track the timestamp at which inCommitTimestamps
    * were enabled. More specifically, it is the inCommitTimestamp of the commit with
-   * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
+   * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]]. Internal property that
+   * cannot be set by users.
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP = buildConfig[Option[Long]](
     "inCommitTimestampEnablementTimestamp",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
-    "needs to be a long.")
+    "needs to be a long.",
+    userConfigurable = false)
 
   /**
    * This property is used by CheckpointProtectionTableFeature and denotes the

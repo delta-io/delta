@@ -1212,6 +1212,219 @@ trait DeltaTableCreationTests
     }
   }
 
+  // Same names and types as the existing log, listed in a different order. CREATE TABLE over
+  // that location must fail when verifyColumnOrder is on, and is accepted (keeping the log
+  // order) when verifyColumnOrder is off.
+  private val existingLocationDdl =
+    "id BIGINT, shipping DECIMAL(10,2), discount DECIMAL(10,2), " +
+      "addr STRUCT<city: STRING, country: STRING>, " +
+      "tags ARRAY<STRUCT<k: STRING, v: INT>>, " +
+      "attrs MAP<STRING, STRUCT<k: STRING, v: INT>>"
+
+  private val topLevelSwapDdl =
+    "id BIGINT, discount DECIMAL(10,2), shipping DECIMAL(10,2), " +
+      "addr STRUCT<city: STRING, country: STRING>, " +
+      "tags ARRAY<STRUCT<k: STRING, v: INT>>, " +
+      "attrs MAP<STRING, STRUCT<k: STRING, v: INT>>"
+
+  private val partitionColMovedDdl =
+    "shipping DECIMAL(10,2), discount DECIMAL(10,2), " +
+      "addr STRUCT<city: STRING, country: STRING>, " +
+      "tags ARRAY<STRUCT<k: STRING, v: INT>>, " +
+      "attrs MAP<STRING, STRUCT<k: STRING, v: INT>>, id BIGINT"
+
+  private val structFieldSwapDdl =
+    "id BIGINT, shipping DECIMAL(10,2), discount DECIMAL(10,2), " +
+      "addr STRUCT<country: STRING, city: STRING>, " +
+      "tags ARRAY<STRUCT<k: STRING, v: INT>>, " +
+      "attrs MAP<STRING, STRUCT<k: STRING, v: INT>>"
+
+  private val arrayStructFieldSwapDdl =
+    "id BIGINT, shipping DECIMAL(10,2), discount DECIMAL(10,2), " +
+      "addr STRUCT<city: STRING, country: STRING>, " +
+      "tags ARRAY<STRUCT<v: INT, k: STRING>>, " +
+      "attrs MAP<STRING, STRUCT<k: STRING, v: INT>>"
+
+  private val mapStructFieldSwapDdl =
+    "id BIGINT, shipping DECIMAL(10,2), discount DECIMAL(10,2), " +
+      "addr STRUCT<city: STRING, country: STRING>, " +
+      "tags ARRAY<STRUCT<k: STRING, v: INT>>, " +
+      "attrs MAP<STRING, STRUCT<v: INT, k: STRING>>"
+
+  private def withExistingDeltaLocation(f: String => Unit): Unit = {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("orders_raw", "orders") {
+        sql(s"CREATE TABLE orders_raw ($existingLocationDdl) USING delta " +
+          s"PARTITIONED BY (id) LOCATION '$path'")
+        sql("INSERT INTO orders_raw VALUES (1, 5.00, 0.50, " +
+          "named_struct('city', 'Paris', 'country', 'FR'), " +
+          "array(named_struct('k', 'a', 'v', 1)), " +
+          "map('m', named_struct('k', 'a', 'v', 1)))")
+        f(path)
+      }
+    }
+  }
+
+  private def createOrdersOverLocation(path: String, columns: String): Unit = {
+    sql(s"CREATE TABLE orders ($columns) USING delta PARTITIONED BY (id) LOCATION '$path'")
+  }
+
+  private def assertColumnOrderMismatch(path: String, columns: String, message: String): Unit = {
+    val ex = intercept[AnalysisException](createOrdersOverLocation(path, columns))
+    assert(ex.getErrorClass == "DELTA_CREATE_TABLE_SCHEME_MISMATCH")
+    assert(ex.getMessage.contains(message), ex.getMessage)
+  }
+
+  private val columnOrderCases = Seq(
+    (topLevelSwapDdl,
+      "Specified order of top-level fields is different from existing schema"),
+    (partitionColMovedDdl,
+      "Specified order of top-level fields is different from existing schema"),
+    (structFieldSwapDdl,
+      "Specified order of fields of addr is different from existing schema"),
+    (arrayStructFieldSwapDdl,
+      "Specified order of fields of tags[] is different from existing schema"),
+    (mapStructFieldSwapDdl,
+      "Specified order of fields of attrs[value] is different from existing schema")
+  )
+
+  private def assertAllColumnOrderMismatches(path: String): Unit = {
+    for ((ddl, message) <- columnOrderCases) {
+      assertColumnOrderMismatch(path, ddl, message)
+    }
+  }
+
+  private def createOrdersCtasOverLocation(path: String, selectList: String): Unit = {
+    sql(s"CREATE TABLE orders USING delta PARTITIONED BY (id) LOCATION '$path' " +
+      s"AS SELECT $selectList FROM orders_raw")
+  }
+
+  test("CREATE TABLE over an existing location rejects a reordered " +
+      "column list when verifyColumnOrder is on") {
+    withExistingDeltaLocation { path =>
+      withSQLConf(DeltaSQLConf.CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED.key -> "true") {
+        assertAllColumnOrderMismatches(path)
+      }
+    }
+  }
+
+  test("CREATE TABLE over an existing location treats a case-folded " +
+      "column reorder as missing and extra names, not an order permutation") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("src", "dst") {
+        sql(s"CREATE TABLE src (a INT, b INT) USING delta LOCATION '$path'")
+        withSQLConf(DeltaSQLConf.CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED.key -> "true") {
+          val ex = intercept[AnalysisException] {
+            sql(s"CREATE TABLE dst (`B` INT, `A` INT) USING delta LOCATION '$path'")
+          }
+          assert(ex.getErrorClass == "DELTA_CREATE_TABLE_SCHEME_MISMATCH")
+          assert(ex.getMessage.contains("missing field(s): a, b"), ex.getMessage)
+          assert(ex.getMessage.contains("additional field(s): B, A"), ex.getMessage)
+          assert(!ex.getMessage.contains(
+            "Specified order of top-level fields is different from existing schema"),
+            ex.getMessage)
+        }
+      }
+    }
+  }
+
+  test("CREATE TABLE IF NOT EXISTS over an existing location still " +
+      "rejects a reordered column list when verifyColumnOrder is on") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withTable("src", "dst") {
+        sql(s"CREATE TABLE src (a INT, b INT) USING delta LOCATION '$path'")
+        withSQLConf(DeltaSQLConf.CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED.key -> "true") {
+          val ex = intercept[AnalysisException] {
+            sql(s"CREATE TABLE IF NOT EXISTS dst (b INT, a INT) USING delta LOCATION '$path'")
+          }
+          assert(ex.getErrorClass == "DELTA_CREATE_TABLE_SCHEME_MISMATCH")
+          assert(ex.getMessage.contains(
+            "Specified order of top-level fields is different from existing schema"),
+            ex.getMessage)
+        }
+      }
+    }
+  }
+
+  test("CREATE TABLE over an existing location accepts matching " +
+      "column order when verifyColumnOrder is on") {
+    withExistingDeltaLocation { path =>
+      withSQLConf(DeltaSQLConf.CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED.key -> "true") {
+        createOrdersOverLocation(path, existingLocationDdl)
+      }
+    }
+  }
+
+  test("CREATE TABLE over an existing location ignores column order " +
+      "when verifyColumnOrder is off") {
+    withExistingDeltaLocation { path =>
+      withSQLConf(DeltaSQLConf.CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED.key -> "false") {
+        for ((ddl, _) <- columnOrderCases) {
+          createOrdersOverLocation(path, ddl)
+          sql("DROP TABLE IF EXISTS orders")
+        }
+      }
+    }
+  }
+
+
+
+  test("CREATE TABLE over an existing location still reports type " +
+      "mismatch when verifyColumnOrder is off") {
+    withExistingDeltaLocation { path =>
+      withSQLConf(DeltaSQLConf.CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED.key -> "false") {
+        val typeEx = intercept[AnalysisException] {
+          createOrdersOverLocation(
+            path,
+            "id INT, shipping DECIMAL(10,2), discount DECIMAL(10,2), " +
+              "addr STRUCT<city: STRING, country: STRING>, " +
+              "tags ARRAY<STRUCT<k: STRING, v: INT>>, " +
+              "attrs MAP<STRING, STRUCT<k: STRING, v: INT>>")
+        }
+        assert(typeEx.getErrorClass == "DELTA_CREATE_TABLE_SCHEME_MISMATCH")
+        assert(typeEx.getMessage.contains("Specified type for id is different"), typeEx.getMessage)
+      }
+    }
+  }
+
+  test("CREATE TABLE over an existing location stores swapped values " +
+      "from a positional INSERT when verifyColumnOrder is off") {
+    withExistingDeltaLocation { path =>
+      withSQLConf(DeltaSQLConf.CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED.key -> "false") {
+        // Combined top-level and nested reorder: accepted, but the table keeps the log order,
+        // so a positional INSERT written against the DDL stores swapped values.
+        sql("CREATE TABLE orders (id BIGINT, discount DECIMAL(10,2), shipping DECIMAL(10,2), " +
+          "addr STRUCT<country: STRING, city: STRING>, " +
+          "tags ARRAY<STRUCT<k: STRING, v: INT>>, " +
+          "attrs MAP<STRING, STRUCT<k: STRING, v: INT>>) " +
+          s"USING delta PARTITIONED BY (id) LOCATION '$path'")
+      }
+      sql("INSERT INTO orders VALUES (2, 1.25, 9.99, " +
+        "named_struct('country', 'DE', 'city', 'Berlin'), " +
+        "array(named_struct('k', 'b', 'v', 2)), " +
+        "map('m', named_struct('k', 'b', 'v', 2)))")
+      checkAnswer(
+        sql("SELECT id, discount, shipping, addr.city, addr.country FROM orders_raw"),
+        Row(1L, BigDecimal("0.50"), BigDecimal("5.00"), "Paris", "FR") ::
+          Row(2L, BigDecimal("9.99"), BigDecimal("1.25"), "DE", "Berlin") :: Nil)
+    }
+  }
+
+  test("CTAS over an existing location fails as non-empty before " +
+      "column order is checked when verifyColumnOrder is on") {
+    withExistingDeltaLocation { path =>
+      withSQLConf(DeltaSQLConf.CREATE_TABLE_VERIFY_COLUMN_ORDER_ENABLED.key -> "true") {
+        val ex = intercept[AnalysisException] {
+          createOrdersCtasOverLocation(path, "id, discount, shipping, addr, tags, attrs")
+        }
+        assert(ex.getErrorClass == "DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION")
+      }
+    }
+  }
+
   testQuietly("create table with unknown table properties should throw an error") {
     withTempDir { tempDir =>
       withTable("delta_test") {

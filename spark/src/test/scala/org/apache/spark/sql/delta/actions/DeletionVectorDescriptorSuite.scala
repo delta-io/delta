@@ -48,7 +48,7 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
 
     // Unique id to identify the DV
     assert(dv.legacyUniqueId === s"i$encodedDVData")
-    assert(dv.uniqueFileId === s"i$encodedDVData")
+    assert(dv.uniqueFileId(testTablePath, useObjectIdentity = false) === s"i$encodedDVData")
 
     // There is no on-disk file name for an inline DV
     intercept[IllegalArgumentException] { dv.absolutePath(testTablePath) }
@@ -77,7 +77,7 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
       // Unique id to identify the DV
       val offsetSuffix = offset.map(o => s"@$o").getOrElse("")
       assert(dv.legacyUniqueId === s"p$testDVAbsPath$offsetSuffix")
-      assert(dv.uniqueFileId === s"p$testDVAbsPath")
+      assert(dv.uniqueFileId(testTablePath, useObjectIdentity = false) === s"p$testDVAbsPath")
 
       // Given the input already has an absolute path, it should return the path in DV
       assert(dv.absolutePath(testTablePath) === new Path(testDVAbsPath))
@@ -114,7 +114,7 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
       val offsetSuffix = offset.map(o => s"@$o").getOrElse("")
       val encodedUUID = encodeUUID(uuid, "prefix")
       assert(dv.legacyUniqueId === s"u$encodedUUID$offsetSuffix")
-      assert(dv.uniqueFileId === s"u$encodedUUID")
+      assert(dv.uniqueFileId(testTablePath, useObjectIdentity = false) === s"u$encodedUUID")
 
       // Expect the DV final path to be under the given table path
       assert(dv.absolutePath(testTablePath) ===
@@ -158,7 +158,7 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
       // Unique id to identify the DV
       val offsetSuffix = offset.map(o => s"@$o").getOrElse("")
       assert(dv.legacyUniqueId === s"r$testDVRelPath$offsetSuffix")
-      assert(dv.uniqueFileId === s"r$testDVRelPath")
+      assert(dv.uniqueFileId(testTablePath, useObjectIdentity = false) === s"r$testDVRelPath")
 
       // Expect the DV path to resolve under the given table path.
       assert(dv.absolutePath(testTablePath) === new Path(s"$testTablePath/$testDVRelPath"))

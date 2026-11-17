@@ -102,10 +102,12 @@ object IcebergTransactionUtils
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
       statsParser: String => InternalRow,
-      snapshot: Snapshot): DataFile = {
+      snapshot: Snapshot,
+      disableExplicitRowIdAssignment: Boolean = false): DataFile = {
     var dataFileBuilder =
       convertFileAction(
-        add, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)
+        add, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot,
+        disableExplicitRowIdAssignment)
         // Attempt to attach the number of records metric regardless of whether the Delta stats
         // string is null/empty or not because this metric is required by Iceberg. If the number
         // of records is both unavailable here and unavailable in the Delta stats, Iceberg will
@@ -149,7 +151,8 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: SnapshotDescriptor): DataFiles.Builder = {
+      snapshot: SnapshotDescriptor,
+      disableExplicitRowIdAssignment: Boolean = false): DataFiles.Builder = {
     val absPath = canonicalizeFilePath(f, tablePath)
     var builder = DataFiles
       .builder(partitionSpec)
@@ -162,7 +165,7 @@ object IcebergTransactionUtils
           snapshot, partitionSpec, f.partitionValues, logicalToPhysicalPartitionNames))
     }
     f match {
-      case add: AddFile =>
+      case add: AddFile if !disableExplicitRowIdAssignment =>
         add.baseRowId.map { rowId =>
           builder.withFirstRowId(rowId)
         }
@@ -358,15 +361,27 @@ object IcebergTransactionUtils
      */
     def setIcebergTxnLastSequenceNumber(txn: IcebergTransaction, sequenceNumber: Long): Unit = {
       Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
-        .foreach { metadata =>
-          val mirror = universe.runtimeMirror(getClass.getClassLoader)
-          val instanceMirror = mirror.reflect(metadata)
-          val field = universe
-            .typeOf[TableMetadata]
-            .decl(universe.TermName("lastSequenceNumber"))
-            .asTerm
-          instanceMirror.reflectField(field).set(sequenceNumber)
-        }
+        .foreach(setIcebergMetadataLastSequenceNumber(_, sequenceNumber))
+    }
+
+    /**
+     * Sets `TableMetadata.lastSequenceNumber` without adding an Iceberg snapshot. This is used when
+     * a metadata-only Delta commit must advance the corresponding Iceberg sequence boundary.
+     * Iceberg does not expose a public mutator, so the field is updated reflectively.
+     *
+     * @param metadata metadata instance to update
+     * @param sequenceNumber new last sequence number
+     */
+    def setIcebergMetadataLastSequenceNumber(
+        metadata: TableMetadata,
+        sequenceNumber: Long): Unit = {
+      val mirror = universe.runtimeMirror(getClass.getClassLoader)
+      val instanceMirror = mirror.reflect(metadata)
+      val field = universe
+        .typeOf[TableMetadata]
+        .decl(universe.TermName("lastSequenceNumber"))
+        .asTerm
+      instanceMirror.reflectField(field).set(sequenceNumber)
     }
 
     /**

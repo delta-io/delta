@@ -284,11 +284,12 @@ trait DeleteCDCTableWithDVsTests extends DeleteCDCMixin
       checkAnswer(
         readDeltaTableByIdentifier(),
         Seq(1, 2, 4, 5, 6, 7, 8, 9).toDF())
+      val deleteVersion = getLatestOperationVersion("DELETE")
       checkAnswer(
-        computeCDC(spark, deltaLog, 2, 2).drop(CDC_COMMIT_TIMESTAMP),
+        computeCDC(spark, deltaLog, deleteVersion, deleteVersion).drop(CDC_COMMIT_TIMESTAMP),
         Seq(0, 3).toDF()
           .withColumn(CDC_TYPE_COLUMN_NAME, lit(CDC_TYPE_DELETE_STRING))
-          .withColumn(CDC_COMMIT_VERSION, lit(2)))
+          .withColumn(CDC_COMMIT_VERSION, lit(deleteVersion)))
       spark.sql(s"DROP TABLE IF EXISTS $deleteSourceTableName")
     }
   }
@@ -310,11 +311,12 @@ trait DeleteCDCTableWithDVsTests extends DeleteCDCMixin
       checkAnswer(
         readDeltaTableByIdentifier(),
         spark.range(0, 5).toDF())
+      val deleteVersion = getLatestOperationVersion("DELETE")
       checkAnswer(
-        computeCDC(spark, deltaLog, 2, 2).drop(CDC_COMMIT_TIMESTAMP),
+        computeCDC(spark, deltaLog, deleteVersion, deleteVersion).drop(CDC_COMMIT_TIMESTAMP),
         spark.range(5, 10).toDF()
           .withColumn(CDC_TYPE_COLUMN_NAME, lit(CDC_TYPE_DELETE_STRING))
-          .withColumn(CDC_COMMIT_VERSION, lit(2)))
+          .withColumn(CDC_COMMIT_VERSION, lit(deleteVersion)))
       spark.sql(s"DROP TABLE IF EXISTS $deleteSourceTableName")
     }
   }

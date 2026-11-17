@@ -16,10 +16,8 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
-import java.lang.{Long => JLong}
-import java.util.Optional
-
 import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import io.delta.kernel.{CommitRange => KernelCommitRange}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.internal.{
@@ -32,6 +30,9 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
 
   test("query-context methods forward to context-free implementations by default") {
     var forwardedCalls = 0
+    val changeParams = GetTableChangesParam(31, Some(37L))
+    assert(changeParams.commitRangeValidation)
+    assert(changeParams.failOnDataLoss)
 
     val manager = new DeltaV2SnapshotManager {
       override def loadLatestSnapshot(): Snapshot = {
@@ -70,11 +71,9 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
 
       override def getTableChanges(
           kernelEngine: KernelEngine,
-          startVersion: Long,
-          endVersion: Optional[JLong]): KernelCommitRange = {
+          params: GetTableChangesParam): KernelCommitRange = {
         assert(kernelEngine == null)
-        assert(startVersion == 31)
-        assert(endVersion == Optional.of[JLong](37L))
+        assert(params == changeParams)
         forwardedCalls += 1
         null
       }
@@ -99,8 +98,7 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
     assert(
       manager.getTableChanges(
         null,
-        31,
-        Optional.of[JLong](37L),
+        changeParams,
         queryContext) == null)
 
     def assertNullQueryContext(body: => Any): Unit = {
@@ -112,7 +110,8 @@ class DeltaV2SnapshotManagerSuite extends SparkFunSuite {
     assertNullQueryContext(manager.loadSnapshotAt(41, null))
     assertNullQueryContext(manager.getActiveCommitAtTime(43, true, false, true, null))
     assertNullQueryContext(manager.checkVersionExists(47, false, true, null))
-    assertNullQueryContext(manager.getTableChanges(null, 53, Optional.empty(), null))
+    assertNullQueryContext(manager.getTableChanges(
+      null, GetTableChangesParam(53, None), null))
     assert(forwardedCalls == 5)
   }
 }

@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import scala.collection.mutable
 
-import io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClientBuilder
 import io.delta.storage.commit.CommitCoordinatorClient
 
 import org.apache.spark.sql.SparkSession
@@ -48,9 +47,11 @@ trait CommitCoordinatorBuilder {
   def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient
 }
 
-/** An extended builder interface for [[CommitCoordinatorClient]] with CatalogOwned table feature */
+/**
+ * An extended builder interface for [[CommitCoordinatorClient]] with CatalogManaged table feature
+ */
 trait CatalogOwnedCommitCoordinatorBuilder extends CommitCoordinatorBuilder {
-  /** Returns a catalog-owned commit-coordinator client based for the given catalog. */
+  /** Returns a catalog-managed commit-coordinator client based for the given catalog. */
   def buildForCatalog(spark: SparkSession, catalogName: String): CommitCoordinatorClient
 }
 
@@ -111,13 +112,14 @@ object CommitCoordinatorProvider {
   }
 
   private val initialCommitCoordinatorBuilders = Seq[CommitCoordinatorBuilder](
-    UCCommitCoordinatorBuilder,
-    new DynamoDBCommitCoordinatorClientBuilder()
+    UCCommitCoordinatorBuilder
   )
   initialCommitCoordinatorBuilders.foreach(registerBuilder)
 }
 
-/** Factory to get the correct [[CatalogOwnedCommitCoordinatorBuilder]] for a catalog-owned table */
+/**
+ * Factory to get the correct [[CatalogOwnedCommitCoordinatorBuilder]] for a catalog-managed table
+ */
 object CatalogOwnedCommitCoordinatorProvider {
   // mapping from catalog names to the corresponding [[CatalogOwnedCommitCoordinatorBuilder]]s.
   private val catalogNameToBuilderMapping =

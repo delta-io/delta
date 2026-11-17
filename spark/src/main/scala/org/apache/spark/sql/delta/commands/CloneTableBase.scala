@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -228,11 +229,11 @@ abstract class CloneTableBase(
       var actions: Iterator[Action] =
         addFileIter.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
-          // CLONE does not preserve Row IDs and Commit Versions, nor the source table's AMT
-          // back reference and passthrough.
+          // CLONE does not preserve Row IDs and Commit Versions, nor the source
+          // table's AMT back reference, snapshot IDs and passthrough.
           copiedFile.copy(
             baseRowId = None, defaultRowCommitVersion = None, backReference = None,
-            amtPassthrough = None)
+            amtPassthrough = None, snapshotId = None, modifiedSnapshotId = None)
         }
       sourceTable.snapshot.foreach { sourceSnapshot =>
         // Handle DomainMetadata for cloning a table.
@@ -274,7 +275,7 @@ abstract class CloneTableBase(
           deltaOperation,
           context,
           commitOpMetrics.mapValues(_.toString()).toMap,
-          dataChange = Some(commitDataChange))
+          dataChange = commitDataChange)
       }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(
@@ -315,7 +316,10 @@ abstract class CloneTableBase(
     val filteredConfiguration = clonedMetadata.configuration
       // Coordinated Commit configurations are never copied over to the target table.
       .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
-      // Catalog-Owned enabled table's UC table ID property is never copied over to the
+      // ICT enablement provenance info refers to the source's log. The commit re-derives it for
+      // the target (see InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo).
+      .filterKeys(!InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(_))
+      // Catalog-Managed enabled table's UC table ID property is never copied over to the
       // target table.
       .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
       .toMap
@@ -359,9 +363,6 @@ abstract class CloneTableBase(
       targetSnapshot: SnapshotDescriptor,
       validatedOverrides: Map[String, String]): Map[String, String] = {
     if (tableExists(targetSnapshot)) {
-      assert(validatedOverrides.isEmpty,
-        "Explicit overrides on Coordinated Commits configurations for existing tables" +
-          " are not supported, and should have been caught earlier.")
       CoordinatedCommitsUtils.getExplicitCCConfigurations(targetSnapshot.metadata.configuration)
     } else {
       if (validatedOverrides.nonEmpty) {
@@ -416,6 +417,30 @@ abstract class CloneTableBase(
       metadata.configuration ++
         validatedConfigurationsWithoutCoordinatedCommits ++
         finalCatalogOwnedMetadata)
+    // An AMT source makes a new target AMT only through the protocol, which the defaults applied
+    // while creating its metadata (e.g. the catalog-managed QoL features) do not see. Request AMT
+    // in the configuration too, so that they skip the features AMT is incompatible with. An
+    // existing target gets none of those defaults.
+    if (!tableExists(targetSnapshot)) {
+      AdaptiveMetadataTableFeatureBase.supportedBy(sourceTable.protocol).foreach { amtFeature =>
+        metadata = metadata.copy(configuration = metadata.configuration +
+          (TableFeatureProtocolUtils.propertyKey(amtFeature) ->
+            TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
+      }
+    }
+    // AMT requires column mapping `id` mode, and a new table gets it enabled automatically. CLONE
+    // copies the source's data files as they are, and files written without column mapping have
+    // no Parquet field IDs, so the target cannot be in `id` mode. Iceberg files carry field IDs.
+    // Match every way the transaction turns AMT on: the configuration (the feature property or
+    // Iceberg Native) or the target protocol.
+    if (!tableExists(targetSnapshot) &&
+        !sourceTable.isInstanceOf[CloneIcebergSource] &&
+        sourceTable.metadata.columnMappingMode != IdMapping &&
+        (AMTUtils.amtRequested(metadata.configuration) ||
+          AMTUtils.amtSupported(targetSnapshot.protocol))) {
+      throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
+        AdaptiveMetadataTableFeature.name, sourceTable.metadata.columnMappingMode.name)
+    }
 
     verifyMetadataInvariants(targetSnapshot, metadata)
     metadata
@@ -429,7 +454,7 @@ abstract class CloneTableBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       opName: String): Protocol = {
-    // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table.
+    // Catalog-Managed: Do not copy over [[CatalogOwnedTableFeature]] from source table.
     val sourceProtocol =
       sourceTable.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
     // Pre-transaction version of the target table.
@@ -440,14 +465,14 @@ abstract class CloneTableBase(
     // the table property overrides as table features set by it won't be in the transaction
     // metadata anymore.
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
-    // For CREATE CLONE, check the default spark configuration for Catalog-Owned.
+    // For CREATE CLONE, check the default spark configuration for Catalog-Managed.
     val catalogOwnedEnabledByDefaultConf =
       if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
           && !tableExists(txn.snapshot)) {
         // Append [[CatalogOwnedTableFeature]] to the `configWithOverrides` below if table
-        // does not exist, to ensure the final target protocol contains CatalogOwned
+        // does not exist, to ensure the final target protocol contains CatalogManaged
         // if enabled by default.
-        // Note: We need this because CatalogOwned is enabled through single protocol
+        // Note: We need this because CatalogManaged is enabled through single protocol
         //       without auxiliary metadata.
         Map(s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported")
       } else {

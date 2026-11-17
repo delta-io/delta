@@ -55,7 +55,6 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
 import org.apache.spark.sql.execution.{FileSourceScanLike, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.{ManualClock, SystemClock, Utils}
@@ -100,6 +99,15 @@ object DeltaTestUtilsBase {
 trait CDCTestMixin {
   // Setting the spark Conf is left to the test implementation.
 
+  /** Reads through the CDF scan so tests also exercise scan filter handling. */
+  def readCDF(
+      spark: SparkSession,
+      tableName: String,
+      startVersion: Long,
+      endVersion: Long): DataFrame = {
+    spark.sql(s"SELECT * FROM table_changes('$tableName', $startVersion, $endVersion)")
+  }
+
   def computeCDC(
       spark: SparkSession,
       deltaLog: DeltaLog,
@@ -111,7 +119,7 @@ trait CDCTestMixin {
 }
 
 trait ChangelogV2CDCUtilMixin
-  extends SharedSparkSession
+  extends DeltaSQLCommandTest
   with CDCTestMixin
   with ChangelogSyntaxSupportedShim {
 
@@ -160,7 +168,7 @@ trait ChangelogV2CDCUtilMixin
       startVersion: Long,
       endVersion: Long,
       predicates: Seq[Expression] = Seq.empty): DataFrame = {
-    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+    withConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
       val tablePath = deltaLog.dataPath.toString
       val tempName = s"v2cdc_temp_${System.nanoTime()}"
       spark.sql(s"CREATE TABLE $tempName USING delta LOCATION '$tablePath'")
@@ -445,13 +453,14 @@ trait DeltaTestUtilsBase {
 }
 
 trait DeltaCheckpointTestUtils
-  extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
+  extends DeltaSQLCommandTest
+  with DeltaTestUtilsBase {
 
   def testDifferentCheckpoints(testName: String, quiet: Boolean = false)
       (f: (CheckpointPolicy.Policy, Option[V2Checkpoint.Format]) => Unit): Unit = {
     test(s"$testName [Checkpoint V1]") {
       def testFunc(): Unit = {
-        withSQLConf(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey ->
+        withConf(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey ->
           CheckpointPolicy.Classic.name) {
           f(CheckpointPolicy.Classic, None)
         }
@@ -461,7 +470,7 @@ trait DeltaCheckpointTestUtils
     for (checkpointFormat <- V2Checkpoint.Format.ALL)
     test(s"$testName [Checkpoint V2, format: ${checkpointFormat.name}]") {
       def testFunc(): Unit = {
-        withSQLConf(
+        withConf(
           DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
           DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> checkpointFormat.name
         ) {
@@ -507,7 +516,7 @@ trait DeltaCheckpointTestUtils
 }
 
 trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
-  self: SparkFunSuite with SharedSparkSession =>
+  self: DeltaSQLCommandTest =>
 
   /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
   protected def minorCompactDeltaLog(
@@ -735,7 +744,7 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
 }
 
 trait DeltaTestUtilsForTempViews
-  extends SharedSparkSession
+  extends DeltaSQLCommandTest
   with DeltaTestUtilsBase {
 
   def testWithTempView(testName: String)(testFun: Boolean => Any): Unit = {
@@ -1029,6 +1038,25 @@ trait DeltaDMLTestUtils
   }
 
   /**
+   * Finds the latest operation of the given type that ran on the given table and returns its
+   * commit version.
+   *
+   * @param operation Delta operation name, see [[DeltaOperations]].
+   * @param tableIdentifier SQL identifier of the table, defaults to the test table.
+   */
+  protected def getLatestOperationVersion(
+      operation: String,
+      tableIdentifier: String = tableSQLIdentifier): Long = {
+    val operationVersions = sql(s"DESCRIBE HISTORY $tableIdentifier")
+      .where($"operation" === operation)
+      .select($"version")
+      .as[Long]
+      .collect()
+    assert(operationVersions.nonEmpty, s"Couldn't find a ${operation} operation")
+    operationVersions.max
+  }
+
+  /**
    * Finds the latest operation of the given type that ran on the test table and returns the
    * dataframe with the changes of the corresponding table version.
    *
@@ -1159,7 +1187,7 @@ trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
  */
 case object NameBasedAccessIncompatible extends Tag("NameBasedAccessIncompatible")
 
-trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils with SharedSparkSession {
+trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils with DeltaSQLCommandTest {
 
   override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(
       implicit pos: Position): Unit = {

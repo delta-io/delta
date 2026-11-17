@@ -40,7 +40,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, -1) :: Row(3, -1) :: Row(4, -1) :: Nil)
 
-    val latestVersion = deltaLog.update().version
+    val latestVersion = getLatestOperationVersion("UPDATE")
     checkAnswer(
       computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
@@ -63,7 +63,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, -1) :: Row(3, -1) :: Row(4, -1) :: Nil)
 
-    val latestVersion = deltaLog.update().version
+    val latestVersion = getLatestOperationVersion("UPDATE")
     checkAnswer(
       computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
@@ -86,7 +86,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, 3) :: Row(4, 4) :: Nil)
 
-    val latestVersion = deltaLog.update().version
+    val latestVersion = getLatestOperationVersion("UPDATE")
     checkAnswer(
       computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
@@ -103,7 +103,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, 3) :: Row(4, 4) :: Nil)
 
-    val latestVersion1 = deltaLog.update().version
+    val latestVersion1 = getLatestOperationVersion("UPDATE")
     checkAnswer(
       computeCDC(spark, deltaLog, latestVersion1, latestVersion1)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
@@ -116,7 +116,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -3",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, -3) :: Row(4, 4) :: Nil)
 
-    val latestVersion2 = deltaLog.update().version
+    val latestVersion2 = getLatestOperationVersion("UPDATE")
     checkAnswer(
       computeCDC(spark, deltaLog, latestVersion1, latestVersion2)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
@@ -137,7 +137,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, -1) :: Row(4, 4) :: Nil)
 
-    val latestVersion = deltaLog.update().version
+    val latestVersion = getLatestOperationVersion("UPDATE")
     checkAnswer(
       computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
@@ -158,18 +158,19 @@ trait UpdateCDCTests  extends UpdateSQLMixin
         .partitionBy("partition_column")
         .format("delta")
         .saveAsTable(tableName)
+      val log = DeltaLog.forTable(
+        spark,
+        spark.sessionState.sqlParser.parseTableIdentifier(tableName))
       sql(s"INSERT INTO $tableName VALUES (4, 4, 4)")
-      sql(s"UPDATE $tableName SET partition_column = null WHERE partition_column = 4")
+      val insertVersion = getLatestOperationVersion("WRITE", tableName)
+      executeUpdate(tableName, "partition_column = null", "partition_column = 4")
+      val updateVersion = getLatestOperationVersion("UPDATE", tableName)
       checkAnswer(
-        computeCDC(spark,
-          DeltaLog.forTable(
-            spark,
-            spark.sessionState.sqlParser.parseTableIdentifier(tableName)
-          ), 1, 2)
+        computeCDC(spark, log, insertVersion, updateVersion)
           .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-        Row(4, 4, 4, "insert", 1) ::
-          Row(4, 4, 4, "update_preimage", 2) ::
-          Row(4, null, 4, "update_postimage", 2)  :: Nil)
+        Row(4, 4, 4, "insert", insertVersion) ::
+          Row(4, 4, 4, "update_preimage", updateVersion) ::
+          Row(4, null, 4, "update_postimage", updateVersion)  :: Nil)
     }
   }
 }

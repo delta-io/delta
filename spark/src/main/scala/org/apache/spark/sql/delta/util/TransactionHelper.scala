@@ -21,7 +21,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, IsolationLevel, Serializable, Snapshot, WriteSerializable}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, FileActionOperationClass, IsolationLevel, Serializable, Snapshot, WriteSerializable}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
@@ -168,9 +168,10 @@ trait TransactionHelper extends DeltaLogging {
   private[delta] lazy val readSnapshotTableCommitCoordinatorClientOpt:
       Option[TableCommitCoordinatorClient] = {
     if (snapshot.isCatalogOwned) {
-      // Catalog owned table's commit coordinator is always determined by the catalog.
+      // Catalog managed table's commit coordinator is always determined by the catalog.
       CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
-        spark, catalogTable, snapshot)
+        spark, catalogTable, snapshot
+      )
     } else {
       // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent
       // commit, then it will be detected as a conflict and the transaction will anyway fail.
@@ -221,7 +222,7 @@ trait TransactionHelper extends DeltaLogging {
       } else {
         metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
       },
-      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
+      // For Catalog-Managed table, the coordinator conf for UC-CC is [[Map.empty]]
       // so we don't distinguish between CO/CC here.
       commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
   }
@@ -280,6 +281,7 @@ trait TransactionHelper extends DeltaLogging {
     private var numCdcFiles: Int = 0
     private var cdcBytesNew: Long = 0L
     private var numAbsolutePaths = 0
+    private var fileActionDataChange = false
     // We don't expect commits to have more than 2 billion actions
     private var numActions: Int = 0
     private val partitionsAdded = mutable.HashSet.empty[Map[String, String]]
@@ -322,12 +324,14 @@ trait TransactionHelper extends DeltaLogging {
         action match {
           case a: AddFile =>
             numAdd += 1
+            fileActionDataChange = a.dataChange
             if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
             partitionsAdded += a.partitionValues
             addFilesHistogram.foreach(_.insert(a.size))
             if (a.dataChange) bytesNew += a.size
           case r: RemoveFile =>
             numRemove += 1
+            fileActionDataChange = r.dataChange
             removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
           case c: AddCDCFile =>
             numCdcFiles += 1
@@ -431,7 +435,11 @@ trait TransactionHelper extends DeltaLogging {
         removeFilesHistogram = removeFilesHistogram.map(FileSizeHistogramUtils.compress),
         numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId),
-        amtCommitStats = amtCommitStatsOpt)
+        amtCommitStats = amtCommitStatsOpt,
+        fileActionOperationClass = Some(
+          FileActionOperationClass
+            .classify(numAdd, numRemove, fileActionDataChange)
+            .toString))
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
     }
 

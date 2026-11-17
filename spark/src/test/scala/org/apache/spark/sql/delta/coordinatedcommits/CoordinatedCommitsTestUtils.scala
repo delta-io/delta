@@ -46,7 +46,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 case object CatalogManagedMaintenanceIncompatible
   extends Tag("CatalogManagedMaintenanceIncompatible")
 
-// This trait is built to serve as a base trait for tests built for both CatalogOwned
+// This trait is built to serve as a base trait for tests built for both CatalogManaged
 // and commit-coordinators table feature.
 trait CommitCoordinatorUtilBase {
   /**
@@ -56,13 +56,13 @@ trait CommitCoordinatorUtilBase {
 
   /**
    * Runs the function `f` with commit coordinator table feature unset.
-   * Any table created in function `f` have CatalogOwned/CoordinatedCommits disabled by default.
+   * Any table created in function `f` have CatalogManaged/CoordinatedCommits disabled by default.
    */
   def withoutDefaultCCTableFeature(f: => Unit): Unit
 
   /**
    * Runs the function `f` with commit coordinator table feature set.
-   * Any table created in function `f` have CatalogOwned/CoordinatedCommits enabled by default.`
+   * Any table created in function `f` have CatalogManaged/CoordinatedCommits enabled by default.`
    */
   def withDefaultCCTableFeature(f: => Unit): Unit
 
@@ -79,7 +79,7 @@ trait CommitCoordinatorUtilBase {
   def propertiesString: String
 
   /**
-   * Returns true if this test is about CatalogOwned table feature.
+   * Returns true if this test is about CatalogManaged table feature.
    * Returns false if this test is about CoordinatedCommits tabel feature.
    */
   def isCatalogOwnedTest: Boolean
@@ -97,7 +97,7 @@ trait CatalogOwnedTestBaseSuite
   val defaultCatalogOwnedFeatureEnabledKey: String =
     TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
 
-  // If this config is not overridden, newly created table is not CatalogOwned by default.
+  // If this config is not overridden, newly created table is not CatalogManaged by default.
   def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = None
 
   def catalogOwnedDefaultCreationEnabledInTests: Boolean =
@@ -196,6 +196,23 @@ trait CatalogOwnedTestBaseSuite
     }
   }
 
+  /** Run the test with:
+   * 1. Without catalog-managed commits
+   * 2. With catalog-managed commits at backfill batch sizes 1, 2, and 10
+   */
+  def testWithDifferentBackfillIntervalOptional(testName: String)(f: Option[Int] => Unit): Unit = {
+    test(s"$testName [Backfill batch size: None]") {
+      withoutDefaultCCTableFeature {
+        f(None)
+      }
+    }
+    testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
+      withDefaultCCTableFeature {
+        f(Some(backfillBatchSize))
+      }
+    }
+  }
+
   /**
    * Run the test against a [[TrackingCommitCoordinatorClient]] with backfill batch size =
    * `batchBackfillSize`
@@ -264,7 +281,7 @@ trait CatalogOwnedTestBaseSuite
   }
 
   /**
-   * Constructs the specific table properties for Catalog Owned tables.
+   * Constructs the specific table properties for Catalog Managed tables.
    *
    * @param spark The Spark session.
    * @param metadata The metadata of the CC table.
@@ -301,7 +318,7 @@ trait CatalogOwnedTestBaseSuite
 
   /**
    * Returns the properties that are expected to show up in the table properties of a Delta table
-   * when catalog owned is enabled in tests.
+   * when catalog managed is enabled in tests.
    */
   def extractCatalogOwnedSpecificPropertiesIfEnabled(
       metadata: Metadata): Iterable[(String, String)] = {
@@ -534,26 +551,6 @@ trait CoordinatedCommitsTestUtils
   }
 
   override def isCatalogOwnedTest: Boolean = false
-
-  /** Run the test with:
-   * 1. Without coordinated-commits
-   * 2. With coordinated-commits with different backfill batch sizes
-   */
-  def testWithDifferentBackfillIntervalOptional(testName: String)(f: Option[Int] => Unit): Unit = {
-    test(s"$testName [Backfill batch size: None]") {
-      f(None)
-    }
-    testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
-      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
-      withSQLConf(
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-            defaultCommitsCoordinatorName,
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
-            coordinatedCommitsCoordinatorJson) {
-        f(Some(backfillBatchSize))
-      }
-    }
-  }
 
   def getUpdatedActionsForZerothCommit(
       commitInfo: CommitInfo,

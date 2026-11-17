@@ -251,7 +251,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            featuresToExclude =
+              Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
             Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
@@ -282,7 +283,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            featuresToExclude =
+              Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
             Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
@@ -516,7 +518,7 @@ class DeltaLogSuite extends QueryTest
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
       if (catalogOwnedDefaultCreationEnabledInTests) {
-        // For Catalog Owned table with a commit that is not backfilled, we can't use
+        // For Catalog Managed table with a commit that is not backfilled, we can't use
         // 00000000002.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
         val oc = getCatalogOwnedCommitCoordinatorClient(
@@ -628,7 +630,7 @@ class DeltaLogSuite extends QueryTest
       val log = DeltaLog.forTable(spark, path)
       var commitFilePath = FileNames.unsafeDeltaFile(log.logPath, 1L)
       if (catalogOwnedDefaultCreationEnabledInTests) {
-        // For Catalog Owned table with a commit that is not backfilled, we can't use
+        // For Catalog Managed table with a commit that is not backfilled, we can't use
         // 00000000001.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
         val oc = getCatalogOwnedCommitCoordinatorClient(

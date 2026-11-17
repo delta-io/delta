@@ -16,13 +16,17 @@
 
 package org.apache.spark.sql.delta.commands
 
+import java.time.Instant
+
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DataFrameUtils, DeltaErrors, DeltaLog, DeltaOptions, OptimisticTransaction}
+import org.apache.spark.sql.delta.PreprocessTableMerge
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.commands.InsertReplaceOnOrUsingAPIOrigin.InsertReplaceOnOrUsingAPIOrigin
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.commons.lang3.StringUtils
 
@@ -151,7 +155,8 @@ case class DeltaInsertReplaceOnOrUsingCommand(
    */
   private def materializeSource(
       sparkSession: SparkSession,
-      insertReplaceCriteria: InsertReplaceCriteria): DataFrame = {
+      insertReplaceCriteria: InsertReplaceCriteria,
+      sourceQueryWithPinnedTimestampOpt: Option[LogicalPlan] = None): DataFrame = {
     commandStats.replaceCriteria = StringUtils.abbreviate(
       insertReplaceCriteria match {
         case InsertReplaceOn(cond, _) => cond.sql
@@ -162,7 +167,12 @@ case class DeltaInsertReplaceOnOrUsingCommand(
       2048)
 
     val Project(schemaAdjustmentProjectionList, originalQueryBeforeSchemaAdjustmentProjection) =
-      query
+      if (sparkSession.conf.get(
+          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+        sourceQueryWithPinnedTimestampOpt.getOrElse(query)
+      } else {
+        query
+      }
 
     // This is the matching condition of the INSERT REPLACE ON/USING operation.
     val replaceOnOrUsingCond: Expression = insertReplaceCriteria match {
@@ -190,17 +200,31 @@ case class DeltaInsertReplaceOnOrUsingCommand(
       Project(schemaAdjustmentProjectionList, getMergeSource.df.queryExecution.analyzed))
   }
 
-  private def checkShouldMaterializeSource(sparkSession: SparkSession): Boolean = {
+  private def checkShouldMaterializeSource(
+      sparkSession: SparkSession,
+      sourceQueryWithPinnedTimestampOpt: Option[LogicalPlan] = None): Boolean = {
     val (shouldMaterialize, materializeReason) =
-      shouldMaterializeSource(sparkSession, source = query, isInsertOnly = false)
+      if (sparkSession.conf.get(
+          DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+        shouldMaterializeSource(sparkSession,
+          source = sourceQueryWithPinnedTimestampOpt.getOrElse(query), isInsertOnly = false)
+      } else {
+        shouldMaterializeSource(sparkSession, source = query, isInsertOnly = false)
+      }
     commandStats.materializeSourceReason = Some(materializeReason.toString)
     shouldMaterialize
   }
 
   private def executeWithRetry(
       sparkSession: SparkSession,
-      runOperationFunc: SparkSession => Seq[Row]): Seq[Row] = {
-    val shouldMaterialize = checkShouldMaterializeSource(sparkSession)
+      runOperationFunc: SparkSession => Seq[Row],
+      sourceQueryWithPinnedTimestampOpt: Option[LogicalPlan] = None): Seq[Row] = {
+    val shouldMaterialize = if (sparkSession.conf.get(
+        DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)) {
+      checkShouldMaterializeSource(sparkSession, sourceQueryWithPinnedTimestampOpt)
+    } else {
+      checkShouldMaterializeSource(sparkSession)
+    }
     if (!shouldMaterialize) {
       runOperationFunc(sparkSession)
     } else {
@@ -218,13 +242,42 @@ case class DeltaInsertReplaceOnOrUsingCommand(
     recordReplaceOnOrUsingStats(sparkSession) {
       val insertReplaceCriteria = resolveInsertReplaceCriteria(sparkSession)
       var resultOpt: Option[T] = None
+      val pinStatementTime = sparkSession.conf.get(
+        DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED)
+
+      // The source is a field of this leaf command and escapes normal clock folding.
+      // Fold before retries so both phases and rematerializations share one instant.
+      val instantOpt = if (pinStatementTime) {
+        val instant: Instant = {
+          Instant.now()
+        }
+        Some(instant)
+      } else {
+        None
+      }
+      val sourceQueryWithPinnedTimestampOpt = if (pinStatementTime) {
+        instantOpt.map { instant =>
+          PreprocessTableMerge(SQLConf.get)
+            .transformTimestamps(query, instant)
+        }
+      } else {
+        None
+      }
 
       executeWithRetry(sparkSession, runOperationFunc = { spark =>
-        val materializedDf = materializeSource(spark, insertReplaceCriteria)
-        val preparedWriteCmd = prepareWriteCmd(spark, materializedDf, insertReplaceCriteria)
+        val materializedDf = materializeSource(spark, insertReplaceCriteria,
+          sourceQueryWithPinnedTimestampOpt =
+            if (pinStatementTime) sourceQueryWithPinnedTimestampOpt else None)
+        val preparedWriteCmd = if (pinStatementTime) {
+          prepareWriteCmd(spark, materializedDf, insertReplaceCriteria)
+            .copy(insertReplaceOnOrUsingCurrentTimeOpt = instantOpt)
+        } else {
+          prepareWriteCmd(spark, materializedDf, insertReplaceCriteria)
+        }
         resultOpt = Some(executeAndRecordStats(preparedWriteCmd))
         Seq.empty
-      })
+      }, sourceQueryWithPinnedTimestampOpt =
+        if (pinStatementTime) sourceQueryWithPinnedTimestampOpt else None)
 
       resultOpt.getOrElse(throw new IllegalStateException(
         "executeWithRetry did not invoke the operation function"))

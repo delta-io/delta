@@ -460,6 +460,37 @@ trait RecordChecksum extends DeltaLogging {
       case _ =>
     }
 
+    // A negative value means the old checksum drifted or this commit removed files that were not
+    // live. Persisting it would propagate the corruption to every later incremental checksum.
+    val negativeFields = findNegativeFields(
+      tableSizeBytes = tableSizeBytes,
+      numFiles = numFiles,
+      numDeletedRecordsOpt = numDeletedRecordsOpt,
+      numDeletionVectorsOpt = numDeletionVectorsOpt,
+      fileSizeHistogram = fileSizeHistogram,
+      deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt)
+    if (negativeFields.nonEmpty) {
+      val skipChecksumWrite =
+        conf.getConf(DeltaSQLConf.INCREMENTAL_COMMIT_SKIP_CHECKSUM_ON_NEGATIVE_FIELD)
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.checksum.compute.negativeField",
+        data = Map(
+          "attemptVersion" -> attemptVersion,
+          "operationName" -> operationName,
+          "negativeFields" -> negativeFields,
+          "skippedChecksumWrite" -> skipChecksumWrite,
+          "oldTableSizeBytes" -> oldVersionChecksum.tableSizeBytes,
+          "oldNumFiles" -> oldVersionChecksum.numFiles,
+          "numAddFilesInThisCommit" -> actions.count(_.isInstanceOf[AddFile]),
+          "numRemoveFilesInThisCommit" -> actions.count(_.isInstanceOf[RemoveFile]),
+          "ignoreAddFiles" -> ignoreAddFiles,
+          "ignoreRemoveFiles" -> ignoreRemoveFiles))
+      if (skipChecksumWrite) {
+        return Left("NEGATIVE_CHECKSUM_FIELD")
+      }
+    }
+
     val setTransactions = incrementallyComputeSetTransactions(
       oldSnapshot, oldVersionChecksum, attemptVersion, actions)
 
@@ -554,6 +585,34 @@ trait RecordChecksum extends DeltaLogging {
       fileSizeHistogram = fileSizeHistogram,
       lastManifestCommit = lastManifestCommit
     ))
+  }
+
+  /** Returns the incrementally computed checksum fields (or histogram bins) that are negative. */
+  private def findNegativeFields(
+      tableSizeBytes: Long,
+      numFiles: Long,
+      numDeletedRecordsOpt: Option[Long],
+      numDeletionVectorsOpt: Option[Long],
+      fileSizeHistogram: Option[FileSizeHistogram],
+      deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram]): Map[String, Any] = {
+    def negativeBins(counts: Array[Long]): Map[Int, Long] =
+      counts.zipWithIndex.collect { case (count, bin) if count < 0 => bin -> count }.toMap
+
+    val scalarFields = Seq(
+      "tableSizeBytes" -> Some(tableSizeBytes),
+      "numFiles" -> Some(numFiles),
+      "numDeletedRecords" -> numDeletedRecordsOpt,
+      "numDeletionVectors" -> numDeletionVectorsOpt
+    ).collect { case (name, Some(value)) if value < 0 => name -> value }
+    val histogramFields = Seq(
+      "fileSizeHistogram.fileCounts" -> fileSizeHistogram.map(_.fileCounts),
+      "fileSizeHistogram.totalBytes" -> fileSizeHistogram.map(_.totalBytes),
+      "deletedRecordCountsHistogram.deletedRecordCounts" ->
+        deletedRecordCountsHistogramOpt.map(_.deletedRecordCounts)
+    ).flatMap { case (name, countsOpt) =>
+      countsOpt.map(negativeBins).filter(_.nonEmpty).map(name -> _)
+    }
+    (scalarFields ++ histogramFields).toMap
   }
 
   /**
@@ -879,7 +938,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
     // AMT manifest trees do not yet round-trip every AddFile field: `DataEntry.toAddFile` zeroes
     // `modificationTime`, forces `dataChange = false`, drops `tags`, and reduces `stats` to
     // `{"numRecords":n}`. Project those lossy fields before comparing.
-    if (AMTUtils.amtEnabled(self)) {
+    if (AMTUtils.amtSupported(protocol)) {
       def normalizeForAmtTreeRoundTrip(f: AddFile): AddFile = f.copy(
         // CRC and AMT reconstruction may use different path encodings for the same on-disk DV,
         // so normalize both to absolute paths before comparing.

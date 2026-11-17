@@ -96,14 +96,17 @@ class IcebergConversionTransaction(
   ///////////////////////////
 
   implicit class AddFileConversion(addFile: AddFile) {
-    def toDataFile: DataFile =
+    def toDataFile: DataFile = toDataFile(disableExplicitRowIdAssignment = false)
+
+    def toDataFile(disableExplicitRowIdAssignment: Boolean): DataFile =
       convertDeltaAddFileToIcebergDataFile(
         addFile,
         tablePath,
         currentPartitionSpec,
         logicalToPhysicalPartitionNames,
         statsParser,
-        convert.wrappedSnapshot)
+        convert.wrappedSnapshot,
+        disableExplicitRowIdAssignment)
 
     def dvToDeleteFile: DeleteFile =
       DeltaToIcebergConvert.Action.dvToDeleteFile(
@@ -220,14 +223,17 @@ class IcebergConversionTransaction(
    *
    * e.g. OPTIMIZE
    */
-  class RewriteHelper(rewriter: RewriteFiles) extends TransactionHelper(rewriter) {
+  class RewriteHelper(
+      rewriter: RewriteFiles,
+      private[icebergShaded]val disableExplicitRowIdAssignment: Boolean = false)
+    extends TransactionHelper(rewriter) {
 
     override def opType: String = "rewrite"
 
     override def add(add: AddFile): Unit = {
       writeSize += add.size
       assert(!add.dataChange, "Rewrite operation should not add data")
-      rewriter.addFile(add.toDataFile)
+      rewriter.addFile(add.toDataFile(disableExplicitRowIdAssignment))
       if (add.deletionVector != null) {
         rewriter.addFile(add.dvToDeleteFile)
       }
