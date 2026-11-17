@@ -3795,17 +3795,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT =
-    buildConf("spark.sql.delta.sharing.cdfStreamingAutoResolveResponseFormat")
-      .doc("When true, auto-resolve the Delta Sharing streaming CDF source format by calling " +
-        "getMetadata on the table and using the server's responded format (parquet or delta). " +
-        "When false, use the responseFormat option from the user. Gates the streaming CDF " +
-        "(readChangeFeed=true) path independently from the non-CDF streaming path controlled " +
-        "by spark.sql.delta.sharing.streamingAutoResolveResponseFormat.")
-      .internal()
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_SHARING_STREAMING_ENABLE_HISTORICAL_PROTOCOL =
     buildConf("spark.sql.delta.sharing.streamingEnableHistoricalProtocol")
       .doc("When true, a Delta Sharing streaming query (non-CDF, incremental getFiles) requests " +
