@@ -38,24 +38,9 @@ public final class RowIdValueSetterBuilder implements MetadataValueSetterBuilder
 
   @Override
   public BoundMetadataValueSetter buildWithFile(PartitionedFile file) {
-    // base_row_id is required whenever row tracking is enabled on the file; if it's not present
-    // (would yield null via Scala's `apply` throwing NoSuchElementException, or returning null
-    // from a Java-shaped map), fail fast with an actionable error rather than NPE on the
-    // subsequent .longValue() call.
-    Object rawBaseRowId =
-        file.otherConstantMetadataColumnValues()
-            .get(RowId$.MODULE$.BASE_ROW_ID())
-            .getOrElse(() -> null);
-    if (rawBaseRowId == null) {
-      throw new IllegalStateException(
-          "Missing '"
-              + RowId$.MODULE$.BASE_ROW_ID()
-              + "' on PartitionedFile '"
-              + file.filePath()
-              + "' for row tracking - every Delta file with row tracking "
-              + "enabled must carry a base_row_id constant.");
-    }
-    long baseRowId = ((Number) rawBaseRowId).longValue();
+    long baseRowId =
+        RowTrackingMetadataValueUtils.requireRowTrackingLong(
+            file, RowId$.MODULE$.BASE_ROW_ID(), "base_row_id constant");
     return new Bound(baseRowId, materializedRowIdIdx, rowIndexIdx);
   }
 
