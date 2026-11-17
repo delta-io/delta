@@ -112,13 +112,14 @@ private[delta] case class IndexedFile(
 trait DeltaSourceBase extends Source
     with SupportsAdmissionControl
     with SupportsTriggerAvailableNow
-    with DeltaLogging { self: DeltaSource =>
+    with DeltaLogging
+    with DeltaSourceOffsetLogic { self: DeltaSource =>
 
   /**
    * Configuration options for handling schema changes behavior. Controls unsafe operations like
    * column mapping changes, partition column changes, nullability changes, and type widening.
    */
-  protected lazy val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
+  override protected lazy val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
     val schemaReadOptions = DeltaStreamUtils.SchemaReadOptions.fromSparkSession(
       spark = spark,
       isStreamingFromColumnMappingTable =
@@ -656,55 +657,6 @@ trait DeltaSourceBase extends Source
       }
     }
   }
-
-  /**
-   * Checks for non-additive schema changes (column renames, drops, type widening) and blocks
-   * the stream by throwing an exception if detected.
-   *
-   * Blocks when type widening tracking is enabled and widening changes exist, or when column
-   * mapping changes (rename/drop) are detected, unless `allowUnsafeStreamingReadOnColumnMapping
-   * SchemaChanges` is enabled. Upon blocking, the error requests the user to provide a schema
-   * tracking location to enable schema tracking. On restart, users must acknowledge changes via
-   * reader options or SQL confs.
-   * See [[DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked]].
-   *
-   * Note: Should not be called when schema tracking is active (trackingMetadataChange = true).
-   *
-   * @param oldMetadata Previous metadata (typically from stream initialization)
-   * @param newMetadata New metadata with potential schema changes
-   * @param validatedDuringStreamStart Whether validating during stream start vs. execution,
-   *                                   which affects the error message.
-   * @throws DeltaAnalysisException if non-additive schema changes require blocking
-   */
-  private def checkNonAdditiveSchemaChanges(
-      oldMetadata: Metadata,
-      newMetadata: Metadata,
-      validatedDuringStreamStart: Boolean): Unit = {
-    val shouldTrackSchema: Boolean =
-      if (schemaReadOptions.typeWideningEnabled &&
-          schemaReadOptions.enableSchemaTrackingForTypeWidening &&
-        TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
-        // If schema tracking is enabled for type widening, we will detect widening type changes and
-        // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
-        // DROP/RENAME for column mapping.
-        true
-      } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
-        false
-      } else {
-        // Column mapping schema changes
-        assert(!trackingMetadataChange, "should not check schema change while tracking it")
-        !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
-          schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges)
-      }
-
-    if (shouldTrackSchema) {
-      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-        spark,
-        oldMetadata.schema,
-        newMetadata.schema,
-        detectedDuringStreaming = !validatedDuringStreamStart)
-    }
-  }
 }
 
 /**
@@ -718,7 +670,7 @@ trait DeltaSourceBase extends Source
  * the same answer as a batch query that had processed the entire dataset at any given point.
  */
 case class DeltaSource(
-    spark: SparkSession,
+    override val spark: SparkSession,
     deltaLog: DeltaLog,
     catalogTableOpt: Option[CatalogTable],
     options: DeltaOptions,
