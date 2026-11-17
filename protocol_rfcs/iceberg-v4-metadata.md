@@ -354,7 +354,6 @@ The root manifest contains entries of the following types:
 |----------|------------|------------|----------|---------------|-------------|
 | 147 | `tracking` | Struct ([Tracking](#tracking)) | Required | All | Tracking information for this entry |
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
-| 157 | `format_version` | Int | Required | All | Iceberg writer format version; 0: for ≤v3, 4 for V4. |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
 | 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
@@ -430,23 +429,23 @@ Tracks where a DV blob can be read. Only for `content_type` = DATA entries.
 
 ### Manifest Info
 
-Summary information for `content_type` = DATA_MANIFEST entries. Includes file/row counts and the Manifest Deletion Vector (MDV).
+Summary information for `content_type` = DATA_MANIFEST entries. Includes the manifest format version, file/row counts, and the Manifest Deletion Vector (MDV). Field IDs and semantics follow the [`manifest_info` struct](https://iceberg.apache.org/spec/#manifest-info-fields) in the Iceberg V4 specification.
 
 | Field ID | Field Name | Delta Type | Required | Description |
 |----------|------------|------------|----------|-------------|
+| 521 | `format_version` | Int | Required | Iceberg format version used to write the manifest; 0 for ≤v3, 4 for V4. |
 | 504 | `added_files_count` | Int | Required | Number of files added |
 | 505 | `existing_files_count` | Int | Required | Number of existing files |
 | 506 | `deleted_files_count` | Int | Required | Number of deleted files |
-| 520 | `replaced_files_count` | Int | Required | Number of replaced files |
-| 524 | `modified_files_count` | Int | Required | Number of modified files |
+| 523 | `replaced_files_count` | Int | Required | Number of replaced files |
+| 525 | `modified_files_count` | Int | Required | Number of modified files |
 | 512 | `added_rows_count` | Long | Required | Number of rows in added files |
 | 513 | `existing_rows_count` | Long | Required | Number of rows in existing files |
 | 514 | `deleted_rows_count` | Long | Required | Number of rows in deleted files |
-| 521 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
-| 525 | `modified_rows_count` | Long | Required | Number of rows in modified files |
+| 524 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
+| 526 | `modified_rows_count` | Long | Required | Number of rows in modified files |
 | 516 | `min_sequence_number` | Long | Required | Minimum data sequence number of all live entries in the manifest |
-| 522 | `dv` | Binary | Optional | MDV bitmap marking deleted positions in leaf manifest. Must be non-null if and only if `dv_cardinality` is non-null. |
-| 523 | `dv_cardinality` | Long | Optional | Number of entries marked as deleted in the MDV. Must be non-null if and only if `dv` is non-null. |
+| 522 | `dv` | Binary | Optional | MDV bitmap marking deleted positions in leaf manifest. The number of marked positions is stored in the bitmap header (see the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec). |
 
 ### Manifest Deletion Vectors (MDVs)
 
@@ -620,7 +619,6 @@ DATA_MANIFEST entry:
     status: EXISTING
   manifest_info:
     dv: <bitmap marking positions 2, 17>
-    dv_cardinality: 2
 ```
 
 When reading a leaf manifest, readers must check the `DATA_MANIFEST` entry for a non-null `manifest_info.dv`. If present, deserialize the bitmap and skip entries at positions marked in it.
