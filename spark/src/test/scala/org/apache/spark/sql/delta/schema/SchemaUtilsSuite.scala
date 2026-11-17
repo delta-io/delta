@@ -52,7 +52,7 @@ class SchemaUtilsSuite extends QueryTest
   with DeltaSQLCommandTest {
   import SchemaUtils._
   import TypeWideningMode._
-  import deltaImplicits._
+  import testImplicits._
 
   private def expectFailure(shouldContain: String*)(f: => Unit): Unit = {
     val e = intercept[AnalysisException] {
