@@ -38,6 +38,7 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.*;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +56,43 @@ public class Checkpointer {
 
   /** The name of the last checkpoint file */
   public static final String LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint";
+
+  static final long DEFAULT_CHECKPOINT_SEARCH_WINDOW = 1000;
+
+  // Thread-local so a caller can tune the search for one snapshot load without affecting
+  // concurrent loads of other tables in the same JVM.
+  private static final ThreadLocal<Long> checkpointSearchWindow =
+      ThreadLocal.withInitial(() -> DEFAULT_CHECKPOINT_SEARCH_WINDOW);
+
+  /**
+   * Runs {@code body} with the backward checkpoint search listing {@code window} versions per step
+   * instead of the default 1000.
+   *
+   * <p>The search lists every file in a window, so tables that checkpoint often with many parts per
+   * checkpoint are cheaper to search with a small window, while tables with sparse checkpoints need
+   * more listing calls.
+   *
+   * <p>Only searches that run on the calling thread before {@code body} returns use the window.
+   * Snapshot builds that defer log segment loading (for example time travel with {@code
+   * withProtocolAndMetadata}) must force the log segment inside {@code body}.
+   */
+  public static <T> T withCheckpointSearchWindow(long window, Supplier<T> body) {
+    if (window < 1) {
+      throw new IllegalArgumentException(
+          "Checkpoint search window must be positive, got " + window);
+    }
+    long previous = checkpointSearchWindow.get();
+    checkpointSearchWindow.set(window);
+    try {
+      return body.get();
+    } finally {
+      checkpointSearchWindow.set(previous);
+    }
+  }
+
+  static long getCheckpointSearchWindow() {
+    return checkpointSearchWindow.get();
+  }
 
   public static void checkpoint(Engine engine, Clock clock, SnapshotImpl snapshot)
       throws TableNotFoundException, IOException {
@@ -167,15 +205,13 @@ public class Checkpointer {
     // This is a just a tracker for testing purposes
     long numberOfFilesSearched = 0;
     long currentVersion = version;
+    long window = getCheckpointSearchWindow();
 
-    // Some cloud storage APIs make a calls to fetch 1000 at a time.
-    // To make use of that observation and to avoid making more listing calls than
-    // necessary, list 1000 at a time (backwards from the given version). Search
-    // within that list if a checkpoint is found. If found stop, otherwise list the previous
-    // 1000 entries. Repeat until a checkpoint is found or there are no more delta commits.
+    // Listing only goes forward from a prefix, so step backwards one window at a time and stop at
+    // the first window that holds a complete checkpoint.
     while (currentVersion >= 0) {
       try {
-        long searchLowerBound = Math.max(0, currentVersion - 1000);
+        long searchLowerBound = Math.max(0, currentVersion - window);
         CloseableIterator<FileStatus> deltaLogFileIter =
             wrapEngineExceptionThrowsIO(
                 () ->
@@ -228,7 +264,7 @@ public class Checkpointer {
               latestCheckpoint.get());
           return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
         }
-        currentVersion -= 1000; // search for checkpoint in previous 1000 entries
+        currentVersion -= window;
       } catch (IOException e) {
         String msg =
             String.format(

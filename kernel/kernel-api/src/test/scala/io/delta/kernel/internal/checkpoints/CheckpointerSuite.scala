@@ -27,7 +27,7 @@ import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpo
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockListFromFileSystemClient, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
@@ -218,6 +218,94 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       beforeVersion = 2050,
       expCheckpointVersion = 2000,
       expNumFilesListed = 2002)
+  }
+
+  test("findLastCompleteCheckpointBefore - small search window lists only nearby versions") {
+    // 2000 deltas and a 20-part checkpoint at every version from 1000.
+    val files = deltaFileStatuses(Seq.range(0, 2000)) ++
+      multiCheckpointFileStatuses(Seq.range(1000, 2000), 20)
+
+    // The default window lists v501-1500: 1000 deltas + 501 checkpoints (v1000-1500) * 20 parts.
+    assertLastCheckpoint(files, beforeVersion = 1501, expCheckpointVersion = 1500, 1000 + 501 * 20)
+
+    // A window of 1 lists only v1500: its 20 parts and its delta.
+    Checkpointer.withCheckpointSearchWindow(
+      1,
+      () =>
+        assertLastCheckpoint(
+          files,
+          beforeVersion = 1501,
+          expCheckpointVersion = 1500,
+          expNumFilesListed = 20 + 1))
+  }
+
+  test("findLastCompleteCheckpointBefore - every search step uses the window") {
+    val files = deltaFileStatuses(Seq.range(0, 10000)) ++ singularCheckpointFileStatuses(Seq(2500))
+
+    def listingStartVersions(window: Long): Seq[Long] = {
+      val fsClient = new MockListFromFileSystemClient(listFromProvider(files))
+      val result = Checkpointer.withCheckpointSearchWindow(
+        window,
+        () => findLastCompleteCheckpointBeforeHelper(mockEngine(fsClient), logPath, 9999))
+      assert(result._1.isPresent && result._1.get().version === 2500)
+      fsClient.getListFromCalls.map(p => new Path(p).getName.stripSuffix(".").toLong)
+    }
+
+    assert(listingStartVersions(Checkpointer.DEFAULT_CHECKPOINT_SEARCH_WINDOW) ===
+      Seq(8999, 7999, 6999, 5999, 4999, 3999, 2999, 1999))
+    assert(listingStartVersions(2000) === Seq(7999, 5999, 3999, 1999))
+    assert(listingStartVersions(3000) === Seq(6999, 3999, 999))
+  }
+
+  test("withCheckpointSearchWindow - restores the previous window and rejects non-positive") {
+    class Boom extends RuntimeException
+    val default = Checkpointer.DEFAULT_CHECKPOINT_SEARCH_WINDOW
+    assert(Checkpointer.getCheckpointSearchWindow === default)
+
+    var windowInsideBody = 0L
+    intercept[Boom] {
+      Checkpointer.withCheckpointSearchWindow(
+        5,
+        () => {
+          windowInsideBody = Checkpointer.getCheckpointSearchWindow
+          throw new Boom
+        })
+    }
+    assert(windowInsideBody === 5)
+    assert(Checkpointer.getCheckpointSearchWindow === default)
+
+    Seq(0L, -1L).foreach { window =>
+      intercept[IllegalArgumentException] {
+        Checkpointer.withCheckpointSearchWindow(window, () => ())
+      }
+    }
+    assert(Checkpointer.getCheckpointSearchWindow === default)
+  }
+
+  test("withCheckpointSearchWindow - nested scopes restore the outer window") {
+    val windows = Checkpointer.withCheckpointSearchWindow(
+      5,
+      () => {
+        val inner =
+          Checkpointer.withCheckpointSearchWindow(7, () => Checkpointer.getCheckpointSearchWindow)
+        (inner, Checkpointer.getCheckpointSearchWindow)
+      })
+    assert(windows === (7, 5))
+    assert(Checkpointer.getCheckpointSearchWindow === Checkpointer.DEFAULT_CHECKPOINT_SEARCH_WINDOW)
+  }
+
+  test("withCheckpointSearchWindow - does not affect other threads") {
+    var windowOnOtherThread = 0L
+    Checkpointer.withCheckpointSearchWindow(
+      5,
+      () => {
+        val thread = new Thread(() => {
+          windowOnOtherThread = Checkpointer.getCheckpointSearchWindow
+        })
+        thread.start()
+        thread.join()
+      })
+    assert(windowOnOtherThread === Checkpointer.DEFAULT_CHECKPOINT_SEARCH_WINDOW)
   }
 
   /** Assert that the checkpoint metadata is same as [[SAMPLE_LAST_CHECKPOINT_FILE_CONTENT]] */
