@@ -15,15 +15,77 @@
  */
 package org.apache.spark.sql.delta.v2
 
+import java.util.concurrent.TimeUnit
 import java.util.function.Supplier
 
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import scala.util.control.NonFatal
+
+import com.databricks.spark.util.TagDefinition
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
+import org.apache.hadoop.fs.Path
 
 /**
  * Delta V2 specialization of [[DeltaLogging]]. Frame-name suffixes passed here must be fixed
  * system-code literals; this trait supplies the shared `Delta` group and `v2.` prefix.
  */
 private[v2] trait DeltaV2Logging extends DeltaLogging {
+  protected final def elapsedTimeMs(startedAtNs: Long): Long =
+    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNs)
+
+  private val deltaV2OpTypePrefix = "delta.v2."
+
+  private def deltaV2OpType(opType: String): String = {
+    if (opType.startsWith(deltaV2OpTypePrefix)) opType else deltaV2OpTypePrefix + opType
+  }
+
+  protected final override def recordDeltaEvent(
+      provider: DeltaLoggingProvider,
+      opType: String,
+      tags: Map[TagDefinition, String],
+      data: AnyRef,
+      path: Option[Path]): Unit = {
+    super.recordDeltaEvent(provider, deltaV2OpType(opType), tags, data, path)
+  }
+
+  /**
+   * Records a table-scoped event without requiring a DeltaLog-backed provider. Delta V2 must not
+   * depend on DeltaLog, so the path supplies the table identity through DeltaLogging's supported
+   * path-attribution fallback.
+   */
+  protected final def recordDeltaEventForTablePath(
+      tablePath: => Path,
+      opType: String,
+      tags: Map[TagDefinition, String] = Map.empty,
+      data: => AnyRef = null): Unit = {
+    try {
+      recordDeltaEvent(
+        provider = null,
+        opType = opType,
+        tags = tags,
+        data = data,
+        path = Some(tablePath))
+    } catch {
+      case NonFatal(loggingFailure) =>
+        logWarning("Failed to record table-scoped Delta V2 event", loggingFailure)
+    }
+  }
+
+  protected final override def recordDeltaOperationForTablePath[A](
+      tablePath: String,
+      opType: String,
+      tags: Map[TagDefinition, String])(
+      thunk: => A): A = {
+    super.recordDeltaOperationForTablePath(tablePath, deltaV2OpType(opType), tags)(thunk)
+  }
+
+  protected final override def recordDeltaOperation[A](
+      provider: DeltaLoggingProvider,
+      opType: String,
+      tags: Map[TagDefinition, String])(
+      thunk: => A): A = {
+    super.recordDeltaOperation(provider, deltaV2OpType(opType), tags)(thunk)
+  }
+
   private def deltaV2FrameName(nameSuffix: String): String = "v2." + nameSuffix
 
   protected final def recordFrameProfile[T](
