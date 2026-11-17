@@ -1191,26 +1191,23 @@ This section provides guidance on how to migrate your connector to the latest ve
 
 #### Catalog-managed snapshot errors
 
-`SnapshotBuilder.build` now throws `MaxCatalogVersionException`, a subtype of `KernelException`,
-when the latest snapshot of a catalog-managed table is loaded without `maxCatalogVersion`. This case
-previously threw `IllegalArgumentException`; its error message is unchanged. Update any exception
-handlers that relied on the previous type.
+`SnapshotBuilder.build` throws `MaxCatalogVersionException`, a subtype of `KernelException`, when
+`maxCatalogVersion` is required but not provided:
 
-To support catalog-managed upgrades and downgrades, `maxCatalogVersion` requirements changed:
+- No version or timestamp is specified and the resolved snapshot is catalog-managed.
+- `atTimestamp` is given a catalog-managed latest snapshot.
+- `withLogData` provides catalog commits, including for `atVersion` queries.
 
-- `maxCatalogVersion` is no longer rejected for filesystem-managed snapshots, since a
-  catalog-ratified downgrade produces one. Without `atVersion` or `atTimestamp`, the snapshot is
-  loaded at `maxCatalogVersion` even if later filesystem-managed versions exist.
-- `atVersion` queries no longer require `maxCatalogVersion` because the requested version is
-  catalog-managed. Connectors must still provide it while the table is currently catalog-managed.
-- `atTimestamp` queries require `maxCatalogVersion` if the supplied latest snapshot is
-  catalog-managed.
-- `withLogData` catalog commits now require `maxCatalogVersion`, including for `atVersion` queries.
+Connectors must provide `maxCatalogVersion` whenever the table is currently catalog-managed,
+including for `atVersion` queries, which Kernel does not check. `maxCatalogVersion` is accepted for
+filesystem-managed snapshots, since a catalog-ratified downgrade produces one. Without `atVersion` or
+`atTimestamp`, the snapshot is loaded at `maxCatalogVersion` even if later filesystem-managed
+versions exist.
 
 The exception identifies a missing catalog context. This can result from a table becoming
 catalog-managed or from incorrect builder inputs. It does not guarantee that a transition occurred
 or that a retry will succeed. Other catalog-version validation errors, including negative versions,
-version bounds, and log-tail ordering and coverage, retain their existing exception types.
+version bounds, and log-tail ordering and coverage, throw `IllegalArgumentException`.
 
 ### Migration from Delta Lake version 3.1.0 to 3.2.0
 Following are API changes in Delta Kernel 3.2.0 that may require changes in your connector.
