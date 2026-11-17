@@ -400,9 +400,11 @@ trait Checkpoints extends DeltaLogging {
   def writeLastCheckpointFileForAMT(
       manifestCommitVersion: Long,
       writeResult: AMTWriteResult): Unit = {
-    val AMTWriteResult(contentRootVersion, checkpoint, leaves, _, _) = writeResult
     val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
-      manifestCommitVersion, contentRootVersion, checkpoint, leaves)
+      manifestCommitVersion,
+      writeResult.contentRootVersion,
+      writeResult.checkpoint,
+      writeResult.leaves)
     writeLastCheckpointFile(this, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
   }
 

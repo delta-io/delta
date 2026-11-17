@@ -190,6 +190,7 @@ class AMTSnapshotDiscoverySuite
         synchronous = AMTCheckpointProvider.fromCheckpoint(
           spark, deltaLog, checkpoint, context.provider.manifestCommitVersion)
       })
+      assert(discoveryJobs == 1, "Leaf pointer decoding must not launch another Spark job")
       assert(prefetched.isInstanceOf[ColumnarAMTCheckpointProvider])
       assert(synchronous.isInstanceOf[ColumnarAMTCheckpointProvider])
 
@@ -267,6 +268,7 @@ class AMTSnapshotDiscoverySuite
                 synchronous = AMTCheckpointProvider.fromCheckpoint(
                   spark, deltaLog, checkpoint, context.manifestCommitVersion)
               })
+              assert(jobs == 1, "The footer count check must not launch another Spark job")
             }
             val scanQueries = queries.filter(_.analyzed.exists(_.isInstanceOf[LogicalRelation]))
             assert(scanQueries.size == (if (shouldCache) 0 else 1))
@@ -288,6 +290,92 @@ class AMTSnapshotDiscoverySuite
           }
         }
       }
+    }
+  }
+
+  ///////////////////////////
+  // Warm snapshot providers
+  ///////////////////////////
+
+  for ((layout, deferredScenarios) <- Seq(
+      "root-only" -> Seq(AMTCheckpointScenario.DeferredIncremental),
+      "leaf-backed" -> Seq(
+        AMTCheckpointScenario.DeferredIncremental,
+        AMTCheckpointScenario.DeferredFull))) {
+    testAcrossAMTCheckpointScenarios(
+        s"[warm commit] columnar provider reuses writer-produced root rows: $layout",
+        s"amt_written_root_cache_${layout.replace('-', '_')}",
+        deferredScenarios = deferredScenarios,
+        sqlConfs = Seq(
+          DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true",
+          DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> "50000") ++
+          (if (layout == "leaf-backed") leafPackingConfs else Seq(
+            DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "100")),
+        tableSchema = "id INT, part INT",
+        partitionColumns = Seq("part"))(
+        setup = name => appendRowsAsSeparateFiles(
+          name,
+          if (layout == "leaf-backed") leafPackedFiles + 1 else 2,
+          columnExprs = Seq("CAST(id AS INT)", "CAST(id % 3 AS INT)")),
+        inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+          s"INSERT INTO $name VALUES (100, 1)"))) { context =>
+      val deltaLog = context.postCheckpointSnapshot.deltaLog
+      assert(context.provider.isInstanceOf[ColumnarAMTCheckpointProvider])
+      assert(context.provider.leaves.nonEmpty == (layout == "leaf-backed"))
+
+      val rootPath = context.checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
+      val uncached = AMTCheckpointProvider(
+        spark,
+        context.manifestCommitVersion,
+        context.checkpoint,
+        context.provider.leaves,
+        deltaLog.dataPath)
+      val expectedRootFiles = uncached.readLiveRootDataEntries(spark, deltaLog)
+      val expectedActions =
+        uncached.loadActionsForStateReconstruction(spark, deltaLog).get.collect()
+      if (layout == "root-only") assert(expectedRootFiles.nonEmpty)
+
+      val savedRoot = new Path(rootPath.toString + ".saved")
+      val fs = rootPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+      assert(fs.rename(rootPath, savedRoot))
+      try {
+        assert(context.provider.readLiveRootDataEntries(spark, deltaLog) == expectedRootFiles)
+        val actions = context.provider.loadActionsForStateReconstruction(spark, deltaLog).get
+        assert(!actions.inputFiles.map(new Path(_)).contains(rootPath))
+        checkAnswer(actions, expectedActions.toSeq)
+
+        // The next checkpoint starts from this in-memory snapshot and needs its root DATA entries.
+        commitCheckpoint(deltaLog, incremental = true)
+        assert(deltaLog.update().version == context.manifestCommitVersion + 1)
+      } finally {
+        assert(fs.rename(savedRoot, rootPath))
+      }
+    }
+  }
+
+  for ((suffix, maxNumEntries) <- Seq(
+      ("cache_disabled", 0),
+      ("above_limit", 1))) {
+    testAcrossAMTCheckpointScenarios(
+        s"[warm commit] writer does not retain root rows when $suffix",
+        s"amt_written_root_$suffix",
+        sqlConfs = Seq(
+          DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true",
+          DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> maxNumEntries.toString,
+          DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "100"))(
+        setup = name => appendRowsAsSeparateFiles(name, 2)) { context =>
+      val deltaLog = context.postCheckpointSnapshot.deltaLog
+      val rootPath = context.checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
+      val actions = context.provider.loadActionsForStateReconstruction(spark, deltaLog).get
+      assert(actions.inputFiles.map(new Path(_)).contains(rootPath))
+    }
+  }
+
+  test("[root cache] skips the entry count when columnar reconstruction is disabled") {
+    withSQLConf(
+        DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "false",
+        DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> "50000") {
+      assert(!AMTUtils.shouldCacheRootRows(spark, fail("the entry count must not be evaluated")))
     }
   }
 

@@ -269,7 +269,7 @@ case class IncrementalAMTWriteMetrics(
  *
  * @param contentRootVersion          the table version the manifest tree describes
  * @param checkpoint                  the inline [[Checkpoint]] action to embed in the commit JSON
- * @param leaves                      the root's `DATA_MANIFEST` pointer entries, one per leaf
+ * @param rootInfo                    the root's leaf pointers and cached rows, when retained
  * @param includeActionsInCommitJson  whether the transaction should still write the commit's file
  *                                    actions inline in the commit JSON.
  * @param amtWriteMetrics             metrics for the materialization that produced this result
@@ -277,9 +277,11 @@ case class IncrementalAMTWriteMetrics(
 case class AMTWriteResult(
     contentRootVersion: Long,
     checkpoint: Checkpoint,
-    leaves: Seq[DataManifestEntry],
+    rootInfo: AMTRootInfo,
     includeActionsInCommitJson: Boolean,
-    amtWriteMetrics: SingleAMTWriteMetrics)
+    amtWriteMetrics: SingleAMTWriteMetrics) {
+  def leaves: Seq[DataManifestEntry] = rootInfo.leaves
+}
 
 /** A lazily-materialized [[AMTCheckpointProvider]] for `checkpointOpt`. */
 class LazyAMTCheckpointProvider(

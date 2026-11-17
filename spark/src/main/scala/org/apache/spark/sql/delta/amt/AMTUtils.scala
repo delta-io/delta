@@ -16,16 +16,20 @@
 
 package org.apache.spark.sql.delta.amt
 
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaConfigs, DeltaErrors, DeltaIllegalStateException, DeltaLog, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.optimizer.ConvertToLocalRelation
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -313,4 +317,24 @@ object AMTUtils extends DeltaLogging {
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
     ManifestBitmap.fromSerializedByteArray(bytes)
+
+  private[amt] def shouldCacheRootRows(
+      spark: SparkSession,
+      numEntries: => Long): Boolean = {
+    val columnarEnabled = spark.sessionState.conf
+      .getConf(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED)
+    val maxNumEntries = spark.sessionState.conf
+      .getConf(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES)
+    columnarEnabled && maxNumEntries > 0 && numEntries < maxNumEntries
+  }
+
+  /**
+   * Applies [[ConvertToLocalRelation]] until the plan stops changing. When the rule visits the plan
+   * top-down, one application folds only the `Project` directly above the `LocalRelation`.
+   */
+  @tailrec
+  private[amt] def convertToLocalRelationFully(plan: LogicalPlan): LogicalPlan = {
+    val converted = ConvertToLocalRelation(plan)
+    if (converted.fastEquals(plan)) plan else convertToLocalRelationFully(converted)
+  }
 }
