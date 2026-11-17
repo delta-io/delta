@@ -208,8 +208,9 @@ private[read] class DeltaV2ScanBuilder(
       val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
 
       // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
-      // requires partition-only filters and prunes files by accumulating record counts until the
-      // limit is satisfied.
+      // requires partition-only filters (guaranteed by build(): effectiveLimit is only set when
+      // there are no residual data filters) and prunes files by accumulating record counts until
+      // the limit is satisfied.
       def selectFiles(): DeltaScan =
         if (effectiveLimit.isPresent) {
           recordFrameProfile("filesForScan.limitAndFilters") {
