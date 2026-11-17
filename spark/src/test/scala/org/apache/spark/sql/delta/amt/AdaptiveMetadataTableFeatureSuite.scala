@@ -21,7 +21,7 @@ import java.util.Locale
 import org.apache.spark.sql.delta.{
   AdaptiveMetadataPreviewTableFeature,
   AdaptiveMetadataTableFeature,
-  CatalogOwnedTableFeature,
+  CatalogManagedTableFeature,
   ColumnMappingTableFeature,
   DeletionVectorsTableFeature,
   DeltaAnalysisException,
@@ -88,7 +88,7 @@ class AdaptiveMetadataTableFeatureSuite
 
   test("feature requires catalogManaged, rowTracking, domainMetadata, DVs and column mapping") {
     assert(AdaptiveMetadataPreviewTableFeature.requiredFeatures === Set(
-      CatalogOwnedTableFeature,
+      CatalogManagedTableFeature,
       RowTrackingFeature,
       DomainMetadataTableFeature,
       DeletionVectorsTableFeature,
@@ -220,7 +220,7 @@ class AdaptiveMetadataTableFeatureSuite
    */
   private def createNonAMTTableForReplace(tableName: String, checkpointPolicy: String): Unit = {
     sql(s"CREATE TABLE $tableName (id INT) USING $tableProvider " +
-      s"TBLPROPERTIES ('${propertyKey(CatalogOwnedTableFeature)}' = '$FEATURE_PROP_SUPPORTED', " +
+      s"TBLPROPERTIES ('${propertyKey(CatalogManagedTableFeature)}' = '$FEATURE_PROP_SUPPORTED', " +
       s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'id', " +
       s"'${DeltaConfigs.CHECKPOINT_POLICY.key}' = '$checkpointPolicy')")
   }

@@ -511,7 +511,7 @@ class DeltaTableFeatureSuite
         CatalogManagedCommitCoordinatorProvider.registerBuilder(
           "spark_catalog", InMemoryCommitCoordinatorBuilder(batchSize = 100))
         spark.range(0).write.format("delta")
-          .option(propertyKey(CatalogOwnedTableFeature), "supported")
+          .option(propertyKey(CatalogManagedTableFeature), "supported")
           .saveAsTable(table)
         val log = DeltaLog.forTable(spark, TableIdentifier(table))
         val featureName = TestRemovableReaderWriterFeature.name
