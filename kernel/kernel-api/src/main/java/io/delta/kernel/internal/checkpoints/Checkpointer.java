@@ -20,8 +20,11 @@ import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
 import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.CHECKPOINT_PROTECTION_W_FEATURE;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -53,6 +56,9 @@ public class Checkpointer {
   private static final Logger logger = LoggerFactory.getLogger(Checkpointer.class);
 
   private static final int READ_LAST_CHECKPOINT_FILE_MAX_RETRIES = 3;
+
+  /** Default number of versions searched per batch when finding a checkpoint. */
+  public static final int DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE = 1000;
 
   /** The name of the last checkpoint file */
   public static final String LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint";
@@ -171,8 +177,8 @@ public class Checkpointer {
 
   /** Find the last complete checkpoint before (strictly less than) a given version. */
   public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
-      Engine engine, Path tableLogPath, long version) {
-    return findLastCompleteCheckpointBeforeHelper(engine, tableLogPath, version)._1;
+      Engine engine, Path tableLogPath, long version, int batchSize) {
+    return findLastCompleteCheckpointBeforeHelper(engine, tableLogPath, version, batchSize)._1;
   }
 
   /**
@@ -180,7 +186,8 @@ public class Checkpointer {
    * searched. This helps in testing
    */
   public static Tuple2<Optional<CheckpointInstance>, Long> findLastCompleteCheckpointBeforeHelper(
-      Engine engine, Path tableLogPath, long version) {
+      Engine engine, Path tableLogPath, long version, int batchSize) {
+    checkArgument(batchSize > 0, "checkpoint search batch size must be > 0");
     CheckpointInstance upperBoundCheckpoint = new CheckpointInstance(version);
     logger.info("Try to find the last complete checkpoint before version {}", version);
 
@@ -188,22 +195,18 @@ public class Checkpointer {
     long numberOfFilesSearched = 0;
     long currentVersion = version;
 
-    // Some cloud storage APIs make a calls to fetch 1000 at a time.
-    // To make use of that observation and to avoid making more listing calls than
-    // necessary, list 1000 at a time (backwards from the given version). Search
-    // within that list if a checkpoint is found. If found stop, otherwise list the previous
-    // 1000 entries. Repeat until a checkpoint is found or there are no more delta commits.
+    // Multipart checkpoints can add many files per version. Start each pass at most batchSize
+    // versions before currentVersion, and search earlier if no complete checkpoint is found.
     while (currentVersion >= 0) {
-      try {
-        long searchLowerBound = Math.max(0, currentVersion - 1000);
-        CloseableIterator<FileStatus> deltaLogFileIter =
-            wrapEngineExceptionThrowsIO(
-                () ->
-                    engine
-                        .getFileSystemClient()
-                        .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound)),
-                "Listing from %s",
-                FileNames.listingPrefix(tableLogPath, searchLowerBound));
+      long searchLowerBound = Math.max(0, currentVersion - batchSize);
+      try (CloseableIterator<FileStatus> deltaLogFileIter =
+          wrapEngineExceptionThrowsIO(
+              () ->
+                  engine
+                      .getFileSystemClient()
+                      .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound)),
+              "Listing from %s",
+              FileNames.listingPrefix(tableLogPath, searchLowerBound))) {
 
         List<CheckpointInstance> checkpoints = new ArrayList<>();
         while (deltaLogFileIter.hasNext()) {
@@ -216,8 +219,11 @@ public class Checkpointer {
           } else if (FileNames.isCheckpointFile(fileName)) {
             currentFileVersion = FileNames.checkpointVersion(fileName);
           } else {
-            // allow all other types of files.
-            currentFileVersion = currentVersion;
+            // Skip unrecognized file types (e.g. .crc files). If we assigned
+            // them a version, they could prematurely trigger the break condition
+            // below and cause us to miss recent checkpoints.
+            numberOfFilesSearched++;
+            continue;
           }
 
           boolean shouldContinue =
@@ -245,7 +251,10 @@ public class Checkpointer {
               latestCheckpoint.get());
           return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
         }
-        currentVersion -= 1000; // search for checkpoint in previous 1000 entries
+        if (searchLowerBound == 0) {
+          break;
+        }
+        currentVersion -= batchSize;
       } catch (IOException e) {
         String msg =
             String.format(
@@ -277,6 +286,11 @@ public class Checkpointer {
   /** Returns information about the most recent checkpoint. */
   public Optional<CheckpointMetaData> readLastCheckpointFile(Engine engine) {
     return loadMetadataFromFile(engine, 0 /* tries */);
+  }
+
+  /** Reads {@code _last_checkpoint} as an opaque JSON blob. */
+  public Optional<LastCheckpointSerialized> readLastCheckpointSerialized(Engine engine) {
+    return loadSerializedFromFile(engine, 0 /* tries */);
   }
 
   /**
@@ -376,6 +390,81 @@ public class Checkpointer {
       // is to list files and find the last checkpoint file. And the `_last_checkpoint`
       // file is possibly being written to.
       return loadMetadataFromFile(engine, tries + 1);
+    }
+  }
+
+  /**
+   * Loads the opaque {@code _last_checkpoint} JSON blob via {@link LastCheckpointFileReader}.
+   *
+   * @param engine {@link Engine instance to use}
+   * @param tries Number of times already tried to load before this call.
+   */
+  private Optional<LastCheckpointSerialized> loadSerializedFromFile(Engine engine, int tries) {
+    if (tries >= READ_LAST_CHECKPOINT_FILE_MAX_RETRIES) {
+      logger.warn(
+          "Failed to load serialized last checkpoint from file {} after {} attempts.",
+          lastCheckpointFilePath,
+          READ_LAST_CHECKPOINT_FILE_MAX_RETRIES);
+      return Optional.empty();
+    }
+
+    logger.info(
+        "Loading serialized last checkpoint from the _last_checkpoint file. Attempt: {} / {}",
+        tries + 1,
+        READ_LAST_CHECKPOINT_FILE_MAX_RETRIES);
+
+    try {
+      Optional<String> jsonOpt =
+          LastCheckpointFileReader.readUtf8(engine, lastCheckpointFilePath.toString());
+      if (!jsonOpt.isPresent()) {
+        logger.warn(
+            "Last checkpoint file {} has no data. Retrying after 1sec. (current attempt = {})",
+            lastCheckpointFilePath,
+            tries);
+        try {
+          Thread.sleep(1000);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return Optional.empty();
+        }
+        return loadSerializedFromFile(engine, tries + 1);
+      }
+
+      String json = jsonOpt.get();
+      // Detect a torn read: _last_checkpoint may be overwritten between getFileStatus (size)
+      // and readFiles (bytes).
+      validateJsonObject(json);
+      return Optional.of(new LastCheckpointSerialized(json));
+    } catch (Exception e) {
+      if (e instanceof FileNotFoundException
+          || (e instanceof KernelEngineException
+              && e.getCause() instanceof FileNotFoundException)) {
+        return Optional.empty();
+      }
+      String msg =
+          String.format(
+              "Failed to load serialized last checkpoint from file %s. "
+                  + "It must be in the process of being written. "
+                  + "Retrying after 1sec. (current attempt of %s (max 3)",
+              lastCheckpointFilePath, tries);
+      logger.warn(msg, e);
+      return loadSerializedFromFile(engine, tries + 1);
+    }
+  }
+
+  /** Syntax check for the opaque blob path: valid JSON object with a {@code version} field. */
+  private static void validateJsonObject(String json) throws IOException {
+    final JsonNode node;
+    try {
+      node = JsonUtils.mapper().readTree(json);
+    } catch (JsonProcessingException e) {
+      throw new IOException("Failed to parse _last_checkpoint as JSON", e);
+    }
+    if (node == null || !node.isObject()) {
+      throw new IOException("_last_checkpoint must be a JSON object");
+    }
+    if (!node.has("version")) {
+      throw new IOException("_last_checkpoint missing version field");
     }
   }
 }

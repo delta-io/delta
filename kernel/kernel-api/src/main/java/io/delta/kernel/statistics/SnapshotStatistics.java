@@ -18,6 +18,8 @@ package io.delta.kernel.statistics;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.engine.Engine;
+import java.io.IOException;
 import java.util.Optional;
 
 /** Provides statistics and metadata about a {@link Snapshot}. */
@@ -41,6 +43,34 @@ public interface SnapshotStatistics {
    * @return the recommended checksum write mode, or empty if checksum already exists
    */
   Optional<Snapshot.ChecksumWriteMode> getChecksumWriteMode();
+
+  /**
+   * Returns the estimated cost of loading checksum information incrementally.
+   *
+   * <ul>
+   *   <li>{@code Optional.of(N)} – CRC exists in the log segment, where {@code N} is the number of
+   *       delta versions between the last seen checksum version and the snapshot version
+   *   <li>{@link Optional#empty()} – no CRC file exists in the log segment
+   * </ul>
+   *
+   * @return the estimated number of delta files to read, or empty if unavailable
+   */
+  Optional<Integer> getIncrementalChecksumLoadCost();
+
+  /**
+   * Returns {@link TableStats} for the current snapshot version.
+   *
+   * <p>Returns {@link Optional#empty()} when:
+   *
+   * <ul>
+   *   <li>No checksum file exists in the log segment.
+   *   <li>A checksum file exists but the TableStats cannot be incrementally computed from it to the
+   *       current snapshot version.
+   * </ul>
+   *
+   * @param engine the engine to use for reading files
+   */
+  Optional<TableStats> getTableStats(Engine engine) throws IOException;
 
   // TODO: getNumUnpublishedCatalogCommits
   // TODO: getNumDeltasSinceLastCheckpoint

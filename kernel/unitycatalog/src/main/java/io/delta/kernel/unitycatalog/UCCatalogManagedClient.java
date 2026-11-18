@@ -27,6 +27,7 @@ import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.VersionToLoadAfterLatestCommitException;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
@@ -37,6 +38,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.metrics.UcLoadSnapshotTelemetry;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.GetCommitsResponse;
+import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import java.io.IOException;
@@ -82,22 +84,27 @@ public class UCCatalogManagedClient {
    * @param engine The Delta Kernel {@link Engine} to use for loading the table.
    * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
    * @param tablePath The path to the Delta table in the underlying storage system.
+   * @param ucTableIdentifier The three-part Unity Catalog table identifier.
    * @param versionOpt The optional version to time-travel to when loading the table. This must be
    *     mutually exclusive with timestampOpt.
    * @param timestampOpt The optional timestamp to time-travel to when loading the table. This must
    *     be mutually exclusive with versionOpt.
-   * @throws IllegalArgumentException if a negative version or timestamp is provided
+   * @throws IllegalArgumentException if a negative version is provided
    * @throws IllegalArgumentException if both versionOpt and timestampOpt are defined
+   * @throws VersionToLoadAfterLatestCommitException if the requested version is greater than the
+   *     latest version ratified by UC
    */
   public Snapshot loadSnapshot(
       Engine engine,
       String ucTableId,
       String tablePath,
+      UCTableIdentifier ucTableIdentifier,
       Optional<Long> versionOpt,
       Optional<Long> timestampOpt) {
     Objects.requireNonNull(engine, "engine is null");
     Objects.requireNonNull(ucTableId, "ucTableId is null");
     Objects.requireNonNull(tablePath, "tablePath is null");
+    Objects.requireNonNull(ucTableIdentifier, "ucTableIdentifier is null");
     Objects.requireNonNull(versionOpt, "versionOpt is null");
     Objects.requireNonNull(timestampOpt, "timestampOpt is null");
     versionOpt.ifPresent(version -> checkArgument(version >= 0, "version must be non-negative"));
@@ -122,7 +129,13 @@ public class UCCatalogManagedClient {
               () -> {
                 final GetCommitsResponse response =
                     metricsCollector.getCommitsTimer.timeChecked(
-                        () -> getRatifiedCommitsFromUC(ucTableId, tablePath, versionOpt));
+                        () ->
+                            getRatifiedCommitsFromUC(
+                                ucTableId,
+                                tablePath,
+                                versionOpt,
+                                UCCatalogManagedCommitter.toStorageTableIdentifier(
+                                    ucTableIdentifier)));
 
                 metricsCollector.setNumCatalogCommits(response.getCommits().size());
 
@@ -134,7 +147,7 @@ public class UCCatalogManagedClient {
 
                 final List<ParsedLogData> logData =
                     getSortedKernelParsedDeltaDataFromRatifiedCommits(
-                        ucTableId, response.getCommits());
+                        ucTableId, tablePath, response.getCommits());
 
                 return metricsCollector.kernelSnapshotBuildTimer.timeChecked(
                     () -> {
@@ -156,6 +169,7 @@ public class UCCatalogManagedClient {
                                             engine,
                                             ucTableId,
                                             tablePath,
+                                            ucTableIdentifier,
                                             logData,
                                             maxUcTableVersion));
                         snapshotBuilder =
@@ -164,7 +178,9 @@ public class UCCatalogManagedClient {
 
                       Snapshot snapshot =
                           snapshotBuilder
-                              .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
+                              .withCommitter(
+                                  createUCCommitter(
+                                      ucClient, ucTableId, tablePath, ucTableIdentifier))
                               .withLogData(logData)
                               .withMaxCatalogVersion(maxUcTableVersion)
                               .build(engine);
@@ -193,12 +209,15 @@ public class UCCatalogManagedClient {
    * transaction is built and committed, creating 000.json, you must call {@code
    * TablesApi::createTable} to inform Unity Catalog of the successful table creation.
    *
+   * @deprecated Use {@link #buildCreateTableTransaction(String, String, StructType, String,
+   *     UCTableIdentifier)} which automatically finalizes the table.
    * @param ucTableId The Unity Catalog table ID.
    * @param tablePath The staging path to the Delta table.
    * @param schema The table schema.
    * @param engineInfo Information about the creating engine.
    * @return A {@link CreateTableTransactionBuilder} configured for UC managed tables.
    */
+  @Deprecated
   public CreateTableTransactionBuilder buildCreateTableTransaction(
       String ucTableId, String tablePath, StructType schema, String engineInfo) {
     Objects.requireNonNull(ucTableId, "ucTableId is null");
@@ -208,6 +227,29 @@ public class UCCatalogManagedClient {
 
     return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
         .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
+        .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
+  }
+
+  /**
+   * Builds a create table transaction with automatic UC finalization. When committed, the committer
+   * writes 000.json and then calls UC to finalize (promote) the staging table.
+   *
+   * @param ucTableIdentifier Logical UC table identifier for create-time registration.
+   */
+  public CreateTableTransactionBuilder buildCreateTableTransaction(
+      String ucTableId,
+      String tablePath,
+      StructType schema,
+      String engineInfo,
+      UCTableIdentifier ucTableIdentifier) {
+    Objects.requireNonNull(ucTableId, "ucTableId is null");
+    Objects.requireNonNull(tablePath, "tablePath is null");
+    Objects.requireNonNull(schema, "schema is null");
+    Objects.requireNonNull(engineInfo, "engineInfo is null");
+    Objects.requireNonNull(ucTableIdentifier, "ucTableIdentifier is null");
+
+    return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
+        .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
   }
 
@@ -222,6 +264,7 @@ public class UCCatalogManagedClient {
    * @param engine The Delta Kernel {@link Engine} to use for loading the table.
    * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
    * @param tablePath The path to the Delta table in the underlying storage system.
+   * @param ucTableIdentifier The three-part Unity Catalog table identifier.
    * @param startVersionOpt The optional start version boundary. This must be mutually exclusive
    *     with startTimestampOpt. Either this or startTimestampOpt must be provided.
    * @param startTimestampOpt The optional start timestamp boundary. This must be mutually exclusive
@@ -233,24 +276,63 @@ public class UCCatalogManagedClient {
    * @throws IllegalArgumentException if neither startVersionOpt nor startTimestampOpt is provided
    * @throws IllegalArgumentException if both startVersionOpt and startTimestampOpt are defined
    * @throws IllegalArgumentException if both endVersionOpt and endTimestampOpt are defined
-   * @throws IllegalArgumentException if either startVersionOpt or endVersionOpt is provided and is
+   * @throws VersionToLoadAfterLatestCommitException if either startVersionOpt or endVersionOpt is
    *     greater than the latest ratified version from UC
+   * @deprecated Use {@link #loadCommitRange(Engine, String, String, UCTableIdentifier,
+   *     UCLoadCommitRangeOptions)} instead.
+   */
+  @Deprecated
+  public CommitRange loadCommitRange(
+      Engine engine,
+      String ucTableId,
+      String tablePath,
+      UCTableIdentifier ucTableIdentifier,
+      Optional<Long> startVersionOpt,
+      Optional<Long> startTimestampOpt,
+      Optional<Long> endVersionOpt,
+      Optional<Long> endTimestampOpt) {
+    return loadCommitRange(
+        engine,
+        ucTableId,
+        tablePath,
+        ucTableIdentifier,
+        new UCLoadCommitRangeOptions(
+            startVersionOpt,
+            startTimestampOpt,
+            endVersionOpt,
+            endTimestampOpt,
+            Optional.empty(),
+            Optional.empty()));
+  }
+
+  /**
+   * Loads a Kernel {@link CommitRange} with the provided boundaries and validation options.
+   *
+   * @param engine The Delta Kernel {@link Engine} to use for loading the table.
+   * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
+   * @param tablePath The path to the Delta table in the underlying storage system.
+   * @param ucTableIdentifier The three-part Unity Catalog table identifier.
+   * @param loadCommitRangeOptions The boundaries and optional validation settings.
+   * @throws IllegalArgumentException if boundaries conflict, no start boundary is provided, or the
+   *     start boundary is greater than the end boundary
+   * @throws VersionToLoadAfterLatestCommitException if a version boundary is greater than the
+   *     latest ratified version from UC
    */
   public CommitRange loadCommitRange(
       Engine engine,
       String ucTableId,
       String tablePath,
-      Optional<Long> startVersionOpt,
-      Optional<Long> startTimestampOpt,
-      Optional<Long> endVersionOpt,
-      Optional<Long> endTimestampOpt) {
+      UCTableIdentifier ucTableIdentifier,
+      UCLoadCommitRangeOptions loadCommitRangeOptions) {
     Objects.requireNonNull(engine, "engine is null");
     Objects.requireNonNull(ucTableId, "ucTableId is null");
     Objects.requireNonNull(tablePath, "tablePath is null");
-    Objects.requireNonNull(startVersionOpt, "startVersionOpt is null");
-    Objects.requireNonNull(startTimestampOpt, "startTimestampOpt is null");
-    Objects.requireNonNull(endVersionOpt, "endVersionOpt is null");
-    Objects.requireNonNull(endTimestampOpt, "endTimestampOpt is null");
+    Objects.requireNonNull(ucTableIdentifier, "ucTableIdentifier is null");
+    Objects.requireNonNull(loadCommitRangeOptions, "loadCommitRangeOptions is null");
+    Optional<Long> startVersionOpt = loadCommitRangeOptions.getStartVersionOpt();
+    Optional<Long> startTimestampOpt = loadCommitRangeOptions.getStartTimestampOpt();
+    Optional<Long> endVersionOpt = loadCommitRangeOptions.getEndVersionOpt();
+    Optional<Long> endTimestampOpt = loadCommitRangeOptions.getEndTimestampOpt();
     checkArgument(
         !startVersionOpt.isPresent() || !startTimestampOpt.isPresent(),
         "Cannot provide both a start timestamp and start version");
@@ -281,16 +363,21 @@ public class UCCatalogManagedClient {
     Optional<Long> endVersionOptForCommitQuery =
         endVersionOpt.filter(v -> !startTimestampOpt.isPresent());
     final GetCommitsResponse response =
-        getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOptForCommitQuery);
+        getRatifiedCommitsFromUC(
+            ucTableId,
+            tablePath,
+            endVersionOptForCommitQuery,
+            UCCatalogManagedCommitter.toStorageTableIdentifier(ucTableIdentifier));
     final long ucTableVersion = response.getLatestTableVersion();
     validateVersionBoundariesExist(ucTableId, startVersionOpt, endVersionOpt, ucTableVersion);
     final List<ParsedLogData> logData =
-        getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
+        getSortedKernelParsedDeltaDataFromRatifiedCommits(
+            ucTableId, tablePath, response.getCommits());
     final Lazy<Snapshot> latestSnapshot =
         new Lazy<>(
             () ->
                 loadLatestSnapshotForTimestampResolution(
-                    engine, ucTableId, tablePath, logData, ucTableVersion));
+                    engine, ucTableId, tablePath, ucTableIdentifier, logData, ucTableVersion));
 
     return timeUncheckedOperation(
         logger,
@@ -324,6 +411,17 @@ public class UCCatalogManagedClient {
                         endTimestampOpt.get(), latestSnapshot.get()));
           }
 
+          if (loadCommitRangeOptions.getCommitRangeValidationOpt().isPresent()) {
+            commitRangeBuilder =
+                commitRangeBuilder.withCommitRangeValidation(
+                    loadCommitRangeOptions.getCommitRangeValidationOpt().get());
+          }
+          if (loadCommitRangeOptions.getFailOnDataLossOpt().isPresent()) {
+            commitRangeBuilder =
+                commitRangeBuilder.withFailOnDataLoss(
+                    loadCommitRangeOptions.getFailOnDataLossOpt().get());
+          }
+
           return commitRangeBuilder.withLogData(logData).build(engine);
         });
   }
@@ -340,6 +438,17 @@ public class UCCatalogManagedClient {
    */
   protected Committer createUCCommitter(UCClient ucClient, String ucTableId, String tablePath) {
     return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath);
+  }
+
+  /**
+   * Creates a UC committer that carries the three-part {@link UCTableIdentifier}.
+   *
+   * <p>The identifier is required by the UCDeltaClient, whose {@code commit} needs the {@code
+   * catalog.schema.table} name. The UCClient ignores it.
+   */
+  protected Committer createUCCommitter(
+      UCClient ucClient, String ucTableId, String tablePath, UCTableIdentifier ucTableIdentifier) {
+    return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier);
   }
 
   ////////////////////
@@ -386,7 +495,11 @@ public class UCCatalogManagedClient {
   }
 
   private GetCommitsResponse getRatifiedCommitsFromUC(
-      String ucTableId, String tablePath, Optional<Long> versionOpt) {
+      String ucTableId,
+      String tablePath,
+      Optional<Long> versionOpt,
+      TableIdentifier tableIdentifier) {
+    Objects.requireNonNull(tableIdentifier, "tableIdentifier is null");
     logger.info(
         "[{}] Invoking the UCClient to get ratified commits at version {}",
         ucTableId,
@@ -403,6 +516,7 @@ public class UCCatalogManagedClient {
                 return ucClient.getCommits(
                     ucTableId,
                     new Path(tablePath).toUri(),
+                    tableIdentifier,
                     Optional.empty() /* startVersion */,
                     versionOpt /* endVersion */);
               } catch (IOException ex) {
@@ -424,7 +538,7 @@ public class UCCatalogManagedClient {
   private void validateTimeTravelVersionNotPastMax(
       String ucTableId, long tableVersionToLoad, long maxRatifiedVersion) {
     if (tableVersionToLoad > maxRatifiedVersion) {
-      throw new IllegalArgumentException(
+      throw new VersionToLoadAfterLatestCommitException(
           String.format(
               "[%s] Cannot load table version %s as the latest version ratified by UC is %s",
               ucTableId, tableVersionToLoad, maxRatifiedVersion));
@@ -439,7 +553,7 @@ public class UCCatalogManagedClient {
     BiConsumer<Long, String> validateVersion =
         (version, type) -> {
           if (version > maxRatifiedVersion) {
-            throw new IllegalArgumentException(
+            throw new VersionToLoadAfterLatestCommitException(
                 String.format(
                     "[%s] Cannot load commit range with %s version %d as the latest version "
                         + "ratified by UC is %d",
@@ -466,11 +580,12 @@ public class UCCatalogManagedClient {
 
   /**
    * Converts a list of ratified commits into a sorted list of {@link ParsedLogData} for use in
-   * loading a Delta table.
+   * loading a Delta table. Each commit may be staged or already published.
    */
   @VisibleForTesting
   static List<ParsedLogData> getSortedKernelParsedDeltaDataFromRatifiedCommits(
-      String ucTableId, List<Commit> commits) {
+      String ucTableId, String tablePath, List<Commit> commits) {
+    final String logPath = new Path(tablePath, "_delta_log").toString();
     final List<ParsedLogData> result =
         timeUncheckedOperation(
             logger,
@@ -481,7 +596,9 @@ public class UCCatalogManagedClient {
                     .sorted(Comparator.comparingLong(Commit::getVersion))
                     .map(
                         commit ->
-                            ParsedCatalogCommitData.forFileStatus(
+                            ParsedCatalogCommitData.forCatalogFileStatus(
+                                logPath,
+                                commit.getVersion(),
                                 hadoopFileStatusToKernelFileStatus(commit.getFileStatus())))
                     .collect(Collectors.toList()));
 
@@ -506,6 +623,7 @@ public class UCCatalogManagedClient {
       Engine engine,
       String ucTableId,
       String tablePath,
+      UCTableIdentifier ucTableIdentifier,
       List<ParsedLogData> logData,
       long ucTableVersion) {
     // TODO: We can remove timeUncheckedOperation when the commitRange code integrates with metrics
@@ -515,7 +633,7 @@ public class UCCatalogManagedClient {
         ucTableId,
         () ->
             TableManager.loadSnapshot(tablePath)
-                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
                 .withLogData(logData)
                 .withMaxCatalogVersion(ucTableVersion)
                 .build(engine));

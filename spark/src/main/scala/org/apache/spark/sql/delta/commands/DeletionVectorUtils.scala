@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaConfigs, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaConfigs, DeltaLogFileIndex, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.SupportsRowIndexFilters
@@ -103,7 +103,7 @@ trait DeletionVectorUtils extends DeltaLogging {
     } catch {
       case e: Exception =>
         recordDeltaEvent(
-          deltaLog = null,
+          provider = null,
           opType = "delta.assertions.deletionVectorSerializationError",
           data = debugInfo ++ Map(
             "serializationFormat" -> serializationFormat,
@@ -128,7 +128,7 @@ trait DeletionVectorUtils extends DeltaLogging {
     } catch {
       case e: Exception =>
         recordDeltaEvent(
-          deltaLog = null,
+          provider = null,
           "delta.assertions.deletionVectorDeserializationError",
           data = debugInfo ++ Map(
             "errorMsg" -> e.getMessage,

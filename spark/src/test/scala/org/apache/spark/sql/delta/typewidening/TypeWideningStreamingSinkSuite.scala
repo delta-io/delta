@@ -38,7 +38,6 @@ class TypeWideningStreamingSinkSuite
     super.beforeAll()
     // Set by default confs to enable automatic type widening in all tests. Negative tests should
     // explicitly disable these.
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
     spark.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
     // Ensure we don't silently cast test inputs to null on overflow.
@@ -110,20 +109,6 @@ class TypeWideningStreamingSinkSuite
       stream.write(Int.MaxValue)("CAST(value AS INT)")
       assert(stream.currentSchema("value").dataType === IntegerType)
       checkAnswer(stream.read(), Row(17) :: Row(Int.MaxValue) :: Nil)
-    }
-  }
-
-  test("type can be widened even if type casting is disabled in the sink") {
-    withDeltaStream[Int] { stream =>
-      stream.write(17)("CAST(value AS SHORT)")
-      assert(stream.currentSchema("value").dataType === ShortType)
-      checkAnswer(stream.read(), Row(17))
-
-      withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "false") {
-        stream.write(Int.MaxValue)("CAST(value AS INT)")
-        assert(stream.currentSchema("value").dataType === IntegerType)
-        checkAnswer(stream.read(), Row(17) :: Row(Int.MaxValue) :: Nil)
-      }
     }
   }
 

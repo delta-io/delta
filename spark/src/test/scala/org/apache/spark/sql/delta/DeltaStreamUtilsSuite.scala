@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.sql.Timestamp
 
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.{SparkFunSuite, SparkThrowable}
 
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils
 
@@ -69,11 +69,18 @@ class DeltaStreamUtilsSuite extends SparkFunSuite {
     val commitVersion = 5L
     val latestVersion = 5L
     val timestamp = new Timestamp(2000)
-    val e = intercept[Exception] {
+    val e = intercept[SparkThrowable] {
       DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
         timeZone, commitTs, commitVersion, latestVersion, timestamp, canExceedLatest = false)
     }
-    assert(e.getMessage.contains("DELTA_TIMESTAMP_GREATER_THAN_COMMIT"))
+    checkError(
+      e,
+      "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+      "42816",
+      Map(
+        "providedTimestamp" -> "1969-12-31 16:00:02.0",
+        "lastCommitTimestamp" -> "1969-12-31 16:00:01.0",
+        "maximumTimestamp" -> "1970-01-01 00:00:01"))
   }
 
   test("getStartingVersionFromCommitAtTimestamp - " +

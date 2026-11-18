@@ -62,20 +62,31 @@ def delete_if_exists(path):
         print("Deleted %s " % path)
 
 
-def prepare(root_dir, spark_version):
+def prepare(root_dir, spark_version, kernel_version=None):
     print("##### Preparing python tests & building packages #####")
+    print(f"[python/run-tests.py] prepare: spark_version={spark_version!r}, "
+          f"kernel_version={kernel_version!r}")
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
-    ivy_caches_to_clear = [
-        filepath for filepath in os.listdir(os.path.expanduser("~"))
-        if filepath.startswith(".ivy")
-    ]
-    print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
-    for filepath in ivy_caches_to_clear:
-        delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
-    delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
+    # When kernel_version is set we are consuming the kernel from Maven; wiping
+    # the io.delta caches would delete the very artifact we just resolved (or
+    # locally published as a snapshot), forcing an unnecessary re-resolve and
+    # potentially failing if the artifact is only available locally.
+    if kernel_version:
+        print(f"Skipping io.delta cache wipe because kernel_version={kernel_version!r}")
+    else:
+        ivy_caches_to_clear = [
+            filepath for filepath in os.listdir(os.path.expanduser("~"))
+            if filepath.startswith(".ivy")
+        ]
+        print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
+        for filepath in ivy_caches_to_clear:
+            delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
+        delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
     sbt_command = sbt_command + [f"-DsparkVersion={spark_version}"]
+    if kernel_version:
+        sbt_command = sbt_command + [f"-DkernelVersion={kernel_version}"]
     run_cmd(sbt_command + ["clean", "publishM2"], stream_output=True)
 
 
@@ -224,7 +235,8 @@ if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     spark_version = os.getenv("SPARK_VERSION") or "default"
-    prepare(root_dir, spark_version)
+    kernel_version = os.getenv("KERNEL_VERSION")
+    prepare(root_dir, spark_version, kernel_version)
     delta_spark_package = get_local_package("delta-spark", spark_version, root_dir)
 
     run_python_style_checks(root_dir)

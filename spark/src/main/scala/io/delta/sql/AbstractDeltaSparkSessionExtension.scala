@@ -49,11 +49,23 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
     }
+    // We want this rule to run before resolution so that ResolveSchemaEvolution in Spark correctly
+    // sees when schema evolution is enabled. Ideally this should be injected in the pre-resolution
+    // phase, but there is no hook point there yet.
+    extensions.injectHintResolutionRule { session =>
+      new SetDSv2SchemaEvolutionShims(session)
+    }
     extensions.injectResolutionRule { session =>
       ResolveDeltaPathTable(session)
     }
     extensions.injectResolutionRule { session =>
       PreprocessTimeTravel(session)
+    }
+    extensions.injectResolutionRule { _ => PropagateSchemaEvolutionWriteOptionShims }
+    // Keep DeltaImplicitCast immediately before DeltaAnalysis so both rules see the plan in the
+    // same analyzer state.
+    extensions.injectResolutionRule { session =>
+      DeltaImplicitCast(session)
     }
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support

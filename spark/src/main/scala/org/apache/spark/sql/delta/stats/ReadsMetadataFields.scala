@@ -45,6 +45,12 @@ object DeltaStatistics {
    * This should only be present in tables with Deletion Vectors enabled.
    */
   val TIGHT_BOUNDS = "tightBounds"
+  /*
+   * Whether the file has tight or wide stats, like [[TIGHT_BOUNDS]]. Only present in tables with
+   * the `adaptiveMetadata` feature, whose writers emit it instead of [[TIGHT_BOUNDS]]; see
+   * [[StatsTightness]].
+   */
+  val TIGHT_STATS = "tightStats"
 
   val ALL_STAT_FIELDS = Seq(NUM_RECORDS, MIN, MAX, NULL_COUNT, TIGHT_BOUNDS)
 }

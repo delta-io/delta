@@ -51,11 +51,6 @@ public abstract class HadoopFileSystemLogStore extends LogStore {
     @Override
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
         FileSystem fs = path.getFileSystem(hadoopConf);
-        if (!fs.exists(path.getParent())) {
-            throw new FileNotFoundException(
-                String.format("No such file or directory: %s", path.getParent())
-            );
-        }
         FileStatus[] files = fs.listStatus(path.getParent());
         return Arrays.stream(files)
             .filter(f -> f.getPath().getName().compareTo(path.getName()) >= 0)

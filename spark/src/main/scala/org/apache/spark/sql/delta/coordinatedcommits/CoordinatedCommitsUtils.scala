@@ -16,17 +16,20 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Locale
 import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CatalogManagedTableFeature, CheckpointPolicy, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
@@ -43,39 +46,39 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.util.Utils
 
-object CatalogOwnedTableUtils extends DeltaLogging {
+object CatalogManagedTableUtils extends DeltaLogging {
   /** The default catalog name only used for testing. */
   val DEFAULT_CATALOG_NAME_FOR_TESTING: String = "spark_catalog"
 
   /**
-   * Sets or removes CatalogOwnedTableFeature from a transaction's protocol.
+   * Sets or removes CatalogManagedTableFeature from a transaction's protocol.
    *
    * This helper method is used to control whether a transaction should use CC.
    *
    * @param txn The OptimisticTransaction to modify protocol and metadata on
-   * @param withCatalogOwnedTableFeature If true, adds CatalogOwnedTableFeature to the protocol
+   * @param withCatalogOwnedTableFeature If true, adds CatalogManagedTableFeature to the protocol
    *                                      and ensures ICT enablement. If false, removes it.
    *
-   * @note When adding CatalogOwnedTableFeature, this method also forces a metadata update
+   * @note When adding CatalogManagedTableFeature, this method also forces a metadata update
    *       to ensure ICT (In-Commit Timestamp) is properly enabled. See the below comment
    *       for details.
    */
   def setTxnProtocol(txn: OptimisticTransaction, withCatalogOwnedTableFeature: Boolean): Unit = {
     if (withCatalogOwnedTableFeature) {
-      val p = txn.protocol.withFeature(feature = CatalogOwnedTableFeature)
+      val p = txn.protocol.withFeature(feature = CatalogManagedTableFeature)
       txn.updateProtocol(protocol = p)
       // Force a metadata update to trigger ICT (In-Commit Timestamp) enablement.
-      // CatalogOwnedTableFeature requires ICT to be enabled in the metadata, but
-      // updateMetadataAndProtocolWithRequiredFeatures in prepareCommit only runs
+      // CatalogManagedTableFeature requires ICT to be enabled in the metadata, but
+      // updateMetadataAndProtocolWithRequiredFeatures in prepareInitialActions only runs
       // when there's an explicit metadata change (metadataChanges.headOption is non-empty).
       // Since we're only updating the protocol here without changing metadata content,
       // we need to explicitly call updateMetadata to ensure metadataChanges is non-empty
-      // during prepareCommit, which will then enable ICT in the metadata.
+      // during prepareInitialActions, which will then enable ICT in the metadata.
       // Without this, generateInCommitTimestampForFirstCommitAttempt would return None,
       // causing UCCommitCoordinatorClient to fail with DELTA_MISSING_COMMIT_TIMESTAMP.
       txn.updateMetadata(proposedNewMetadata = txn.metadata)
     } else {
-      val p = txn.protocol.removeFeature(targetFeature = CatalogOwnedTableFeature)
+      val p = txn.protocol.removeFeature(targetFeature = CatalogManagedTableFeature)
       txn.updateProtocol(protocol = p)
     }
   }
@@ -84,7 +87,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   def populateTableCommitCoordinatorFromCatalog(
       spark: SparkSession,
       catalogTableOpt: Option[CatalogTable],
-      snapshot: Snapshot): Option[TableCommitCoordinatorClient] = {
+      snapshot: Snapshot
+  ): Option[TableCommitCoordinatorClient] = {
     if (!snapshot.isCatalogOwned) {
       return None
     }
@@ -100,7 +104,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
         snapshot.metadata.configuration
       TableCommitCoordinatorClient(
         commitCoordinatorClient = cc,
-        logPath = snapshot.deltaLog.logPath,
+        logPath = snapshot.logPath,
         tableConf = tableConf,
         hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
         logStore = snapshot.deltaLog.store
@@ -108,25 +112,25 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     }
     .orElse {
       if (Utils.isTesting) {
-        // In unit test with a path based access, it is possible to enable CatalogOwned with
+        // In unit test with a path based access, it is possible to enable CatalogManaged with
         // in-memory commit coordinator. In this case, we return table commit coordinator
-        // registered in the provider so that it can still test CatalogOwned table feature
+        // registered in the provider so that it can still test CatalogManaged table feature
         // capability.
-        CatalogOwnedCommitCoordinatorProvider.getBuilder(DEFAULT_CATALOG_NAME_FOR_TESTING)
+        CatalogManagedCommitCoordinatorProvider.getBuilder(DEFAULT_CATALOG_NAME_FOR_TESTING)
           .flatMap{ builder =>
             Some(builder.buildForCatalog(spark, DEFAULT_CATALOG_NAME_FOR_TESTING))
           }
           .map { cc =>
             return Some(TableCommitCoordinatorClient(
               cc,
-              logPath = snapshot.deltaLog.logPath,
+              logPath = snapshot.logPath,
               tableConf = snapshot.metadata.configuration,
               hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
-              logStore = snapshot.deltaLog.store)
-            )
+              logStore = snapshot.deltaLog.store
+            ))
           }
       }
-      // This table is catalog owned table but catalogTableOpt is not defined. This means
+      // This table is catalog managed table but catalogTableOpt is not defined. This means
       // that the caller is accessing this table by path-based or the calling code path is missing
       // the CatalogTable.
       // TODO: Better error message with proper error code.
@@ -140,7 +144,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       identifier: CatalystTableIdentifier): Option[CommitCoordinatorClient] = {
     identifier.nameParts match {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
-        CatalogOwnedCommitCoordinatorProvider.getBuilder(catalog.name)
+        CatalogManagedCommitCoordinatorProvider.getBuilder(catalog.name)
           .map(_.buildForCatalog(spark, catalog.name)).orElse {
             if (catalog.getClass.getName ==
                 UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
@@ -166,7 +170,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
         if (catalog.getClass.getName == UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
           // UC is the current commit coordinator.
-          Some("unity-catalog")
+          Some(UCCommitCoordinatorBuilder.COORDINATOR_NAME)
         } else {
           // Other catalog (e.g., `spark_catalog`) is the commit coordinator.
           Some(catalog.name)
@@ -178,7 +182,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
 
   /**
    * The "Quality of Life" table features that will be enabled automatically
-   * when creating CatalogOwned tables.
+   * when creating CatalogManaged tables.
    * Note that we also include the properties (i.e., DeltaConfig and target value)
    * used to determine whether the table features and the corresponding
    * properties/metadata have been enabled or not.
@@ -194,7 +198,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     )
 
   /**
-   * Return true if we should enable CatalogOwned either via default spark
+   * Return true if we should enable CatalogManaged either via default spark
    * session configuration during creating a new table,
    * or via the explicit table property overrides.
    */
@@ -204,11 +208,11 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       isCreatingNew: Boolean = true): Boolean = {
     // Check explicit property overrides when creating a new or upgrading an existing table.
     val isExplicitlyEnablingCO = TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
-      configs = propertyOverrides).contains(CatalogOwnedTableFeature)
+      configs = propertyOverrides).contains(CatalogManagedTableFeature)
 
     // Check default spark session configuration only when creating a new table.
     val isEnablingCOByDefault =
-      isCreatingNew && CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+      isCreatingNew && CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark)
 
     isExplicitlyEnablingCO || isEnablingCOByDefault
   }
@@ -240,7 +244,9 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       metadata: Metadata): Metadata = {
     val qoLConfigsToAdd = QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
       case (feature, config, targetValue) if
-          !isAlreadyConfigured(config, metadata.configuration, spark) =>
+          !isAlreadyConfigured(config, metadata.configuration, spark) &&
+          !(AMTUtils.amtRequested(metadata.configuration) &&
+            AdaptiveMetadataTableFeature.incompatibleFeatures.contains(feature)) =>
         config.key -> targetValue
     }.toMap
     metadata.copy(configuration = metadata.configuration ++ qoLConfigsToAdd)
@@ -252,12 +258,12 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
 
   /**
-   * The main ICT table properties used as dependencies for Catalog-Owned enabled table.
+   * The main ICT table properties used as dependencies for Catalog-Managed enabled table.
    */
   val ICT_TABLE_PROPERTY_KEYS: Seq[String] = ICT_TABLE_PROPERTY_CONFS.map(_.key)
 
   /**
-   * Verifies that the property keys do not contain any ICT dependencies for Catalog-Owned.
+   * Verifies that the property keys do not contain any ICT dependencies for Catalog-Managed.
    */
   private[delta] def verifyNotContainsICTConfigurations(propKeys: Seq[String]): Unit = {
     ICT_TABLE_PROPERTY_KEYS.foreach { key =>
@@ -269,18 +275,31 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     }
   }
 
+  private[delta] def verifyCatalogManagedStatusIsSupported(
+      propertyOverrides: Map[String, String]): Unit = {
+    val catalogManagedKey =
+      TableFeatureProtocolUtils.propertyKey(CatalogManagedTableFeature).toLowerCase(Locale.ROOT)
+    propertyOverrides.foreach { case (key, status) =>
+      if (key.toLowerCase(Locale.ROOT) == catalogManagedKey &&
+          status.toLowerCase(Locale.ROOT) != TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED) {
+        throw DeltaErrors.unsupportedTableFeatureStatusException(
+          feature = CatalogManagedTableFeature.name, status = status)
+      }
+    }
+  }
+
   /**
-   * Validates the Catalog-Owned configurations in explicit command overrides for
+   * Validates the Catalog-Managed configurations in explicit command overrides for
    * `AlterTableSetPropertiesDeltaCommand`.
    *
-   * If [[CatalogOwnedTableFeature]] presents, we do NOT allow users to
-   * modify any ICT properties that Catalog-Owned depends on.
+   * If [[CatalogManagedTableFeature]] presents, we do NOT allow users to
+   * modify any ICT properties that Catalog-Managed depends on.
    */
   def validatePropertiesForAlterTableSetPropertiesDeltaCommand(
       snapshot: Snapshot,
       propertyOverrides: Map[String, String]): Unit = {
     if (snapshot.isCatalogOwned) {
-      // For Catalog-Owned enabled tables, check the dependent ICT properties.
+      // For Catalog-Managed enabled tables, check the dependent ICT properties.
       // Note: Upgrade/Downgrade have been blocked earlier, which do not need to be
       //       checked here.
       verifyNotContainsICTConfigurations(propKeys = propertyOverrides.keys.toSeq)
@@ -290,8 +309,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   /**
    * Validates the configurations to unset for `AlterTableUnsetPropertiesDeltaCommand`.
    *
-   * If the table already has [[CatalogOwnedTableFeature]] present,
-   * we do not allow users to unset any of the ICT properties that Catalog-Owned depends on.
+   * If the table already has [[CatalogManagedTableFeature]] present,
+   * we do not allow users to unset any of the ICT properties that Catalog-Managed depends on.
    */
   def validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
       snapshot: Snapshot,
@@ -309,6 +328,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
    * @param tableExists Whether the table already exists.
    * @param query The query to be executed (e.g., CloneTableCommand).
    * @param catalogTableProperties The table properties from the catalog table.
+   * @param catalogTable The catalog table, used to derive the table name in error messages.
    * @param existingTableSnapshotOpt The snapshot of the existing table, if it exists.
    */
   def validatePropertiesForCreateDeltaTableCommand(
@@ -316,6 +336,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       tableExists: Boolean,
       query: Option[LogicalPlan],
       catalogTableProperties: Map[String, String],
+      catalogTable: CatalogTable,
       existingTableSnapshotOpt: Option[Snapshot] = None): Unit = {
     val (command, propertyOverrides) = query match {
       // For CLONE, we cannot use the properties from the catalog table, because they are already
@@ -326,8 +347,15 @@ object CatalogOwnedTableUtils extends DeltaLogging {
           cmd.tablePropertyOverrides)
       case _ => (if (tableExists) "REPLACE" else "CREATE", catalogTableProperties)
     }
+    // Session default table properties (`spark.databricks.delta.properties.defaults.*`) are not
+    // part of `propertyOverrides`; they are merged into the table configuration only later in
+    // [[OptimisticTransaction]]. Merge them in here so that a default requesting CatalogManaged via
+    // the `enabled` status is rejected at creation time instead of silently producing a
+    // table that has the feature in its protocol but is not registered as CatalogManaged in UC.
+    verifyCatalogManagedStatusIsSupported(
+      DeltaConfigs.mergeGlobalConfigs(spark.sessionState.conf, propertyOverrides))
     // We do not allow users to modify [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]] and
-    // [[CatalogOwnedTableFeature.name]] in any explicit overrides for REPLACE command.
+    // [[CatalogManagedTableFeature.name]] in any explicit overrides for REPLACE command.
     if (tableExists) {
       // Must be "REPLACE" or "REPLACE with CLONE" if the table already exists.
       assert(command == "REPLACE with CLONE" || command == "REPLACE",
@@ -336,7 +364,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
 
       val isSpecifyingCatalogManaged = TableFeatureProtocolUtils
         .getSupportedFeaturesFromTableConfigs(propertyOverrides)
-        .contains(CatalogOwnedTableFeature)
+        .contains(CatalogManagedTableFeature)
       val existingTableIsCatalogManaged = existingTableSnapshotOpt.exists(_.isCatalogOwned)
 
       // Allow specifying CatalogManaged in REPLACE TABLE if the existing table is already
@@ -351,10 +379,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       // the CatalogManaged status during REPLACE (the table type won't change), there's no need
       // to block that case.
       if (isSpecifyingCatalogManaged && !existingTableIsCatalogManaged) {
-        throw new IllegalStateException(
-          "Specifying CatalogManaged in REPLACE TABLE command is not supported " +
-          "for tables that are not already CatalogManaged. " +
-          "Please either upgrade the existing table or create a fresh CatalogManaged table.")
+        throw DeltaErrors.replaceTableWithCatalogManagedNotSupported(
+          catalogTable.identifier.nameParts)
       }
     }
   }
@@ -373,14 +399,14 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   }
 
   /**
-   * Whether Catalog-Owned is enabled via default SparkSession configuration.
+   * Whether Catalog-Managed is enabled via default SparkSession configuration.
    *
    * @param spark The SparkSession to check.
-   * @return True if Catalog-Owned is enabled by default, false otherwise.
+   * @return True if Catalog-Managed is enabled by default, false otherwise.
    */
   def defaultCatalogOwnedEnabled(spark: SparkSession): Boolean = {
     spark.conf
-      .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
+      .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature))
       .contains("supported")
   }
 
@@ -392,7 +418,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   private def logAndThrowPathBasedAccessNotAllowed(snapshot: Snapshot): Nothing = {
     recordCommitCoordinatorPopulationUsageLog(
       snapshot.deltaLog,
-      opType = CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS,
+      opType = CatalogManagedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS,
       snapshot,
       catalogTableOpt = None,
       commitCoordinatorOpt = None,
@@ -458,7 +484,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     val allData = baseData ++ catalogData ++ coordinatorData ++ stackTraceData ++ diagnosticData
 
     recordDeltaEvent(
-      deltaLog = deltaLog,
+      provider = deltaLog,
       opType = opType,
       data = allData
     )
@@ -519,6 +545,38 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   }
 
   /**
+   * Ensures that commit files are backfilled up to the current version in the snapshot.
+   *
+   * This method checks if there are any un-backfilled versions up to the current version and
+   * triggers the backfilling process using the commit-coordinator. It verifies that the delta file
+   * for the current version exists after the backfilling process.
+   *
+   * @throws IllegalStateException
+   *   if the delta file for the current version is not found after backfilling.
+   */
+  def ensureCommitFilesBackfilled(
+      version: Long,
+      deltaLog: DeltaLog,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
+      deltaCommitFileProvider: DeltaCommitFileProvider,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    val minUnbackfilledVersion = deltaCommitFileProvider.minUnbackfilledVersion
+    if (minUnbackfilledVersion <= version) {
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      tableCommitCoordinatorClient.backfillToVersion(
+        catalogTableOpt.map(_.identifier),
+        version,
+        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
+      val fs = deltaLog.logPath.getFileSystem(hadoopConf)
+      val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+      if (!fs.exists(expectedBackfilledDeltaFile)) {
+        throw new IllegalStateException("Backfilling of commit files failed. " +
+          s"Expected delta file $expectedBackfilledDeltaFile not found.")
+      }
+    }
+  }
+
+  /**
    * Returns an iterator of commit files starting from startVersion.
    * If the iterator is consumed beyond what the file system listing shows, this method do a
    * deltaLog.update() to find the latest version and returns listing results upto that version.
@@ -530,6 +588,10 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       catalogTableOpt: Option[CatalogTable],
       startVersion: Long): Iterator[(FileStatus, Long)] = {
 
+    /**
+     * Returns the backfilled deltas found by a filesystem listing between startVersion and
+     * endVersion (a flat `_delta_log` listing, so it never sees `_staged_commits` files).
+     */
     def listDeltas(startVersion: Long, endVersion: Option[Long]): Iterator[(FileStatus, Long)] = {
       deltaLog
         .listFrom(startVersion)
@@ -561,18 +623,54 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       if (maxVersionSeen >= endSnapshot.version) {
         return Iterator.empty
       }
-      val unbackfilledDeltas = endSnapshot.logSegment.deltas.collect {
-        case UnbackfilledDeltaFile(fileStatus, version, _) if version > maxVersionSeen =>
-          (fileStatus, version)
+      // Collect the unlisted unbackfilled deltas since the checkpoint version (inclusive).
+      //  - For non-AMT tables, `unbackfilledDeltas` must be strictly after checkpoint version.
+      //  - For AMT tables, `unbackfilledDeltas` may include the commit at checkpoint version.
+      val unbackfilledDeltas = endSnapshot.logSegment.unbackfilledDeltas.collect {
+        case (file, version, _) if version > maxVersionSeen => (file, version)
       }
-      // Check for a gap between listing and commit files in the logsegment
-      val gapListing = unbackfilledDeltas.headOption match {
-        case Some((_, version)) if maxVersionSeen + 1 < version =>
-          listDeltas(maxVersionSeen + 1, Some(version))
-        // no gap before
-        case _ => Iterator.empty
+      val backfillGapFixEnabled = SparkSession.active.sessionState.conf.getConf(
+        DeltaSQLConf.COMMIT_FILES_ITERATOR_BACKFILL_GAP_FIX_ENABLED)
+      if (backfillGapFixEnabled) {
+        // This fixes two bugs in the gap listing between Phase 1 (filesystem) and
+        // Phase 2 (coordinator/snapshot):
+        //
+        // Bug 1 - data loss: between Phase 1 and Phase 2,
+        // a concurrent writer backfills ALL remaining commits. unbackfilledDeltas is empty,
+        // headOption returns None, and the old code falls through to Iterator.empty,
+        // silently dropping versions [maxVersionSeen+1, endSnapshot.version].
+        // Fix: fall back to filesystem listing up to endSnapshot.version.
+        //
+        // Bug 2 - duplicate entries (Some case): listDeltas uses an inclusive upper bound
+        // (takeWhile { version <= endVersion }). If the first unbackfilled version is also
+        // backfilled on filesystem (either it happened after we contacted UC, or UC did not
+        // know), the gap listing includes it, producing a duplicate with unbackfilledDeltas.
+        // Example: prev snapshot v100, latest v110. update() returns v105-v110 as
+        // unbackfilled, but v105 is backfilled on filesystem. Old code calls
+        // listDeltas(101, Some(105)), which includes 105.json. gapListing=[v101..v105],
+        // unbackfilledDeltas=[v105..v110]. v105 appears twice.
+        // Fix: use version - 1 as exclusive upper bound. listDeltas(101, Some(104)) stops
+        // before v105, eliminating the overlap.
+        val highestGapVersion = unbackfilledDeltas.headOption match {
+          case Some((_, version)) => version - 1
+          case None => endSnapshot.version
+        }
+        val gapListing = if (maxVersionSeen < highestGapVersion) {
+          listDeltas(maxVersionSeen + 1, Some(highestGapVersion))
+        } else {
+          Iterator.empty
+        }
+        gapListing ++ unbackfilledDeltas
+      } else {
+        // Check for a gap between listing and commit files in the logsegment
+        val gapListing = unbackfilledDeltas.headOption match {
+          case Some((_, version)) if maxVersionSeen + 1 < version =>
+            listDeltas(maxVersionSeen + 1, Some(version))
+          // no gap before
+          case _ => Iterator.empty
+        }
+        gapListing ++ unbackfilledDeltas
       }
-      gapListing ++ unbackfilledDeltas
     }
 
     // We want to avoid invoking `tailFromSnapshot()` as it internally calls deltaLog.update()
@@ -636,7 +734,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       commitCoordinator =>
         TableCommitCoordinatorClient(
           commitCoordinator,
-          snapshotDescriptor.deltaLog.logPath,
+          snapshotDescriptor.logPath,
           snapshotDescriptor.metadata.coordinatedCommitsTableConf,
           snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
           snapshotDescriptor.deltaLog.store
@@ -682,10 +780,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    * Returns true if the snapshot is backed by unbackfilled commits.
    */
   def unbackfilledCommitsPresent(snapshot: Snapshot): Boolean = {
-    snapshot.logSegment.deltas.exists {
-      case FileNames.UnbackfilledDeltaFile(_, _, _) => true
-      case _ => false
-    } && !snapshot.allCommitsBackfilled
+    // The unbackfilled commits from the segment might be stale, so we consult the snapshot as well.
+    snapshot.logSegment.unbackfilledDeltas.nonEmpty && !snapshot.allCommitsBackfilled
   }
 
   /**
@@ -698,13 +794,12 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    */
   def backfillWhenCoordinatedCommitsDisabled(snapshot: Snapshot): Unit = {
     if (snapshot.getTableCommitCoordinatorForWrites.nonEmpty || snapshot.isCatalogOwned) {
-      // Coordinated commits or Catalog-owned is enabled on the table. Don't backfill
+      // Coordinated commits or Catalog-managed is enabled on the table. Don't backfill
       // as backfills are managed by commit-coordinators.
       return
     }
-    val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {
-      case UnbackfilledDeltaFile(unbackfilledDeltaFile, version, _) =>
-        (unbackfilledDeltaFile, version)
+    val unbackfilledFilesAndVersions = snapshot.logSegment.unbackfilledDeltas.map {
+      case (file, version, _) => (file, version)
     }
     if (unbackfilledFilesAndVersions.isEmpty) return
     // Coordinated commits are disabled on the table but the table still has un-backfilled files.
@@ -772,6 +867,18 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   }
 
   /**
+   * Extracts the explicit QoL configurations from the provided properties.
+   *
+   * These are preserved across catalog-managed REPLACE when the existing table already has the
+   * QoL defaults materialized in metadata, so a no-op REPLACE does not accidentally drop them
+   * while rebuilding the configuration map.
+   */
+  def getExplicitQoLConfigurations(properties: Map[String, String]): Map[String, String] = {
+    val qolKeys = CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._2.key).toSet
+    properties.filter { case (k, _) => qolKeys.contains(k) }
+  }
+
+  /**
    * Fetches the SparkSession default configurations for ICT. The `withDefaultKey`
    * flag controls whether the keys in the returned map should have the default prefix or not.
    */
@@ -806,179 +913,6 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         finalKey -> value
       }
     }.toMap
-  }
-
-  /**
-   * Verifies that the properties contain exactly the Coordinator Name and Coordinator Conf.
-   * If `fromDefault` is true, then the properties have keys with the default prefix.
-   */
-  private def verifyContainsOnlyCoordinatorNameAndConf(
-      properties: Map[String, String],
-      command: String,
-      fromDefault: Boolean): Unit = {
-    Seq(DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF).foreach { conf =>
-      if (fromDefault) {
-        if (properties.contains(conf.defaultTablePropertyKey)) {
-          throw new DeltaIllegalArgumentException(
-            errorClass = "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_SESSION",
-            messageParameters = Array(
-              command, conf.defaultTablePropertyKey, conf.defaultTablePropertyKey))
-        }
-      } else {
-        if (properties.contains(conf.key)) {
-          throw new DeltaIllegalArgumentException(
-            errorClass = "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_COMMAND",
-            messageParameters = Array(command, conf.key))
-        }
-      }
-    }
-    Seq(
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME,
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF).foreach { conf =>
-      if (fromDefault) {
-        if (!properties.contains(conf.defaultTablePropertyKey)) {
-          throw new DeltaIllegalArgumentException(
-            errorClass = "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION",
-            messageParameters = Array(command, conf.defaultTablePropertyKey))
-        }
-      } else {
-        if (!properties.contains(conf.key)) {
-          throw new DeltaIllegalArgumentException(
-            errorClass = "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_COMMAND",
-            messageParameters = Array(command, conf.key))
-        }
-      }
-    }
-  }
-
-  /**
-   * Verifies that the property keys do not contain any ICT dependencies for Coordinated Commits.
-   */
-  private def verifyNotContainsICTConfigurations(
-      propKeys: Seq[String], command: String, errorClass: String): Unit = {
-    ICT_TABLE_PROPERTY_KEYS.foreach { key =>
-      if (propKeys.contains(key)) {
-        throw new DeltaIllegalArgumentException(
-          errorClass,
-          messageParameters = Array(command))
-      }
-    }
-  }
-
-  /**
-   * Validates the Coordinated Commits configurations in explicit command overrides for
-   * `AlterTableSetPropertiesDeltaCommand`.
-   *
-   * If the table already has Coordinated Commits configurations present, then we do not allow
-   * users to override them via `ALTER TABLE t SET TBLPROPERTIES ...`. Users must downgrade the
-   * table and then upgrade it with the new Coordinated Commits configurations.
-   * If the table is a Coordinated Commits table or will be one via this ALTER command, then we
-   * do not allow users to disable any ICT properties that Coordinated Commits depends on.
-   */
-  def validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
-      existingConfs: Map[String, String],
-      propertyOverrides: Map[String, String]): Unit = {
-    val existingCoordinatedCommitsConfs = getExplicitCCConfigurations(existingConfs)
-    val coordinatedCommitsOverrides = getExplicitCCConfigurations(propertyOverrides)
-    if (coordinatedCommitsOverrides.nonEmpty) {
-      if (existingCoordinatedCommitsConfs.nonEmpty) {
-        throw new DeltaIllegalArgumentException(
-          "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
-          Array("ALTER"))
-      }
-      verifyNotContainsICTConfigurations(propertyOverrides.keys.toSeq, command = "ALTER",
-        errorClass = "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES")
-      verifyContainsOnlyCoordinatorNameAndConf(
-        coordinatedCommitsOverrides, command = "ALTER", fromDefault = false)
-    }
-    if (existingCoordinatedCommitsConfs.nonEmpty) {
-      verifyNotContainsICTConfigurations(propertyOverrides.keys.toSeq, command = "ALTER",
-        errorClass = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES")
-    }
-  }
-
-  /**
-   * Validates the configurations to unset for `AlterTableUnsetPropertiesDeltaCommand`.
-   *
-   * If the table already has Coordinated Commits configurations present, then we do not allow users
-   * to unset them via `ALTER TABLE t UNSET TBLPROPERTIES ...`. Users could only downgrade the table
-   * via `ALTER TABLE t DROP FEATURE ...`. We also do not allow users to unset any ICT properties
-   * that Coordinated Commits depends on.
-   */
-  def validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
-      existingConfs: Map[String, String],
-      propKeysToUnset: Seq[String]): Unit = {
-    // If the table does not have any Coordinated Commits configurations, then we do not check the
-    // properties to unset. This is because unsetting non-existent entries would either be caught
-    // earlier (without `IF EXISTS`) or simply be a no-op (with `IF EXISTS`). Thus, we ignore them
-    // instead of throwing an exception.
-    if (getExplicitCCConfigurations(existingConfs).nonEmpty) {
-      if (propKeysToUnset.exists(TABLE_PROPERTY_KEYS.contains)) {
-        throw new DeltaIllegalArgumentException(
-          "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
-          Array.empty)
-      }
-      verifyNotContainsICTConfigurations(propKeysToUnset, command = "ALTER",
-        errorClass = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES")
-    }
-  }
-
-  /**
-   * Validates the Coordinated Commits configurations in explicit command overrides and default
-   * SparkSession properties for `CreateDeltaTableCommand`.
-   * See `validateConfigurationsForCreateDeltaTableCommandImpl` for details.
-   */
-  def validateConfigurationsForCreateDeltaTableCommand(
-      spark: SparkSession,
-      tableExists: Boolean,
-      query: Option[LogicalPlan],
-      catalogTableProperties: Map[String, String]): Unit = {
-    val (command, propertyOverrides) = query match {
-      // For CLONE, we cannot use the properties from the catalog table, because they are already
-      // the result of merging the source table properties with the overrides, but we do not
-      // consider the source table properties for Coordinated Commits.
-      case Some(cmd: CloneTableCommand) =>
-        (if (tableExists) "REPLACE with CLONE" else "CREATE with CLONE",
-          cmd.tablePropertyOverrides)
-      case _ => (if (tableExists) "REPLACE" else "CREATE", catalogTableProperties)
-    }
-    validateConfigurationsForCreateDeltaTableCommandImpl(
-      spark, propertyOverrides, tableExists, command)
-  }
-
-  /**
-   * Validates the Coordinated Commits configurations for the table.
-   *   - If the table already exists, the explicit command property overrides must not contain any
-   *     Coordinated Commits configurations.
-   *   - If the table does not exist, the explicit command property overrides must contain exactly
-   *     the Coordinator Name and Coordinator Conf, and no Table Conf. Default configurations are
-   *     checked similarly if none of the three properties is present in explicit overrides.
-   */
-  private[delta] def validateConfigurationsForCreateDeltaTableCommandImpl(
-      spark: SparkSession,
-      propertyOverrides: Map[String, String],
-      tableExists: Boolean,
-      command: String): Unit = {
-    val coordinatedCommitsConfs = getExplicitCCConfigurations(propertyOverrides)
-    if (tableExists) {
-      if (coordinatedCommitsConfs.nonEmpty) {
-        throw new DeltaIllegalArgumentException(
-          "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
-          Array(command))
-      }
-    } else {
-      if (coordinatedCommitsConfs.nonEmpty) {
-        verifyContainsOnlyCoordinatorNameAndConf(
-          coordinatedCommitsConfs, command, fromDefault = false)
-      } else {
-        val defaultCoordinatedCommitsConfs = getDefaultCCConfigurations(
-          spark, withDefaultKey = true)
-        if (defaultCoordinatedCommitsConfs.nonEmpty) {
-          verifyContainsOnlyCoordinatorNameAndConf(
-            defaultCoordinatedCommitsConfs, command, fromDefault = true)
-        }
-      }
-    }
   }
 
   /**

@@ -16,6 +16,8 @@
 
 package io.delta.flink.table;
 
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
+
 import dev.failsafe.Failsafe;
 import dev.failsafe.Fallback;
 import dev.failsafe.RetryPolicy;
@@ -24,6 +26,7 @@ import dev.failsafe.function.CheckedSupplier;
 import io.delta.flink.Conf;
 import io.delta.flink.table.postcommit.ChecksumListener;
 import io.delta.flink.table.postcommit.MaintenanceListener;
+import io.delta.flink.table.postcommit.ReportCommitMetricsListener;
 import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -33,8 +36,10 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
@@ -48,6 +53,7 @@ import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
@@ -108,8 +114,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
         target =
             new URI(
                 target.getScheme(),
-                Optional.ofNullable(target.getHost()).orElse(""),
+                Optional.ofNullable(target.getAuthority()).orElse(""),
                 target.getPath() + "/",
+                target.getQuery(),
                 target.getFragment());
       }
     } catch (URISyntaxException e) {
@@ -133,7 +140,14 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   protected final DeltaCatalog catalog;
   protected String tableId;
-  protected String tableUUID;
+
+  /**
+   * @deprecated The UC Delta API no longer requires a table UUID for credential lookup. This field
+   *     is retained for remaining Kernel and metrics call sites and should be removed after they
+   *     are migrated.
+   */
+  @Deprecated protected String tableUUID;
+
   protected URI tablePath;
   protected final TableConf conf;
   /*
@@ -181,6 +195,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     addEventListener(new MaintenanceListener());
     addEventListener(new ChecksumListener());
+    addEventListener(new ReportCommitMetricsListener());
   }
 
   public AbstractKernelTable(DeltaCatalog catalog, String tableId, Map<String, String> conf) {
@@ -198,6 +213,16 @@ public abstract class AbstractKernelTable implements DeltaTable {
   @Override
   public StructType getSchema() {
     return schema;
+  }
+
+  /**
+   * Returns the physical schema of the table, i.e. the logical schema with each field renamed to
+   * its physical name according to the table's column mapping mode. The schema is produced by
+   * Kernel from the transaction state, so it honors the actual column mapping mode (including id
+   * mode metadata) instead of re-deriving the mapping in the connector.
+   */
+  public StructType getPhysicalSchema() {
+    return TransactionStateRow.getPhysicalSchema(tableState);
   }
 
   @Override
@@ -253,6 +278,68 @@ public abstract class AbstractKernelTable implements DeltaTable {
     refresh(null);
   }
 
+  /** Internal primitive for committing an append-only schema update. */
+  final void updateSchema(StructType targetSchema) {
+    Objects.requireNonNull(targetSchema, "targetSchema cannot be null");
+    if (refreshThreadPool == null) {
+      throw new IllegalStateException("DeltaTable must be opened before updating its schema");
+    }
+    AtomicReference<StructType> initialSchema = new AtomicReference<>();
+
+    withTiming(
+        "updateSchema",
+        () ->
+            withRetry(
+                () -> {
+                  updateSchemaFromLatestSnapshot(targetSchema, initialSchema);
+                  return null;
+                }));
+  }
+
+  private void updateSchemaFromLatestSnapshot(
+      StructType targetSchema, AtomicReference<StructType> initialSchema) {
+    Snapshot latestSnapshot =
+        snapshot().orElseThrow(() -> new IllegalStateException("Snapshot should exist"));
+    StructType latestSchema = latestSnapshot.getSchema();
+    StructType schemaAtFirstAttempt = initialSchema.get();
+    if (schemaAtFirstAttempt == null) {
+      initialSchema.set(latestSchema);
+    } else if (!SchemaEvolutionUtils.logicallyEqual(schemaAtFirstAttempt, latestSchema)
+        && !SchemaEvolutionUtils.logicallyEqual(latestSchema, targetSchema)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Target schema is stale: table schema changed concurrently from %s to %s",
+              schemaAtFirstAttempt, latestSchema));
+    }
+    Optional<StructType> updatedSchema =
+        SchemaEvolutionUtils.buildAdditiveSchema(latestSchema, targetSchema);
+
+    if (updatedSchema.isEmpty()) {
+      refresh(latestSnapshot);
+      return;
+    }
+
+    Engine localEngine = getEngine();
+    Transaction txn =
+        latestSnapshot
+            .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
+            .withUpdatedSchema(updatedSchema.get())
+            .build(localEngine);
+    TransactionCommitResult result =
+        withTiming(
+            "updateSchema.txn", () -> txn.commit(localEngine, CloseableIterable.emptyIterable()));
+    Snapshot committedSnapshot =
+        result
+            .getPostCommitSnapshot()
+            .orElseGet(
+                () ->
+                    snapshot()
+                        .orElseThrow(
+                            () -> new IllegalStateException("Snapshot should exist after commit")));
+    refresh(committedSnapshot);
+    onPostCommit(committedSnapshot, result.getTransactionReport());
+  }
+
   @Override
   public Optional<Snapshot> commit(
       CloseableIterable<Row> actions, String appId, long txnId, Map<String, String> properties) {
@@ -275,12 +362,13 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
                   TransactionCommitResult result =
                       withTiming("commit.txn", () -> txn.commit(localEngine, actions));
+                  TransactionReport report = result.getTransactionReport();
                   return result
                       .getPostCommitSnapshot()
                       .map(
                           pcSnapshot -> {
                             this.refresh(pcSnapshot);
-                            onPostCommit(pcSnapshot);
+                            onPostCommit(pcSnapshot, report);
                             return pcSnapshot;
                           });
                 }));
@@ -312,6 +400,19 @@ public abstract class AbstractKernelTable implements DeltaTable {
           return Transaction.generateAppendActions(
               localEngine, writeState, dataFiles, writeContext);
         });
+  }
+
+  @Override
+  public CloseableIterator<Row> scan(Predicate predicate) {
+    return snapshot()
+        .map(
+            s ->
+                s.getScanBuilder()
+                    .withFilter(predicate)
+                    .build()
+                    .getScanFiles(getEngine())
+                    .flatMap(FilteredColumnarBatch::getRows))
+        .orElse(toCloseableIterator(Collections.emptyIterator()));
   }
 
   /**
@@ -413,7 +514,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
     try {
       TransactionCommitResult result =
           txnBuilder.build(engine).commit(engine, CloseableIterable.emptyIterable());
-      result.getPostCommitSnapshot().ifPresent(this::onPostCommit);
+      TransactionReport report = result.getTransactionReport();
+      result.getPostCommitSnapshot().ifPresent(snapshot -> this.onPostCommit(snapshot, report));
     } catch (TableAlreadyExistsException ignore) {
       // Concurrent open may cause this. Ignore it safely.
     }
@@ -429,6 +531,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
       info = catalog.getTable(tableId);
       tableUUID = info.uuid;
       tablePath = normalize(info.tablePath);
+      credentialManager.initializeCredentials(info.getStorageProperties());
     } catch (ExceptionUtils.ResourceNotFoundException notFound) {
       catalog.createTable(
           tableId,
@@ -436,8 +539,10 @@ public abstract class AbstractKernelTable implements DeltaTable {
           partitionColumns,
           conf.catalogConf(),
           tableDesc -> {
+            this.conf.update(tableDesc.requiredProperties);
             this.tablePath = normalize(tableDesc.tablePath);
             this.tableUUID = tableDesc.uuid;
+            credentialManager.initializeCredentials(tableDesc.getStorageProperties());
             createDeltaTable();
           });
     }
@@ -498,7 +603,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
     conf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
 
     this.conf.engineConf().forEach(conf::set);
-    this.credentialManager.getCredentials().forEach(conf::set);
+    Map<String, String> creds = this.credentialManager.getCredentials();
+    creds.forEach(conf::set);
 
     // Explicitly load external conf files
     // TODO this is because Flink does not auto load this file in Docker
@@ -541,8 +647,12 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   private CredentialManager createCredentialManager() {
-    return new CredentialManager(
-        () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
+    if (!conf.shouldFetchCredentialsFromCatalog()) {
+      // Do not fetch credentials from Unity Catalog; rely on the ambient environment
+      // (workload identity, instance profile, ADC, or core-site.xml) to supply them.
+      return new CredentialManager.AmbientCredentialManager();
+    }
+    return new CredentialManager(() -> catalog.getCredentials(tableId), this::refreshCredential);
   }
 
   /**
@@ -634,11 +744,11 @@ public abstract class AbstractKernelTable implements DeltaTable {
     this.eventListeners.remove(listener);
   }
 
-  public void onPostCommit(Snapshot snapshot) {
+  public void onPostCommit(Snapshot snapshot, TransactionReport report) {
     eventListeners.forEach(
         listener -> {
           try {
-            listener.onPostCommit(this, snapshot);
+            listener.onPostCommit(this, snapshot, report);
           } catch (Exception e) {
             LOG.error("Suppressed exception from listener", e);
           }

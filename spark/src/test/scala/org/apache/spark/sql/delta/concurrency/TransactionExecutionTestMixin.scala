@@ -28,11 +28,13 @@ import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLock
 import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.util.ThreadUtils
 
 trait TransactionExecutionTestMixin {
-  self: PhaseLockingTestMixin with SharedSparkSession with Logging =>
+  self: PhaseLockingTestMixin with Logging =>
+
+  protected def spark: SparkSession
 
   /**
    * Timeout used when waiting for individual phases of instrumented operations to complete.
@@ -53,6 +55,7 @@ trait TransactionExecutionTestMixin {
         spark.withActive(
           try {
             TransactionExecutionObserver.withObserver(observer) {
+              observer.phases.analysisPhase.waitToEnter()
               fn()
             }
           } catch {
@@ -114,13 +117,23 @@ trait TransactionExecutionTestMixin {
 
   /** Unblocks all phases before the `commitPhase` for [[TransactionObserver]] */
   def unblockUntilPreCommit(observer: TransactionObserver): Unit = {
+    observer.phases.analysisPhase.entryBarrier.unblock()
     observer.phases.initialPhase.entryBarrier.unblock()
     observer.phases.preparePhase.entryBarrier.unblock()
   }
 
-  /**
-   * Unblocks the `commitPhase` and `backfillPhase` for [[TransactionObserver]].
-   */
+  /** Unblocks the `commitPhase` and `backfillPhase` for [[TransactionObserver]]. */
+  def unblockBackfill(observer: TransactionObserver): Unit = {
+    observer.phases.commitPhase.entryBarrier.unblock()
+    observer.phases.backfillPhase.entryBarrier.unblock()
+  }
+
+  /** Unblocks the `postCommitPhase` for [[TransactionObserver]]. */
+  def unblockPostCommit(observer: TransactionObserver): Unit = {
+    observer.phases.postCommitPhase.entryBarrier.unblock()
+  }
+
+  /** Unblocks the `commitPhase` till `postCommitPhase` for [[TransactionObserver]]. */
   def unblockCommit(observer: TransactionObserver): Unit = {
     observer.phases.commitPhase.entryBarrier.unblock()
     observer.phases.backfillPhase.entryBarrier.unblock()
@@ -129,6 +142,7 @@ trait TransactionExecutionTestMixin {
 
   /** Unblocks all phases for [[TransactionObserver]] so that corresponding query can finish. */
   def unblockAllPhases(observer: TransactionObserver): Unit = {
+    observer.phases.analysisPhase.entryBarrier.unblock()
     observer.phases.initialPhase.entryBarrier.unblock()
     observer.phases.preparePhase.entryBarrier.unblock()
     observer.phases.commitPhase.entryBarrier.unblock()
@@ -138,6 +152,14 @@ trait TransactionExecutionTestMixin {
 
   def waitForPrecommit(observer: TransactionObserver): Unit =
     busyWaitFor(observer.phases.preparePhase.hasEntered, timeout)
+
+  def waitForPreCommitComplete(observer: TransactionObserver): Unit = {
+    busyWaitFor(observer.phases.preparePhase.hasLeft, timeout)
+  }
+
+  def waitForBackfillComplete(observer: TransactionObserver): Unit = {
+    busyWaitFor(observer.phases.backfillPhase.hasLeft, timeout)
+  }
 
   def waitForCommit(observer: TransactionObserver): Unit = {
     busyWaitFor(observer.phases.commitPhase.hasLeft, timeout)

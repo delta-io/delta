@@ -124,7 +124,7 @@ trait UpdateSQLTests extends UpdateSQLMixin {
   test("invalid implicit cast string source type into boolean target, " +
    s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}") {
     append(Seq((99, true), (100, false), (101, true)).toDF("key", "value"))
-    withSQLConf(
+    withConf(
       SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
     checkError(
@@ -146,7 +146,7 @@ trait UpdateSQLTests extends UpdateSQLMixin {
   test("valid implicit cast string source type into int target, " +
      s"storeAssignmentPolicy = ${StoreAssignmentPolicy.STRICT}") {
     append(Seq((99, 2), (100, 4), (101, 3)).toDF("key", "value"))
-    withSQLConf(
+    withConf(
         SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
         DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
     checkError(
@@ -169,7 +169,7 @@ trait UpdateSQLWithDeletionVectorsMixin extends UpdateSQLMixin
   with DeltaExcludedTestMixin
   with DeletionVectorsTestUtils {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, update = true)
   }

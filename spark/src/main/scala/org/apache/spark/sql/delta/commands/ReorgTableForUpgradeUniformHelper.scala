@@ -208,7 +208,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
         log"${MDC(DeltaLogKeys.TABLE_NAME, target.tableIdentifier)} succeeded.")
     }
 
-    recordDeltaEvent(updatedSnapshot.deltaLog, "delta.upgradeUniform.success", data = Map(
+    recordDeltaEvent(updatedSnapshot, "delta.upgradeUniform.success", data = Map(
       "currIcebergCompatVersion" -> currIcebergCompatVersionOpt.toString,
       "targetIcebergCompatVersion" -> targetIcebergCompatVersion.toString,
       "metrics" -> metricsOpt.toString,

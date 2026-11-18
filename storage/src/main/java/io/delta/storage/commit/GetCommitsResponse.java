@@ -16,11 +16,9 @@
 
 package io.delta.storage.commit;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
-
-import org.apache.hadoop.fs.Path;
-
 /**
  * Response container for
  * {@link CommitCoordinatorClient#getCommits(TableDescriptor, Long, Long)}.
@@ -42,6 +40,13 @@ public class GetCommitsResponse {
 
   public long getLatestTableVersion() {
     return latestTableVersion;
+  }
+
+  /** Returns a new response with commits sorted by version. */
+  public GetCommitsResponse sortCommitsByVersion() {
+    List<Commit> sorted = new ArrayList<>(commits);
+    sorted.sort(Comparator.comparingLong(Commit::getVersion));
+    return new GetCommitsResponse(sorted, latestTableVersion);
   }
 }
 

@@ -17,19 +17,19 @@
 package org.apache.spark.sql.delta.icebergShaded
 
 import java.nio.ByteBuffer
-import java.sql.Timestamp
 import java.time.{LocalDateTime, OffsetDateTime, ZoneOffset}
 import java.time.format._
 import java.util.{Base64, List => JList}
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat, NoMapping, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DummySnapshot, IcebergCompat, NoMapping, RowId, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.getTotalSizeOfDVFieldsInFile
 import org.apache.spark.sql.delta.util.JsonUtils
-import shadedForDelta.org.apache.iceberg.{FileMetadata, PartitionData, PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties}
+import shadedForDelta.org.apache.iceberg.{DeleteFile, FileFormat, FileMetadata, PartitionData, PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.expressions.Literal
 import shadedForDelta.org.apache.iceberg.types.{Conversions, Type => IcebergType, Types => IcebergTypes}
 
@@ -43,50 +43,105 @@ import org.apache.spark.unsafe.types.CalendarInterval
  */
 class DeltaToIcebergConverter(val snapshot: SnapshotDescriptor, val catalogTable: CatalogTable) {
 
-  private val schemaUtils: IcebergSchemaUtils =
-    IcebergSchemaUtils(snapshot.metadata.columnMappingMode == NoMapping)
+  // Always wrap the input in a DummySnapshot. For NoMapping snapshots the wrap also
+  // decorates the schema with synthetic column-mapping IDs so the id-mode path downstream
+  // sees a complete statsSchema; for id-mode the wrap is metadata-preserving.
+  val wrappedSnapshot: Snapshot = {
+    val effectiveMetadata =
+      if (snapshot.metadata.columnMappingMode == NoMapping) {
+        val (decoratedSchema, maxId) =
+          DeltaToIcebergConvert.decorateNoMappingSchema(snapshot.metadata.schema)
+        snapshot.metadata.copy(
+          schemaString = decoratedSchema.json,
+          configuration = snapshot.metadata.configuration +
+            (DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString))
+      } else {
+        snapshot.metadata
+      }
+    new DummySnapshot(
+      logPath = snapshot.logPath,
+      deltaLog = snapshot.deltaLog,
+      metadata = effectiveMetadata,
+      protocolOpt = Some(snapshot.protocol))
+  }
 
-  def maxFieldId: Int = schemaUtils.maxFieldId(snapshot)
+  private val schemaUtils: IcebergSchemaUtils = IcebergSchemaUtils()
+
+  def maxFieldId: Int = schemaUtils.maxFieldId(wrappedSnapshot)
 
   val schema: IcebergSchema = IcebergCompat
-    .getEnabledVersion(snapshot.metadata)
+    .getEnabledVersion(wrappedSnapshot.metadata)
     .orElse(Some(0))
     .map { compatVersion =>
-      val icebergStruct = schemaUtils.convertStruct(snapshot.schema)(compatVersion)
+      val icebergStruct = schemaUtils.convertStruct(wrappedSnapshot.schema)(compatVersion)
       new IcebergSchema(icebergStruct.fields())
     }.getOrElse(throw new IllegalArgumentException("No IcebergCompat available"))
 
   val partition: PartitionSpec = IcebergTransactionUtils
-    .createPartitionSpec(schema, snapshot.metadata.partitionColumns)
+    .createPartitionSpec(schema, wrappedSnapshot.metadata.partitionColumns)
 
   val properties: Map[String, String] =
-    DeltaToIcebergConvert.TableProperties(snapshot.metadata.configuration)
+    DeltaToIcebergConvert.TableProperties(wrappedSnapshot.metadata.configuration)
 }
 /**
  * Utils for converting a Delta Table to Iceberg Table
  */
-object DeltaToIcebergConvert
-  extends DeltaLogging
-  {
-  object Action
-    extends DeltaLogging
-    {
-      def buildPartitionValues(
-          builder: FileMetadata.Builder,
-          fileAction: FileAction,
-          partitionSpec: PartitionSpec,
-          snapshot: Snapshot,
-          logicalToPhysicalPartitionNames: Map[String, String]): Unit = {
-        if (partitionSpec.isPartitioned) {
-            builder.withPartition(
-              DeltaToIcebergConvert.Partition.convertPartitionValues(
-                snapshot,
-                partitionSpec,
-                fileAction.partitionValues,
-                logicalToPhysicalPartitionNames))
-        }
+object DeltaToIcebergConvert extends DeltaLogging {
+  object Action {
+
+    def buildPartitionValues(
+        builder: FileMetadata.Builder,
+        fileAction: FileAction,
+        partitionSpec: PartitionSpec,
+        snapshot: SnapshotDescriptor,
+        logicalToPhysicalPartitionNames: Map[String, String]): Unit = {
+      if (partitionSpec.isPartitioned) {
+          builder.withPartition(
+            DeltaToIcebergConvert.Partition.convertPartitionValues(
+              snapshot,
+              partitionSpec,
+              fileAction.partitionValues,
+              logicalToPhysicalPartitionNames))
       }
     }
+
+    private[delta] def dvToDeleteFile(
+        dvSource: FileAction,
+        partitionSpec: PartitionSpec,
+        logicalToPhysicalPartitionNames: Map[String, String],
+        snapshot: SnapshotDescriptor): DeleteFile = {
+      val dv = dvSource.deletionVector
+      if (dv == null || !dv.isOnDisk || dv.offset.isEmpty) {
+        throw new IllegalArgumentException("Invalid DeletionVector. Cannot convert.")
+      }
+      var builder = FileMetadata.deleteFileBuilder(partitionSpec)
+        .ofPositionDeletes()
+        .withFormat(FileFormat.PUFFIN)
+        .withPath(dv.absolutePath(snapshot.dataPath).toString)
+        .withFileSizeInBytes(dv.offset.get + getTotalSizeOfDVFieldsInFile(dv.sizeInBytes))
+        .withReferencedDataFile(dvSource.absolutePath(snapshot).toString)
+        .withContentOffset(dv.offset.get)
+        .withContentSizeInBytes(getTotalSizeOfDVFieldsInFile(dv.sizeInBytes))
+        .withRecordCount(dv.cardinality)
+
+      buildPartitionValues(
+        builder, dvSource, partitionSpec, snapshot, logicalToPhysicalPartitionNames)
+      builder.build
+    }
+  }
+
+  object RowTracking {
+    /**
+     * Set the next row-id on an Iceberg transaction so that subsequent data files written by
+     * the transaction get first-row-ids picked up from the Delta-side row-id high water mark.
+     * No-op when the Delta snapshot has no row tracking high water mark recorded.
+     */
+    private[delta] def setNextRowId(snapshot: Snapshot, icebergTxn: IcebergTransaction): Unit = {
+      RowId.extractHighWatermark(snapshot).foreach { highWaterMark =>
+        IcebergTransactionUtils.setIcebergTxnNextRowId(icebergTxn, highWaterMark + 1)
+      }
+    }
+  }
   /**
    * Utils used when converting Delta schema to Iceberg
    */
@@ -357,7 +412,7 @@ object DeltaToIcebergConvert
   object Partition {
 
     private[delta] def convertPartitionValues(
-        snapshot: Snapshot,
+        snapshot: SnapshotDescriptor,
         partitionSpec: PartitionSpec,
         partitionValues: Map[String, String],
         logicalToPhysicalPartitionNames: Map[String, String]): StructLike = {
@@ -380,6 +435,68 @@ object DeltaToIcebergConvert
         partitionVals(i) = icebergPartitionValue
       }
       new IcebergTransactionUtils.Row(partitionVals)
+    }
+  }
+
+  /**
+   * Stamps synthetic column-mapping IDs onto a NoMapping schema in DFS order. Leaf fields
+   * get `delta.columnMapping.id`; Array/Map parents additionally get `nested.ids` entries
+   * for `arr.element`, `m.key`, `m.value`. Pre-existing IDs are observed so newly minted
+   * ones don't collide. Returns the decorated schema and the largest ID seen.
+   */
+  private[delta] def decorateNoMappingSchema(schema: StructType): (StructType, Int) =
+    new NoMappingSchemaDecorator().decorate(schema)
+
+  private class NoMappingSchemaDecorator {
+    private var counter = 0
+
+    def decorate(schema: StructType): (StructType, Int) = (decorateStruct(schema), counter)
+
+    private def nextId(): Int = { counter += 1; counter }
+    private def observe(id: Int): Unit = if (id > counter) counter = id
+
+    private def decorateStruct(schema: StructType): StructType =
+      StructType(schema.fields.map { f =>
+        if (DeltaColumnMapping.hasColumnId(f)) {
+          observe(DeltaColumnMapping.getColumnId(f))
+          f
+        } else {
+          val id = nextId()
+          val nestedIds = new MetadataBuilder()
+          val newDataType = decorateDataType(f.dataType, nestedIds, Seq(f.name))
+          val mdBuilder = new MetadataBuilder()
+            .withMetadata(f.metadata)
+            .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, id.toLong)
+            .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, f.name)
+          val nestedBuilt = nestedIds.build()
+          if (nestedBuilt.json != "{}") {
+            mdBuilder.putMetadata(
+              DeltaColumnMapping.COLUMN_MAPPING_METADATA_NESTED_IDS_KEY, nestedBuilt)
+          }
+          f.copy(dataType = newDataType, metadata = mdBuilder.build())
+        }
+      })
+
+    private def decorateDataType(
+        dt: DataType,
+        nestedIds: MetadataBuilder,
+        path: Seq[String]): DataType = dt match {
+      case st: StructType =>
+        decorateStruct(st)
+      case ArrayType(elemType, containsNull) =>
+        val elemPath = path :+ DeltaColumnMapping.PARQUET_LIST_ELEMENT_FIELD_NAME
+        nestedIds.putLong(elemPath.mkString("."), nextId().toLong)
+        ArrayType(decorateDataType(elemType, nestedIds, elemPath), containsNull)
+      case MapType(keyType, valueType, valueContainsNull) =>
+        val keyPath = path :+ DeltaColumnMapping.PARQUET_MAP_KEY_FIELD_NAME
+        val valPath = path :+ DeltaColumnMapping.PARQUET_MAP_VALUE_FIELD_NAME
+        nestedIds.putLong(keyPath.mkString("."), nextId().toLong)
+        nestedIds.putLong(valPath.mkString("."), nextId().toLong)
+        MapType(
+          decorateDataType(keyType, nestedIds, keyPath),
+          decorateDataType(valueType, nestedIds, valPath),
+          valueContainsNull)
+      case other => other
     }
   }
 }

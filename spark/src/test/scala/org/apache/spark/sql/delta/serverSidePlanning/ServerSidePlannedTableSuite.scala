@@ -16,10 +16,16 @@
 
 package org.apache.spark.sql.delta.serverSidePlanning
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.connector.catalog.{Identifier, V1Table}
 import org.apache.spark.sql.sources.{And, EqualTo, Filter, GreaterThan, LessThan}
+import org.apache.spark.sql.types.StructType
 
 /**
  * Tests for server-side planning with a mock client.
@@ -36,7 +42,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
         name STRING,
         value INT,
         a STRUCT<`b.c`: STRING>
-      ) USING parquet
+      ) USING delta
     """)
     sql("""
       INSERT INTO test_db.shared_test (id, name, value, a) VALUES
@@ -216,13 +222,118 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
+  test("hasCredentials must be read from the raw V1Table, not the DeltaTableV2") {
+    // Regression test: SSP's credential check looks for `option.fs.*` table properties. A raw
+    // `V1Table` surfaces `fs.*` storage properties as `option.fs.*` (Spark's
+    // `V1Table.addV2TableProperties`), but `DeltaTableV2.properties()` intentionally strips `fs.*`
+    // (see `DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES`). If the credential check runs against
+    // the `DeltaTableV2` it always reports "no credentials", which would wrongly route a
+    // credentialed UC table through server-side planning -- SSP is only a fallback for tables that
+    // lack credentials.
+    val ident = Identifier.of(Array("test_db"), "shared_test")
+    val baseCatalogTable =
+      spark.sessionState.catalog.getTableMetadata(TableIdentifier("shared_test", Some("test_db")))
+
+    // Simulate a UC-injected filesystem credential on the loaded table's storage properties.
+    val credentialedCatalogTable = baseCatalogTable.copy(
+      storage = baseCatalogTable.storage.copy(
+        properties = baseCatalogTable.storage.properties + ("fs.s3a.access.key" -> "secret")))
+
+    val rawV1Table = V1Table(credentialedCatalogTable)
+    val deltaTableV2 = DeltaTableV2(
+      spark,
+      new Path(credentialedCatalogTable.location),
+      catalogTable = Some(credentialedCatalogTable),
+      tableIdentifier = Some(ident.toString))
+
+    // The raw V1Table exposes the credential as `option.fs.*`...
+    assert(ServerSidePlannedTable.hasCredentials(rawV1Table),
+      "Expected the raw V1Table to expose fs.* credentials as option.fs.* properties")
+    // ...but the DeltaTableV2 strips fs.* storage properties, so it never does.
+    assert(!ServerSidePlannedTable.hasCredentials(deltaTableV2),
+      "Expected DeltaTableV2 to hide fs.* credentials, so hasCredentials must report false")
+
+    // tryCreate takes the credential result and the schema as explicit inputs (both computed by the
+    // caller from the raw V1Table), so it never reads them off the DeltaTableV2. With a real UC
+    // deployment (skipUCRequirementForTests = false) a credentialed table must NOT use SSP.
+    withServerSidePlanningFactory(new TestServerSidePlanningClientFactory()) {
+      assert(
+        ServerSidePlannedTable.shouldUseServerSidePlanning(
+          isUnityCatalog = true,
+          hasCredentials = ServerSidePlannedTable.hasCredentials(rawV1Table),
+          enableServerSidePlanning = ServerSidePlannedTable.isEnabled(spark),
+          skipUCRequirementForTests = false) == false,
+        "A credentialed UC table (creds read from the raw V1Table) must not use server-side " +
+          "planning")
+    }
+  }
+
+  test("tryCreate builds the planned table from the supplied schema, not table.schema()") {
+    // Regression test: reading DeltaTableV2.schema() (or .properties()) forces an
+    // initialSnapshot / _delta_log read, which fails in the no-credentials SSP fallback case. The
+    // caller must therefore supply the schema, and tryCreate must use it verbatim rather than
+    // calling table.schema(). We assert that by passing a schema that deliberately differs from the
+    // table's own schema and checking the planned table reflects the supplied one.
+    val ident = Identifier.of(Array("test_db"), "shared_test")
+    val ct = spark.sessionState.catalog
+      .getTableMetadata(TableIdentifier("shared_test", Some("test_db")))
+    val v1 = V1Table(ct)
+    val suppliedSchema = new StructType()
+      .add("id", "int")
+      .add("name", "string")
+
+    withServerSidePlanningFactory(new TestServerSidePlanningClientFactory()) {
+      val planned = ServerSidePlannedTable.tryCreate(
+        spark, ident, v1, isUnityCatalog = false,
+        hasCredentials = false,
+        tableSchema = suppliedSchema)
+      assert(planned.isDefined, "Expected SSP to engage in test mode")
+      assert(planned.get.schema() == suppliedSchema,
+        s"Planned table must use the supplied schema; got ${planned.get.schema()}")
+    }
+  }
+
+  test("loadTable schema selection prefers the V1Table schema, falls back only when empty") {
+    // Covers the schema-selection branch in AbstractDeltaCatalog.loadTable:
+    //   val tableSchema = if (v1.schema.nonEmpty) v1.schema else deltaTable.schema()
+    // The UC path (v1.schema populated by the delegate) must use the V1Table schema and never read
+    // DeltaTableV2.schema() (which forces a _delta_log read). Only an empty metastore schema (an
+    // HMS Delta table) falls back to the log-backed DeltaTableV2 schema. An end-to-end loadTable
+    // test of the populated case needs a UC delegate (unavailable in OSS), so we exercise the exact
+    // selection expression against both a populated and an empty V1Table.
+    val baseCt = spark.sessionState.catalog
+      .getTableMetadata(TableIdentifier("shared_test", Some("test_db")))
+    val deltaTable = DeltaTableV2(
+      spark,
+      new Path(baseCt.location),
+      catalogTable = Some(baseCt),
+      tableIdentifier = Some("test_db.shared_test"))
+
+    // Populated V1Table (mirrors what the UC delegate returns): schema is used as-is.
+    val populatedSchema = new StructType().add("id", "int").add("name", "string")
+    val populatedV1 = V1Table(baseCt.copy(schema = populatedSchema))
+    assert(populatedV1.schema.nonEmpty)
+    val selectedForUC =
+      if (populatedV1.schema.nonEmpty) populatedV1.schema else deltaTable.schema()
+    assert(selectedForUC == populatedSchema,
+      s"UC path must use the V1Table schema; got $selectedForUC")
+
+    // Empty V1Table (an HMS Delta table): falls back to the log-backed DeltaTableV2 schema.
+    val emptyV1 = V1Table(baseCt.copy(schema = new StructType()))
+    assert(emptyV1.schema.isEmpty)
+    val selectedForHms =
+      if (emptyV1.schema.nonEmpty) emptyV1.schema else deltaTable.schema()
+    assert(selectedForHms == deltaTable.schema(),
+      s"HMS path must fall back to DeltaTableV2.schema(); got $selectedForHms")
+  }
+
   test("ServerSidePlannedTable is read-only") {
     withTable("readonly_test") {
       sql("""
         CREATE TABLE readonly_test (
           id INT,
           data STRING
-        ) USING parquet
+        ) USING delta
       """)
 
       // First insert WITHOUT server-side planning should succeed
@@ -265,7 +376,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     // Verify the metadata has expected defaults
     assert(metadata.catalogName == "my_catalog")
     assert(metadata.planningEndpointUri == "")
-    assert(metadata.authToken.isEmpty)
+    assert(metadata.tokenSupplier.isEmpty)
     assert(metadata.tableProperties.isEmpty)
   }
 
@@ -274,7 +385,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     val metadata = UnityCatalogMetadata(
       catalogName = "test_catalog",
       ucUri = ucUri,
-      ucToken = "test-token",
+      tokenSupplier = Some(() => "test-token"),
       tableProps = Map.empty
     )
 
@@ -285,6 +396,76 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       "https://unity-catalog-server.example.com/api/2.1/unity-catalog/" +
       "iceberg-rest/v1"
     assert(metadata.planningEndpointUri == expectedEndpoint)
+  }
+
+  test("extractAuthConfig: OAuth config") {
+    val cat = "oauthCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.auth.type" -> "oauth",
+      s"spark.sql.catalog.$cat.auth.oauth.uri" ->
+        "https://oauth.example.com/token",
+      s"spark.sql.catalog.$cat.auth.oauth.clientId" ->
+        "client123",
+      s"spark.sql.catalog.$cat.auth.oauth.clientSecret" ->
+        "secret456"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, cat)
+      assert(config("type") == "oauth")
+      assert(config("oauth.uri") ==
+        "https://oauth.example.com/token")
+      assert(config("oauth.clientId") == "client123")
+      assert(config.size == 4)
+    }
+  }
+
+  test("extractAuthConfig: legacy token as static") {
+    val cat = "legacyCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.token" -> "dapi-token"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, cat)
+      assert(config("type") == "static")
+      assert(config("token") == "dapi-token")
+      assert(config.size == 2)
+    }
+  }
+
+  test("extractAuthConfig: error if both token formats") {
+    val cat = "conflictCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.auth.token" -> "new",
+      s"spark.sql.catalog.$cat.token" -> "old"
+    ) {
+      val e = intercept[IllegalArgumentException] {
+        UnityCatalogMetadata.extractAuthConfig(spark, cat)
+      }
+      assert(e.getMessage.contains("configured twice"))
+    }
+  }
+
+  test("extractAuthConfig: legacy token wins over auth.*") {
+    val cat = "legacyWinsCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.auth.type" -> "oauth",
+      s"spark.sql.catalog.$cat.auth.oauth.uri" ->
+        "https://oauth.example.com",
+      s"spark.sql.catalog.$cat.token" -> "dapi-legacy"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, cat)
+      // Legacy .token always wins (converted to static)
+      assert(config("type") == "static")
+      assert(config("token") == "dapi-legacy")
+      assert(config.size == 2)
+    }
+  }
+
+  test("extractAuthConfig: empty when no auth") {
+    val config = UnityCatalogMetadata
+      .extractAuthConfig(spark, "nonExistentCat")
+    assert(config.isEmpty)
   }
 
   test("simple EqualTo filter pushed to planning client") {
@@ -483,6 +664,38 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       sql("EXPLAIN EXTENDED SELECT id, name FROM test_db.shared_test").collect()
       val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
       assert(capturedProjection.isEmpty, "Should not fire a planTable request for EXPLAIN")
+    }
+  }
+
+  test("ServerSidePlannedTable closes planning client on close") {
+    var clientClosed = false
+    val trackingClient = new ServerSidePlanningClient {
+      override def planScan(
+          databaseName: String,
+          table: String,
+          filterOption: Option[Filter],
+          projectionOption: Option[Seq[String]],
+          limitOption: Option[Int]): ScanPlan = ScanPlan(Seq.empty)
+      override def canConvertFilters(filters: Array[Filter]): Boolean = true
+      override def close(): Unit = { clientClosed = true }
+    }
+
+    val table = new ServerSidePlannedTable(
+      spark, "test_db", "test_table", new org.apache.spark.sql.types.StructType(), trackingClient)
+    assert(!clientClosed, "Client should not be closed before table.close()")
+    table.close()
+    assert(clientClosed, "Client should be closed after table.close()")
+  }
+
+  test("planning client is closed after scan completes") {
+    withPushdownCapturingEnabled {
+      assert(!TestServerSidePlanningClient.isClientClosed,
+        "Client should not be closed before query execution")
+
+      sql("SELECT id FROM test_db.shared_test").collect()
+
+      assert(TestServerSidePlanningClient.isClientClosed,
+        "Planning client should be closed after scan plan is obtained")
     }
   }
 }

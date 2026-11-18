@@ -117,13 +117,13 @@ abstract class MaterializedRowTrackingColumn {
    * in 'dataFrame' if one is available. Otherwise returns None.
    */
   private[delta] def getAttribute(
-      snapshot: Snapshot, dataFrame: DataFrame): Option[Attribute] = {
+      snapshot: SnapshotDescriptor, dataFrame: DataFrame): Option[Attribute] = {
     if (!RowTracking.isEnabled(snapshot.protocol, snapshot.metadata)) {
       return None
     }
 
     val materializedColumnName = getMaterializedColumnNameOrThrow(
-      snapshot.protocol, snapshot.metadata, snapshot.deltaLog.unsafeVolatileTableId)
+      snapshot.protocol, snapshot.metadata, snapshot.metadata.id)
 
     val analyzedPlan = dataFrame.queryExecution.analyzed
     analyzedPlan.outputSet.view.find(attr => materializedColumnName == attr.name)

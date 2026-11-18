@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, NumRecordsStats, OptimisticTransaction, ResolvedPathBasedNonDeltaTable}
@@ -38,12 +39,12 @@ import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliase
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 
@@ -107,6 +108,21 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
     val nameToAddFileMap = candidateFiles.map(add =>
       DeltaFileOperations.absolutePath(basePath.toString, add.path).toString -> add).toMap
     assert(nameToAddFileMap.size == candidateFiles.length,
+      s"File name collisions found among:\n${candidateFiles.map(_.path).mkString("\n")}")
+    nameToAddFileMap
+  }
+
+  /**
+   * Generates a candidate map while also enforcing absolute-path uniqueness across earlier
+   * batches in the same partition.
+   */
+  def generateCandidateFileMap(
+      basePath: Path,
+      candidateFiles: Seq[AddFile],
+      seenAbsolutePaths: mutable.Set[String]): Map[String, AddFile] = {
+    val nameToAddFileMap = generateCandidateFileMap(basePath, candidateFiles)
+    val hasCollision = nameToAddFileMap.keysIterator.exists(path => !seenAbsolutePaths.add(path))
+    assert(!hasCollision,
       s"File name collisions found among:\n${candidateFiles.map(_.path).mkString("\n")}")
     nameToAddFileMap
   }
@@ -432,10 +448,7 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
       // check that both session configs are set
       numOptions = txnVersion.size + txnAppId.size
       if (numOptions != 0 && numOptions != 2) {
-        throw DeltaErrors.invalidIdempotentWritesOptionsException(
-          "Both spark.databricks.delta.write.txnAppId and " +
-            "spark.databricks.delta.write.txnVersion must be specified for " +
-            "idempotent Delta writes")
+        throw DeltaErrors.invalidIdempotentWritesMissingSessionConfsException()
       }
       fromSessionConf = true
     }
@@ -474,6 +487,25 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
       log" (${MDC(DeltaLogKeys.NUM_RECORDS, stats.numLogicalRecordsAddedPartial)})" +
       log" does not match removed records" +
       log" (${MDC(DeltaLogKeys.NUM_RECORDS2, stats.numLogicalRecordsRemovedPartial)})")
+  }
+
+  /**
+   * Creates a LogicalPlan for the current Delta table snapshot,
+   * optionally wrapping it with a table alias if provided.
+   */
+  protected def createTableRelation(
+      txn: OptimisticTransaction, tableAliasOpt: Option[String]): LogicalPlan = {
+    val baseRelation = txn.deltaLog.createRelation(
+      snapshotToUseOpt = Some(txn.snapshot),
+      catalogTableOpt = txn.catalogTable)
+    val tableRelation = LogicalRelation(baseRelation)
+    if (tableAliasOpt.isDefined) {
+      SubqueryAlias(
+        identifier = tableAliasOpt.get,
+        child = tableRelation)
+    } else {
+      tableRelation
+    }
   }
 }
 

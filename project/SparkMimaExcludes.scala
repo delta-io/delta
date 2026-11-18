@@ -24,6 +24,8 @@ object SparkMimaExcludes {
   val ignoredABIProblems = Seq(
       // scalastyle:off line.size.limit
       ProblemFilters.exclude[Problem]("org.*"),
+      ProblemFilters.exclude[Problem]("io.delta.internal.*"),
+      ProblemFilters.exclude[Problem]("io.delta.spark.internal.*"),
       ProblemFilters.exclude[Problem]("io.delta.sql.parser.*"),
       ProblemFilters.exclude[Problem]("io.delta.tables.execution.*"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.apply"),
@@ -93,7 +95,12 @@ object SparkMimaExcludes {
 
       // Changes in 4.1.0
       // TODO: change in type hierarchy due to removal of DeltaThrowableConditionShim
-      ProblemFilters.exclude[MissingTypesProblem]("io.delta.exceptions.*")
+      ProblemFilters.exclude[MissingTypesProblem]("io.delta.exceptions.*"),
+
+      // Changes in 4.2.0
+      // MDC and logBasedOnLevel were removed from Spark's Logging trait in Spark 4.2.0-SNAPSHOT
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.MDC"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.logBasedOnLevel")
 
       // scalastyle:on line.size.limit
   )

@@ -29,6 +29,7 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.unitycatalog.adapters.DomainMetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.MetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.ProtocolAdapter;
 import io.delta.kernel.unitycatalog.adapters.UniformAdapter;
@@ -37,14 +38,18 @@ import io.delta.kernel.unitycatalog.metrics.UcPublishTelemetry;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
+import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,18 +64,39 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   protected final UCClient ucClient;
   protected final String ucTableId;
   protected final Path tablePath;
+  private final Optional<UCTableIdentifier> ucTableIdentifier;
 
   /**
-   * Creates a new UCCatalogManagedCommitter for the specified Unity Catalog-managed Delta table.
+   * Creates a committer for an existing Unity Catalog-managed Delta table ({@code version >= 1}
+   * writes).
    *
    * @param ucClient the Unity Catalog client to use for commit operations
    * @param ucTableId the unique Unity Catalog table identifier
    * @param tablePath the path to the Delta table in the underlying storage system
    */
   public UCCatalogManagedCommitter(UCClient ucClient, String ucTableId, String tablePath) {
+    this(ucClient, ucTableId, tablePath, Optional.empty());
+  }
+
+  /**
+   * Creates a committer for a new Unity Catalog-managed Delta table (CREATE TABLE). The provided
+   * {@link UCTableIdentifier} enables automatic table finalization in UC after writing the
+   * version-0 delta file.
+   */
+  public UCCatalogManagedCommitter(
+      UCClient ucClient, String ucTableId, String tablePath, UCTableIdentifier ucTableIdentifier) {
+    this(ucClient, ucTableId, tablePath, Optional.of(requireNonNull(ucTableIdentifier)));
+  }
+
+  private UCCatalogManagedCommitter(
+      UCClient ucClient,
+      String ucTableId,
+      String tablePath,
+      Optional<UCTableIdentifier> ucTableIdentifier) {
     this.ucClient = requireNonNull(ucClient, "ucClient is null");
     this.ucTableId = requireNonNull(ucTableId, "ucTableId is null");
     this.tablePath = new Path(requireNonNull(tablePath, "tablePath is null"));
+    this.ucTableIdentifier = requireNonNull(ucTableIdentifier);
   }
 
   /////////////////
@@ -179,12 +205,10 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   ///////////////////////////
 
   /**
-   * Handles CATALOG_CREATE by writing the published delta file for version 0.
-   *
-   * <p>Note that this assumes that the table is being created within a staging location, and that
-   * the Connector will post-commit inform UC of this 000.json file.
+   * Handles CATALOG_CREATE by writing the published delta file for version 0. If {@link
+   * UCTableIdentifier} is present (set via 4-arg constructor), also finalizes the table in Unity
+   * Catalog. When absent, finalization is skipped — the caller is expected to handle it externally.
    */
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
   private CommitResponse createImpl(
       Engine engine,
       CloseableIterator<Row> finalizedActions,
@@ -199,6 +223,15 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
     final FileStatus kernelPublishedDeltaFileStatus =
         writeDeltaFile(
             engine, finalizedActions, commitMetadata.getPublishedDeltaFilePath(), metricsCollector);
+
+    // Finalize table creation in UC when UCTableIdentifier is present.
+    // When absent, the caller handles finalization externally (e.g., Flink's staging table flow).
+    if (ucTableIdentifier.isPresent()) {
+      finalizeTableInCatalog(commitMetadata);
+    } else {
+      logger.info(
+          "[{}] Skipping kernel-managed finalization (no UCTableIdentifier provided)", ucTableId);
+    }
 
     return new CommitResponse(
         ParsedPublishedDeltaData.forFileStatus(kernelPublishedDeltaFileStatus));
@@ -291,6 +324,54 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   ////////////////////
   // Helper methods //
   ////////////////////
+
+  /**
+   * Finalizes table creation by calling the UC createTable API, promoting the staging table to a
+   * registered table. Extracts all necessary properties from the {@link CommitMetadata}.
+   */
+  private void finalizeTableInCatalog(CommitMetadata commitMetadata) throws CommitFailedException {
+    final UCTableIdentifier tableIdentifier = ucTableIdentifier.get();
+    final List<UCClient.ColumnDef> columns =
+        UnityCatalogUtils.toColumnDefs(commitMetadata.getEffectiveMetadata().getSchema());
+
+    // The Delta-Tables API has structured fields for the last-commit timestamp and domain metadata
+    // (clustering, row tracking), so it takes metadata.configuration as properties.
+    final Map<String, String> ucTableProperties =
+        ucClient instanceof UCDeltaClient
+            ? commitMetadata.getEffectiveMetadata().getConfiguration()
+            : UnityCatalogUtils.getPropertiesForCreate(commitMetadata);
+    checkState(
+        commitMetadata.getCommitInfo().getInCommitTimestamp().isPresent(),
+        "InCommitTimestamp must be present for version 0 catalog-managed table creation");
+    final long lastCommitTimestampMs = commitMetadata.getCommitInfo().getInCommitTimestamp().get();
+    final List<AbstractDomainMetadata> domainMetadatas =
+        commitMetadata.getCommitDomainMetadatas().stream()
+            .map(DomainMetadataAdapter::new)
+            .collect(Collectors.toList());
+
+    try {
+      logger.info("[{}] Finalizing table creation in Unity Catalog", ucTableId);
+      ucClient.finalizeCreate(
+          tableIdentifier.getTableName(),
+          tableIdentifier.getCatalogName(),
+          tableIdentifier.getSchemaName(),
+          tablePath.toUri().toString(),
+          columns,
+          new ProtocolAdapter(commitMetadata.getEffectiveProtocol()),
+          ucTableProperties,
+          lastCommitTimestampMs,
+          domainMetadatas);
+      logger.info(
+          "[{}] Finalized table creation in Unity Catalog as {}.{}.{}",
+          ucTableId,
+          tableIdentifier.getCatalogName(),
+          tableIdentifier.getSchemaName(),
+          tableIdentifier.getTableName());
+    } catch (io.delta.storage.commit.CommitFailedException e) {
+      logger.warn("[{}] Failed to finalize table creation in Unity Catalog", ucTableId, e);
+      throw storageCFEtoKernelCFE(e);
+    }
+  }
 
   private String normalize(Path path) {
     return path.toUri().normalize().toString();
@@ -389,15 +470,27 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                         });
               });
 
+          // UCClient ignores the old P&M and domain metadata; UCDeltaClient compares the old and
+          // new P&M to emit set-protocol/metadata updates and forwards domain-metadata updates.
+          final List<AbstractDomainMetadata> domainMetadatas =
+              commitMetadata.getCommitDomainMetadatas().stream()
+                  .map(DomainMetadataAdapter::new)
+                  .collect(Collectors.toList());
+
           try {
             ucClient.commit(
                 ucTableId,
                 tablePath.toUri(),
+                ucTableIdentifier
+                    .map(UCCatalogManagedCommitter::toStorageTableIdentifier)
+                    .orElse(null),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 commitMetadata.getMaxKnownPublishedDeltaVersion(),
-                false /* isDisown */,
+                commitMetadata.getReadMetadataOpt().map(MetadataAdapter::new),
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
+                commitMetadata.getReadProtocolOpt().map(ProtocolAdapter::new),
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
+                domainMetadatas,
                 uniformMetadataOpt);
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
@@ -440,6 +533,11 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
         "unknown" /* owner */,
         "unknown" /* group */,
         new org.apache.hadoop.fs.Path(kernelFileStatus.getPath()) /* path */);
+  }
+
+  static TableIdentifier toStorageTableIdentifier(UCTableIdentifier id) {
+    return new TableIdentifier(
+        new String[] {id.getCatalogName(), id.getSchemaName()}, id.getTableName());
   }
 
   private static CommitFailedException storageCFEtoKernelCFE(

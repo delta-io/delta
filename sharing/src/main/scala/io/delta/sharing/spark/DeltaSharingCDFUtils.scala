@@ -18,8 +18,10 @@ package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
 import java.nio.charset.StandardCharsets.UTF_8
+import java.util.UUID
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.DeltaSharingClient
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
@@ -40,6 +42,7 @@ object DeltaSharingCDFUtils extends Logging {
    * Prepares the BaseRelation for cdf queries on a delta sharing table. Since there's no limit
    * pushdown or filter pushdown involved, it wiill firatly fetch all the files from the delta
    * sharing server, prepare the local delta log, and leverage DeltaTableV2 to produce the relation.
+   * Versionless CDF is already materialized as data, so it only needs a snapshot read.
    */
   private[sharing] def prepareCDFRelation(
       sqlContext: SQLContext,
@@ -52,8 +55,19 @@ object DeltaSharingCDFUtils extends Logging {
     // and also any metadata changes between [startingVersion, endingVersion], to put them in the
     // delta log. This is to allow delta library to check the metadata change and handle it
     // properly -- currently it throws error for column mapping changes.
-    val deltaTableFiles =
-      client.getCDFFiles(table, options.cdfOptions, includeHistoricalMetadata = true)
+    // includeHistoricalProtocol requests a protocol for each protocol change in the same range, so
+    // a mid-range protocol upgrade (e.g. enabling deletionVectors) is reflected in the delta log
+    // instead of leaving the recipient on a stale head protocol. Gated by a default-off flag; when
+    // off the client keeps the legacy single-head-protocol behavior.
+    val includeHistoricalProtocol = sqlContext.sparkSession.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_SHARING_CDF_ENABLE_HISTORICAL_PROTOCOL)
+    val deltaTableFiles = client.getCDFFiles(
+      table,
+      options.cdfOptions,
+      includeHistoricalMetadata = true,
+      fileIdHash = None,
+      includeHistoricalProtocol = includeHistoricalProtocol
+    )
     logInfo(
       s"Fetched ${deltaTableFiles.lines.size} lines with cdf options ${options.cdfOptions} " +
       s"for table ${table} from delta sharing server, took ${getDuration(startTime)}s."
@@ -62,15 +76,28 @@ object DeltaSharingCDFUtils extends Logging {
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
     // 2. Prepare local delta log
     val queryCustomTablePath = client.getProfileProvider.getCustomTablePath(path)
-    val queryParamsHashId = DeltaSharingUtils.getQueryParamsHashId(options.cdfOptions)
+    val queryParamsHashId = if (deltaTableFiles.isVersionlessCDF) {
+      // Each materialization has its own version-zero log, including reads with identical bounds.
+      s"${DeltaSharingUtils.getQueryParamsHashId(options.cdfOptions)}_${UUID.randomUUID()}"
+    } else {
+      DeltaSharingUtils.getQueryParamsHashId(options.cdfOptions)
+    }
     val tablePathWithHashIdSuffix =
       DeltaSharingUtils.getTablePathWithIdSuffix(queryCustomTablePath, queryParamsHashId)
-    val deltaLogMetadata = DeltaSharingLogFileSystem.constructLocalDeltaLogAcrossVersions(
-      lines = deltaTableFiles.lines,
-      customTablePath = tablePathWithHashIdSuffix,
-      startingVersionOpt = None,
-      endingVersionOpt = None
-    )
+    val deltaLogMetadata = if (deltaTableFiles.isVersionlessCDF) {
+      // Materialized rows already contain the source CDF columns. Read them as a snapshot.
+      DeltaSharingLogFileSystem.constructLocalDeltaLogAtVersionZero(
+        lines = deltaTableFiles.lines,
+        customTablePath = tablePathWithHashIdSuffix
+      )
+    } else {
+      DeltaSharingLogFileSystem.constructLocalDeltaLogAcrossVersions(
+        lines = deltaTableFiles.lines,
+        customTablePath = tablePathWithHashIdSuffix,
+        startingVersionOpt = None,
+        endingVersionOpt = None
+      )
+    }
 
     // 3. Register parquet file id to url mapping
     CachedTableManager.INSTANCE.register(
@@ -85,7 +112,8 @@ object DeltaSharingCDFUtils extends Logging {
       refresher = DeltaSharingUtils.getRefresherForGetCDFFiles(
         client = client,
         table = table,
-        cdfOptions = options.cdfOptions
+        cdfOptions = options.cdfOptions,
+        includeHistoricalProtocol = includeHistoricalProtocol
       ),
       expirationTimestamp =
         if (CachedTableManager.INSTANCE
@@ -103,10 +131,11 @@ object DeltaSharingCDFUtils extends Logging {
       DeltaSharingOptions.CDF_END_VERSION -> deltaLogMetadata.maxVersion.toString,
       DeltaSharingOptions.CDF_READ_OPTION -> "true"
     )
-    DeltaTableV2(
+    val deltaTable = DeltaTableV2(
       spark = sqlContext.sparkSession,
       path = DeltaSharingLogFileSystem.encode(tablePathWithHashIdSuffix),
-      options = localDeltaCdfOptions
-    ).toBaseRelation
+      options = if (deltaTableFiles.isVersionlessCDF) Map.empty else localDeltaCdfOptions
+    )
+    deltaTable.toBaseRelation
   }
 }

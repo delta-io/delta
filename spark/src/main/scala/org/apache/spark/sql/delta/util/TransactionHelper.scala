@@ -21,16 +21,20 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, IsolationLevel, Serializable, Snapshot, WriteSerializable}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CommitStats, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, FileActionOperationClass, IsolationLevel, Serializable, Snapshot, WriteSerializable}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.amt.AMTCommitStats
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.{FileSizeHistogram, FileSizeHistogramUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -41,6 +45,22 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  */
 trait TransactionHelper extends DeltaLogging {
   def deltaLog: DeltaLog
+
+  /** The path to the Delta table data directory. */
+  def dataPath: Path
+
+  /** The path to the Delta log directory. */
+  def logPath: Path
+
+  /** The Hadoop [[Configuration]] used to access the Delta log. */
+  def newDeltaHadoopConf(): Configuration = deltaLog.newDeltaHadoopConf()
+
+  /** Canonical name of the commit log store class for commit-stats telemetry. */
+  protected def commitLogStoreClassName: String = deltaLog.store.getClass.getCanonicalName
+
+  /** Value used for the `TAG_LOG_STORE_CLASS` operation tag. */
+  protected[delta] def commitLogStoreClassNameForTag: String = deltaLog.store.getClass.getName
+
   def catalogTable: Option[CatalogTable]
   def snapshot: Snapshot
 
@@ -55,6 +75,12 @@ trait TransactionHelper extends DeltaLogging {
 
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol
+
+  /**
+   * Returns the catalog-qualified table name when available, falling back to the table's metadata
+   * name and finally to its path.
+   */
+  def tableNameOrPath: String = snapshot.tableNameOrPath(catalogTable)
 
   /**
    * Default [[IsolationLevel]] as set in table metadata.
@@ -142,9 +168,10 @@ trait TransactionHelper extends DeltaLogging {
   private[delta] lazy val readSnapshotTableCommitCoordinatorClientOpt:
       Option[TableCommitCoordinatorClient] = {
     if (snapshot.isCatalogOwned) {
-      // Catalog owned table's commit coordinator is always determined by the catalog.
+      // Catalog managed table's commit coordinator is always determined by the catalog.
       CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
-        spark, catalogTable, snapshot)
+        spark, catalogTable, snapshot
+      )
     } else {
       // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent
       // commit, then it will be detected as a conflict and the transaction will anyway fail.
@@ -164,7 +191,7 @@ trait TransactionHelper extends DeltaLogging {
         // Only the 0th commit to a table can be a FS -> CO upgrade for now.
         // Upgrading an existing FS table to CO through ALTER TABLE is not supported yet.
         case None if newProtocol.exists(_.readerAndWriterFeatureNames
-            .contains(CatalogOwnedTableFeature.name)) =>                       // FS -> CO
+            .contains(CatalogManagedTableFeature.name)) =>                       // FS -> CO
           (CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT, metadata)
         case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
           (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
@@ -176,7 +203,7 @@ trait TransactionHelper extends DeltaLogging {
         case _ =>
           throw new IllegalStateException(
             "Unexpected state found when trying " +
-            s"to generate CoordinatedCommitsStats for table ${deltaLog.logPath}. " +
+            s"to generate CoordinatedCommitsStats for table ${logPath}. " +
             s"$readSnapshotTableCommitCoordinatorClientOpt, " +
             s"$metadata, $snapshot, $catalogTable")
       }
@@ -195,7 +222,7 @@ trait TransactionHelper extends DeltaLogging {
       } else {
         metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
       },
-      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
+      // For Catalog-Managed table, the coordinator conf for UC-CC is [[Map.empty]]
       // so we don't distinguish between CO/CC here.
       commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
   }
@@ -254,6 +281,7 @@ trait TransactionHelper extends DeltaLogging {
     private var numCdcFiles: Int = 0
     private var cdcBytesNew: Long = 0L
     private var numAbsolutePaths = 0
+    private var fileActionDataChange = false
     // We don't expect commits to have more than 2 billion actions
     private var numActions: Int = 0
     private val partitionsAdded = mutable.HashSet.empty[Map[String, String]]
@@ -262,6 +290,12 @@ trait TransactionHelper extends DeltaLogging {
 
     private var inputActionsIteratorOpt = Option.empty[Iterator[Action]]
 
+    private val (addFilesHistogram, removeFilesHistogram) =
+      if (spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
+        (Some(FileSizeHistogramUtils.emptyHistogram), Some(FileSizeHistogramUtils.emptyHistogram))
+      } else {
+        (None, None)
+      }
 
     private def assertStateBeforeFinalization(): Unit = {
       assert(
@@ -290,11 +324,15 @@ trait TransactionHelper extends DeltaLogging {
         action match {
           case a: AddFile =>
             numAdd += 1
+            fileActionDataChange = a.dataChange
             if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
             partitionsAdded += a.partitionValues
+            addFilesHistogram.foreach(_.insert(a.size))
             if (a.dataChange) bytesNew += a.size
           case r: RemoveFile =>
             numRemove += 1
+            fileActionDataChange = r.dataChange
+            removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
           case c: AddCDCFile =>
             numCdcFiles += 1
             cdcBytesNew += c.size
@@ -347,8 +385,11 @@ trait TransactionHelper extends DeltaLogging {
         postCommitSnapshot: Snapshot,
         computedNeedsCheckpoint: Boolean,
         isolationLevel: IsolationLevel,
+        fileSizeHistogramOpt: Option[FileSizeHistogram],
         commitInfoOpt: Option[CommitInfo],
-        commitSizeBytes: Long): Unit = {
+        commitSizeBytes: Long,
+        amtCommitStatsOpt: Option[AMTCommitStats] = None,
+        isIdempotentRetry: Boolean = false): Unit = {
       assertStateBeforeFinalization()
 
       val doCollectCommitStats =
@@ -389,8 +430,16 @@ trait TransactionHelper extends DeltaLogging {
         numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
         isolationLevel = isolationLevel.toString,
         coordinatedCommitsInfo = createCoordinatedCommitsStats(newProtocolOpt),
+        fileSizeHistogram = fileSizeHistogramOpt.map(FileSizeHistogramUtils.compress),
+        addFilesHistogram = addFilesHistogram.map(FileSizeHistogramUtils.compress),
+        removeFilesHistogram = removeFilesHistogram.map(FileSizeHistogramUtils.compress),
         numOfDomainMetadatas = numOfDomainMetadatas,
-        txnId = Some(txnId))
+        txnId = Some(txnId),
+        amtCommitStats = amtCommitStatsOpt,
+        fileActionOperationClass = Some(
+          FileActionOperationClass
+            .classify(numAdd, numRemove, fileActionDataChange)
+            .toString))
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
     }
 

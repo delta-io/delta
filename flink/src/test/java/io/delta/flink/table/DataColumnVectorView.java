@@ -16,10 +16,13 @@
 
 package io.delta.flink.table;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * A wrapper to provide a ColumnVector view backed by a nested list. Usage example: <code>
@@ -74,16 +77,35 @@ public class DataColumnVectorView implements ColumnVector {
   }
 
   @Override
+  public boolean getBoolean(int rowId) {
+    checkValidRowId(rowId);
+    checkValidDataType(BooleanType.BOOLEAN);
+    return (Boolean) rows.get(rowId).get(colIdx);
+  }
+
+  @Override
+  public byte getByte(int rowId) {
+    checkValidRowId(rowId);
+    checkValidDataType(ByteType.BYTE);
+    return (byte) rows.get(rowId).get(colIdx);
+  }
+
+  @Override
+  public short getShort(int rowId) {
+    checkValidRowId(rowId);
+    checkValidDataType(ShortType.SHORT);
+    return (short) rows.get(rowId).get(colIdx);
+  }
+
+  @Override
   public int getInt(int rowId) {
     checkValidRowId(rowId);
-    checkValidDataType(IntegerType.INTEGER);
     return (Integer) rows.get(rowId).get(colIdx);
   }
 
   @Override
   public long getLong(int rowId) {
     checkValidRowId(rowId);
-    checkValidDataType(LongType.LONG);
     return (Long) rows.get(rowId).get(colIdx);
   }
 
@@ -92,6 +114,13 @@ public class DataColumnVectorView implements ColumnVector {
     checkValidRowId(rowId);
     checkValidDataType(StringType.STRING);
     return rows.get(rowId).get(colIdx).toString();
+  }
+
+  @Override
+  public byte[] getBinary(int rowId) {
+    checkValidRowId(rowId);
+    checkValidDataType(BinaryType.BINARY);
+    return (byte[]) rows.get(rowId).get(colIdx);
   }
 
   @Override
@@ -117,5 +146,53 @@ public class DataColumnVectorView implements ColumnVector {
     }
     DecimalType actualType = (DecimalType) dataType;
     return (BigDecimal) rows.get(rowId).get(colIdx);
+  }
+
+  @Override
+  public ColumnVector getChild(int ordinal) {
+    List<List<?>> childData =
+        rows.stream().map(row -> (List<?>) row.get(colIdx)).collect(Collectors.toList());
+    StructType childType = (StructType) getDataType();
+    return new DataColumnVectorView(
+        childData, ordinal, childType.fields().get(ordinal).getDataType());
+  }
+
+  @Override
+  public ArrayValue getArray(int rowId) {
+    List<List<?>> arrayData = (List) rows.get(rowId).get(colIdx);
+    ArrayType dataType = (ArrayType) getDataType();
+    return new ArrayValue() {
+      @Override
+      public int getSize() {
+        return arrayData.size();
+      }
+
+      @Override
+      public ColumnVector getElements() {
+        return new DataColumnVectorView(arrayData, 0, dataType.getElementType());
+      }
+    };
+  }
+
+  @Override
+  public MapValue getMap(int rowId) {
+    List<List<?>> mapData = (List) rows.get(rowId).get(colIdx);
+    MapType mapType = (MapType) getDataType();
+    return new MapValue() {
+      @Override
+      public int getSize() {
+        return mapData.size();
+      }
+
+      @Override
+      public ColumnVector getKeys() {
+        return new DataColumnVectorView(mapData, 0, mapType.getKeyType());
+      }
+
+      @Override
+      public ColumnVector getValues() {
+        return new DataColumnVectorView(mapData, 1, mapType.getValueType());
+      }
+    };
   }
 }

@@ -71,7 +71,7 @@ trait PartitionLikeDataSkippingSuiteBase
         minNumFilesToApply.toString) {
       // Execute the query with partition-like filters and validate that the result matches.
       val res = sql(query).collect()
-      assert(res.sameElements(baseResult))
+      assert(res.sortBy(_.toString).sameElements(baseResult.sortBy(_.toString)))
 
       val predicates = sql(query).queryExecution.optimizedPlan.collect {
         case Filter(condition, _) => condition
@@ -446,6 +446,60 @@ trait PartitionLikeDataSkippingSuiteBase
         expectedNumPartitionLikeDataFilters = 1,
         allPredicatesUsed = true,
         minNumFilesToApply = 1L)
+    }
+  }
+
+  test("partition-like skipping disabled when data skipping stats use is disabled") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_STATS_SKIPPING.key -> "false",
+        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD.key -> "0") {
+      // We can't test this E2E via a read (as `PrepareDeltaScan` will avoid file skipping when
+      // stats collection is disabled), so we have to test this directly by invoking `filesForScan`
+      // to simulate file skipping that might occur by another caller.
+      val df = sql(
+        s"SELECT * FROM $testTableName " +
+          "WHERE LOWER(CONCAT('AAA', s.b)) = 'aaa1971-01-31 17:01:01.001'")
+      val predicates = df.queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+        .update().filesForScan(predicates)
+      assert(scanResult.files.length == 22)
+      assert(scanResult.unusedFilters.nonEmpty)
+      assert(scanResult.partitionLikeDataFilters.size == 0)
+    }
+  }
+
+  Seq("FLOAT", "DOUBLE").foreach { dataType =>
+    test(s"partition-like data skipping is disabled for $dataType columns") {
+      val tbl = "tbl"
+      withSQLConf(
+          DeltaSQLConf
+            .DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_FLOATING_POINT_VALIDATION_ENABLED.key ->
+            "true") {
+        withClusteredTable(tbl, s"a BIGINT, b $dataType", "b") {
+          spark.range(100)
+            .selectExpr("id AS a", s"CAST(-0.0 AS $dataType) AS b")
+            .union(spark.range(100)
+              .selectExpr("id AS a", s"CAST(0.0 AS $dataType) AS b"))
+            .coalesce(1)
+            .write
+            .format("delta")
+            .mode("append")
+            .saveAsTable(tbl)
+
+          Seq("0.0", "-0.0").foreach { value =>
+            validateExpectedScanMetrics(
+              tableName = tbl,
+              query = s"SELECT * FROM $tbl WHERE format_string('%s', b) = '$value'",
+              expectedNumFiles = 1,
+              expectedNumPartitionLikeDataFilters = 0,
+              allPredicatesUsed = false,
+              minNumFilesToApply = 1L)
+          }
+        }
+      }
     }
   }
 }

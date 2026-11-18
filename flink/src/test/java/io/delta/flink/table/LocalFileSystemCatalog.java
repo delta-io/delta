@@ -57,7 +57,7 @@ public class LocalFileSystemCatalog implements DeltaCatalog {
   }
 
   @Override
-  public Map<String, String> getCredentials(String uuid) {
+  public Map<String, String> getCredentials(String tableId) {
     return configurations;
   }
 }

@@ -16,8 +16,13 @@
 
 package org.apache.spark.sql.delta.columnmapping
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaColumnMapping
+import org.apache.spark.sql.delta.DeltaColumnMappingSuiteUtils
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaHistory
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations.RemoveColumnMapping
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
@@ -43,7 +48,7 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
   }
 
   override protected def afterEach(): Unit = {
-    sql(s"DROP TABLE IF EXISTS $testTableName")
+    executeDml(s"DROP TABLE IF EXISTS $testTableName")
     super.afterEach()
   }
 
@@ -66,7 +71,7 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
     val originalData = spark.table(tableName = testTableName).select(logicalColumnName).collect()
     // Add a schema comment and verify it is preserved after the rewrite.
     val comment = "test comment"
-    sql(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")
+    executeDml(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")
 
     val table = DeltaTableV2(spark, TableIdentifier(tableName = testTableName))
     val originalSnapshot = table.update()
@@ -133,14 +138,14 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
     } else {
       s"SET TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'none')"
     }
-    sql(
+    executeDml(
       s"""
          |ALTER TABLE $testTableName $unsetStr
          |""".stripMargin)
   }
 
   protected def enableColumnMapping(): Unit = {
-    sql(
+    executeDml(
       s"""ALTER TABLE $testTableName
         SET TBLPROPERTIES (
         '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
@@ -149,11 +154,11 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
   }
 
   protected def renameColumn(): Unit = {
-    sql(s"ALTER TABLE $testTableName RENAME COLUMN $thirdColumn TO $renamedThirdColumn")
+    executeDml(s"ALTER TABLE $testTableName RENAME COLUMN $thirdColumn TO $renamedThirdColumn")
   }
 
   protected def dropColumn(): Unit = {
-    sql(s"ALTER TABLE $testTableName DROP COLUMN $thirdColumn")
+    executeDml(s"ALTER TABLE $testTableName DROP COLUMN $thirdColumn")
   }
 
   /**

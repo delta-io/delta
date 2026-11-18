@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.functions.{col, lit, struct}
 
 trait RowTrackingUpdateSuiteBase extends RowIdTestUtils with RowTrackingEnabled {
   protected def dvsEnabled: Boolean = false
@@ -42,6 +42,7 @@ trait RowTrackingUpdateSuiteBase extends RowIdTestUtils with RowTrackingEnabled 
       .set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, dvsEnabled.toString)
       .set(DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key, dvsEnabled.toString)
       .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, dvsEnabled.toString)
+      .set(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false")
   }
 
   protected def writeTestTable(
@@ -49,10 +50,14 @@ trait RowTrackingUpdateSuiteBase extends RowIdTestUtils with RowTrackingEnabled 
       isPartitioned: Boolean,
       lastModifiedVersion: Long = 0L): Unit = {
     // Disable optimized writes to write out the specified number of files.
-    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
+      val voidCol =
+        if (DeltaTestUtilsBase.nullTypeColumnsSupported) lit(null) else lit(null).cast("int")
       val df = spark.range(
         start = 0, end = numRowsTarget, step = 1, numPartitions = numFiles)
         .withColumn("last_modified_version", lit(lastModifiedVersion))
+        .withColumn("void_col", voidCol)
+        .withColumn("struct_col", struct(col("void_col"), col("last_modified_version")))
         .withColumn("partition", (col("id") / (numRowsTarget / 3)).cast("int"))
         .write.format("delta")
       if (isPartitioned) {
@@ -98,7 +103,7 @@ trait RowTrackingUpdateSuiteBase extends RowIdTestUtils with RowTrackingEnabled 
   protected def executeUpdate(tableName: String, where: Option[String], newVersion: Long): Unit = {
     val whereClause = where.map(c => s"WHERE $c").getOrElse("")
     sql(s"""UPDATE $tableName as t
-         |SET last_modified_version = $newVersion
+         |SET last_modified_version = $newVersion, struct_col.last_modified_version = $newVersion
          |$whereClause""".stripMargin)
   }
 }
@@ -139,7 +144,7 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
   test(s"Preserves row IDs on unpartitioned table with optimized writes") {
     withRowIdTestTable(isPartitioned = false) {
       val whereClause = Some(s"id = 0 OR id = $numRowsTarget - 1")
-      withSQLConf(
+      withConf(
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "true") {
         checkAndExecuteUpdate(targetTableName, condition = whereClause)
       }
@@ -182,7 +187,7 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
   } {
     test("UPDATE preserves Row Tracking on tables enabled using backfill, "
         + s"isPartitioned=$isPartitioned") {
-      withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
+      withConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
         // This is the expected delta log history by the end of the test.
         // version 0: Table Creation
         // version 1: Protocol upgrade

@@ -24,6 +24,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.unitycatalog.InMemoryUCClient;
 import io.delta.kernel.unitycatalog.UCCatalogManagedCommitter;
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import java.io.File;
@@ -43,6 +44,9 @@ import scala.collection.mutable.ArrayBuffer;
  * <pre>{@code
  * {
  *   "uc_table_id": "12345678-1234-1234-1234-123456789abc",
+ *   "catalog_name": "benchmark_catalog",
+ *   "schema_name": "benchmark_schema",
+ *   "table_name": "benchmark_table",
  *   "max_ratified_version": 2,
  *   "log_tail": [
  *     {
@@ -141,6 +145,18 @@ public class UcCatalogInfo {
   @JsonProperty(value = "uc_table_id", required = true)
   private String ucTableId;
 
+  /** The Unity Catalog catalog name. */
+  @JsonProperty(value = "catalog_name", required = true)
+  private String catalogName;
+
+  /** The Unity Catalog schema name. */
+  @JsonProperty(value = "schema_name", required = true)
+  private String schemaName;
+
+  /** The Unity Catalog table name. */
+  @JsonProperty(value = "table_name", required = true)
+  private String tableName;
+
   /** The maximum ratified version for this table in Unity Catalog. */
   @JsonProperty(value = "max_ratified_version", required = true)
   private long maxRatifiedVersion;
@@ -165,6 +181,11 @@ public class UcCatalogInfo {
   /** @return the Unity Catalog table ID */
   public String getUcTableId() {
     return ucTableId;
+  }
+
+  /** @return the three-part Unity Catalog table identifier */
+  public UCTableIdentifier getUcTableIdentifier() {
+    return new UCTableIdentifier(catalogName, schemaName, tableName);
   }
 
   /**

@@ -17,6 +17,7 @@ package io.delta.kernel.internal.metrics;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.metrics.FileSizeHistogramResult;
 import io.delta.kernel.metrics.TransactionMetricsResult;
@@ -61,6 +62,14 @@ public class TransactionMetrics {
 
   private final Counter removeFilesSizeInBytesCounter = new Counter();
 
+  // Number of DVs in add files minus the number in remove files. Updates numDeletionVectorsOpt
+  // in the post-commit CRC.
+  private final Counter numDeletionVectorsDeltaCounter = new Counter();
+
+  // Net change in records deleted through DVs only: add-file DV cardinalities minus remove-file
+  // DV cardinalities. Updates numDeletedRecordsOpt in the post-commit CRC.
+  private final Counter numDeletedRecordsDeltaCounter = new Counter();
+
   private Optional<FileSizeHistogram> tableFileSizeHistogram;
 
   private TransactionMetrics(Optional<FileSizeHistogram> tableFileSizeHistogram) {
@@ -68,30 +77,44 @@ public class TransactionMetrics {
   }
 
   /**
-   * Updates the metrics for a seen AddFile with size {@code addFileSize}. Specifically, updates
-   * addFilesCounter, addFilesSizeInBytesCounter, and tableFileSizeHistogram. Note, it does NOT
-   * increment totalActionsCounter, this needs to be done separately.
+   * Updates the metrics for a seen AddFile with size {@code addFileSize}. Specifically, updates the
+   * file count, table size, deletion-vector metrics, and tableFileSizeHistogram. Note, it does NOT
+   * increment totalActionsCounter; this needs to be done separately.
    *
    * @param addFileSize the size of the add file to update the metrics for
+   * @param deletionVector the deletion vector attached to the add file, if any
    */
-  public void updateForAddFile(long addFileSize) {
+  public void updateForAddFile(
+      long addFileSize, Optional<DeletionVectorDescriptor> deletionVector) {
     checkArgument(addFileSize >= 0, "File size must be non-negative, got %s", addFileSize);
     addFilesCounter.increment();
     addFilesSizeInBytesCounter.increment(addFileSize);
+    deletionVector.ifPresent(
+        dv -> {
+          numDeletionVectorsDeltaCounter.increment();
+          numDeletedRecordsDeltaCounter.increment(dv.getCardinality());
+        });
     tableFileSizeHistogram.ifPresent(histogram -> histogram.insert(addFileSize));
   }
 
   /**
    * Updates the metrics for a seen RemoveFile with size {@code removeFileSize}. Specifically,
-   * updates removeFilesCounter, removeFilesSizeInBytesCounter, and tableFileSizeHistogram. Note, it
-   * does NOT increment totalActionsCounter, this needs to be done separately.
+   * updates the file count, table size, deletion-vector metrics, and tableFileSizeHistogram. Note,
+   * it does NOT increment totalActionsCounter; this needs to be done separately.
    *
    * @param removeFileSize the size of the remove file to update the metrics for
+   * @param deletionVector the deletion vector attached to the remove file, if any
    */
-  public void updateForRemoveFile(long removeFileSize) {
+  public void updateForRemoveFile(
+      long removeFileSize, Optional<DeletionVectorDescriptor> deletionVector) {
     checkArgument(removeFileSize >= 0, "File size must be non-negative, got %s", removeFileSize);
     removeFilesCounter.increment();
     removeFilesSizeInBytesCounter.increment(removeFileSize);
+    deletionVector.ifPresent(
+        dv -> {
+          numDeletionVectorsDeltaCounter.increment(-1);
+          numDeletedRecordsDeltaCounter.increment(-dv.getCardinality());
+        });
     tableFileSizeHistogram.ifPresent(histogram -> histogram.remove(removeFileSize));
   }
 
@@ -100,7 +123,8 @@ public class TransactionMetrics {
    *
    * <ul>
    *   <li>Resets addFilesCounter, removeFilesCounter, totalActionsCounter,
-   *       addFilesSizeInBytesCounter, and removeFilesSizeInBytesCounter to 0
+   *       addFilesSizeInBytesCounter, removeFilesSizeInBytesCounter,
+   *       numDeletionVectorsDeltaCounter, and numDeletedRecordsDeltaCounter to 0
    *   <li>Sets tableFileSizeHistogram to be empty since we don't know the updated distribution
    *       after the conflicting txn committed
    * </ul>
@@ -115,6 +139,8 @@ public class TransactionMetrics {
     removeFilesCounter.reset();
     totalActionsCounter.reset();
     removeFilesSizeInBytesCounter.reset();
+    numDeletionVectorsDeltaCounter.reset();
+    numDeletedRecordsDeltaCounter.reset();
     // For now, on retry we set tableFileSizeHistogram = Optional.empty() because we don't know the
     // correct state of tableFileSizeHistogram after conflicting transaction has committed
     tableFileSizeHistogram = Optional.empty();
@@ -130,6 +156,8 @@ public class TransactionMetrics {
       final long numRemoveFiles = removeFilesCounter.value();
       final long numTotalActions = totalActionsCounter.value();
       final long totalRemoveFileSizeInBytes = removeFilesSizeInBytesCounter.value();
+      final long numDeletionVectorsDelta = numDeletionVectorsDeltaCounter.value();
+      final long numDeletedRecordsDelta = numDeletedRecordsDeltaCounter.value();
       final Optional<FileSizeHistogramResult> tableFileSizeHistogramResult =
           tableFileSizeHistogram.map(FileSizeHistogram::captureFileSizeHistogramResult);
 
@@ -169,6 +197,16 @@ public class TransactionMetrics {
       }
 
       @Override
+      public long getNumDeletionVectorsDelta() {
+        return numDeletionVectorsDelta;
+      }
+
+      @Override
+      public long getNumDeletedRecordsDelta() {
+        return numDeletedRecordsDelta;
+      }
+
+      @Override
       public Optional<FileSizeHistogramResult> getTableFileSizeHistogram() {
         return tableFileSizeHistogramResult;
       }
@@ -180,7 +218,8 @@ public class TransactionMetrics {
     return String.format(
         "TransactionMetrics(totalCommitTimer=%s, commitAttemptsCounter=%s, addFilesCounter=%s, "
             + "removeFilesCounter=%s, totalActionsCounter=%s, totalAddFilesSizeInBytes=%s,"
-            + "totalRemoveFilesSizeInBytes=%s, tableFileSizeHistogram=%s)",
+            + "totalRemoveFilesSizeInBytes=%s, numDeletionVectorsDelta=%s, "
+            + "numDeletedRecordsDelta=%s, tableFileSizeHistogram=%s)",
         totalCommitTimer,
         commitAttemptsCounter,
         addFilesCounter,
@@ -188,6 +227,8 @@ public class TransactionMetrics {
         totalActionsCounter,
         addFilesSizeInBytesCounter,
         removeFilesSizeInBytesCounter,
+        numDeletionVectorsDeltaCounter,
+        numDeletedRecordsDeltaCounter,
         tableFileSizeHistogram);
   }
 }

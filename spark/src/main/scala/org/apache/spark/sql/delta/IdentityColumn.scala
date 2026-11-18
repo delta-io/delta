@@ -298,7 +298,7 @@ object IdentityColumn extends DeltaLogging {
             f, candidateHighWaterMark, allowLoweringHighWaterMarkForSyncIdentity = false)
           if (loggingSeq.nonEmpty) {
             recordDeltaEvent(
-              deltaLog = deltaLog,
+              provider = deltaLog,
               opType = opTypeHighWaterMarkUpdate,
               data = Map(
                 "columnName" -> f.name,
@@ -374,7 +374,7 @@ object IdentityColumn extends DeltaLogging {
   }
 
   def logTableWrite(
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       generatedIdentityColumns: Set[String],
       numInsertedRowsOpt: Option[Long]): Unit = {
     val identityColumns = getIdentityColumns(snapshot.schema)
@@ -383,7 +383,7 @@ object IdentityColumn extends DeltaLogging {
         f => !generatedIdentityColumns.contains(f.name)
       }.map(_.name)
       recordDeltaEvent(
-        snapshot.deltaLog,
+        snapshot,
         opTypeWrite,
         data = Map(
           "numInsertedRows" -> numInsertedRowsOpt,
@@ -422,7 +422,7 @@ object IdentityColumn extends DeltaLogging {
         field, candidateHighWaterMark, allowLoweringHighWaterMarkForSyncIdentity)
       if (loggingSeq.nonEmpty) {
         recordDeltaEvent(
-          deltaLog = deltaLog,
+          provider = deltaLog,
           opType = opTypeHighWaterMarkUpdate,
           data = Map(
             "columnName" -> field.name,

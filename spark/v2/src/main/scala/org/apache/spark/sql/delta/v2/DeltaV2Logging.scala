@@ -1,0 +1,108 @@
+/*
+ * Copyright (2026) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.apache.spark.sql.delta.v2
+
+import java.util.concurrent.TimeUnit
+import java.util.function.Supplier
+
+import scala.util.control.NonFatal
+
+import com.databricks.spark.util.TagDefinition
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
+import org.apache.hadoop.fs.Path
+
+/**
+ * Delta V2 specialization of [[DeltaLogging]]. Frame-name suffixes passed here must be fixed
+ * system-code literals; this trait supplies the shared `Delta` group and `v2.` prefix.
+ */
+private[v2] trait DeltaV2Logging extends DeltaLogging {
+  protected final def elapsedTimeMs(startedAtNs: Long): Long =
+    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNs)
+
+  private val deltaV2OpTypePrefix = "delta.v2."
+
+  private def deltaV2OpType(opType: String): String = {
+    if (opType.startsWith(deltaV2OpTypePrefix)) opType else deltaV2OpTypePrefix + opType
+  }
+
+  protected final override def recordDeltaEvent(
+      provider: DeltaLoggingProvider,
+      opType: String,
+      tags: Map[TagDefinition, String],
+      data: AnyRef,
+      path: Option[Path]): Unit = {
+    super.recordDeltaEvent(provider, deltaV2OpType(opType), tags, data, path)
+  }
+
+  /**
+   * Records a table-scoped event without requiring a DeltaLog-backed provider. Delta V2 must not
+   * depend on DeltaLog, so the path supplies the table identity through DeltaLogging's supported
+   * path-attribution fallback.
+   */
+  protected final def recordDeltaEventForTablePath(
+      tablePath: => Path,
+      opType: String,
+      tags: Map[TagDefinition, String] = Map.empty,
+      data: => AnyRef = null): Unit = {
+    try {
+      recordDeltaEvent(
+        provider = null,
+        opType = opType,
+        tags = tags,
+        data = data,
+        path = Some(tablePath))
+    } catch {
+      case NonFatal(loggingFailure) =>
+        logWarning("Failed to record table-scoped Delta V2 event", loggingFailure)
+    }
+  }
+
+  protected final override def recordDeltaOperationForTablePath[A](
+      tablePath: String,
+      opType: String,
+      tags: Map[TagDefinition, String])(
+      thunk: => A): A = {
+    super.recordDeltaOperationForTablePath(tablePath, deltaV2OpType(opType), tags)(thunk)
+  }
+
+  protected final override def recordDeltaOperation[A](
+      provider: DeltaLoggingProvider,
+      opType: String,
+      tags: Map[TagDefinition, String])(
+      thunk: => A): A = {
+    super.recordDeltaOperation(provider, deltaV2OpType(opType), tags)(thunk)
+  }
+
+  private def deltaV2FrameName(nameSuffix: String): String = "v2." + nameSuffix
+
+  protected final def recordFrameProfile[T](
+      nameSuffix: String)(thunk: => T): T = {
+    super.recordFrameProfile("Delta", deltaV2FrameName(nameSuffix))(thunk)
+  }
+
+  protected final def recordFrameProfileValue[T](
+      nameSuffix: String,
+      body: Supplier[T]): T =
+    super.recordFrameProfileValue("Delta", deltaV2FrameName(nameSuffix), body)
+
+  protected final def recordFrameProfileAction(
+      nameSuffix: String,
+      body: Runnable): Unit =
+    super.recordFrameProfileAction("Delta", deltaV2FrameName(nameSuffix), body)
+}
+
+/** Java inheritance bridge for Delta V2 classes that do not already have a superclass. */
+private[v2] abstract class DeltaV2JavaLogging extends DeltaV2Logging

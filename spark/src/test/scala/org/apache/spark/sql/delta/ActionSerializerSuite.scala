@@ -21,6 +21,7 @@ import java.util.UUID
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import org.apache.spark.sql.delta.amt.AMTPassthrough
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -32,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.util.Utils
 
 // scalastyle:off: removeFile
@@ -103,6 +104,96 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(action2.json === json2.replaceAll("\\s", ""))
   }
 
+  test("AddFile - backReference json serialization/deserialization") {
+    val withBackRef = AddFile(
+      path = "a",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 2,
+      dataChange = false,
+      backReference = Some(BackReference(manifest = "metadata/leaf-1.parquet", pos = 7)))
+    assert(withBackRef.json.contains("\"backReference\":{\"manifest\":" +
+      "\"metadata/leaf-1.parquet\",\"pos\":7}"))
+    assert(Action.fromJson(withBackRef.json) === withBackRef)
+
+    // Absent (default None) -> omitted from the serialized action.
+    val withoutBackRef = AddFile("a", Map.empty, 1, 2, dataChange = false)
+    assert(!withoutBackRef.json.contains("backReference"))
+    assert(Action.fromJson(withoutBackRef.json).asInstanceOf[AddFile].backReference.isEmpty)
+  }
+
+  test("RemoveFile - backReference json serialization/deserialization") {
+    val withBackRef = RemoveFile(
+      path = "a",
+      deletionTimestamp = Some(1L),
+      backReference = Some(BackReference(manifest = "metadata/leaf-2.parquet", pos = 3)))
+    assert(withBackRef.json.contains("\"backReference\":{\"manifest\":" +
+      "\"metadata/leaf-2.parquet\",\"pos\":3}"))
+    assert(Action.fromJson(withBackRef.json) === withBackRef)
+
+    val withoutBackRef = RemoveFile("a", Some(1L))
+    assert(!withoutBackRef.json.contains("backReference"))
+    assert(Action.fromJson(withoutBackRef.json).asInstanceOf[RemoveFile].backReference.isEmpty)
+  }
+
+  test("AddFile back reference propagates to removeWithTimestamp and copy") {
+    val backRef = Some(BackReference(manifest = "metadata/leaf-3.parquet", pos = 11))
+    val add = AddFile("a", Map.empty, 1, 2, dataChange = true, backReference = backRef)
+    // removeWithTimestamp -> tombstone inherits the back reference.
+    assert(add.removeWithTimestamp().backReference == backRef)
+    // copy (the mechanism the superseding AddFile of removeRows relies on) preserves it.
+    assert(add.copy(dataChange = false).backReference == backRef)
+  }
+
+  test("AddFile - amtPassthrough json serialization/deserialization") {
+    val withPassthrough = AddFile(
+      path = "a",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 2,
+      dataChange = false,
+      amtPassthrough = Some(AMTPassthrough(spec_id = Some(7))))
+    assert(withPassthrough.json.contains("\"amtPassthrough\":{\"spec_id\":7}"))
+    assert(Action.fromJson(withPassthrough.json) === withPassthrough)
+
+    // Absent (default None) -> omitted from the serialized action.
+    val withoutPassthrough = AddFile("a", Map.empty, 1, 2, dataChange = false)
+    assert(!withoutPassthrough.json.contains("amtPassthrough"))
+    assert(Action.fromJson(withoutPassthrough.json).asInstanceOf[AddFile].amtPassthrough.isEmpty)
+
+    // A present-but-empty passthrough keeps the struct, with its own field omitted.
+    val emptyPassthrough = AddFile(
+      "a", Map.empty, 1, 2, dataChange = false, amtPassthrough = Some(AMTPassthrough()))
+    assert(emptyPassthrough.json.contains("\"amtPassthrough\":{}"))
+    assert(Action.fromJson(emptyPassthrough.json) === emptyPassthrough)
+  }
+
+  test("AddFile snapshot IDs serialize and transition to RemoveFile") {
+    val passthrough = Some(AMTPassthrough(spec_id = Some(7)))
+    val add = AddFile(
+      "a",
+      Map.empty,
+      1,
+      2,
+      dataChange = true,
+      amtPassthrough = passthrough,
+      snapshotId = Some(11L),
+      modifiedSnapshotId = Some(12L))
+    assert(add.json.contains("\"snapshotId\":11"))
+    assert(add.json.contains("\"modifiedSnapshotId\":12"))
+    assert(Action.fromJson(add.json) === add)
+
+    // copy (the mechanism the superseding AddFile of removeRows relies on) preserves it.
+    val copied = add.copy(dataChange = false)
+    assert(copied.snapshotId.contains(11L))
+    assert(copied.modifiedSnapshotId.contains(12L))
+    val remove = add.removeWithTimestamp()
+    assert(!remove.json.contains("amtPassthrough"))
+    assert(remove.snapshotId.isEmpty)
+    assert(remove.modifiedSnapshotId.contains(12L))
+    assert(Action.fromJson(remove.json) === remove)
+  }
+
   // This is the same test as "removefile" in OSS, but due to a Jackson library upgrade the behavior
   // has diverged between Spark 3.1 and Spark 3.2.
   // We don't believe this is a practical issue because all extant versions of Delta explicitly
@@ -149,17 +240,21 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
-      txnId = None).copy(engineInfo = None)
+      txnId = None,
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
+    ).copy(engineInfo = None)
 
     // json of commit info actions without tag or engineInfo field
     val json1 =
       """{"commitInfo":{"inCommitTimestamp":123,"timestamp":123,"operation":"CONVERT",""" +
         """"operationParameters":{},"readVersion":23,""" +
         """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+        """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}""".stripMargin
     assert(Action.fromJson(json1) === expectedCommitInfo)
   }
 
@@ -172,17 +267,21 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = None,
-      txnId = None).copy(engineInfo = None)
+      txnId = None,
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
+    ).copy(engineInfo = None)
 
     // json of commit info actions without tag or engineInfo field
     val json1 =
       """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
         """"operationParameters":{},"readVersion":23,""" +
         """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+        """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}""".stripMargin
     assert(Action.fromJson(json1) === expectedCommitInfo)
   }
 
@@ -447,7 +546,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       """"extendedFileMetadata":true,"partitionValues":{"x":"2"},"size":10}}""")
 
   private def deletionVectorWithRelativePath: DeletionVectorDescriptor =
-    DeletionVectorDescriptor.onDiskWithRelativePath(
+    DeletionVectorDescriptor.onDiskWithUuidRelativePath(
       id = UUID.randomUUID(),
       randomPrefix = "a1",
       sizeInBytes = 10,
@@ -633,6 +732,69 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     }
   }
 
+  test("Checkpoint - Spark log schema stores an array of action structs") {
+    val elementSchema = Action.logSchema("checkpoint").dataType match {
+      case ArrayType(schema: StructType, _) => schema
+      case other => fail(s"Expected an array of checkpoint action structs, found $other")
+    }
+    // Compare Spark's inferred array element schema with AMTCheckpointSingleAction's fields.
+    // Keep the expected names explicit to catch accidental changes to the schema.
+    assert(elementSchema.fieldNames.toSeq === Seq(
+      "checkpointMetadata",
+      "contentRoot",
+      "protocol",
+      "metaData",
+      "domainMetadata",
+      "txn",
+      "sidecar"))
+    assert(elementSchema.fields.forall(_.dataType.isInstanceOf[StructType]))
+  }
+
+  // Snapshot replay can decode trailing commit JSON with Spark and call `SingleAction.unwrap`.
+  // A deferred Checkpoint must pass validation before replay ignores its pointer.
+  // Spark ignores Jackson's annotations and custom deserializer, so Jackson round-trip tests
+  // do not cover this path or guarantee that required sidecar types survive decoding.
+  Seq(false, true).foreach { withSidecars =>
+    test(s"Checkpoint - Spark decodes the action array with sidecars=$withSidecars") {
+      import testImplicits._
+
+      val sidecars = if (withSidecars) {
+        Seq(
+          SidecarFile(
+            path = "domain-metadata.parquet",
+            sizeInBytes = 100L,
+            modificationTime = 0L,
+            `type` = Some(SidecarType.Type.DomainMetadata)),
+          SidecarFile(
+            path = "transactions.parquet",
+            sizeInBytes = 2048L,
+            modificationTime = 0L,
+            `type` = Some(SidecarType.Type.Txn)))
+      } else {
+        Seq.empty
+      }
+      val checkpoint = Checkpoint(
+        version = 1L,
+        contentRoot = ContentRoot("metadata/root.parquet", sizeInBytes = 4096L, version = 1L),
+        protocol = Protocol(minReaderVersion = 3, minWriterVersion = 7),
+        metaData = Metadata(id = "metadata-id"),
+        domainMetadata = Seq(
+          DomainMetadata("domain-1", "{}", removed = false),
+          DomainMetadata("domain-2", "{}", removed = false)),
+        txns = Seq(
+          SetTransaction("app-1", 7L, Some(100L)),
+          SetTransaction("app-2", 8L, None)),
+        sidecars = sidecars)
+      val decoded = spark.read.schema(Action.logSchema)
+        .option("mode", "FAILFAST")
+        .json(Seq(checkpoint.json).toDS())
+        .as[SingleAction](SingleAction.encoder)
+        .collect().toSeq
+      assert(decoded === Seq(checkpoint.wrap))
+      assert(decoded.map(_.unwrap) === Seq(checkpoint))
+    }
+  }
+
   testActionSerDe(
     "AddCDCFile (without tags) - json serialization/deserialization",
     AddCDCFile("part=p1/f1", partitionValues = Map("x" -> "2"), size = 10),
@@ -703,10 +865,12 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(23),
       isolationLevel = Some("SnapshotIsolation"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
       userMetadata = Some("123"),
       tags = Some(Map("k1" -> "v1")),
-      txnId = Some("123")
+      txnId = Some("123"),
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
     ).copy(engineInfo = None)
 
     testActionSerDe(
@@ -717,7 +881,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
           """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
           """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-          """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin)
+          """"tags":{"k1":"v1"},"txnId":"123",""" +
+          """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}""".stripMargin)
 
     test("CommitInfo (with operationParameters) - json serialization/deserialization") {
       val operation = DeltaOperations.Convert(
@@ -735,7 +900,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
             """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion"""" +
             """:23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
-            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
+            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123",""" +
+            """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}"""
         } else {
           """{"commitInfo":{"inCommitTimestamp":123,""" +
             """"timestamp":123,"operation":"CONVERT","operationParameters"""" +
@@ -743,7 +909,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
             """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion""" +
             """":23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
-            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
+            """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123",""" +
+            """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}"""
         }
       assert(commitInfo1.json == expectedCommitInfoJson1)
       val newCommitInfo1 = Action.fromJson(expectedCommitInfoJson1).asInstanceOf[CommitInfo]
@@ -759,7 +926,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
           """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
           """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0",""" +
-          """"txnId":"123"}}""".stripMargin)
+          """"txnId":"123",""" +
+          """"lastManifestCommit":{"version":43,"contentRootVersion":41}}}""".stripMargin)
   }
 
   test("CommitInfo operationParameters deserialization with primitive types") {
@@ -782,10 +950,12 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(5),
       isolationLevel = Some("WriteSerializable"),
       isBlindAppend = Some(false),
+      dataChange = None,
       operationMetrics = Some(Map("numFiles" -> "10")),
       userMetadata = Some("test metadata"),
       tags = Some(Map("source" -> "test")),
-      txnId = Some("txn-123")
+      txnId = Some("txn-123"),
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
     )
 
     // Serialize and deserialize to test the JsonMapDeserializer
@@ -821,10 +991,12 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       readVersion = Some(42),
       isolationLevel = Some("WriteSerializable"),
       isBlindAppend = Some(true),
+      dataChange = None,
       operationMetrics = Some(Map("numFiles" -> "25", "numOutputRows" -> "1000")),
       userMetadata = operation.userMetadata,
       tags = Some(Map("environment" -> "production", "team" -> "data-eng")),
-      txnId = Some("txn-write-456")
+      txnId = Some("txn-write-456"),
+      lastManifestCommit = Some(LastManifestCommit(version = 43, contentRootVersion = 41))
     )
 
     // Test round-trip serialization/deserialization

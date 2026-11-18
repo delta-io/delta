@@ -134,6 +134,9 @@ trait IdentityColumnConflictSuiteBase
     None
   }
 
+  /** Executes the winning transaction SQL. Overridable for custom RPC assertions. */
+  protected def sqlWithTotalRpcBound(sqlText: String): Unit = sql(sqlText)
+
   /**
    * Helper function to test two concurrently running commands. Winning transaction commits before
    * current transaction commits.
@@ -157,7 +160,7 @@ trait IdentityColumnConflictSuiteBase
       unblockUntilPreCommit(txnObserver)
       busyWaitFor(txnObserver.phases.preparePhase.hasEntered, timeout)
 
-      sql(winningTxn.sqlCommand.replace("{tblName}", tblName))
+      sqlWithTotalRpcBound(winningTxn.sqlCommand.replace("{tblName}", tblName))
 
       val expectedException = expectedExceptionClass(currentTxn, winningTxn)
       val events = Log4jUsageLogger.track {

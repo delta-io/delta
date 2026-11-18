@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.schema
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, TypeWideningMode}
+import org.apache.spark.sql.delta.shims.GeoTypesShim
 
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.Literal
@@ -100,13 +101,14 @@ object SchemaMergingUtils {
    * the duplication exists.
    *
    * @param schema the schema to check for duplicates
-   * @param colType column type name, used in an exception message
+   * @param errorSubClass error sub-class for DELTA_DUPLICATE_COLUMNS_FOUND indicating where the
+   *                      duplicate was found (e.g. "METADATA_UPDATE", "TABLE_SCHEMA").
    * @param caseSensitive Whether we should exception if two columns have casing conflicts. This
    *                      should default to false for Delta.
    */
   def checkColumnNameDuplication(
       schema: StructType,
-      colType: String,
+      errorSubClass: String,
       caseSensitive: Boolean = false): Unit = {
     val columnNames = explodeNestedFieldNames(schema)
     // scalastyle:off caselocale
@@ -121,8 +123,8 @@ object SchemaMergingUtils {
         case (x, ys) if ys.length > 1 => s"$x"
       }
       throw new DeltaAnalysisException(
-        errorClass = "DELTA_DUPLICATE_COLUMNS_FOUND",
-        messageParameters = Array(colType, duplicateColumns.mkString(", ")))
+        errorClass = s"DELTA_DUPLICATE_COLUMNS_FOUND.$errorSubClass",
+        messageParameters = Array(duplicateColumns.mkString(", ")))
     }
   }
 
@@ -155,7 +157,7 @@ object SchemaMergingUtils {
       keepExistingType: Boolean = false,
       typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       caseSensitive: Boolean = false): StructType = {
-    checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
+    checkColumnNameDuplication(dataSchema, "DATA", caseSensitive)
     mergeDataTypes(
       tableSchema,
       dataSchema,
@@ -313,7 +315,11 @@ object SchemaMergingUtils {
    * there's no valid cast.
    */
   private def typeForImplicitCast(sourceType: DataType, targetType: DataType): Option[DataType] = {
-    TypeCoercion.implicitCast(Literal.default(sourceType), targetType).map(_.dataType)
+    if (GeoTypesShim.isGeoSpatialType(sourceType) || GeoTypesShim.isGeoSpatialType(targetType)) {
+      None
+    } else {
+      TypeCoercion.implicitCast(Literal.default(sourceType), targetType).map(_.dataType)
+    }
   }
 
   def toFieldMap(

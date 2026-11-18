@@ -45,7 +45,7 @@ public class ChecksumReader {
             .getJsonHandler()
             .readJsonFiles(
                 singletonCloseableIterator(checkSumFile),
-                CRCInfo.CRC_FILE_SCHEMA,
+                CRCInfo.CRC_FILE_READ_SCHEMA,
                 Optional.empty())) {
       // We do this instead of iterating through the rows or using `getSingularRow` so we
       // can use the existing fromColumnVector methods in Protocol, Metadata, Format etc

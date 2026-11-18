@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
@@ -386,7 +387,10 @@ object TableFeature {
       TypeWideningTableFeature,
       IcebergCompatV1TableFeature,
       IcebergCompatV2TableFeature,
+      IcebergCompatV3TableFeature,
       DeletionVectorsTableFeature,
+      GeoSpatialPreviewTableFeature,
+      GeoSpatialTableFeature,
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
       RowTrackingFeature,
@@ -395,7 +399,8 @@ object TableFeature {
       VariantTypeTableFeature,
       VariantShreddingPreviewTableFeature,
       VariantShreddingTableFeature,
-      CatalogOwnedTableFeature,
+      FileTypePreviewTableFeature,
+      CatalogManagedTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
     if (isTesting && testingFeaturesEnabled) {
@@ -422,6 +427,9 @@ object TableFeature {
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency)
     }
+    // Both AMT features are always registered, so every client can read and write their tables;
+    // their SQL confs only gate creating them (see `AdaptiveMetadataTableFeatureBase`).
+    features ++= AdaptiveMetadataTableFeatureBase.features
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
@@ -650,6 +658,55 @@ object IdentityColumnsTableFeature
   }
 }
 
+
+/** Common base shared by the preview and geospatial table features. */
+abstract class GeoSpatialTableFeatureBase(name: String)
+  extends ReaderWriterFeature(name)
+  with RemovableFeature {
+
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean =
+    !DeltaGeoSpatial.containsGeoColumns(snapshot.metadata.schema)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    GeospatialPreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/**
+ * Feature used for the private preview phase of geospatial support. Tables that have this
+ * feature are still supported even after the preview.
+ */
+object GeoSpatialPreviewTableFeature
+  extends GeoSpatialTableFeatureBase(name = "geospatial-dev")
+
+/**
+ * Stable feature for geospatial support.
+ *
+ * Table feature that adds support for GeoSpatial types (Geometry and Geography).
+ * Feature is automatically added whenever schema contains any of these two types.
+ * Additionally, feature is gated behind a delta.geo.preview.enabled config.
+ */
+object GeoSpatialTableFeature
+  extends GeoSpatialTableFeatureBase(name = "geospatial")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    val hasGeoColumns = DeltaGeoSpatial.containsGeoColumns(metadata.schema)
+
+    if (hasGeoColumns && !DeltaGeoSpatial.isPreviewEnabled(spark)) {
+      throw DeltaErrors.geoSpatialNotSupportedException()
+    }
+
+    hasGeoColumns &&
+    // Don't automatically enable the stable feature if the preview feature is already supported, to
+    // avoid possibly breaking old clients that only support the preview feature.
+    !protocol.isFeatureSupported(GeoSpatialPreviewTableFeature)
+  }
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+}
+
 object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")
     with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
@@ -806,6 +863,40 @@ object VariantShreddingTableFeature
     // feature is enabled so old tables with only the preview table feature can be read.
     !protocol.isFeatureSupported(VariantShreddingPreviewTableFeature)
   }
+
+  override def requiredFeatures: Set[TableFeature] = Set(VariantTypeTableFeature)
+}
+
+/**
+ * Preview feature for the `file` data type (a reference to a range of bytes, inline or in an
+ * external file; maps to the Parquet `FILE` logical type). See the RFC at
+ * `protocol_rfcs/file-type.md` (discussion issue delta-io/delta#7147).
+ *
+ * This registers the `fileType-preview` table feature so it is recognized and can be gated while
+ * the type is developed behind the preview name (no forward-compatibility guarantee). Automatic
+ * enablement when a `file` column is present in the schema is added together with the type
+ * implementation (schema serialization / read / write / stats).
+ *
+ * The feature is removable so that it can be dropped once a table no longer contains `file`
+ * columns (for example after a `REPLACE` with a schema that has none). There is no `file` type in
+ * the schema yet, so nothing can currently reference the feature: the "feature in use" checks
+ * below return "not used" and must be tightened to detect `file` columns when the type support
+ * lands, otherwise `DROP FEATURE` would be allowed to remove the feature while `file` data exists.
+ */
+object FileTypePreviewTableFeature extends ReaderWriterFeature(name = "fileType-preview")
+  with RemovableFeature {
+
+  // TODO(file-type impl): return false once a `file` column is present in the schema, so the
+  // feature cannot be dropped while it is still in use.
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = true
+
+  // TODO(file-type impl): return true for actions that reference a `file` column, so historical
+  // uses of the feature are detected during removal (this is a reader-writer feature, so removal
+  // scans history via this method).
+  override def actionUsesFeature(action: Action): Boolean = false
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    FileTypePreDowngradeCommand(table)
 }
 
 object DeletionVectorsTableFeature
@@ -833,7 +924,10 @@ object DeletionVectorsTableFeature
    */
   override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = {
     val dvsWritable = DeletionVectorUtils.deletionVectorsWritable(snapshot)
-    val dvsExist = snapshot.numDeletionVectorsOpt.getOrElse(0L) > 0
+    // Log replay counts DVs only while DVs are writable. After DROP FEATURE turns DVs off, the DV
+    // count is known only from a checksum, and a RESTORE commit can have none.
+    val dvsExist = snapshot.numDeletionVectorsOpt.map(_ > 0)
+      .getOrElse(!DeletionVectorUtils.isTableDVFree(snapshot))
 
     !(dvsWritable || dvsExist)
   }
@@ -851,6 +945,73 @@ object DeletionVectorsTableFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     DeletionVectorsPreDowngradeCommand(table)
+}
+
+/**
+ * The AMT (Adaptive Metadata Tree) table features: [[AdaptiveMetadataPreviewTableFeature]] is the
+ * private-preview feature, and [[AdaptiveMetadataTableFeature]] its successor. Both features enable
+ * AMT; a table has at most one of them. Both are always registered, so their tables stay readable
+ * and writable in every client, and a SQL conf per feature gates creating them (`creationConf`).
+ *
+ * [[AdaptiveMetadataTableFeature]] is named `adaptiveMetadata-dev` while what it adds, the
+ * `tightStats` stats flag (see `StatsTightness`), is in development, so that no client claims to
+ * support `adaptiveMetadata` before it is complete. It will be renamed to `adaptiveMetadata` then.
+ */
+sealed abstract class AdaptiveMetadataTableFeatureBase(name: String)
+  extends ReaderWriterFeature(name)
+  with RemovableFeature {
+
+  // The AMT features rely on the following features:
+  //  - catalogManaged: adaptive metadata tables are catalog managed (CCv2) only.
+  //  - rowTracking: stable row identity is required by the adaptive metadata layout.
+  //  - domainMetadata: listed explicitly even though rowTracking already requires it.
+  //  - deletionVectors: deletes are expressed as DVs rather than file rewrites.
+  //  - columnMapping: Iceberg v4 manifests reference columns by field ID, so column mapping
+  //    must be present. Note that presence alone is not enough; `id` mode is enforced separately
+  //    in [[OptimisticTransaction.scala]].
+  override def requiredFeatures: Set[TableFeature] = Set(
+    CatalogManagedTableFeature,
+    RowTrackingFeature,
+    DomainMetadataTableFeature,
+    DeletionVectorsTableFeature,
+    ColumnMappingTableFeature)
+
+  // AMT stores its checkpoint in the checkpoint action, so none of these may be on the table.
+  def incompatibleFeatures: Set[TableFeature] = Set(V2CheckpointTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    AdaptiveMetadataPreDowngradeCommand(table, this)
+
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = true
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+object AdaptiveMetadataPreviewTableFeature
+  extends AdaptiveMetadataTableFeatureBase(name = "adaptiveMetadata-preview")
+
+object AdaptiveMetadataTableFeature
+  extends AdaptiveMetadataTableFeatureBase(name = "adaptiveMetadata-dev")
+
+object AdaptiveMetadataTableFeatureBase {
+  /** All AMT table features. */
+  val features: Seq[AdaptiveMetadataTableFeatureBase] =
+    Seq(AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature)
+
+  /** The AMT table feature `protocol` supports, if any; a table has at most one. */
+  def supportedBy(protocol: Protocol): Option[AdaptiveMetadataTableFeatureBase] =
+    features.find(protocol.isFeatureSupported)
+
+  /** The SQL conf that gates creating a table with the AMT table feature `feature`. */
+  def creationConf(feature: AdaptiveMetadataTableFeatureBase): ConfigEntry[Boolean] =
+    feature match {
+      case AdaptiveMetadataPreviewTableFeature =>
+        DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED
+      case AdaptiveMetadataTableFeature => DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_ENABLED
+    }
+
+  /** Whether `protocol` supports either AMT table feature. */
+  def isSupportedBy(protocol: Protocol): Boolean = supportedBy(protocol).isDefined
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
@@ -1019,6 +1180,23 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
+object IcebergCompatV3TableFeature extends WriterFeature(name = "icebergCompatV3")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean = IcebergCompatV3.isEnabled(metadata)
+
+  override def requiredFeatures: Set[TableFeature] =
+    Set(ColumnMappingTableFeature, RowTrackingFeature)
+}
+
+
 /**
  * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
  */
@@ -1114,6 +1292,8 @@ object V2CheckpointTableFeature
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   private def isV2CheckpointSupportNeededByMetadata(metadata: Metadata): Boolean =
     DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(metadata).needsV2CheckpointSupport
 
@@ -1179,9 +1359,11 @@ object CoordinatedCommitsTableFeature
 }
 
 /** Table feature to represent tables that commits are managed by catalog */
-object CatalogOwnedTableFeature
+object CatalogManagedTableFeature
   extends ReaderWriterFeature(name = "catalogManaged")
   with RemovableFeature {
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   override def requiredFeatures: Set[TableFeature] =
     Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
@@ -1310,6 +1492,13 @@ object VacuumProtocolCheckTableFeature
   extends ReaderWriterFeature(name = "vacuumProtocolCheck")
   with RemovableFeature {
 
+  // Allowing concurrent transactions to rebase over this feature's enablement is safe:
+  // VACUUM already performs the writer-side protocol check at transaction start regardless
+  // of whether VacuumProtocolCheckTableFeature is in the protocol. So a rebased commit
+  // acquiring this feature mid-flight gains no new check at commit time -- the protection
+  // is already in place.
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
     VacuumProtocolCheckPreDowngradeCommand(table)
   }
@@ -1357,7 +1546,7 @@ object CheckpointProtectionTableFeature
    * Gets the version requiring checkpoint protection from `snapshot`. If the table property is
    * not set, return the default value 0.
    */
-  def getCheckpointProtectionVersion(snapshot: Snapshot): Long = {
+  def getCheckpointProtectionVersion(snapshot: SnapshotDescriptor): Long = {
     getCheckpointProtectionVersionOption(snapshot.protocol, snapshot.metadata).getOrElse(0)
   }
 
@@ -1373,18 +1562,16 @@ object CheckpointProtectionTableFeature
       catalogTableOpt: Option[CatalogTable],
       toVersion: Long): Boolean = {
     deltaLog
-      .getChangeLogFiles(
+      .getSingleCommitIterator(
         startVersion = 0,
         endVersion = toVersion,
         catalogTableOpt = catalogTableOpt,
         failOnDataLoss = false)
-      .map { case (_, file) => file }
-      .filter(FileNames.isDeltaFile)
       .take(1).isEmpty
   }
 
   def historyPriorToCheckpointProtectionVersionIsTruncated(
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       catalogTableOpt: Option[CatalogTable]): Boolean = {
     val checkpointProtectionVersion = getCheckpointProtectionVersion(snapshot)
     if (checkpointProtectionVersion <= 0) return true

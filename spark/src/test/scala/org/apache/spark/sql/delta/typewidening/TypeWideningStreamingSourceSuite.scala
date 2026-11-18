@@ -27,7 +27,7 @@ import org.scalatest.BeforeAndAfterAll
 
 import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.SparkArithmeticException
-import org.apache.spark.sql.{DataFrame, Row, SaveMode}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.functions.{col, count, lit}
 import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.test.SQLTestUtils
@@ -70,17 +70,20 @@ trait TypeWideningStreamingSourceTestMixin
   /** Unblocks the stream after a widening type change. */
   protected def withUnblockedTypeChanges(fn: => Unit): Unit
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING, schemaTrackingEnabled)
     spark.udf.register("scala_udf", (x: Int) => x + 1)
   }
 
-  override def afterAll(): Unit = {
+  override protected def afterAll(): Unit = {
     // The scala UDF is a temporary function, no need to drop it.
     super.afterAll()
   }
+
+  /** Whether the suite uses the DSv2 connector. Override to true in V2 test suites. */
+  protected def useDsv2: Boolean = false
 
   /** Short-hand to read a data stream from the Delta table at the given location. */
   protected def readStream(
@@ -90,9 +93,25 @@ trait TypeWideningStreamingSourceTestMixin
     val allOptions = options ++ Option.when(schemaTrackingEnabled)(
       DeltaOptions.SCHEMA_TRACKING_LOCATION -> checkpointDir.toString
     )
-    spark.readStream.format("delta")
-      .options(allOptions)
-      .load(path.getCanonicalPath)
+    loadStreamWithOptions(path, allOptions)
+  }
+
+  /** Read a data stream without schema tracking options. */
+  protected def readStreamWithoutSchemaTracking(
+      path: File,
+      options: Map[String, String] = Map.empty): DataFrame = {
+    loadStreamWithOptions(path, options)
+  }
+
+  /** Loads a stream from the given path, routing through V2 connector when useDsv2 is true. */
+  private def loadStreamWithOptions(path: File, options: Map[String, String]): DataFrame = {
+    val reader = spark.readStream.options(options)
+    if (useDsv2) {
+      // This will route through DeltaCatalog which checks V2_ENABLE_MODE
+      reader.table(s"delta.`${path.getCanonicalPath}`")
+    } else {
+      reader.format("delta").load(path.getCanonicalPath)
+    }
   }
 
   /** Test action checking that the stream fails due to a metadata change - typ. a schema change. */
@@ -135,9 +154,10 @@ trait TypeWideningStreamingSourceTestMixin
  * Can run both with and without schema tracking.
  */
 trait TypeWideningStreamingSourceTests
-  extends StreamTest
+  extends QueryTest
   with SQLTestUtils
-  with TypeWideningStreamingSourceTestMixin {
+  with TypeWideningStreamingSourceTestMixin
+  with StreamTest {
 
   import testImplicits._
 
@@ -162,21 +182,22 @@ trait TypeWideningStreamingSourceTests
     test(s"type change - $name") {
       withTempDir { dir =>
         val partitionByStr = partitionBy.map(p => s"PARTITIONED BY ($p)").getOrElse("")
-        sql(s"CREATE TABLE delta.`$dir` (widened byte, other byte) USING DELTA $partitionByStr")
+        executeDml(
+          s"CREATE TABLE delta.`$dir` (widened byte, other byte) USING DELTA $partitionByStr")
         val checkpointDir = new File(dir, "sink_checkpoint")
 
         testStream(query(readStream(dir, checkpointDir)), outputMode)(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1, 1)") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1, 1)") },
           ProcessAllAvailable(),
-          Execute { _ => sql(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
+          Execute { _ => executeDml(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
           ExpectMetadataEvolutionException()
         )
 
         val streamActions = expectedResult match {
           case ExpectedResult.Success(rows: Seq[Row @unchecked]) =>
             Seq(
-              Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789, 2)") },
+              Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (123456789, 2)") },
               ProcessAllAvailable(),
               CheckLastBatch(rows: _*)
             )
@@ -318,14 +339,14 @@ trait TypeWideningStreamingSourceTests
 
   test("widening type change then restore back") {
     withTempDir { dir =>
-      sql(s"CREATE TABLE delta.`$dir` (a byte) USING DELTA")
+      executeDml(s"CREATE TABLE delta.`$dir` (a byte) USING DELTA")
       val checkpointDir = new File(dir, "sink_checkpoint")
 
       testStream(readStream(dir, checkpointDir))(
         StartStream(checkpointLocation = checkpointDir.toString),
-        Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1)") },
+        Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1)") },
         ProcessAllAvailable(),
-        Execute { _ => sql(s"ALTER TABLE delta.`$dir`ALTER COLUMN a TYPE int") },
+        Execute { _ => executeDml(s"ALTER TABLE delta.`$dir`ALTER COLUMN a TYPE int") },
         // Widening a column type requires restarting the stream so that the new, wider schema is
         // used to process the batch.
         ExpectMetadataEvolutionException()
@@ -342,11 +363,11 @@ trait TypeWideningStreamingSourceTests
       withUnblockedTypeChanges {
         testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
           ProcessAllAvailable(),
           CheckLastBatch(123456789),
           // Restore will narrow the type back, the schema change fails the query.
-          Execute { _ => sql(s"RESTORE delta.`$dir` VERSION AS OF 1") },
+          Execute { _ => executeDml(s"RESTORE delta.`$dir` VERSION AS OF 1") },
           if (schemaTrackingEnabled) {
             // With schema tracking, the first try evolves the tracked schema. The unsupported
             // type change is surfaced on the next retry.
@@ -373,12 +394,12 @@ trait TypeWideningStreamingSourceTests
   } {
     test(s"$name type changes are not supported") {
       withTempDir { dir =>
-        sql(s"CREATE TABLE delta.`$dir` (a int) USING DELTA")
+        executeDml(s"CREATE TABLE delta.`$dir` (a int) USING DELTA")
         val checkpointDir = new File(dir, "sink_checkpoint")
 
         testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1)") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1)") },
           ProcessAllAvailable(),
           Execute { _ =>
             // Overwrite the table schema to apply an arbitrary type change.
@@ -404,7 +425,7 @@ trait TypeWideningStreamingSourceTests
         // Try to restart the stream even though the error is not retryable and it will fail again.
         testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (2)") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (2)") },
           ExpectIncompatibleSchemaChangeException()
         )
       }
@@ -417,8 +438,8 @@ trait TypeWideningStreamingSourceTests
       withTempDir { sinkDir =>
         // The test mixin implicitly enables type widening on all tables, disable type widening on
         // the sink initially for this test.
-        sql(s"CREATE TABLE delta.`$sourceDir` (a byte) USING DELTA")
-        sql(
+        executeDml(s"CREATE TABLE delta.`$sourceDir` (a byte) USING DELTA")
+        executeDml(
           s"""
              |CREATE TABLE delta.`$sinkDir` (a byte) USING DELTA
              |TBLPROPERTIES('delta.enableTypeWidening' = 'false')
@@ -443,16 +464,16 @@ trait TypeWideningStreamingSourceTests
         }
 
         // Start with no type change.
-        sql(s"INSERT INTO delta.`$sourceDir` VALUES (1)")
+        executeDml(s"INSERT INTO delta.`$sourceDir` VALUES (1)")
         runStream(mergeSchema = false)
         checkAnswer(readDeltaTable(sinkDir.toString), Seq(Row(1)))
 
         // Change type of column 'a' and introduce a new column 'b'. Schema evolution is enabled
         // so the new column 'b' is added to the sink, but type widening is disabled on the sink so
         // the type of column 'a' remains INT: values are downcasted from INT to BYTE on write.
-        sql(s"ALTER TABLE delta.`$sourceDir`ALTER COLUMN a TYPE int")
-        sql(s"ALTER TABLE delta.`$sourceDir`ADD COLUMN b int")
-        sql(s"INSERT INTO delta.`$sourceDir` VALUES (2, 2)")
+        executeDml(s"ALTER TABLE delta.`$sourceDir`ALTER COLUMN a TYPE int")
+        executeDml(s"ALTER TABLE delta.`$sourceDir`ADD COLUMN b int")
+        executeDml(s"INSERT INTO delta.`$sourceDir` VALUES (2, 2)")
 
         if (schemaTrackingEnabled) {
           val evolutionException = intercept[DeltaRuntimeException] {
@@ -468,8 +489,9 @@ trait TypeWideningStreamingSourceTests
         // Enable type widening on the sink and insert a value in 'a' that won't fit, first with
         // schema evolution disabled: the type of column 'a' in the sink isn't automatically changed
         // to INT and values are downcast: the value overflows and fails.
-        sql(s"ALTER TABLE delta.`$sinkDir` SET TBLPROPERTIES('delta.enableTypeWidening' = 'true')")
-        sql(s"INSERT INTO delta.`$sourceDir` VALUES (${Int.MaxValue}, ${Int.MaxValue})")
+        executeDml(
+          s"ALTER TABLE delta.`$sinkDir` SET TBLPROPERTIES('delta.enableTypeWidening' = 'true')")
+        executeDml(s"INSERT INTO delta.`$sourceDir` VALUES (${Int.MaxValue}, ${Int.MaxValue})")
 
         def getSparkArithmeticException(ex: Throwable): SparkArithmeticException = ex match {
           case e: SparkArithmeticException => e
@@ -498,29 +520,30 @@ trait TypeWideningStreamingSourceTests
 
 /** Tests that specifically cover type widening without schema tracking. */
 trait TypeWideningStreamingSourceWithoutSchemaTrackingTests
-  extends StreamTest
+  extends QueryTest
   with SQLTestUtils
-  with TypeWideningStreamingSourceTestMixin {
+  with TypeWideningStreamingSourceTestMixin
+  with StreamTest {
 
   import testImplicits._
 
   test("schema changed event is logged for type widening") {
     withTempDir { dir =>
-      sql(s"CREATE TABLE delta.`$dir` (widened byte) USING DELTA")
+      executeDml(s"CREATE TABLE delta.`$dir` (widened byte) USING DELTA")
       val checkpointDir = new File(dir, "sink_checkpoint")
 
       val logs = Log4jUsageLogger.track {
         testStream(readStream(dir, checkpointDir))(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1)") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1)") },
           ProcessAllAvailable(),
-          Execute { _ => sql(s"ALTER TABLE delta.`$dir` ALTER COLUMN widened TYPE int") },
+          Execute { _ => executeDml(s"ALTER TABLE delta.`$dir` ALTER COLUMN widened TYPE int") },
           ExpectMetadataEvolutionException()
         )
 
         testStream(readStream(dir, checkpointDir))(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
           ProcessAllAvailable(),
           CheckLastBatch(Row(123456789))
         )
@@ -547,16 +570,16 @@ trait TypeWideningStreamingSourceWithoutSchemaTrackingTests
 
   test("schema changed event is not logged when there are no schema changes") {
     withTempDir { dir =>
-      sql(s"CREATE TABLE delta.`$dir` (widened byte) USING DELTA")
+      executeDml(s"CREATE TABLE delta.`$dir` (widened byte) USING DELTA")
       val checkpointDir = new File(dir, "sink_checkpoint")
 
       val logs = Log4jUsageLogger.track {
         testStream(readStream(dir, checkpointDir))(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1)") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1)") },
           // This doesn't do anything since the type is already `byte`.
-          Execute { _ => sql(s"ALTER TABLE delta.`$dir` ALTER COLUMN widened TYPE byte") },
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (100)") },
+          Execute { _ => executeDml(s"ALTER TABLE delta.`$dir` ALTER COLUMN widened TYPE byte") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (100)") },
           ProcessAllAvailable(),
           CheckAnswer(1, 100)
         )
@@ -574,32 +597,30 @@ trait TypeWideningStreamingSourceWithoutSchemaTrackingTests
 
 /** Tests that specifically cover schema tracking for type widening. */
 trait TypeWideningStreamingSourceSchemaTrackingTests
-  extends StreamTest
+  extends QueryTest
   with SQLTestUtils
-  with TypeWideningStreamingSourceTestMixin {
+  with TypeWideningStreamingSourceTestMixin
+  with StreamTest {
 
   import testImplicits._
 
   test(
     "type change first without schemaTrackingLocation and unblock using schemaTrackingLocation") {
     withTempDir { dir =>
-      sql(s"CREATE TABLE delta.`$dir` (widened byte) USING DELTA")
+      executeDml(s"CREATE TABLE delta.`$dir` (widened byte) USING DELTA")
       val checkpointDir = new File(dir, "sink_checkpoint")
 
-      def readWithoutSchemaTrackingLog(): DataFrame =
-        spark.readStream.format("delta").load(dir.getCanonicalPath)
-
-      testStream(readWithoutSchemaTrackingLog())(
+      testStream(readStreamWithoutSchemaTracking(dir))(
         StartStream(checkpointLocation = checkpointDir.toString),
-        Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1)") },
+        Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1)") },
         ProcessAllAvailable(),
         CheckAnswer(1)
       )
 
-      testStream(readWithoutSchemaTrackingLog())(
+      testStream(readStreamWithoutSchemaTracking(dir))(
         StartStream(checkpointLocation = checkpointDir.toString),
-        Execute { _ => sql(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
-        Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
+        Execute { _ => executeDml(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
+        Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
         ExpectFailure[DeltaStreamingNonAdditiveSchemaIncompatibleException]()
       )
 
@@ -636,7 +657,7 @@ trait TypeWideningStreamingSourceSchemaTrackingTests
   )) {
     test(s"unblocking stream with sql conf after type change - $name") {
       withTempDir { dir =>
-        sql(s"CREATE TABLE delta.`$dir` (widened byte, other byte) USING DELTA")
+        executeDml(s"CREATE TABLE delta.`$dir` (widened byte, other byte) USING DELTA")
         // Getting the checkpoint dir through the delta log to ensure the format is consistent with
         // the path used internally to compute the hash of the checkpoint location to unblock the
         // stream.
@@ -650,8 +671,8 @@ trait TypeWideningStreamingSourceSchemaTrackingTests
 
         testStream(readWithAgg(), outputMode = OutputMode.Complete())(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1, 1)") },
-          Execute { _ => sql(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1, 1)") },
+          Execute { _ => executeDml(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
           ExpectMetadataEvolutionException()
         )
 
@@ -665,7 +686,7 @@ trait TypeWideningStreamingSourceSchemaTrackingTests
         withSQLConf(s"spark.databricks.delta.streaming.${getSqlConf(checkpointHash)}" -> value) {
           testStream(readWithAgg(), outputMode = OutputMode.Complete())(
             StartStream(checkpointLocation = checkpointDir.toString),
-            Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789, 1)") },
+            Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (123456789, 1)") },
             ProcessAllAvailable(),
             CheckLastBatch(Row(1, 2))
           )
@@ -680,7 +701,7 @@ trait TypeWideningStreamingSourceSchemaTrackingTests
   )) {
     test(s"unblocking stream with reader option after type change - $name") {
       withTempDir { dir =>
-        sql(s"CREATE TABLE delta.`$dir` (widened byte, other byte) USING DELTA")
+        executeDml(s"CREATE TABLE delta.`$dir` (widened byte, other byte) USING DELTA")
         val checkpointDir = new File(dir, "sink_checkpoint")
 
         def readWithAgg(options: Map[String, String] = Map.empty): DataFrame =
@@ -690,8 +711,8 @@ trait TypeWideningStreamingSourceSchemaTrackingTests
 
         testStream(readWithAgg(), outputMode = OutputMode.Complete())(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1, 1)") },
-          Execute { _ => sql(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1, 1)") },
+          Execute { _ => executeDml(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
           ExpectMetadataEvolutionException()
         )
 
@@ -704,7 +725,7 @@ trait TypeWideningStreamingSourceSchemaTrackingTests
             readWithAgg(Map("allowSourceColumnTypeChange" -> optionValue)),
             outputMode = OutputMode.Complete())(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789, 1)") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (123456789, 1)") },
           ProcessAllAvailable(),
           CheckLastBatch(Row(1, 2))
         )
@@ -714,12 +735,12 @@ trait TypeWideningStreamingSourceSchemaTrackingTests
 
   test(s"overwrite schema with type change and dropped column") {
     withTempDir { dir =>
-      sql(s"CREATE TABLE delta.`$dir` (a byte, b int) USING DELTA")
+      executeDml(s"CREATE TABLE delta.`$dir` (a byte, b int) USING DELTA")
       val checkpointDir = new File(dir, "sink_checkpoint")
 
       testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
         StartStream(checkpointLocation = checkpointDir.toString),
-        Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1, 1)") },
+        Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1, 1)") },
         ProcessAllAvailable(),
         Execute { _ =>
           // Overwrite the table schema.
@@ -771,7 +792,7 @@ trait TypeWideningStreamingSourceSchemaTrackingTests
           "spark.databricks.delta.streaming.allowSourceColumnTypeChange" -> "always") {
         testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
           StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (2)") },
+          Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (2)") },
           ProcessAllAvailable()
         )
       }
@@ -780,31 +801,28 @@ trait TypeWideningStreamingSourceSchemaTrackingTests
 
   test("disable schema tracking log using internal conf") {
      withTempDir { dir =>
-       sql(s"CREATE TABLE delta.`$dir` (a byte) USING DELTA")
+       executeDml(s"CREATE TABLE delta.`$dir` (a byte) USING DELTA")
        val checkpointDir = new File(dir, "sink_checkpoint")
-
-       def readStream(): DataFrame =
-         spark.readStream.format("delta").load(dir.getCanonicalPath)
 
        // When we disable schema tracking for widening type changes, the stream should succeed
        // without requiring the user to provide a schema tracking location or unblock the type
        // change.
        withSQLConf(
          DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false") {
-         testStream(readStream())(
+         testStream(readStreamWithoutSchemaTracking(dir))(
            StartStream(checkpointLocation = checkpointDir.toString),
-           Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1)") },
+           Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (1)") },
            ProcessAllAvailable(),
-           Execute { _ => sql(s"ALTER TABLE delta.`$dir`ALTER COLUMN a TYPE int") },
+           Execute { _ => executeDml(s"ALTER TABLE delta.`$dir`ALTER COLUMN a TYPE int") },
            ExpectFailure[DeltaIllegalStateException] { ex =>
              assert(ex.asInstanceOf[SparkThrowable].getErrorClass ===
                "DELTA_SCHEMA_CHANGED_WITH_VERSION")
            }
          )
 
-         testStream(readStream())(
+         testStream(readStreamWithoutSchemaTracking(dir))(
            StartStream(checkpointLocation = checkpointDir.toString),
-           Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
+           Execute { _ => executeDml(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
            ProcessAllAvailable(),
            CheckLastBatch(123456789)
          )

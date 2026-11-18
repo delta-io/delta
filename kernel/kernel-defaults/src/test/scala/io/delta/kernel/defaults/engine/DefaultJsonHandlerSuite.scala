@@ -15,8 +15,10 @@
  */
 package io.delta.kernel.defaults.engine
 
+import java.io.File
 import java.math.{BigDecimal => JBigDecimal}
-import java.nio.file.FileAlreadyExistsException
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{FileAlreadyExistsException, Files}
 import java.util.{Collections, Optional}
 
 import scala.collection.JavaConverters._
@@ -24,10 +26,13 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.ColumnVector
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestRow, TestUtils}
+import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.internal.actions.CommitInfo
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.types._
 
+import com.fasterxml.jackson.core.JsonProcessingException
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -158,6 +163,46 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       dataType = StringType.STRING,
       3,
       TestRow("foo", "", null))
+  }
+
+  Seq(false, true).foreach { readFromFile =>
+    test(s"parse metadata schemaString larger than 20 million characters: " +
+      s"readFromFile=$readFromFile") {
+      val comment = "x" * (20 * 1024 * 1024)
+      val schemaString = s"""{"type":"struct","fields":[{"name":"col","type":"string",
+        |"nullable":true,"metadata":{"comment":"$comment"}}]}""".stripMargin
+      val encodedSchema = new ObjectMapper().writeValueAsString(schemaString)
+      val json = s"""{"metaData":{"schemaString":$encodedSchema}}"""
+      val readSchema = new StructType()
+        .add("metaData", new StructType().add("schemaString", StringType.STRING))
+
+      withTempDir { dir =>
+        val rows = if (readFromFile) {
+          val file = new File(dir, "metadata.json")
+          Files.write(file.toPath, json.getBytes(UTF_8))
+          jsonHandler.readJsonFiles(
+            fsClient.listFrom(file.toURI.toString),
+            readSchema,
+            Optional.empty()).toSeq.flatMap(_.getRows.toSeq)
+        } else {
+          jsonHandler.parseJson(
+            singletonStringColumnVector(json),
+            readSchema,
+            Optional.empty()).getRows.toSeq
+        }
+        checkAnswer(rows, Seq(TestRow(TestRow(schemaString))))
+      }
+    }
+  }
+
+  test("reject malformed JSON and preserve the parser cause") {
+    val error = intercept[KernelEngineException] {
+      jsonHandler.parseJson(
+        singletonStringColumnVector("{"),
+        new StructType(),
+        Optional.empty())
+    }
+    assert(error.getCause.isInstanceOf[JsonProcessingException])
   }
 
   test("parse decimal type") {
@@ -450,6 +495,63 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       // Try to write as file with overwrite set to true
       writeAndVerify(overwrite = true)
     }
+  }
+
+  test("parse geometry type as WKT string") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+    testJsonParserWithSchema(
+      """{"geom": "POINT (1.0 2.0)"}""",
+      schema,
+      TestRow("POINT (1.0 2.0)"))
+  }
+
+  test("parse geography type as WKT string") {
+    val schema = new StructType()
+      .add("geog", GeographyType.ofDefault())
+    testJsonParserWithSchema(
+      """{"geog": "POINT (10.5 20.5)"}""",
+      schema,
+      TestRow("POINT (10.5 20.5)"))
+  }
+
+  test("parse geometry/geography with null values") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault(), true)
+      .add("geog", GeographyType.ofDefault(), true)
+    testJsonParserWithSchema(
+      """{"geom": null, "geog": null}""",
+      schema,
+      TestRow(null, null))
+  }
+
+  test("parse geometry POINT variants (Z, M, ZM)") {
+    val schema = new StructType()
+      .add("col1", GeometryType.ofDefault())
+    testJsonParserWithSchema(
+      """{"col1": "POINT Z(1.0 2.0 3.0)"}""",
+      schema,
+      TestRow("POINT Z(1.0 2.0 3.0)"))
+    testJsonParserWithSchema(
+      """{"col1": "POINT M(1.0 2.0 4.0)"}""",
+      schema,
+      TestRow("POINT M(1.0 2.0 4.0)"))
+    testJsonParserWithSchema(
+      """{"col1": "POINT ZM(1.0 2.0 3.0 4.0)"}""",
+      schema,
+      TestRow("POINT ZM(1.0 2.0 3.0 4.0)"))
+  }
+
+  test("parse geometry with non-string value throws") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+    val e = intercept[RuntimeException] {
+      testJsonParserWithSchema(
+        """{"geom": 1234}""",
+        schema,
+        TestRow())
+    }
+    assert(e.getMessage.contains("string"))
   }
 
   test("parse diverse type values in a map[string, string]") {

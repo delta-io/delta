@@ -38,7 +38,7 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.metrics.MetricsReport
 import io.delta.kernel.test.{ActionUtils, TestFixtures}
 import io.delta.kernel.utils.CloseableIterator
-import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier}
 
 import InMemoryUCClient.TableData
 import org.apache.hadoop.conf.Configuration
@@ -91,12 +91,14 @@ trait UCCatalogManagedTestUtils
       engine: Engine = defaultEngine,
       ucTableId: String = "testUcTableId",
       tablePath: String = "testUcTablePath",
+      ucTableIdentifier: UCTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl"),
       versionToLoad: Optional[java.lang.Long] = emptyLongOpt,
       timestampToLoad: Optional[java.lang.Long] = emptyLongOpt): SnapshotImpl = {
     ucCatalogManagedClient.loadSnapshot(
       engine,
       ucTableId,
       tablePath,
+      ucTableIdentifier,
       versionToLoad,
       timestampToLoad).asInstanceOf[SnapshotImpl]
   }
@@ -162,14 +164,29 @@ trait UCCatalogManagedTestUtils
    */
   def withUCClientAndTestTable(
       textFx: (InMemoryUCClientWithMetrics, String, Long) => Unit): Unit = {
+    withUCClientAndTestTableWithOptions(includePublishedV0 = false)(textFx)
+  }
+
+  /**
+   * @param includePublishedV0 whether UC also returns the already-published v0 commit
+   *                           (`_delta_log/00000000000000000000.json`) as a catalog commit
+   * @param textFx test function to run that takes input (ucClient, tablePath, maxRatifiedVersion)
+   */
+  def withUCClientAndTestTableWithOptions(includePublishedV0: Boolean)(
+      textFx: (InMemoryUCClientWithMetrics, String, Long) => Unit): Unit = {
     val maxRatifiedVersion = 2L
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
     val ucClient = new InMemoryUCClientWithMetrics("ucMetastoreId")
     val fs = FileSystem.get(new Configuration())
-    val catalogCommits = Seq(
+    val publishedCommits = if (includePublishedV0) {
+      Seq(getTestResourceFilePath("catalog-owned-preview/_delta_log/00000000000000000000.json"))
+    } else {
+      Seq.empty
+    }
+    val catalogCommits = (publishedCommits ++ Seq(
       // scalastyle:off line.size.limit
       getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000001.4cb9708e-b478-44de-b203-53f9ba9b2876.json"),
-      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000002.5b9bba4a-0085-430d-a65e-b0d38c1afbe9.json"))
+      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000002.5b9bba4a-0085-430d-a65e-b0d38c1afbe9.json")))
       // scalastyle:on line.size.limit
       .map { path => fs.getFileStatus(new Path(path)) }
       .map { fileStatus =>
@@ -204,16 +221,21 @@ trait UCCatalogManagedTestUtils
   /** Wrapper class around InMemoryUCClient that tracks number of getCommit calls made */
   class InMemoryUCClientWithMetrics(ucMetastoreId: String) extends InMemoryUCClient(ucMetastoreId) {
     private var numGetCommitsCalls: Long = 0
+    private var lastGetCommitsTableIdentifier: TableIdentifier = _
 
     override def getCommits(
         tableId: String,
         tableUri: URI,
+        tableIdentifier: TableIdentifier,
         startVersion: Optional[JLong],
         endVersion: Optional[JLong]): GetCommitsResponse = {
       numGetCommitsCalls += 1
-      super.getCommits(tableId, tableUri, startVersion, endVersion)
+      lastGetCommitsTableIdentifier = tableIdentifier
+      super.getCommits(tableId, tableUri, tableIdentifier, startVersion, endVersion)
     }
 
     def getNumGetCommitCalls: Long = numGetCommitsCalls
+
+    def getLastGetCommitsTableIdentifier: TableIdentifier = lastGetCommitsTableIdentifier
   }
 }

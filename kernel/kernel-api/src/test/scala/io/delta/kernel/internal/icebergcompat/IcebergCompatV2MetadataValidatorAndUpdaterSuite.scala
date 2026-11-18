@@ -23,7 +23,7 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, DELETION_VECTORS_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE}
 import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 
@@ -35,7 +35,8 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase
 
   override def supportedDataColumnTypes: Set[DataType] = ALL_TYPES
 
-  override def unsupportedDataColumnTypes: Set[DataType] = Set(VariantType.VARIANT)
+  override def unsupportedDataColumnTypes: Set[DataType] =
+    Set(VariantType.VARIANT, GeometryType.ofDefault(), GeographyType.ofDefault())
 
   override def unsupportedPartitionColumnTypes: Set[DataType] = NESTED_TYPES
 
@@ -70,7 +71,7 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
       isNewTable: Boolean,
       metadata: Metadata,
       protocol: Protocol): Optional[Metadata] = {
-    validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
+    validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol, Optional.empty())
   }
 
   Seq(true, false).foreach { isNewTable =>
@@ -129,5 +130,40 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
             s" not compatible with icebergCompat$icebergCompatVersion requirements"))
       }
     }
+  }
+
+  /* --- prevProtocol DV check (concurrent writer protection) --- */
+
+  test("DV check catches deletion vectors enabled in previous protocol") {
+    val schema = new StructType().add("col", BooleanType.BOOLEAN)
+    val metadata = getCompatEnabledMetadata(schema)
+    // newProtocol does NOT support DVs
+    val newProtocol = getCompatEnabledProtocol()
+    // prevProtocol DOES support DVs (simulating a concurrent writer that enabled DVs)
+    val prevProtocol = Optional.of(getCompatEnabledProtocol(DELETION_VECTORS_RW_FEATURE))
+
+    val e = intercept[KernelException] {
+      validateAndUpdateIcebergCompatV2Metadata(
+        false, /* isCreatingNewTable */
+        metadata,
+        newProtocol,
+        prevProtocol)
+    }
+    assert(e.getMessage.contains(
+      "Table features [deletionVectors] are incompatible with icebergCompatV2"))
+  }
+
+  test("DV check passes when neither new nor previous protocol has DVs") {
+    val schema = new StructType().add("col", BooleanType.BOOLEAN)
+    val metadata = getCompatEnabledMetadata(schema)
+    val newProtocol = getCompatEnabledProtocol()
+    val prevProtocol = Optional.of(getCompatEnabledProtocol())
+
+    // Should not throw
+    validateAndUpdateIcebergCompatV2Metadata(
+      false, /* isCreatingNewTable */
+      metadata,
+      newProtocol,
+      prevProtocol)
   }
 }

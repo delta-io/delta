@@ -68,6 +68,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -542,6 +543,13 @@ public class TransactionImpl implements Transaction {
       }
 
       boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
+      boolean isCdfEnabled = TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
+
+      // Track CDF validation state: whether we've seen adds and removes
+      // with enableChangeDataFeed=true
+      // This is wrapped in an AtomicBoolean to allow modification from within the lambda
+      final AtomicBoolean hasAddWithDataChange = new AtomicBoolean(false);
+      final AtomicBoolean hasRemoveWithDataChange = new AtomicBoolean(false);
 
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
@@ -555,6 +563,21 @@ public class TransactionImpl implements Transaction {
                       RemoveFile removeFile = new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
                       if (isAppendOnlyTable && removeFile.getDataChange()) {
                         throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
+                      }
+                      if (isCdfEnabled && removeFile.getDataChange()) {
+                        hasRemoveWithDataChange.set(true);
+                        if (hasAddWithDataChange.get()) {
+                          throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
+                        }
+                      }
+                    }
+                    if (!action.isNullAt(ADD_FILE_ORDINAL)) {
+                      AddFile addFile = new AddFile(action.getStruct(ADD_FILE_ORDINAL));
+                      if (isCdfEnabled && addFile.getDataChange()) {
+                        hasAddWithDataChange.set(true);
+                        if (hasRemoveWithDataChange.get()) {
+                          throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
+                        }
                       }
                     }
                     return action;
@@ -649,12 +672,13 @@ public class TransactionImpl implements Transaction {
   private void incrementMetricsForFileActionRow(TransactionMetrics txnMetrics, Row fileActionRow) {
     txnMetrics.totalActionsCounter.increment();
     if (!fileActionRow.isNullAt(ADD_FILE_ORDINAL)) {
-      txnMetrics.updateForAddFile(new AddFile(fileActionRow.getStruct(ADD_FILE_ORDINAL)).getSize());
+      AddFile addFile = new AddFile(fileActionRow.getStruct(ADD_FILE_ORDINAL));
+      txnMetrics.updateForAddFile(addFile.getSize(), addFile.getDeletionVector());
     } else if (!fileActionRow.isNullAt(REMOVE_FILE_ORDINAL)) {
       RemoveFile removeFile = new RemoveFile(fileActionRow.getStruct(REMOVE_FILE_ORDINAL));
       long removeFileSize =
           removeFile.getSize().orElseThrow(DeltaErrorsInternal::missingRemoveFileSizeDuringCommit);
-      txnMetrics.updateForRemoveFile(removeFileSize);
+      txnMetrics.updateForRemoveFile(removeFileSize, removeFile.getDeletionVector());
     }
   }
 
@@ -840,6 +864,11 @@ public class TransactionImpl implements Transaction {
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
+    // TODO(#8026): Use the incremental operation allowlist for SIMPLE CRCs.
+    Optional<Long> numDeletedRecords =
+        updatedDvMetric(CRCInfo::getNumDeletedRecords, metricsResult.getNumDeletedRecordsDelta());
+    Optional<Long> numDeletionVectors =
+        updatedDvMetric(CRCInfo::getNumDeletionVectors, metricsResult.getNumDeletionVectorsDelta());
     if (isCreateOrReplace) {
       // We don't need to worry about conflicting transaction here since new tables always commit
       // metadata (and thus fail any conflicts)
@@ -854,7 +883,12 @@ public class TransactionImpl implements Transaction {
               domainMetadataState.getPostCommitDomainMetadatas(),
               metricsResult
                   .getTableFileSizeHistogram()
-                  .map(FileSizeHistogram::fromFileSizeHistogramResult)));
+                  .map(FileSizeHistogram::fromFileSizeHistogramResult),
+              Optional.empty(), // inCommitTimestamp
+              Optional.empty(), // setTransactions
+              numDeletedRecords,
+              numDeletionVectors,
+              Optional.empty())); // allFiles
     }
 
     return currentCrcInfo
@@ -876,7 +910,25 @@ public class TransactionImpl implements Transaction {
                     domainMetadataState.getPostCommitDomainMetadatas(),
                     metricsResult
                         .getTableFileSizeHistogram()
-                        .map(FileSizeHistogram::fromFileSizeHistogramResult)));
+                        .map(FileSizeHistogram::fromFileSizeHistogramResult),
+                    Optional.empty(), // inCommitTimestamp
+                    Optional.empty(), // setTransactions
+                    numDeletedRecords,
+                    numDeletionVectors,
+                    Optional.empty())); // allFiles
+  }
+
+  private Optional<Long> updatedDvMetric(Function<CRCInfo, Optional<Long>> getter, long delta) {
+    if (!protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)) {
+      return Optional.empty();
+    }
+    boolean isCreate = !readSnapshotOpt.isPresent();
+    if (isCreate && !DELETION_VECTORS_CREATION_ENABLED.fromMetadata(metadata)) {
+      return Optional.empty();
+    }
+    // Only new tables start from zero; existing tables need the metric from the previous CRC.
+    Optional<Long> baseValue = isCreate ? Optional.of(0L) : currentCrcInfo.flatMap(getter);
+    return baseValue.map(value -> value + delta);
   }
 
   private TransactionReport recordTransactionReport(

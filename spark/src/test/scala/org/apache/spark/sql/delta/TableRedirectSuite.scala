@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.redirect.{
   DropRedirectInProgress,
   EnableRedirectInProgress,
@@ -48,7 +48,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 class TableRedirectSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
-  with CoordinatedCommitsBaseSuite
+  with CatalogOwnedTestBaseSuite
   with DeltaCheckpointTestUtils
   with DeltaSQLTestUtils {
 

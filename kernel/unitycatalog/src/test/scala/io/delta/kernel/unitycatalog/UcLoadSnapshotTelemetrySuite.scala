@@ -71,6 +71,7 @@ class UcLoadSnapshotTelemetrySuite
       val engine = createEngineWithMetricsCapture(reporter)
       val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
       val (ucClient, ucCatalogManagedClient) = createUCClientAndCatalogManagedClient()
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
       setupTableWithCommits(engine, tablePath, ucClient, ucCatalogManagedClient)
       reporter.reports.clear()
 
@@ -79,6 +80,7 @@ class UcLoadSnapshotTelemetrySuite
         engine,
         "testUcTableId",
         tablePath,
+        ucTableIdentifier,
         Optional.empty(),
         Optional.empty())
 
@@ -112,6 +114,7 @@ class UcLoadSnapshotTelemetrySuite
       val engine = createEngineWithMetricsCapture(reporter)
       val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
       val (ucClient, ucCatalogManagedClient) = createUCClientAndCatalogManagedClient()
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
 
       val timestampBetweenV1AndV2 =
         setupTableWithCommits(engine, tablePath, ucClient, ucCatalogManagedClient)
@@ -122,6 +125,7 @@ class UcLoadSnapshotTelemetrySuite
         engine,
         "testUcTableId",
         tablePath,
+        ucTableIdentifier,
         Optional.empty(),
         Optional.of(timestampBetweenV1AndV2))
 
@@ -157,6 +161,7 @@ class UcLoadSnapshotTelemetrySuite
 
       val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
       val (_, ucCatalogManagedClient) = createUCClientAndCatalogManagedClient()
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
 
       intercept[RuntimeException] {
         // Try to load snapshot from non-existent table
@@ -164,6 +169,7 @@ class UcLoadSnapshotTelemetrySuite
           engineWithReporter,
           "nonExistentTableId",
           tablePath,
+          ucTableIdentifier,
           Optional.empty(),
           Optional.empty())
       }

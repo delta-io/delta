@@ -16,12 +16,13 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
+import org.apache.spark.sql.delta.DeltaColumnMappingMode
 import org.apache.spark.sql.types.StructType
 
 /**
- * Abstract trait for metadata actions in Delta. This trait provides a common
- * abstraction that can be implemented by both Spark's V1 Metadata and Kernel's MetadataV2
- * in V2 connector. The V2 connector will implement adapters for reusing V1 utilities.
+ * Common interface for Delta metadata actions consumed by shared V1 utilities.
+ * V1 Metadata implements this trait directly. The V2 snapshot facade exposes V1 Metadata
+ * converted from Kernel metadata, allowing both connectors to reuse the same utilities.
  */
 trait AbstractMetadata {
 
@@ -42,5 +43,12 @@ trait AbstractMetadata {
 
   /** The table properties/configuration defined on the table. */
   def configuration: Map[String, String]
+
+  /** Column mapping mode for this table. */
+  def columnMappingMode: DeltaColumnMappingMode
+
+  /** Returns the partitionSchema as a [[StructType]] */
+  def partitionSchema: StructType =
+    new StructType(partitionColumns.map(c => schema(c)).toArray)
 }
 
