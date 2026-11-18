@@ -355,8 +355,7 @@ private[sharing] class DeltaSharingDataSource
 
     val userInputResponseFormat = options.options.get(DeltaSharingOptions.RESPONSE_FORMAT)
 
-    if (userInputResponseFormat.isEmpty &&
-      (!options.readChangeFeed || shouldAutoResolveCDF(options, sqlContext))) {
+    if (userInputResponseFormat.isEmpty) {
       return autoResolveBaseRelation(options, sqlContext)
     }
 
@@ -428,19 +427,6 @@ private[sharing] class DeltaSharingDataSource
         s"responseformat(${options.responseFormat}) is not supported in delta sharing."
       )
     }
-  }
-
-  /**
-   * Whether a CDF query should auto-resolve its response format (parquet vs delta) by asking the
-   * server, rather than falling back to the legacy parquet path. True only for change-feed reads
-   * with the CDF auto-resolve flag enabled.
-   */
-  private def shouldAutoResolveCDF(
-      options: DeltaSharingOptions,
-      sqlContext: SQLContext): Boolean = {
-    options.readChangeFeed && sqlContext.sparkSession.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF
-    )
   }
 
   /**
