@@ -42,7 +42,6 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.stats.DeltaScan;
-import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
@@ -60,23 +59,12 @@ import org.mockito.ArgumentCaptor;
 import scala.Function0;
 import scala.Option;
 
-public class DeltaV2ScanTest extends DeltaV2TestBase {
-
-  private static String tablePath;
-  private static final String tableName = "deltatbl_partitioned";
+public class DeltaV2ScanTest extends DeltaV2PartitionedTableTestBase {
 
   @BeforeAll
   public static void setupPartitionedTable(@TempDir File tempDir) {
-    createPartitionedTable(tableName, tempDir.getAbsolutePath());
-    tablePath = tempDir.getAbsolutePath();
+    setUpSharedPartitionedTable("deltatbl_partitioned", tempDir);
   }
-
-  private final CaseInsensitiveStringMap options =
-      new CaseInsensitiveStringMap(new java.util.HashMap<>());
-
-  private final DeltaV2Table table =
-      new DeltaV2Table(
-          Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
 
   protected static final Predicate cityPredicate =
       new Predicate(
