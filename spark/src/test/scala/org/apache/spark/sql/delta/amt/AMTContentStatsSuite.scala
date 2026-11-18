@@ -356,6 +356,30 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     }
   }
 
+  test("forRead leaves out minValues and maxValues when no column has bounds") {
+    // Delta's stats schema has min/max for these columns, but AMT persists no bounds for them, so
+    // the groups (here, also the nested struct's) must be left out rather than written as {}.
+    val metadata = metadataWithColumnIds(
+      new StructType()
+        .add("ts", TimestampType)
+        .add("nested", new StructType().add("inner_ts", TimestampType)))
+    val ts = DeltaColumnMapping.getPhysicalName(metadata.dataSchema("ts"))
+    val nestedField = metadata.dataSchema("nested")
+    val nested = DeltaColumnMapping.getPhysicalName(nestedField)
+    val innerTs = DeltaColumnMapping.getPhysicalName(
+      nestedField.dataType.asInstanceOf[StructType]("inner_ts"))
+    val nullCount = s"""{"$ts":1,"$nested":{"$innerTs":2}}"""
+    val bounds = s"""{"$ts":"2020-01-01T00:00:00.000Z","$nested":""" +
+      s"""{"$innerTs":"2020-01-01T00:00:00.000Z"}}"""
+    val persisted = writeStats(
+      s"""{"numRecords":10,"minValues":$bounds,"maxValues":$bounds,""" +
+        s""""nullCount":$nullCount,"tightBounds":true}""",
+      metadata, amtProtocol)
+    assert(JsonUtils.mapper.readTree(readStats(persisted, metadata, amtProtocol)) ==
+      JsonUtils.mapper.readTree(
+        s"""{"numRecords":10,"nullCount":$nullCount,"tightBounds":false}"""))
+  }
+
   test("content stats adapter round-trips a table that collects no statistics") {
     // numIndexedCols = 0 means Delta collects only numRecords, so there are no per-column stats and
     // `content_stats` is dropped from the schema (an empty struct is not Parquet-writable).
