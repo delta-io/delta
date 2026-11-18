@@ -42,9 +42,11 @@ final class PerRowAMTCheckpointProvider(
     toAddSingleActions(entries, dataEntryResolverProvider(parentLeaves = Seq.empty))
   }
 
-  override protected def leafLiveAddSingleActions(deltaLog: DeltaLog): Dataset[SingleAction] =
+  override protected def leafLiveAddSingleActions(
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction] =
     toAddSingleActions(
-      loadLeafDataEntriesWithRowIdPrefix(deltaLog, liveLeavesWithManifestFilters),
+      loadLeafDataEntriesWithRowIdPrefix(spark, deltaLog, liveLeavesWithManifestFilters),
       dataEntryResolverProvider(parentLeaves = liveLeaves))
 
   override private[amt] def readLiveRootDataEntries(

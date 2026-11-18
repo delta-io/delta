@@ -2922,7 +2922,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // reconstructed RemoveFiles nor the order of the actions matters.
     val treeKeys =
         provider.reconstructFileActions(
-          deltaLog, dataChange, commitTimestamp = 0L, ordered = false)
+          spark, deltaLog, dataChange, commitTimestamp = 0L, ordered = false)
         .map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     if (treeKeys != committedKeys) {
       val onlyInTree = treeKeys -- committedKeys
