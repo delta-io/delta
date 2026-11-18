@@ -47,10 +47,11 @@ concurrency:
 #     the PR's changed files can't be fetched.
 #   * Reduced matrix (all other PRs): sharded tests on the oldest and newest published Spark
 #     versions, plus a main+test compile (no tests) on each published version in between.
-#   Why: over a 30-day window, real version-specific PR failures were almost all on the
-#   oldest Spark version: compile errors from APIs missing in 4.0, and runtime differences
-#   on 4.0/4.1 (SQL syntax only in 4.2+, different exception classes). Testing oldest +
-#   newest and compiling the rest would have caught all of them, at about half the runners.
+#   Why: in a 30-day analysis of the earlier 4.0-4.3 matrix, real version-specific PR
+#   failures were almost all on the oldest Spark version (then 4.0): compile errors from APIs
+#   missing there, and runtime differences on the older versions (SQL syntax only in 4.2+,
+#   different exception classes). Testing oldest + newest and compiling the rest would have
+#   caught all of them. Most of those breakages were 4.0-only, so they no longer apply.
 #   Because job names depend on the matrix, branch protection should require the stable
 #   "DS: Spark tests summary" job rather than individual shards.
 #
@@ -228,7 +229,8 @@ jobs:
         uses: ./.github/actions/prepare-spark-env
         with:
           spark-version: ${{ matrix.spark_version }}
-      # Same cache key as run-delta-spark-tests; restore only (master test runs save it).
+      # Same key and restore-keys as run-delta-spark-tests. Restore only: shard 0 of the
+      # master push run saves the cache for each Spark/Scala pair.
       - name: Restore SBT cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -236,10 +238,14 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
+          key: delta-sbt-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}-${{ hashFiles('build.sbt', 'version.sbt', 'project/*.scala', 'project/*.sbt', 'project/project/*.sbt', 'project/build.properties', 'project/scripts/setup_unitycatalog_main.sh') }}
+          restore-keys: delta-sbt-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}-
       # sparkUnityCatalog (in sparkGroup) needs the pinned unreleased UC build to resolve.
+      # SPARK_VERSION picks the UC Spark variant and its cache, as in run-delta-spark-tests.
       - name: Set up pinned Unity Catalog
         uses: ./.github/actions/setup-unitycatalog
+        env:
+          SPARK_VERSION: ${{ matrix.spark_version }}
       - name: Compile main and test sources
         env:
           SPARK_VERSION: ${{ matrix.spark_version }}

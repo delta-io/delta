@@ -18,15 +18,15 @@ Policy:
   * Otherwise (reduced PR matrix): sharded tests on the oldest and newest non-source-build
     versions, and a main+test compile on the non-source-build versions in between.
 
-Most version-specific PR failures show up on the oldest Spark version (APIs missing in
-4.0, SQL syntax and exception classes that differ in 4.0/4.1). The newest version covers
-newly added APIs and behaviour. The compile job catches shim and API breaks on the
+Most version-specific PR failures show up on the oldest Spark version: APIs missing there,
+and SQL syntax and exception classes that differ in older versions. The newest version
+covers newly added APIs and behaviour. The compile job catches shim and API breaks on the
 versions in between without running their tests.
 
 Usage (from the workflow):
     python3 project/scripts/spark_ci_matrix.py \
       --event-name pull_request \
-      --spark-versions '["4.0", "4.1", "4.2", "4.3"]' \
+      --spark-versions '["4.1", "4.2", "4.3"]' \
       --source-build-spark-versions '["master"]' \
       --labels '["full-ci"]' \
       --changed-files-file /tmp/changed_files.tsv \
