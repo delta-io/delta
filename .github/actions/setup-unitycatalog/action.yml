@@ -23,7 +23,7 @@ runs:
           ~/.ivy2/local
           ~/.m2/repository/io/unitycatalog
         # Cache key hashes the setup script (so any script change invalidates) and includes the
-        # Spark short version (so 4.0 and 4.1 don't fight over a single shared cache entry).
+        # Spark short version (so 4.1 and 4.2 don't fight over a single shared cache entry).
         key: uc-jars-${{ runner.os }}-spark${{ env.SPARK_VERSION }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
     - name: Build Unity Catalog from pinned SHA
       shell: bash

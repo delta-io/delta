@@ -52,7 +52,7 @@ trait RowTrackingUpdateSuiteBase extends RowIdTestUtils with RowTrackingEnabled 
     // Disable optimized writes to write out the specified number of files.
     withConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
       val voidCol =
-        if (DeltaTestUtilsBase.nullTypeColumnsSupported) lit(null) else lit(null).cast("int")
+        lit(null)
       val df = spark.range(
         start = 0, end = numRowsTarget, step = 1, numPartitions = numFiles)
         .withColumn("last_modified_version", lit(lastModifiedVersion))

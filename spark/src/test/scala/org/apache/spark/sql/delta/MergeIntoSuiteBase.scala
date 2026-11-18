@@ -3483,7 +3483,6 @@ trait MergeIntoNullTypeTests extends MergeIntoSuiteBaseMixin { self: MergeIntoTe
   override protected def test(testName: String, testTags: Tag*)(testFun: => Any)
       (implicit pos: Position): Unit = {
     super.test(testName, testTags: _*) {
-      assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
       testFun
     }
   }

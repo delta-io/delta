@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.schema
 import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions, DeltaTestUtilsBase}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -106,7 +106,6 @@ trait AppendSaveModeNullTests extends BatchWriterTest {
   }
 
   equivalenceTest("JSON ETL workflow, schema merging NullTypes") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     enableAutoMigration {
       val row1 = """{"key":"abc","id":null,"extra":1}"""
       val row2 = """{"key":"def","id":2,"extra":null}"""
@@ -144,7 +143,6 @@ trait AppendSaveModeNullTests extends BatchWriterTest {
   }
 
   equivalenceTest("JSON ETL workflow, schema merging NullTypes - nested struct") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     enableAutoMigration {
       val row1 = """{"key":"abc","top":{"id":null,"extra":1}}"""
       val row2 = """{"key":"def","top":{"id":2,"extra":null}}"""
