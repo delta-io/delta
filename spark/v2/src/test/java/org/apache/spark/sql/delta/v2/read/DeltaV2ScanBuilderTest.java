@@ -26,7 +26,9 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.OptionalInt;
+import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.MetadataAttribute$;
 import org.apache.spark.sql.connector.read.Scan;
@@ -137,6 +139,42 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
             assertEquals(expectedDataSchema, getRequiredDataSchema(builder));
           });
     }
+  }
+
+  @Test
+  public void testPruneColumns_preservesMetadataWithCaseSensitivePartition(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String v1Table = String.format("delta.`%s`", path);
+    String queryPrefix = "SELECT id, _Metadata, _metadata.file_path FROM ";
+    withSQLConf(
+        "spark.sql.caseSensitive",
+        "true",
+        () ->
+            withSQLConf(
+                "spark.databricks.delta.v2.enableMode",
+                "NONE",
+                () -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id INT, _Metadata INT) "
+                              + "USING delta PARTITIONED BY (_Metadata)",
+                          v1Table));
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 2)", v1Table));
+                  List<Row> expectedRows = spark.sql(queryPrefix + v1Table).collectAsList();
+                  assertEquals(1, expectedRows.size());
+                  assertEquals(1, expectedRows.get(0).getInt(0));
+                  assertEquals(2, expectedRows.get(0).getInt(1));
+                  assertNotNull(expectedRows.get(0).getString(2));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () ->
+                          assertEquals(
+                              expectedRows,
+                              spark.sql(queryPrefix + dsv2Table(path)).collectAsList()));
+                }));
   }
 
   @Test
