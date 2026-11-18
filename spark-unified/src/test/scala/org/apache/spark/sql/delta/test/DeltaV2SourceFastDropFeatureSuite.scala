@@ -32,7 +32,9 @@ class DeltaV2SourceFastDropFeatureSuite
     "Protocol check at startingVersion is skipped when config is disabled",
     "Protocol validations supress errors when snapshot cannot be reconstructed",
     "Protocol is checked when using startingVersion - useStartingTS: false.",
-    "Protocol is checked when using startingVersion - useStartingTS: true."
+    "Protocol is checked when using startingVersion - useStartingTS: true.",
+    "Protocol is checked when coming across an action with a protocol upgrade",
+    "Restart from checkpoint reads forward into an unsupported feature commit"
   )
 
   override protected def shouldFailTests: Set[String] = Set(
@@ -42,11 +44,6 @@ class DeltaV2SourceFastDropFeatureSuite
     // match. The feature is caught eagerly while building the snapshot at stream start.
     "Latest protocol is checked for unsupported features",
 
-    // Same missing translation, but the feature is only hit mid-stream: Kernel wraps its
-    // UnsupportedTableFeatureException in a RuntimeException while iterating commit actions, so the
-    // cause the assertion inspects carries no DELTA_UNSUPPORTED_FEATURES_FOR_READ error class.
-    "Protocol is checked when coming across an action with a protocol upgrade",
-    "Restart from checkpoint reads forward into an unsupported feature commit",
 
     // Builds its first stream while testUnsupportedReaderWriter is still at the latest version.
     // DSv1 gates that test-only feature on UNSUPPORTED_TESTING_FEATURES_ENABLED (off here) and
