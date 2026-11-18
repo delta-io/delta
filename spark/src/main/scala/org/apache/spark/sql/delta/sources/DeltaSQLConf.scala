@@ -682,13 +682,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val AMT_ROOT_CACHE_MAX_NUM_ENTRIES =
     buildConf("amt.rootCache.maxNumEntries")
       .internal()
-      .doc("Cache the persisted AMT root rows only when the entry count from the Parquet " +
-        "footer, including DATA and DATA_MANIFEST entries, is less than this threshold. " +
-        "Otherwise collect only leaf pointers during discovery and read the root again for " +
-        "reconstruction. Set to 0 to disable root row caching and skip the footer count check.")
+      .doc("Cache persisted AMT root rows only when columnar state reconstruction is enabled " +
+        "and the root has fewer entries than this threshold. Discovery reads the entry count " +
+        "from the Parquet footer. Writers use the number of rows written. Set to 0 to disable " +
+        "root row caching and skip the footer count check.")
       .intConf
       .checkValue(_ >= 0, "amt.rootCache.maxNumEntries must be non-negative.")
-      .createWithDefault(12000)
+      .createWithDefault(50000)
 
   val AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT =
     buildConf("amt.largeCommitActionsCountThresholdForInlineManifestCommit")
@@ -983,6 +983,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If true, enables schema merging on appends and on overwrites.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN =
+    buildConf("generatedColumn.eagerAnalyzePlan")
+      .internal()
+      .doc("When enabled, UPDATE and MERGE on a table with generated columns report the " +
+        "analysis error of an update expression. When disabled, they report " +
+        "DELTA_CANNOT_RESOLVE_EXPRESSION for a generation expression instead.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS =
     buildConf("merge.insert.fixCaseSensitiveDuplicateColumns")
@@ -3053,11 +3062,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
     buildConf("createDataFrame.dropNullColumns")
       .internal()
-      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame. Defaults to " +
-        "dropping (no NullType column support) on Spark 4.0, which lacks the Parquet read " +
-        "support for materializing NullType columns, and to keeping them on Spark 4.1+.")
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
       .booleanConf
-      .createWithDefault(org.apache.spark.SPARK_VERSION.startsWith("4.0"))
+      .createWithDefault(false)
 
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
@@ -3795,17 +3802,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT =
-    buildConf("spark.sql.delta.sharing.cdfStreamingAutoResolveResponseFormat")
-      .doc("When true, auto-resolve the Delta Sharing streaming CDF source format by calling " +
-        "getMetadata on the table and using the server's responded format (parquet or delta). " +
-        "When false, use the responseFormat option from the user. Gates the streaming CDF " +
-        "(readChangeFeed=true) path independently from the non-CDF streaming path controlled " +
-        "by spark.sql.delta.sharing.streamingAutoResolveResponseFormat.")
-      .internal()
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_SHARING_STREAMING_ENABLE_HISTORICAL_PROTOCOL =
     buildConf("spark.sql.delta.sharing.streamingEnableHistoricalProtocol")
       .doc("When true, a Delta Sharing streaming query (non-CDF, incremental getFiles) requests " +
@@ -3836,16 +3832,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "on the sharing server, passing that version to the wrapped DeltaSource. When false, the " +
         "wrapped DeltaSource resolves the timestamp again on the local delta log, where an empty " +
         "version range fails with DELTA_TIMESTAMP_GREATER_THAN_COMMIT.")
-      .internal()
-      .booleanConf
-      .createWithDefault(false)
-
-  val DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF =
-    buildConf("spark.sql.delta.sharing.enableAutoResolveForCdf")
-      .doc("When true, Delta Sharing CDF queries without an explicit responseFormat will " +
-        "call getMetadata on the sharing server and pick the parquet or delta CDF code path " +
-        "based on the server's responded format. When false, CDF queries without a response " +
-        "format fall back to the legacy parquet path.")
       .internal()
       .booleanConf
       .createWithDefault(false)
@@ -3932,18 +3918,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
     .booleanConf
     .createWithDefault(true)
-
-  val DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 =
-    buildConf("variant.disableVariantTableFeatureForSpark40")
-    .internal()
-    .doc(
-      """
-        | If true, disables support for the 'variantType' and 'variantType-preview' table
-        | features on Spark 4.0 clients. Spark 4.0 does not support the parquet variant
-        | logical type annotation, which causes interoperability issues with Spark 4.1+.
-        |""".stripMargin)
-    .booleanConf
-    .createWithDefault(false)
 
   val COLLECT_VARIANT_DATA_SKIPPING_STATS =
     buildConf("variantShredding.collectVariantDataSkippingStats")

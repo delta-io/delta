@@ -15,51 +15,16 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
+import static org.apache.spark.sql.delta.v2.DeltaV2TestBase.createTestAddFile;
+import static org.apache.spark.sql.delta.v2.DeltaV2TestBase.createTestCDCFile;
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.actions.AddCDCFile;
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.data.GenericRow;
-import io.delta.kernel.internal.util.VectorUtils;
-import io.delta.kernel.types.StructType;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
-import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
+import org.apache.spark.sql.delta.actions.AddCDCFile;
+import org.apache.spark.sql.delta.actions.AddFile;
 import org.junit.jupiter.api.Test;
 
 /** Unit tests for {@link IndexedFile}. */
 public class IndexedFileTest {
-
-  private static final StructType EMPTY_SCHEMA = new StructType();
-
-  private static AddFile createTestAddFile(String path, long size) {
-    return new AddFile(
-        AddFile.createAddFileRow(
-            EMPTY_SCHEMA,
-            path,
-            VectorUtils.stringStringMapValue(Collections.emptyMap()),
-            size,
-            /* modificationTime= */ 100L,
-            /* dataChange= */ true,
-            /* deletionVector= */ Optional.empty(),
-            /* tags= */ Optional.empty(),
-            /* baseRowId= */ Optional.empty(),
-            /* defaultRowCommitVersion= */ Optional.empty(),
-            /* stats= */ Optional.empty()));
-  }
-
-  private static Row createCDCRow(long size) {
-    Map<Integer, Object> fieldMap = new HashMap<>();
-    fieldMap.put(AddCDCFile.FULL_SCHEMA.indexOf("path"), "cdc-file.parquet");
-    fieldMap.put(
-        AddCDCFile.FULL_SCHEMA.indexOf("partitionValues"),
-        VectorUtils.stringStringMapValue(Collections.emptyMap()));
-    fieldMap.put(AddCDCFile.FULL_SCHEMA.indexOf("size"), size);
-    return new GenericRow(AddCDCFile.FULL_SCHEMA, fieldMap);
-  }
 
   @Test
   public void testSentinel() {
@@ -77,8 +42,7 @@ public class IndexedFileTest {
 
   @Test
   public void testAddFile() {
-    org.apache.spark.sql.delta.actions.AddFile addFile =
-        KernelActionUtils$.MODULE$.addFileFromKernel(createTestAddFile("file.parquet", 4096));
+    AddFile addFile = createTestAddFile("file.parquet", 4096, 100L);
     IndexedFile indexed = IndexedFile.addFile(/* version= */ 3L, /* index= */ 7L, addFile);
 
     assertEquals(3L, indexed.getVersion());
@@ -96,7 +60,7 @@ public class IndexedFileTest {
   @Test
   public void testCdc() {
     // Inferred CDC (from AddFile)
-    AddFile addFile = createTestAddFile("file.parquet", 3072);
+    AddFile addFile = createTestAddFile("file.parquet", 3072, 100L);
     CDCDataFile inferredCdc = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 999L);
     IndexedFile inferred = IndexedFile.cdc(/* version= */ 2L, /* index= */ 0L, inferredCdc);
 
@@ -109,9 +73,9 @@ public class IndexedFileTest {
     String str = inferred.toString();
     assertTrue(str.startsWith("IndexedFile{version=2, index=0, cdcDataFile=CDCDataFile{"));
 
-    // Explicit CDC (from AddCDCFile row)
-    Row cdcRow = createCDCRow(/* size= */ 5000);
-    CDCDataFile explicitCdc = CDCDataFile.fromAddCDCFile(cdcRow, /* commitTimestamp= */ 888L);
+    // Explicit CDC
+    AddCDCFile cdcFile = createTestCDCFile("cdc-file.parquet", 5000);
+    CDCDataFile explicitCdc = CDCDataFile.fromAddCDCFile(cdcFile, /* commitTimestamp= */ 888L);
     IndexedFile explicit = IndexedFile.cdc(/* version= */ 4L, /* index= */ 1L, explicitCdc);
     assertTrue(explicit.isAddCDCFile());
     assertEquals(5000, explicit.getFileSize());

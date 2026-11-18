@@ -1339,8 +1339,8 @@ trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase with ChangelogSyntaxSupp
 
   // Filter by name in a test() override and ignore() the matches; everything else runs. The V2
   // changelog read path uses the `SELECT ... CHANGES` clause, which only the Spark 4.2 parser
-  // supports; supportsChangelogSyntax is a compile-time shim (true on spark-4.2, false on
-  // spark-4.0-4.1) so tests cancel on older versions.
+  // supports; supportsChangelogSyntax is a compile-time shim (true on spark-4.2+, false on
+  // spark-4.1) so tests cancel on older versions.
   override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
       implicit pos: org.scalactic.source.Position): Unit = {
     if (excludedV2Exact.contains(testName) || excludedV2Prefixes.exists(testName.startsWith)) {

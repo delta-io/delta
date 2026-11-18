@@ -27,7 +27,6 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, MicroBatchExecution, StreamingQueryWrapper}
-import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.commons.io.FileUtils
 import org.apache.parquet.hadoop.ParquetFileReader
@@ -507,9 +506,7 @@ class DeltaSinkSuite
   }
 
   test("streaming write shreds variant columns only when the table enables it") {
-    // Runs on V1 here and, via DeltaV2SinkSuite's classification, on the V2 Kernel sink. Where this
-    // Spark version cannot infer a shredding schema nothing shreds, whatever the property says.
-    val shreddingSupported = VariantShreddingTestShims.variantInferShreddingSchemaSupported
+    // Runs on V1 here and, via DeltaV2SinkSuite's classification, on the V2 Kernel sink.
     withSQLConf("spark.sql.variant.writeShredding.enabled" -> "true") {
       Seq(true, false).foreach { shreddingEnabled =>
         withClue(s"${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}=$shreddingEnabled") {
@@ -539,7 +536,7 @@ class DeltaSinkSuite
             }
 
             assert(
-              targetHasShreddedVariant(target) == (shreddingEnabled && shreddingSupported),
+              targetHasShreddedVariant(target) == shreddingEnabled,
               "the shredded layout must follow the table property")
             checkAnswer(
               readTarget(target).selectExpr(
@@ -937,7 +934,6 @@ class DeltaSinkSuite
   }
 
   test("DeltaSink rejects streaming write to table with generated void column") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     failAfter(streamingTimeout) {
       withSinkTarget { (target, checkpointDir) =>
         val columns = Seq(
@@ -973,7 +969,6 @@ class DeltaSinkSuite
   }
 
   test("DeltaSink allows streaming write to table with non-generated void column") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     failAfter(streamingTimeout) {
       withSinkTarget { (target, checkpointDir) =>
         val columns = Seq(

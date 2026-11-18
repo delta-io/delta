@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.amt
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{Checkpoints, DeltaLog, RowId, Snapshot}
+import org.apache.spark.sql.delta.{Checkpoints, DataFrameUtils, DeltaLog, RowId, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DomainMetadata, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -32,6 +32,9 @@ import org.apache.hadoop.mapreduce.Job
 import org.apache.spark.TaskContext
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.functions.{col, hash, struct}
 import org.apache.spark.sql.types.StructType
@@ -39,6 +42,10 @@ import org.apache.spark.util.SerializableConfiguration
 
 /** Helpers for emitting an inline AMT checkpoint during a commit. */
 object AMTWriteHelper extends DeltaLogging {
+
+  private[amt] case class WrittenRoot(
+      contentRoot: ContentRoot,
+      cachedRows: Option[(StructType, Seq[InternalRow])])
 
   /**
    * Writes a new AMT from scratch representing the readSnapshot content metadata. Unlike the
@@ -120,14 +127,14 @@ object AMTWriteHelper extends DeltaLogging {
       contentRoot = contentRoot,
       numRootLiveDataEntries = clusteredWrite.numRootLiveDataEntries,
       numRootTombstoneDataEntries = clusteredWrite.numRootTombstoneDataEntries,
-      leaves = clusteredWrite.leaves,
+      leaves = clusteredWrite.rootInfo.leaves,
       numSetTransactions = txns.size.toLong,
       numDomainMetadata = domainMetadata.size.toLong,
       incrementalWriteMetrics = None)
     AMTWriteResult(
       contentRootVersion = contentTreeVersion,
       checkpoint = checkpoint,
-      leaves = clusteredWrite.leaves,
+      rootInfo = clusteredWrite.rootInfo,
       includeActionsInCommitJson = true,
       amtWriteMetrics = singleMetric)
   }
@@ -144,8 +151,8 @@ object AMTWriteHelper extends DeltaLogging {
    * The outcome of [[writeClusteredManifestTree]].
    *
    * @param contentRoot            the written root manifest pointer.
-   * @param leaves                 the per-leaf [[DataManifestEntry]] pointers; empty for a promoted
-   *                               single-manifest checkpoint.
+   * @param rootInfo               the root's leaf pointers and any cached rows retained while
+   *                               writing it
    * @param numRootLiveDataEntries live DATA files resident in the root manifest itself: the
    *                               promoted manifest's live file count when promoted, else 0 (a
    *                               multi-leaf root holds only pointers, no DATA entries).
@@ -155,7 +162,7 @@ object AMTWriteHelper extends DeltaLogging {
    */
   private case class AMTClusteredWriteResult(
       contentRoot: ContentRoot,
-      leaves: Seq[DataManifestEntry],
+      rootInfo: AMTRootInfo,
       numRootLiveDataEntries: Long,
       numRootTombstoneDataEntries: Long)
 
@@ -217,12 +224,12 @@ object AMTWriteHelper extends DeltaLogging {
           numLeaves = 0L)
         AMTClusteredWriteResult(
           contentRoot,
-          leaves = Seq.empty,
+          rootInfo = new AMTRootInfo(leaves = Seq.empty, cachedRows = None),
           numRootLiveDataEntries = onlyLeaf.manifest_info.liveFilesCount.toLong,
           numRootTombstoneDataEntries = onlyLeaf.manifest_info.tombstoneFilesCount.toLong)
       case _ =>
         // The root lists one pointer per leaf and holds no DATA entries of its own.
-        val baseRoot = writeRoot(
+        val writtenRoot = writeRoot(
           spark = spark,
           fs = fs,
           hadoopConf = hadoopConf,
@@ -233,15 +240,15 @@ object AMTWriteHelper extends DeltaLogging {
           rows = leafEntries.map(_.wrap),
           version = contentTreeVersion)
         val contentRoot = ContentRoot(
-          path = baseRoot.path,
-          sizeInBytes = baseRoot.sizeInBytes,
+          path = writtenRoot.contentRoot.path,
+          sizeInBytes = writtenRoot.contentRoot.sizeInBytes,
           version = contentTreeVersion,
           isIncremental = false,
           lastManifestCommitWithFullRewrite = contentTreeVersion,
           numLeaves = leafEntries.size.toLong)
         AMTClusteredWriteResult(
           contentRoot,
-          leaves = leafEntries,
+          rootInfo = new AMTRootInfo(leafEntries, writtenRoot.cachedRows),
           numRootLiveDataEntries = 0L,
           numRootTombstoneDataEntries = 0L)
     }
@@ -593,10 +600,9 @@ object AMTWriteHelper extends DeltaLogging {
   }
 
   /**
-   * Writes the root parquet file from a pre-built row set and returns a [[ContentRoot]]
-   * carrying its path, size, and version. The rows may be `DATA_MANIFEST` leaf pointers,
-   * root-resident `DATA` entries, or both. Callers still attach tags before embedding it in a
-   * [[Checkpoint]].
+   * Writes the root parquet file from a pre-built row set. The rows may be `DATA_MANIFEST` leaf
+   * pointers, root-resident `DATA` entries, or both. Retains the persisted rows when the root is
+   * below the cache threshold, so the post-commit provider can reuse them.
    */
   private[amt] def writeRoot(
       spark: SparkSession,
@@ -607,14 +613,18 @@ object AMTWriteHelper extends DeltaLogging {
       metadata: Metadata,
       protocol: Protocol,
       rows: Seq[AMTSingleAction],
-      version: Long): ContentRoot = {
+      version: Long): WrittenRoot = {
     val rootFile = FileNames.newAMTRootManifestFile(metadataDir)
-    writeAMTParquet(spark, hadoopConf, rootFile, metadata, protocol, rows)
+    val cachedRows = writeAMTParquet(
+      spark, hadoopConf, rootFile, metadata, protocol, rows,
+      cacheRows = AMTUtils.shouldCacheRootRows(spark, rows.size.toLong))
     val status = fs.getFileStatus(rootFile)
-    ContentRoot(
-      path = AMTUtils.relativizeLocation(tableRoot.toString, rootFile.toString),
-      sizeInBytes = status.getLen,
-      version = version)
+    WrittenRoot(
+      contentRoot = ContentRoot(
+        path = AMTUtils.relativizeLocation(tableRoot.toString, rootFile.toString),
+        sizeInBytes = status.getLen,
+        version = version),
+      cachedRows = cachedRows)
   }
 
   // Returns a copy of a carried-forward leaf's ManifestInfo with `mdv` recorded as its Manifest
@@ -653,18 +663,38 @@ object AMTWriteHelper extends DeltaLogging {
       finalPath: Path,
       metadata: Metadata,
       protocol: Protocol,
-      rows: Seq[AMTSingleAction]): Unit = {
+      rows: Seq[AMTSingleAction],
+      cacheRows: Boolean = false): Option[(StructType, Seq[InternalRow])] = {
     import org.apache.spark.sql.delta.implicits._
     val withPartition = AMTPartitionValues.forWrite(
       spark.createDataset(rows).toDF(), metadata.partitionSchema)
     val df = AMTContentStats.forWrite(withPartition, metadata, protocol)
+    val persistedSchema = AMTSingleAction.persistedSchema(metadata, protocol)
+    val (dfToWrite, cachedRows) = if (cacheRows) {
+      val converted = AMTUtils.convertToLocalRelationFully(df.queryExecution.analyzed)
+      deltaAssert(
+        converted.isInstanceOf[LocalRelation],
+        name = "amtRootRowsMustFoldToLocalRelation",
+        msg = s"AMT root rows did not fold to a LocalRelation:\n${converted.treeString}")
+      converted match {
+        case local: LocalRelation =>
+          val toUnsafe = UnsafeProjection.create(local.schema)
+          val copiedRows = local.data.map(row => toUnsafe(row).copy())
+          val copiedLocal = LocalRelation(local.output, copiedRows)
+          (DataFrameUtils.ofRows(spark, copiedLocal), Some(persistedSchema -> copiedRows))
+        case _ => (df, None)
+      }
+    } else {
+      (df, None)
+    }
     Checkpoints.writeAtomicCheckpointParquetFile(
       spark = spark,
-      df = df,
+      df = dfToWrite,
       finalPath = finalPath,
       hadoopConf = hadoopConf,
       useRename = false,
-      outputSchema = Some(AMTSingleAction.persistedSchema(metadata, protocol)),
+      outputSchema = Some(persistedSchema),
       format = new AMTParquetFileFormat)
+    cachedRows
   }
 }

@@ -29,7 +29,7 @@ object CheckpointHook extends PostCommitHook {
     if (!txn.maintenanceOperation.shouldCheckpoint) return
 
     val snapshotToCheckpoint =
-      if (AMTUtils.amtEnabled(txn.postCommitSnapshot)) {
+      if (AMTUtils.amtEnabled(txn.postCommitSnapshot, isPreviewCompatible = true)) {
         txn.postCommitSnapshot
       } else {
         // Two txns writing multi-part checkpoints at the same version has the risk of corruption.

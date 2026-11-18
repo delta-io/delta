@@ -50,7 +50,7 @@ trait RowTrackingDeleteTestDimension
       val partitionColumnValue = (col("id") / numRowsPerPartition).cast("int")
 
       val voidCol =
-        if (DeltaTestUtilsBase.nullTypeColumnsSupported) lit(null) else lit(null).cast("int")
+        lit(null)
       val df = spark.range(0, initialNumRows, 1, expectedNumFiles)
         .withColumn("void_col", voidCol)
         .withColumn("struct_col", struct(col("void_col"), col("id")))
@@ -208,10 +208,8 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
             }
 
             // The optimized-write file count is tuned to the exact (VOID) schema row size.
-            if (DeltaTestUtilsBase.nullTypeColumnsSupported) {
-              assert(currentNumFiles === expectedNumFiles,
-                s"The current num files $currentNumFiles is unexpected for optimized writes")
-            }
+            assert(currentNumFiles === expectedNumFiles,
+              s"The current num files $currentNumFiles is unexpected for optimized writes")
           }
         }
       }

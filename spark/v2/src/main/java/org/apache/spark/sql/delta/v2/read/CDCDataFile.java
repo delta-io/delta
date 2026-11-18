@@ -15,17 +15,15 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
-import io.delta.kernel.data.MapValue;
-import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.actions.AddCDCFile;
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.Preconditions;
 import java.util.Optional;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.actions.AddCDCFile;
+import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.actions.RemoveFile;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
-import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
+import scala.collection.immutable.Map;
 
 /**
  * Wrapper for all CDC file variants: inferred from AddFile (insert/update), inferred from
@@ -34,44 +32,28 @@ import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 public class CDCDataFile {
   @Nullable private final AddFile addFile;
   @Nullable private final RemoveFile removeFile;
-  private final boolean isAddCDCFile;
-  @Nullable private final String cdcPath;
-  @Nullable private final MapValue cdcPartitionValues;
+  @Nullable private final AddCDCFile addCDCFile;
   @Nullable private final String changeType;
   private final long commitTimestamp;
-  private final long fileSize;
   // base64-encoded inline DV of the changed rows (the bitmap diff between the Add and Remove DVs).
   @Nullable private final String dvBase64Override;
 
   private CDCDataFile(
       @Nullable AddFile addFile,
       @Nullable RemoveFile removeFile,
-      boolean isAddCDCFile,
-      @Nullable String cdcPath,
-      @Nullable MapValue cdcPartitionValues,
+      @Nullable AddCDCFile addCDCFile,
       @Nullable String changeType,
       long commitTimestamp,
-      long fileSize,
       @Nullable String dvBase64Override) {
     Preconditions.checkArgument(
-        addFile != null || removeFile != null || cdcPath != null,
-        "CDCDataFile must have at least one of addFile, removeFile, or cdcPath");
+        addFile != null || removeFile != null || addCDCFile != null,
+        "CDCDataFile must have at least one of addFile, removeFile, or addCDCFile");
     this.addFile = addFile;
     this.removeFile = removeFile;
-    this.isAddCDCFile = isAddCDCFile;
-    this.cdcPath = cdcPath;
-    this.cdcPartitionValues = cdcPartitionValues;
+    this.addCDCFile = addCDCFile;
     this.changeType = changeType;
     this.commitTimestamp = commitTimestamp;
-    this.fileSize = fileSize;
     this.dvBase64Override = dvBase64Override;
-  }
-
-  /** Create a CDCDataFile from a V1 AddFile, converting to Kernel at this boundary. */
-  public static CDCDataFile fromAddFile(
-      org.apache.spark.sql.delta.actions.AddFile addFile, long commitTimestamp) {
-    // TODO: Store V1 AddFiles in CDCDataFile to remove this V1-to-Kernel conversion.
-    return fromAddFile(KernelActionUtils$.MODULE$.toKernelScanAddFile(addFile), commitTimestamp);
   }
 
   /** Create a CDCDataFile inferred from an AddFile action (always "insert"). */
@@ -79,12 +61,9 @@ public class CDCDataFile {
     return new CDCDataFile(
         addFile,
         /* removeFile= */ null,
-        /* isAddCDCFile= */ false,
-        /* cdcPath= */ null,
-        /* cdcPartitionValues= */ null,
+        /* addCDCFile= */ null,
         CDCReader.CDC_TYPE_INSERT(),
         commitTimestamp,
-        addFile.getSize(),
         /* dvBase64Override= */ null);
   }
 
@@ -93,29 +72,20 @@ public class CDCDataFile {
     return new CDCDataFile(
         /* addFile= */ null,
         removeFile,
-        /* isAddCDCFile= */ false,
-        /* cdcPath= */ null,
-        /* cdcPartitionValues= */ null,
+        /* addCDCFile= */ null,
         CDCReader.CDC_TYPE_DELETE_STRING(),
         commitTimestamp,
-        removeFile.getSize().orElse(0L),
         /* dvBase64Override= */ null);
   }
 
   /** Create a CDCDataFile for an explicit AddCDCFile action. */
-  public static CDCDataFile fromAddCDCFile(Row cdcRow, long commitTimestamp) {
-    String path = cdcRow.getString(AddCDCFile.FULL_SCHEMA.indexOf("path"));
-    MapValue partitionValues = cdcRow.getMap(AddCDCFile.FULL_SCHEMA.indexOf("partitionValues"));
-    long size = cdcRow.getLong(AddCDCFile.FULL_SCHEMA.indexOf("size"));
+  public static CDCDataFile fromAddCDCFile(AddCDCFile addCDCFile, long commitTimestamp) {
     return new CDCDataFile(
         /* addFile= */ null,
         /* removeFile= */ null,
-        /* isAddCDCFile= */ true,
-        /* cdcPath= */ path,
-        /* cdcPartitionValues= */ partitionValues,
+        addCDCFile,
         /* changeType= */ null,
         commitTimestamp,
-        size,
         /* dvBase64Override= */ null);
   }
 
@@ -128,12 +98,9 @@ public class CDCDataFile {
     return new CDCDataFile(
         addFile,
         /* removeFile= */ null,
-        /* isAddCDCFile= */ false,
-        /* cdcPath= */ null,
-        /* cdcPartitionValues= */ null,
+        /* addCDCFile= */ null,
         changeType,
         commitTimestamp,
-        addFile.getSize(),
         dvBase64);
   }
 
@@ -150,11 +117,11 @@ public class CDCDataFile {
   /** Returns the file path for any CDC file variant. */
   public String getPath() {
     if (addFile != null) {
-      return addFile.getPath();
+      return addFile.path();
     } else if (removeFile != null) {
-      return removeFile.getPath();
+      return removeFile.path();
     } else {
-      return cdcPath;
+      return addCDCFile.path();
     }
   }
 
@@ -163,10 +130,10 @@ public class CDCDataFile {
    * extendedFileMetadata is not present.
    */
   @Nullable
-  public MapValue getPartitionValues() {
-    if (addFile != null) return addFile.getPartitionValues();
-    if (removeFile != null) return removeFile.getPartitionValues().orElse(null);
-    return cdcPartitionValues;
+  public Map<String, String> getPartitionValues() {
+    if (addFile != null) return addFile.partitionValues();
+    if (removeFile != null) return removeFile.partitionValues();
+    return addCDCFile.partitionValues();
   }
 
   /**
@@ -179,11 +146,11 @@ public class CDCDataFile {
     if (dvBase64Override != null) {
       return Optional.of(dvBase64Override);
     }
-    if (addFile != null && addFile.getDeletionVector().isPresent()) {
-      return Optional.of(addFile.getDeletionVector().get().serializeToBase64());
+    if (addFile != null && addFile.deletionVector() != null) {
+      return Optional.of(addFile.deletionVector().serializeToBase64());
     }
-    if (removeFile != null && removeFile.getDeletionVector().isPresent()) {
-      return Optional.of(removeFile.getDeletionVector().get().serializeToBase64());
+    if (removeFile != null && removeFile.deletionVector() != null) {
+      return Optional.of(removeFile.deletionVector().serializeToBase64());
     }
     return Optional.empty();
   }
@@ -209,25 +176,20 @@ public class CDCDataFile {
   }
 
   public long getFileSize() {
-    return fileSize;
+    if (addFile != null) return addFile.getFileSize();
+    if (removeFile != null) return removeFile.getFileSize();
+    return addCDCFile.getFileSize();
   }
 
-  /** Returns true if this is an explicit CDC file (from AddCDCFile action). */
+  /** Returns true if this is an explicit AddCDCFile action. */
   public boolean isAddCDCFile() {
-    return isAddCDCFile;
+    return addCDCFile != null;
   }
 
   public boolean hasDeletionVector() {
-    if (dvBase64Override != null) {
-      return true;
-    }
-    if (addFile != null) {
-      return addFile.getDeletionVector().isPresent();
-    }
-    if (removeFile != null) {
-      return removeFile.getDeletionVector().isPresent();
-    }
-    return false;
+    return dvBase64Override != null
+        || (addFile != null && addFile.deletionVector() != null)
+        || (removeFile != null && removeFile.deletionVector() != null);
   }
 
   @Override
@@ -238,7 +200,7 @@ public class CDCDataFile {
     } else if (removeFile != null) {
       sb.append("removeFile=").append(removeFile);
     } else {
-      sb.append("explicit=true, path=").append(cdcPath);
+      sb.append("explicit=true, path=").append(addCDCFile.path());
     }
     if (changeType != null) {
       sb.append(", changeType='").append(changeType).append("'");

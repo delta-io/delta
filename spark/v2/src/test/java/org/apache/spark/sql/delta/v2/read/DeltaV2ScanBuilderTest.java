@@ -26,8 +26,11 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.OptionalInt;
+import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.MetadataAttribute$;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.Snapshot;
@@ -99,6 +102,79 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
 
     assertNotNull(asDeltaV2Scan(scan));
     assertEquals(expectedSparkSchema, scan.readSchema());
+  }
+
+  @Test
+  public void testPruneColumns_preservesMetadataDifferingFromPartitionOnlyByCase(
+      @TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "scan_builder_metadata_partition_case_test";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (_metadata STRING, __Metadata INT) "
+                + "USING delta PARTITIONED BY (__Metadata) LOCATION '%s'",
+            tableName, path));
+    StructType dataSchema = new StructType().add("_metadata", DataTypes.StringType);
+    StructType partitionSchema = new StructType().add("__Metadata", DataTypes.IntegerType);
+    StructType tableSchema = dataSchema.add(partitionSchema.fields()[0]);
+    StructField metadataColumn =
+        DataTypes.createStructField(
+            "__metadata",
+            new StructType().add("file_path", DataTypes.StringType),
+            false,
+            MetadataAttribute$.MODULE$.metadata("_metadata"));
+    StructType expectedDataSchema = dataSchema.add(metadataColumn);
+    StructType requiredSchema = expectedDataSchema.add(partitionSchema.fields()[0]);
+
+    // Names are already resolved before pruning, regardless of the current resolver setting.
+    for (String caseSensitive : new String[] {"true", "false"}) {
+      withSQLConf(
+          "spark.sql.caseSensitive",
+          caseSensitive,
+          () -> {
+            DeltaV2ScanBuilder builder =
+                newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
+            builder.pruneColumns(requiredSchema);
+
+            assertEquals(expectedDataSchema, getRequiredDataSchema(builder));
+          });
+    }
+  }
+
+  @Test
+  public void testPruneColumns_preservesMetadataWithCaseSensitivePartition(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String v1Table = String.format("delta.`%s`", path);
+    String queryPrefix = "SELECT id, _Metadata, _metadata.file_path FROM ";
+    withSQLConf(
+        "spark.sql.caseSensitive",
+        "true",
+        () ->
+            withSQLConf(
+                "spark.databricks.delta.v2.enableMode",
+                "NONE",
+                () -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id INT, _Metadata INT) "
+                              + "USING delta PARTITIONED BY (_Metadata)",
+                          v1Table));
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 2)", v1Table));
+                  List<Row> expectedRows = spark.sql(queryPrefix + v1Table).collectAsList();
+                  assertEquals(1, expectedRows.size());
+                  assertEquals(1, expectedRows.get(0).getInt(0));
+                  assertEquals(2, expectedRows.get(0).getInt(1));
+                  assertNotNull(expectedRows.get(0).getString(2));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () ->
+                          assertEquals(
+                              expectedRows,
+                              spark.sql(queryPrefix + dsv2Table(path)).collectAsList()));
+                }));
   }
 
   @Test
@@ -548,17 +624,18 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     DeltaV2TableManager tableManager =
         DeltaV2TableManagerCache$.MODULE$.forTable(
             spark, path, Collections.emptyMap(), Option.empty());
-    return DeltaV2ScanBuilder.create(
-        tableName,
-        snapshot,
-        engine,
-        Option.empty(),
-        tableManager,
-        dataSchema,
-        partitionSchema,
-        tableSchema,
-        Option.empty(),
-        CaseInsensitiveStringMap.empty());
+    return (DeltaV2ScanBuilder)
+        DeltaV2ScanUtils.newScanBuilder(
+            tableName,
+            snapshot,
+            engine,
+            Option.empty(),
+            tableManager,
+            dataSchema,
+            partitionSchema,
+            tableSchema,
+            Option.empty(),
+            CaseInsensitiveStringMap.empty());
   }
 
   // Limit Pushdown Tests

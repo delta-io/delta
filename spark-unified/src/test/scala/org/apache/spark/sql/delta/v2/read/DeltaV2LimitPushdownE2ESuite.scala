@@ -197,12 +197,7 @@ private[read] trait DeltaV2LimitPushdownE2ETests {
       assert(
         rows.forall(_.getString(1) == "a"),
         s"Partition filter + LIMIT returned a non-matching row: ${rows.mkString(", ")}")
-      if (spark.version.startsWith("4.0")) {
-        // Spark 4.0 keeps the partition filter above the scan, which prevents LIMIT pushdown.
-        assertExpectedNoPushedLimit(df, "partition filter with LIMIT")
-      } else {
-        assertExpectedPushedLimit(df, 2, "partition filter with LIMIT")
-      }
+      assertExpectedPushedLimit(df, 2, "partition filter with LIMIT")
     }
   }
 
