@@ -36,7 +36,9 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
+          # Build-file changes refresh the key because GitHub caches are immutable.
           key: delta-sbt-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}-${{ hashFiles('build.sbt', 'version.sbt', 'project/*.scala', 'project/*.sbt', 'project/project/*.sbt', 'project/build.properties', 'project/scripts/setup_unitycatalog_main.sh') }}
+          # Reuse older downloads for this Spark/Scala pair; sbt fetches missing dependencies.
           restore-keys: delta-sbt-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}-
       - name: Set up pinned Unity Catalog
         uses: ./.github/actions/setup-unitycatalog
