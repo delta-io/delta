@@ -663,6 +663,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
               } catch {
                 case e: AnalysisException
                     if e.getErrorClass == "DELTA_CANNOT_RESOLVE_EXPRESSION" &&
+                      !fakePlan.resolved &&
                       conf.getConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN) =>
                   // An unresolved update expression, such as an invalid cast, blocks resolution.
                   // CheckAnalysis reports the error of that expression. If it finds none, keep `e`.
