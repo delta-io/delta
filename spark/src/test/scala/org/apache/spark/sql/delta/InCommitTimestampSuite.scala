@@ -24,7 +24,7 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider,
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider,
   CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CommitCoordinatorProvider,
   CommitCoordinatorUtilBase, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1941,8 +1941,8 @@ class InCommitTimestampWithCatalogOwnedBatch5Suite extends InCommitTimestampSuit
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(5)
 
   test("getActiveCommitAtTime works correctly within catalog owned range") {
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
+    CatalogManagedCommitCoordinatorProvider.registerBuilder(
       catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
       commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
     )

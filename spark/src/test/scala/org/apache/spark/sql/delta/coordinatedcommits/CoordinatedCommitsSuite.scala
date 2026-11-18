@@ -344,7 +344,7 @@ abstract class CommitCoordinatorSuiteBase
   test("0th commit happens via filesystem") {
     val commitCoordinatorName = "tracking-in-memory"
     object NoBackfillingCommitCoordinatorBuilder$
-        extends CatalogOwnedCommitCoordinatorBuilder {
+        extends CatalogManagedCommitCoordinatorBuilder {
 
       override def getName: String = commitCoordinatorName
 

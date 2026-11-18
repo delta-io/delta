@@ -532,7 +532,7 @@ trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
       tableRoot = deltaLog.dataPath,
       useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
         snapshotForReplay.metadata, snapshotForReplay.protocol, spark),
-      retainFirstBackreference = AMTUtils.amtEnabled(snapshotForReplay))
+      retainFirstBackreference = AMTUtils.amtEnabled(snapshotForReplay, isPreviewCompatible = true))
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val catalogTable = tableName
       .map(name => spark.sessionState.catalog.getTableMetadata(new TableIdentifier(name)))

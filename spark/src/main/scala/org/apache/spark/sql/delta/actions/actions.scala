@@ -981,7 +981,7 @@ object FileAction {
       metadata: Metadata,
       protocol: Protocol,
       spark: SparkSession): Boolean =
-    AMTUtils.amtSupported(protocol) ||
+    AMTUtils.amtSupported(protocol, isPreviewCompatible = true) ||
       spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
 
   /**
@@ -1855,7 +1855,7 @@ object CommitInfo {
       metadata: Metadata,
       protocol: Protocol,
       spark: SparkSession): Option[Boolean] = {
-    if (AMTUtils.amtEnabled(metadata, protocol) ||
+    if (AMTUtils.amtEnabled(metadata, protocol, isPreviewCompatible = true) ||
         spark.conf.get(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED)) {
       Some(dataChange)
     } else {
