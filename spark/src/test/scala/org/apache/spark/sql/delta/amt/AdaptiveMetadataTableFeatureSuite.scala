@@ -21,7 +21,7 @@ import java.util.Locale
 import org.apache.spark.sql.delta.{
   AdaptiveMetadataPreviewTableFeature,
   AdaptiveMetadataTableFeature,
-  CatalogOwnedTableFeature,
+  CatalogManagedTableFeature,
   ColumnMappingTableFeature,
   DeletionVectorsTableFeature,
   DeltaAnalysisException,
@@ -77,6 +77,9 @@ class AdaptiveMetadataTableFeatureSuite
   private def protocolOf(tableName: String) =
     DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(tableName))._2.protocol
 
+  private def snapshotOf(tableName: String) =
+    DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(tableName))._2
+
   test("feature is a ReaderWriterFeature and a RemovableFeature") {
     assert(AdaptiveMetadataPreviewTableFeature.isReaderWriterFeature)
     assert(AdaptiveMetadataPreviewTableFeature.isInstanceOf[RemovableFeature])
@@ -88,7 +91,7 @@ class AdaptiveMetadataTableFeatureSuite
 
   test("feature requires catalogManaged, rowTracking, domainMetadata, DVs and column mapping") {
     assert(AdaptiveMetadataPreviewTableFeature.requiredFeatures === Set(
-      CatalogOwnedTableFeature,
+      CatalogManagedTableFeature,
       RowTrackingFeature,
       DomainMetadataTableFeature,
       DeletionVectorsTableFeature,
@@ -106,7 +109,8 @@ class AdaptiveMetadataTableFeatureSuite
       val protocol = protocolOf("amt_supported")
       assert(protocol.isFeatureSupported(AdaptiveMetadataPreviewTableFeature),
         s"Protocol must record adaptiveMetadata-preview as supported. Got: $protocol")
-      assert(AMTUtils.amtEnabled(metadataOf("amt_supported"), protocol),
+      assert(
+        AMTUtils.amtEnabled(metadataOf("amt_supported"), protocol, isPreviewCompatible = true),
         s"AMTUtils.amtEnabled must report the table as AMT-enabled. Got: $protocol")
       // Every required feature (and their transitive dependencies) must be present.
       dependentFeatures(AdaptiveMetadataPreviewTableFeature).foreach { f =>
@@ -220,7 +224,7 @@ class AdaptiveMetadataTableFeatureSuite
    */
   private def createNonAMTTableForReplace(tableName: String, checkpointPolicy: String): Unit = {
     sql(s"CREATE TABLE $tableName (id INT) USING $tableProvider " +
-      s"TBLPROPERTIES ('${propertyKey(CatalogOwnedTableFeature)}' = '$FEATURE_PROP_SUPPORTED', " +
+      s"TBLPROPERTIES ('${propertyKey(CatalogManagedTableFeature)}' = '$FEATURE_PROP_SUPPORTED', " +
       s"'${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'id', " +
       s"'${DeltaConfigs.CHECKPOINT_POLICY.key}' = '$checkpointPolicy')")
   }
@@ -380,9 +384,15 @@ class AdaptiveMetadataTableFeatureSuite
         withTable(tableName) {
           if (creatable) {
             createAdaptiveMetadataTable(tableName, feature = feature)
-            val protocol = protocolOf(tableName)
+            val snapshot = snapshotOf(tableName)
+            val protocol = snapshot.protocol
             assert(protocol.isFeatureSupported(feature), s"Got: $protocol")
-            assert(AMTUtils.amtEnabled(metadataOf(tableName), protocol), s"Got: $protocol")
+            assert(AMTUtils.amtEnabled(snapshot, isPreviewCompatible = true), s"Got: $protocol")
+            // Callers that are not preview compatible only see `adaptiveMetadata-dev` tables.
+            assert(
+              AMTUtils.amtEnabled(snapshot, isPreviewCompatible = false) ==
+                (feature == AdaptiveMetadataTableFeature),
+              s"Got: $protocol")
           } else {
             checkError(
               intercept[DeltaAnalysisException] {

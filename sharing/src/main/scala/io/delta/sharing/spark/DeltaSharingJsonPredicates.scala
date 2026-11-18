@@ -19,7 +19,7 @@ package io.delta.sharing.spark
 import java.util.Locale
 
 import io.delta.sharing.client.util.{ConfUtils, JsonUtils}
-import io.delta.sharing.filters.{AndOp, BaseOp, OpConverter}
+import io.delta.sharing.filters.{AndOp, BaseOp, OpConverter, UnsupportedOpPruner}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{sources => src}
@@ -50,11 +50,13 @@ object DeltaSharingJsonPredicates extends Logging {
    *   - data filters are converted only under `jsonPredicateV2Hints.enabled` (default off), so with
    *     defaults only partition filters reach the server.
    * Partition and data predicates are AND-ed. A conversion error on either side drops just that
-   * side (logged, not thrown).
+   * side (logged, not thrown). Under `jsonPredicateHints.partialFilter.enabled` (default off),
+   * unsupported sub-expressions are instead pruned conservatively: an AND keeps its supported
+   * children, while an OR or NOT containing one is dropped whole.
    *
    * @param partitionFilters filters referencing only partition columns.
    * @param dataFilters      filters referencing at least one non-partition column.
-   * @param conf             session conf supplying the two feature gates.
+   * @param conf             session conf supplying the feature gates.
    * @return the serialized json predicate, or None when disabled or nothing converted.
    */
   def convert(
@@ -64,10 +66,11 @@ object DeltaSharingJsonPredicates extends Logging {
     if (!ConfUtils.jsonPredicatesEnabled(conf)) {
       return None
     }
+    val partialFilterEnabled = ConfUtils.jsonPredicatePartialFilterEnabled(conf)
 
     // Convert the partition filters.
     val partitionOp = try {
-      OpConverter.convert(partitionFilters)
+      OpConverter.convert(partitionFilters, partialFilterEnabled)
     } catch {
       case e: Exception =>
         logError("Error while converting partition filters: " + e)
@@ -78,7 +81,7 @@ object DeltaSharingJsonPredicates extends Logging {
     val dataOp = try {
       if (ConfUtils.jsonPredicatesV2Enabled(conf)) {
         logInfo("Converting data filters")
-        OpConverter.convert(dataFilters)
+        OpConverter.convert(dataFilters, partialFilterEnabled)
       } else {
         None
       }
@@ -96,13 +99,22 @@ object DeltaSharingJsonPredicates extends Logging {
     } else {
       dataOp
     }
-    logInfo("Using combined predicate: " + combinedOp)
 
-    if (combinedOp.isDefined) {
-      Some(JsonUtils.toJson[BaseOp](combinedOp.get))
+    // UnsupportedOp is a client-local placeholder and must never reach the server.
+    val finalOp = if (partialFilterEnabled) {
+      combinedOp.flatMap { op =>
+        val (pruned, hadUnsupported) = UnsupportedOpPruner.prune(op)
+        if (hadUnsupported) {
+          logInfo(s"Pruned unsupported sub-expressions from predicate: $op -> $pruned")
+        }
+        pruned
+      }
     } else {
-      None
+      combinedOp
     }
+    logInfo("Using combined predicate: " + finalOp)
+
+    finalOp.map(JsonUtils.toJson[BaseOp](_))
   }
 
   /**
@@ -120,7 +132,7 @@ object DeltaSharingJsonPredicates extends Logging {
    * @param filters          the pushed filters, ANDed together per the DSv2 contract.
    * @param schema           the full table schema, for column type / nullability lookup.
    * @param partitionColumns the table's partition column names (case-insensitive).
-   * @param conf             session conf supplying the two feature gates.
+   * @param conf             session conf supplying the feature gates.
    */
   def fromPushedFilters(
       filters: Array[src.Filter],

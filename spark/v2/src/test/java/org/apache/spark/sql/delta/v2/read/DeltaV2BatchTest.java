@@ -83,13 +83,13 @@ public class DeltaV2BatchTest extends DeltaV2TestBase {
     if (filters1.length > 0) {
       pushFilters(builder1, filters1);
     }
-    Batch batch1 = ((DeltaV2Scan) builder1.build()).toBatch();
+    Batch batch1 = asDeltaV2Scan(builder1.build()).toBatch();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     if (filters2.length > 0) {
       pushFilters(builder2, filters2);
     }
-    Batch batch2 = ((DeltaV2Scan) builder2.build()).toBatch();
+    Batch batch2 = asDeltaV2Scan(builder2.build()).toBatch();
 
     assertEquals(batch1, batch2);
     assertEquals(batch1.hashCode(), batch2.hashCode());
@@ -98,11 +98,11 @@ public class DeltaV2BatchTest extends DeltaV2TestBase {
   @Test
   public void testEqualsWithDifferentPushedFilters() {
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    Batch batch1 = ((DeltaV2Scan) builder1.build()).toBatch();
+    Batch batch1 = asDeltaV2Scan(builder1.build()).toBatch();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder2, new EqualTo("city", "hz"));
-    Batch batch2 = ((DeltaV2Scan) builder2.build()).toBatch();
+    Batch batch2 = asDeltaV2Scan(builder2.build()).toBatch();
 
     assertNotEquals(batch1, batch2);
     assertNotEquals(batch1.hashCode(), batch2.hashCode());

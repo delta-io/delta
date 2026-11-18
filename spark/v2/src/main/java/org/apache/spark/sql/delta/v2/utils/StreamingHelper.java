@@ -31,11 +31,14 @@ import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import java.util.*;
 import org.apache.spark.annotation.Experimental;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
+import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
@@ -215,13 +218,17 @@ public class StreamingHelper {
    * @param originalStreamingQueryContext request-scoped catalog inputs used to load the commit
    *     range
    * @param failOnDataLoss whether to fail when commits in the range are missing
+   * @param spark the stream's Spark session used to check protocol compatibility
+   * @param readSnapshot the stream's read-time snapshot used for protocol-read logging
    */
   public static Map<Long, Metadata> collectMetadataActions(
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2TableManager tableManager,
       DeltaV2QueryContext originalStreamingQueryContext,
-      boolean failOnDataLoss) {
+      boolean failOnDataLoss,
+      SparkSession spark,
+      SnapshotDescriptor readSnapshot) {
     return collectActions(
         startVersion,
         endVersionOpt,
@@ -229,7 +236,9 @@ public class StreamingHelper {
         originalStreamingQueryContext,
         failOnDataLoss,
         DeltaLogActionUtils.DeltaAction.METADATA,
-        Metadata.class);
+        Metadata.class,
+        spark,
+        readSnapshot);
   }
 
   /**
@@ -250,13 +259,17 @@ public class StreamingHelper {
    * @param originalStreamingQueryContext request-scoped catalog inputs used to load the commit
    *     range
    * @param failOnDataLoss whether to fail when commits in the range are missing
+   * @param spark the stream's Spark session used to check protocol compatibility
+   * @param readSnapshot the stream's read-time snapshot used for protocol-read logging
    */
   public static Map<Long, Protocol> collectProtocolActions(
       long startVersion,
       Optional<Long> endVersionOpt,
       DeltaV2TableManager tableManager,
       DeltaV2QueryContext originalStreamingQueryContext,
-      boolean failOnDataLoss) {
+      boolean failOnDataLoss,
+      SparkSession spark,
+      SnapshotDescriptor readSnapshot) {
     return collectActions(
         startVersion,
         endVersionOpt,
@@ -264,7 +277,9 @@ public class StreamingHelper {
         originalStreamingQueryContext,
         failOnDataLoss,
         DeltaLogActionUtils.DeltaAction.PROTOCOL,
-        Protocol.class);
+        Protocol.class,
+        spark,
+        readSnapshot);
   }
 
   /** Walks the commit files and rejects commits with more than one matching action. */
@@ -275,7 +290,9 @@ public class StreamingHelper {
       DeltaV2QueryContext originalStreamingQueryContext,
       boolean failOnDataLoss,
       DeltaLogActionUtils.DeltaAction actionType,
-      Class<T> actionClass) {
+      Class<T> actionClass,
+      SparkSession spark,
+      SnapshotDescriptor readSnapshot) {
     // LinkedHashMap to preserve insertion order
     Map<Long, T> versionToAction = new LinkedHashMap<>();
     try (ClosableIterator<DeltaSingleCommit> commitsIter =
@@ -291,6 +308,12 @@ public class StreamingHelper {
             commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) {
           while (actionsIter.hasNext()) {
             Action action = actionsIter.next();
+            if (action instanceof Protocol) {
+              String tablePath = readSnapshot.dataPath().toString();
+              // DeltaSingleCommit reads through LogStore without protocol validation,
+              // so validate protocol actions explicitly.
+              Protocol$.MODULE$.protocolRead(spark, (Protocol) action, tablePath, readSnapshot);
+            }
             if (actionClass.isInstance(action)) {
               T existing = versionToAction.putIfAbsent(version, actionClass.cast(action));
               Preconditions.checkArgument(

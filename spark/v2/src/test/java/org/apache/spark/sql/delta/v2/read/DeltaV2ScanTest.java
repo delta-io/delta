@@ -133,7 +133,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testColumnarSupportModeReturnsSupported() {
     // Table schema uses simple types (INT, STRING) which are batch-read-compatible
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     assertEquals(
         Scan.ColumnarSupportMode.SUPPORTED,
@@ -146,7 +146,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     // Calling columnarSupportMode() must NOT trigger file planning (the whole point of the
     // override is to avoid the early planInputPartitions() call that PARTITION_DEFINED causes).
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     // Call columnarSupportMode before any planning
     scan.columnarSupportMode();
@@ -184,7 +184,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
                         path,
                         options);
                 DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) mapTable.newScanBuilder(options);
-                DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+                DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
                 assertEquals(
                     Scan.ColumnarSupportMode.UNSUPPORTED,
@@ -204,7 +204,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         "false",
         () -> {
           DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+          DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
           assertEquals(
               Scan.ColumnarSupportMode.UNSUPPORTED,
@@ -225,7 +225,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
             .add("part", DataTypes.IntegerType);
     builder.pruneColumns(prunedSchema);
 
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     assertEquals(
         Scan.ColumnarSupportMode.UNSUPPORTED,
@@ -258,7 +258,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
                   dvPath,
                   options);
           DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) dvTable.newScanBuilder(options);
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+          DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
           // DV-enabled table with simple types should still return SUPPORTED because the
           // DV column (ByteType) is batch-compatible
@@ -277,7 +277,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testGetDataSchemaPartitionSchemaReadDataSchemaOptionsConfiguration() {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     // Table schema: (part INT, date STRING, city STRING, name STRING, cnt INT)
     // Partition columns: (date STRING, city STRING, part INT)
@@ -328,7 +328,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testGetTablePathReturnsTablePath() {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     String retrievedPath = scan.getTablePath();
     assertNotNull(retrievedPath, "getTablePath should not return null");
@@ -350,7 +350,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     CaseInsensitiveStringMap optionsWithHadoopMap = new CaseInsensitiveStringMap(optionsWithHadoop);
 
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(optionsWithHadoopMap);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     Configuration configuration = scan.getConfiguration();
 
     assertEquals(
@@ -375,7 +375,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
             .add("part", DataTypes.IntegerType);
     builder.pruneColumns(prunedSchema);
 
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     StructType dataSchema = scan.getDataSchema();
     StructType readDataSchema = scan.getReadDataSchema();
@@ -517,7 +517,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     ScanBuilder newBuilder = table.newScanBuilder(scanOptions);
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) newBuilder;
     Scan scan = builder.build();
-    DeltaV2Scan deltaV2Scan = (DeltaV2Scan) scan;
+    DeltaV2Scan deltaV2Scan = asDeltaV2Scan(scan);
 
     List<PartitionedFile> beforeDppFiles = getPartitionedFiles(deltaV2Scan);
     // make a copy for comparison after DPP
@@ -571,7 +571,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testSelectedFilesTracksPlannedAndRuntimeFilteredFiles() throws Exception {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     List<PartitionedFile> plannedFiles = getPartitionedFiles(scan);
     List<AddFile> selectedFiles =
@@ -600,7 +600,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testPlannedSnapshotTriggersPlanningAndReturnsSameSnapshot() throws Exception {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertFalse(getPlanned(scan), "build() should leave file planning lazy");
 
     Snapshot plannedSnapshot = scan.preparedScan().scannedSnapshot();
@@ -675,7 +675,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
               "false",
               () -> {
                 DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-                DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+                DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
                 assertFalse(
                     isRowCountKnown(scan),
@@ -695,7 +695,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+          DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
           assertFalse(
               isRowCountKnown(scan),
@@ -715,7 +715,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+          DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
           scan.toBatch();
           assertEquals(5L, getTotalRows(scan), "5 rows before filtering");
@@ -741,7 +741,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+          DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
           scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
 
@@ -787,7 +787,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
           () -> {
             DeltaV2ScanBuilder builder =
                 (DeltaV2ScanBuilder) mixedStatsTable.newScanBuilder(options);
-            DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+            DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
             assertFalse(
                 isRowCountKnown(scan), "rowCountKnown should be false when some files lack stats");
@@ -810,7 +810,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
 
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(cdcOptionsMap);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     StructType schema = scan.readSchema();
 
@@ -836,7 +836,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testReadSchema_nonCdcRead_returnsDataAndPartitionSchema() {
     // Without readChangeFeed, readSchema() returns readDataSchema + partitionSchema.
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     StructType schema = scan.readSchema();
 
@@ -870,7 +870,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
             .add("date", DataTypes.StringType);
     builder.pruneColumns(requiredSchema);
 
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     // readDataSchema reflects pruning: only "name" remains (cnt dropped, partition + CDC filtered)
     StructType readDataSchema = scan.getReadDataSchema();
@@ -895,7 +895,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
 
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(cdcOptionsMap);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     // Sanity: scan still advertises the CDC schema (this is needed for the streaming path).
     StructType advertised = scan.readSchema();
@@ -916,7 +916,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
 
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(cdcOptionsMap);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     assertEquals(8, scan.readSchema().fields().length);
     UnsupportedOperationException e =
@@ -942,7 +942,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     CaseInsensitiveStringMap nonCdcOptionsMap = new CaseInsensitiveStringMap(nonCdcOptions);
 
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(nonCdcOptionsMap);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     StructType schema = scan.readSchema();
     assertThrows(IllegalArgumentException.class, () -> schema.fieldIndex("_change_type"));
@@ -957,10 +957,10 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsAndHashCode() {
     // Create two scans from the same table with same options
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     // Same table, same options should be equal
     assertEquals(scan1, scan2);
@@ -970,13 +970,13 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsWithDifferentOptions() {
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
 
     Map<String, String> differentOptions = new HashMap<>();
     differentOptions.put("customOption", "value");
     CaseInsensitiveStringMap optionsMap = new CaseInsensitiveStringMap(differentOptions);
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(optionsMap);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     // Different options should not be equal and hashCodes should differ
     assertNotEquals(scan1, scan2);
@@ -985,8 +985,8 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   @Test
   public void testEqualsWithDifferentOriginalQueryContext() throws Exception {
-    DeltaV2Scan scan1 = (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
-    DeltaV2Scan scan2 = (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(((DeltaV2ScanBuilder) table.newScanBuilder(options)).build());
+    DeltaV2Scan scan2 = asDeltaV2Scan(((DeltaV2ScanBuilder) table.newScanBuilder(options)).build());
     assertEquals(scan1, scan2);
 
     CatalogTable catalogTable =
@@ -1007,7 +1007,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     // A path-backed scan carries a present query context with no catalog metadata.
     DeltaV2Scan pathScan =
-        (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(streamingOptions)).build();
+        asDeltaV2Scan(((DeltaV2ScanBuilder) table.newScanBuilder(streamingOptions)).build());
     assertStreamUsesOriginalQueryContext(pathScan, tablePath + "/path-checkpoint", false);
 
     // A catalog-backed scan must retain its original query context through the same execution seam.
@@ -1019,8 +1019,8 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
             catalogTable,
             Collections.emptyMap());
     DeltaV2Scan catalogScan =
-        (DeltaV2Scan)
-            ((DeltaV2ScanBuilder) catalogBackedTable.newScanBuilder(streamingOptions)).build();
+        asDeltaV2Scan(
+            ((DeltaV2ScanBuilder) catalogBackedTable.newScanBuilder(streamingOptions)).build());
     assertStreamUsesOriginalQueryContext(catalogScan, tablePath + "/catalog-checkpoint", true);
   }
 
@@ -1066,11 +1066,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     // Both scans with equivalent filters created separately (not same instance)
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder1, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder2, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     // Same options and equivalent filters should be equal
     assertEquals(scan1, scan2);
@@ -1081,12 +1081,12 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsWithDifferentFilters() {
     // Scan without filters
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
 
     // Scan with filters pushed
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder2, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     // Same options but different filters should not be equal and hashCodes should differ
     assertNotEquals(scan1, scan2);
@@ -1102,11 +1102,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder1, new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder2, new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     assertEquals(scan1, scan2);
     assertEquals(scan1.hashCode(), scan2.hashCode());
@@ -1125,11 +1125,11 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder1, new org.apache.spark.sql.sources.Filter[] {nameEq, cntGt});
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder2, new org.apache.spark.sql.sources.Filter[] {cntGt, nameEq});
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     // Sanity check that dataFilters is actually populated, otherwise this test would trivially
     // pass without exercising the dataFiltersSet path it's intended to cover.
@@ -1147,7 +1147,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testEstimatedSizeMatchesStatistics() throws Exception {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     long estimatedSizeFromStats = scan.estimateStatistics().sizeInBytes().getAsLong();
     long estimatedSizeFromSizeOnlyApi = scan.estimateSizeInBytes().getAsLong();
@@ -1158,7 +1158,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testUnfilteredOrdinaryStatisticsDoNotTriggerFilePlanning() throws Exception {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     int[] supplierCalls = instrumentDeltaScanSupplier(scan);
 
     OptionalLong sizeOnly = scan.estimateSizeInBytes();
@@ -1183,7 +1183,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testFilteredOrdinaryStatisticsPlanFilesOnce() throws Exception {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder, new org.apache.spark.sql.sources.EqualTo("city", "hz"));
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     int[] supplierCalls = instrumentDeltaScanSupplier(scan);
 
     OptionalLong sizeOnly = scan.estimateSizeInBytes();
@@ -1217,7 +1217,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
           DeltaV2Table tableWithoutChecksum = new DeltaV2Table(id, path);
           DeltaV2ScanBuilder builder =
               (DeltaV2ScanBuilder) tableWithoutChecksum.newScanBuilder(options);
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+          DeltaV2Scan scan = asDeltaV2Scan(builder.build());
           int[] supplierCalls = instrumentDeltaScanSupplier(scan);
 
           OptionalLong sizeOnly = scan.estimateSizeInBytes();
@@ -1273,7 +1273,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
                 () -> {
                   DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
                   builder.pruneColumns(new StructType().add("name", DataTypes.StringType));
-                  DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+                  DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
                   long sizeInBytes = scan.estimateSizeInBytes().getAsLong();
                   assertFalse(getPlanned(scan), "size estimation must not plan Delta files");
@@ -1287,7 +1287,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   @Test
   public void testStatisticsRequireSparkPostPushdownFilterAdjustment() {
-    DeltaV2Scan scan = (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+    DeltaV2Scan scan = asDeltaV2Scan(((DeltaV2ScanBuilder) table.newScanBuilder(options)).build());
     assertFalse(scan.reflectsFullyPushedDownFilters());
   }
 
@@ -1295,7 +1295,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEstimatedSizeZeroAfterFilteringOutAllFiles() throws Exception {
     // Test that filtering out all files results in zero for both sizes
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     // Apply filter that matches nothing
     scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
@@ -1320,9 +1320,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsAndHashCodeWithSameRuntimeFilter() {
     // Same filter applied to both scans (same instance)
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     scan1.filter(new Predicate[] {cityPredicate});
     scan2.filter(new Predicate[] {cityPredicate});
@@ -1335,9 +1335,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsAndHashCodeWithEquivalentRuntimeFilters() {
     // Equivalent filters (different instances)
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     scan1.filter(new Predicate[] {cityPredicate});
 
@@ -1357,9 +1357,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsAndHashCodeWithMultipleRuntimeFiltersInSameOrder() {
     // Multiple filters in same order
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     scan1.filter(new Predicate[] {cityPredicate, datePredicate});
     scan2.filter(new Predicate[] {cityPredicate, datePredicate});
@@ -1372,9 +1372,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsAndHashCodeWithIdempotentRuntimeFilters() {
     // Filter idempotency - applying same filter once vs twice
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     scan1.filter(new Predicate[] {cityPredicate});
     scan2.filter(new Predicate[] {cityPredicate});
@@ -1388,9 +1388,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsAndHashCodeWithSeparateRuntimeFilterCalls() {
     // Multiple separate filter() calls vs single call with multiple filters
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     scan1.filter(new Predicate[] {cityPredicate});
     scan1.filter(new Predicate[] {datePredicate});
@@ -1404,9 +1404,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testEqualsAndHashCodeWithRuntimeFiltersInDifferentOrder() {
     // Same filters in different order (order-independent)
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     scan1.filter(new Predicate[] {cityPredicate, datePredicate});
     scan2.filter(new Predicate[] {datePredicate, cityPredicate});
@@ -1420,9 +1420,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     // Non-partition column predicates should not affect equality
     // Only partition column predicates should be tracked
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     // cityPredicate is on partition column, dataPredicate is on non-partition column (cnt)
     scan1.filter(new Predicate[] {cityPredicate});
@@ -1437,9 +1437,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testNotEqualsWithDifferentRuntimeFilters() {
     // Different filters
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     scan1.filter(new Predicate[] {cityPredicate});
     scan2.filter(new Predicate[] {datePredicate});
@@ -1452,9 +1452,9 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testNotEqualsWithAndWithoutRuntimeFilter() {
     // One with filter, one without
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2Scan scan1 = asDeltaV2Scan(builder1.build());
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
+    DeltaV2Scan scan2 = asDeltaV2Scan(builder2.build());
 
     scan2.filter(new Predicate[] {cityPredicate});
 
@@ -1513,7 +1513,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     DeltaV2ScanBuilder builder =
         (DeltaV2ScanBuilder)
             sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     Statistics stats = scan.estimateStatistics();
 
     // Catalog rows and columns are returned without an explicit size so Spark can derive a
@@ -1558,7 +1558,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     DeltaV2ScanBuilder builder =
         (DeltaV2ScanBuilder)
             sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     Statistics stats = scan.estimateStatistics();
 
     assertTrue(stats.numRows().isPresent(), "numRows should be present");
@@ -1583,7 +1583,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     DeltaV2ScanBuilder builder =
         (DeltaV2ScanBuilder)
             sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     Statistics stats = scan.estimateStatistics();
 
     assertFalse(
@@ -1644,7 +1644,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     DeltaV2ScanBuilder builder =
         (DeltaV2ScanBuilder)
             sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     Statistics stats = scan.estimateStatistics();
 
     assertTrue(stats.numRows().isPresent(), "numRows should be present");
@@ -1704,7 +1704,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     StructType prunedSchema = new StructType().add("name", DataTypes.StringType);
     builder.pruneColumns(prunedSchema);
 
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertFalse(getPlanned(scan));
     assertEquals(OptionalLong.of(1024L), scan.estimateSizeInBytes());
     assertFalse(getPlanned(scan), "catalog size lookup should not plan Delta files");
@@ -1746,7 +1746,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     DeltaV2ScanBuilder builder =
         (DeltaV2ScanBuilder)
             sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
     assertFalse(getPlanned(scan));
     assertEquals(
@@ -1787,7 +1787,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testLimitPushdown_descriptionIncludesLimit() {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder.pushLimit(10);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertTrue(
         scan.description().contains("PushedLimit: 10"),
         "description should include the pushed limit");
@@ -1796,7 +1796,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testLimitPushdown_descriptionOmitsLimitWhenAbsent() {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertFalse(
         scan.description().contains("PushedLimit"),
         "description should not mention PushedLimit when no limit is pushed");
@@ -1821,7 +1821,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testLimitPushdown_notEqualWithAndWithoutLimit() {
     DeltaV2Scan withoutLimit =
-        (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+        asDeltaV2Scan(((DeltaV2ScanBuilder) table.newScanBuilder(options)).build());
     DeltaV2Scan withLimit = buildScanWithLimit(10);
     assertNotEquals(withoutLimit, withLimit);
     assertNotEquals(withoutLimit.hashCode(), withLimit.hashCode());
@@ -1830,7 +1830,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   @Test
   public void testLimitPushdown_noLimitPlansAllFiles() throws Exception {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     // The shared partitioned test table has 5 single-row files.
     assertEquals(
         5, getPartitionedFiles(scan).size(), "all files should be planned without a limit");
@@ -1852,7 +1852,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     assertEquals(1, files.size(), "LIMIT 1 over single-row files should plan exactly one file");
 
     DeltaV2Scan unlimited =
-        (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+        asDeltaV2Scan(((DeltaV2ScanBuilder) table.newScanBuilder(options)).build());
     assertTrue(
         getTotalBytes(scan) <= getTotalBytes(unlimited),
         "planned bytes with a limit should not exceed the full-scan bytes");
@@ -1862,7 +1862,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   public void testLimitPushdown_getterReflectsBuilder() {
     assertEquals(Option.apply(7), buildScanWithLimit(7).getPushedLimit());
     DeltaV2Scan noLimit =
-        (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+        asDeltaV2Scan(((DeltaV2ScanBuilder) table.newScanBuilder(options)).build());
     assertEquals(Option.empty(), noLimit.getPushedLimit());
   }
 
@@ -1896,7 +1896,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
               (DeltaV2ScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
           builder.pushLimit(0);
-          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+          DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
           assertFalse(getPlanned(scan), "LIMIT 0 statistics should not plan Delta files");
           Statistics stats = scan.estimateStatistics();
@@ -1924,7 +1924,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
         () -> {
           // Without a limit, retaining numRecords does not populate an aggregate row count.
           DeltaV2Scan noLimit =
-              (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+              asDeltaV2Scan(((DeltaV2ScanBuilder) table.newScanBuilder(options)).build());
           assertFalse(isRowCountKnown(noLimit), "missing aggregate row count should stay unknown");
           assertFalse(noLimit.estimateStatistics().numRows().isPresent());
 
@@ -2007,7 +2007,7 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
               Identifier.of(new String[] {"spark_catalog", "default"}, tblName), path, options);
       DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) tableWithoutStats.newScanBuilder(options);
       assertTrue(builder.pushLimit(1));
-      DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+      DeltaV2Scan scan = asDeltaV2Scan(builder.build());
 
       assertEquals(
           2,
@@ -2021,6 +2021,6 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
   private DeltaV2Scan buildScanWithLimit(int limit) {
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder.pushLimit(limit);
-    return (DeltaV2Scan) builder.build();
+    return asDeltaV2Scan(builder.build());
   }
 }

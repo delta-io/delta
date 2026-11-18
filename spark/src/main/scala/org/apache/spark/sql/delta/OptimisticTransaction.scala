@@ -1184,7 +1184,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val amtFeatureName = amtFeature.name
 
     val existingTableHasAdaptiveMetadata =
-      AMTUtils.amtEnabled(snapshot)
+      AMTUtils.amtEnabled(snapshot, isPreviewCompatible = true)
     // REPLACE counts as creating a new table, but it keeps the existing table and its history, so
     // adding AMT through it is an upgrade too.
     if (readVersion >= 0 && !existingTableHasAdaptiveMetadata) {
@@ -1285,7 +1285,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val addFileMustHaveWideBounds = op.checkAddFileWithDeletionVectorStatsAreNotTightBounds
 
     // A manifest tree cannot store inline DVs, so the next tree build would fail on such a file.
-    val inlineDeletionVectorDisallowed = AMTUtils.amtEnabled(metadata, protocol)
+    val inlineDeletionVectorDisallowed =
+      AMTUtils.amtEnabled(metadata, protocol, isPreviewCompatible = true)
 
     action => action match {
       case a: AddFile if a.deletionVector != null =>
@@ -2868,7 +2869,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Invariant check that the tree of an inline manifest commit reconstructs the commit's own
+   * Test-only invariant check that an inline manifest commit's tree reconstructs the commit's own
    * AddFiles and RemoveFiles, compared by (path, dv, add or remove). `AddCDCFile`s are not recorded
    * in the tree, so they are left out of the comparison.
    */
@@ -2876,6 +2877,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       actionsToCommit: Seq[Action],
       attemptVersion: Long,
       amtWriteResultOpt: Option[AMTWriteResult]): Unit = {
+    if (!DeltaUtils.isTesting) return
     // Only an incremental AMT that describes this commit records the commit's changes:
     //  - A deferred tree describes the previous table version.
     //  - A full rewrite marks every live entry EXISTING and has no tombstones or changed positions.
@@ -3452,7 +3454,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
-        !AMTUtils.amtEnabled(postCommitSnapshot)) {
+        !AMTUtils.amtEnabled(postCommitSnapshot, isPreviewCompatible = true)) {
       MaintenanceOperation(
         shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
     } else if (amtWriteResultOpt.isEmpty) {

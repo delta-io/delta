@@ -43,7 +43,7 @@ object ConcurrentIdentityColumnSchema {
 
   /**
    * The table id under which this table's sequences live in the sequence service. For a
-   * catalog-owned (UC coordinated-commits) table this is the UC table id, stamped into the
+   * catalog-managed (UC coordinated-commits) table this is the UC table id, stamped into the
    * table configuration at creation ([[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]]).
    * The `metadata.id` fallback below is test-only, as CIC requires a table to be managed.
    */

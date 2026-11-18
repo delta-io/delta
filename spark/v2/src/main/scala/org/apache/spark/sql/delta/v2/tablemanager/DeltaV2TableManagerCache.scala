@@ -54,7 +54,17 @@ private[tablemanager] class DeltaV2TableManagerCache(
   private val cache: Cache[CacheKey, DeltaV2TableManager] = {
     val listener: RemovalListener[CacheKey, DeltaV2TableManager] = notification => {
         val manager = notification.getValue
-        if (manager != null) manager.retire()
+        val key = notification.getKey
+        if (manager != null) {
+          val startedAtNs = System.nanoTime()
+          manager.retire()
+          recordDeltaEventForTablePath(
+            tablePath = key.path.getParent,
+            opType = "cache.evict",
+            data = Map(
+              "cause" -> notification.getCause.toString,
+              "elapsedMs" -> elapsedTimeMs(startedAtNs)))
+        }
       }
     CacheBuilder.newBuilder()
       .maximumSize(maxSize)
@@ -74,7 +84,13 @@ private[tablemanager] class DeltaV2TableManagerCache(
     try {
       cache.get(key, () => {
         recordFrameProfile("tableManagerCache.createManager") {
-          managerFactory(key, initialCatalogTableOpt)
+          val createStartedAtNs = System.nanoTime()
+          val created = managerFactory(key, initialCatalogTableOpt)
+          recordDeltaEventForTablePath(
+            tablePath = key.path.getParent,
+            opType = "cache.create",
+            data = Map("elapsedMs" -> elapsedTimeMs(createStartedAtNs)))
+          created
         }
       })
     } catch {
@@ -82,6 +98,9 @@ private[tablemanager] class DeltaV2TableManagerCache(
           _: ExecutionError | _: ExecutionException) =>
         val cause = Option(e.getCause).getOrElse(e)
         logWarning(log"Cache loader failed; rethrowing original cause", cause)
+        recordDeltaEventForTablePath(
+          tablePath = key.path.getParent,
+          opType = "cache.load.failure")
         throw cause
     }
   }

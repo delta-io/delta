@@ -27,7 +27,6 @@ import scala.jdk.javaapi.CollectionConverters
 import scala.util.Using
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.DeltaSingleCommit
@@ -47,6 +46,7 @@ import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.sources.DeltaSource
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset
+import org.apache.spark.sql.delta.sources.DeltaSourceOffsetLogic
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils
@@ -76,7 +76,6 @@ import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
-import io.delta.kernel.internal.util.Preconditions
 import io.delta.kernel.internal.util.Utils
 
 import org.apache.spark.sql.SparkSession
@@ -100,7 +99,7 @@ private[read] class DeltaV2MicroBatchStream(
       tableManager: DeltaV2TableManager,
       snapshotAtSourceInit: Snapshot,
       hadoopConf: Configuration,
-      spark: SparkSession,
+      override protected val spark: SparkSession,
       options: DeltaOptions,
       inputTablePath: String,
       dataSchema: StructType,
@@ -114,7 +113,8 @@ private[read] class DeltaV2MicroBatchStream(
       originalStreamingQueryContext: DeltaV2QueryContext)
     extends MicroBatchStream
         with SupportsAdmissionControl
-        with SupportsTriggerAvailableNow {
+        with SupportsTriggerAvailableNow
+        with DeltaSourceOffsetLogic {
 
   private val logger: Logger = LoggerFactory.getLogger(classOf[DeltaV2MicroBatchStream])
 
@@ -244,7 +244,7 @@ private[read] class DeltaV2MicroBatchStream(
    * Configuration options for handling schema changes behavior. Controls unsafe operations like
    * column mapping changes, partition column changes, nullability changes, and type widening.
    */
-  private val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
+  override protected val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
     val isStreamingFromColumnMappingTable: Boolean =
         this.snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
     val isTypeWideningSupportedInProtocol: Boolean =
@@ -265,9 +265,12 @@ private[read] class DeltaV2MicroBatchStream(
           options,
           schemaReadOptions,
           metadataTrackingLog,
-          readSnapshotDescriptor.metadata,
-          readSnapshotDescriptor.protocol,
+          readSnapshotDescriptor,
           metadataPath)
+
+  override protected def trackingMetadataChange: Boolean =
+      metadataEvolutionHandler.shouldTrackMetadataChange()
+
   locally {
     val shouldValidateSchemaOnRestart: Boolean =
         spark
@@ -940,9 +943,9 @@ private[read] class DeltaV2MicroBatchStream(
       startVersion: Long,
       endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
     // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
-    Preconditions.checkArgument(
-        options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
-        "Using schema from schema tracking log cannot tolerate missing commit files.")
+    require(
+      options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+      "Using schema from schema tracking log cannot tolerate missing commit files.")
     val commits: ClosableIterator[DeltaSingleCommit] =
         streamingBackend.getSingleCommitIterator(
             startVersion,
@@ -1005,9 +1008,9 @@ private[read] class DeltaV2MicroBatchStream(
       endOffset: Optional[DeltaSourceOffset],
       actionSet: Set[DeltaAction]): ClosableIterator[CommitActions] = {
     // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
-    Preconditions.checkArgument(
-        options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
-        "Using schema from schema tracking log cannot tolerate missing commit files.")
+    require(
+      options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+      "Using schema from schema tracking log cannot tolerate missing commit files.")
 
     var endVersionOpt: Option[Long] = ScalaUtils.toScalaOption(endOffset).map(_.reservoirVersion)
 
@@ -1256,10 +1259,11 @@ private[read] class DeltaV2MicroBatchStream(
                   endOffsetOpt,
                   verifyMetadataAction)
         } else if (action.isInstanceOf[Protocol]) {
-          Preconditions.checkArgument(
-              protocolAction == null,
-              "Should not encounter two protocol actions in the same commit of version %d",
-              Long.box(version))
+          Protocol.protocolRead(
+              spark, action.asInstanceOf[Protocol], tablePath, readSnapshotDescriptor)
+          assert(
+            protocolAction == null,
+            s"Should not encounter two protocol actions in the same commit of version $version")
           protocolAction = action.asInstanceOf[Protocol]
         } else if (action.isInstanceOf[CommitInfo]) {
           val commitInfo: CommitInfo = action.asInstanceOf[CommitInfo]
@@ -1340,7 +1344,10 @@ private[read] class DeltaV2MicroBatchStream(
       oldPartitionColumns = oldMetadata.partitionColumns.toList
     }
 
-    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart)
+    checkNonAdditiveSchemaChanges(
+        oldMetadata,
+        newMetadata,
+        validatedDuringStreamStart)
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
@@ -1374,37 +1381,6 @@ private[read] class DeltaV2MicroBatchStream(
                 Some.apply(version),
                 options.containsStartingVersionOrTimestamp)
       }
-    }
-  }
-
-  // Non-additive schema changes include rename column, drop column and change column type.
-  // When schema tracking is enabled, this method is NOT called - the MetadataEvolutionHandler
-  // manages these changes through the barrier protocol instead.
-  private def checkNonAdditiveSchemaChanges(
-      oldMetadata: Metadata, newMetadata: Metadata, validatedDuringStreamStart: Boolean): Unit = {
-    var shouldTrackSchema: Boolean = false
-    if (schemaReadOptions.typeWideningEnabled
-        && schemaReadOptions.enableSchemaTrackingForTypeWidening
-        && TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
-      // If schema tracking is enabled for type widening, we will detect widening type changes and
-      // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
-      // DROP/RENAME for column mapping.
-      shouldTrackSchema = true
-    } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
-      shouldTrackSchema = false
-    } else {
-      // Delegate to the shared utility which handles all column mapping mode transitions
-      // (both enabled, upgrade from none, downgrade to none).
-      shouldTrackSchema =
-          !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
-              newMetadata,
-              oldMetadata,
-              schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges)
-    }
-
-    if (shouldTrackSchema) {
-      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-              spark, oldMetadata.schema, newMetadata.schema, !validatedDuringStreamStart)
     }
   }
 
@@ -1502,7 +1478,9 @@ private[read] class DeltaV2MicroBatchStream(
                       Optional.of(Long.box(batchEndVersion.get)),
                       tableManager,
                       originalStreamingQueryContext,
-                      options.failOnDataLoss)
+                      options.failOnDataLoss,
+                      spark,
+                      readSnapshotDescriptor)
                   .entrySet())) {
             val version: Long = entry.getKey()
             val metadata: Metadata = entry.getValue()
@@ -1683,10 +1661,9 @@ private[read] class DeltaV2MicroBatchStream(
           val protocolOpt: Optional[io.delta.kernel.internal.actions.Protocol] =
               StreamingHelper.getProtocol(batch, rowId)
           if (protocolOpt.isPresent()) {
-            Preconditions.checkArgument(
-                protocolAction == null,
-                "Should not encounter two protocol actions in the same commit of version %d",
-                Long.box(version))
+            assert(
+              protocolAction == null,
+              s"Should not encounter two protocol actions in the same commit of version $version")
             // TODO: Read CDC commits as V1 actions instead of Kernel batches to remove
             // this Protocol conversion.
             protocolAction = KernelActionUtils.protocolFromKernel(protocolOpt.get())
@@ -1776,18 +1753,18 @@ private[read] class DeltaV2MicroBatchStream(
         if (cdc.getAddFile() != null) {
           val prev: io.delta.kernel.internal.actions.AddFile =
               addByPath.put(cdc.getAddFile().getPath(), cdc.getAddFile())
-          Preconditions.checkArgument(
-              prev == null,
-              "Unexpected duplicate AddFile at path %s in a single commit",
-              cdc.getAddFile().getPath())
+          require(
+            prev == null,
+            s"Unexpected duplicate AddFile at path ${cdc.getAddFile().getPath()} " +
+              "in a single commit")
         // scalastyle:off removeFile // Reads Kernel RemoveFiles; does not create any.
         } else if (cdc.getRemoveFile() != null) {
           val prev: io.delta.kernel.internal.actions.RemoveFile =
               removeByPath.put(cdc.getRemoveFile().getPath(), cdc.getRemoveFile())
-          Preconditions.checkArgument(
-              prev == null,
-              "Unexpected duplicate RemoveFile at path %s in a single commit",
-              cdc.getRemoveFile().getPath())
+          require(
+            prev == null,
+            s"Unexpected duplicate RemoveFile at path ${cdc.getRemoveFile().getPath()} " +
+              "in a single commit")
         }
         // scalastyle:on removeFile
       }
@@ -1866,11 +1843,11 @@ private[read] class DeltaV2MicroBatchStream(
       if (file.hasFileAction()) {
         dataFiles.add(file)
       } else {
-        Preconditions.checkState(
-            baseSentinel.isEmpty,
-            String.format(
-                "Expected at most one BASE sentinel per commit, got multiple for version %s",
-                Long.box(commitVersion)))
+        if (baseSentinel.nonEmpty) {
+          throw new IllegalStateException(
+            "Expected at most one BASE sentinel per commit, " +
+              s"got multiple for version $commitVersion")
+        }
         baseSentinel = Some(file)
       }
     }
@@ -1929,10 +1906,9 @@ private[read] class DeltaV2MicroBatchStream(
       startVersion: Long,
       endOffsetOpt: Optional[DeltaSourceOffset],
       verifyMetadataAction: Boolean): Metadata = {
-    Preconditions.checkArgument(
-        existing == null,
-        "Should not encounter two metadata actions in the same commit of version %d",
-        Long.box(version))
+    assert(
+      existing == null,
+      s"Should not encounter two metadata actions in the same commit of version $version")
     // When schema tracking is enabled, verifyMetadataAction is false - the handler manages
     // schema changes through the barrier protocol instead.
     if (verifyMetadataAction) {

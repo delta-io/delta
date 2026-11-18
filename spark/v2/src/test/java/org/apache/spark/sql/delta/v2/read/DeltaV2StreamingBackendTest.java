@@ -34,7 +34,6 @@ import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -69,9 +68,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
     try (commits) {
       List<Long> versions = new ArrayList<>();
       while (commits.hasNext()) {
-        try (DeltaV2SingleCommit commit = (DeltaV2SingleCommit) commits.next()) {
-          versions.add(commit.version());
-        }
+        versions.add(commits.next().version());
       }
       return versions;
     }

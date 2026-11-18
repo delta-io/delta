@@ -3382,6 +3382,77 @@ class SchemaUtilsSuite extends QueryTest
     )
   }
 
+  /////////////////////////////////////////
+  // typeAsNullable and typeAsFullyNullable
+  /////////////////////////////////////////
+  test("typeAsNullable and typeAsFullyNullable") {
+    case class NullabilityCase(
+        inputType: DataType,
+        expectedTypeAsNullable: DataType,
+        expectedTypeAsFullyNullable: DataType)
+
+    val int = IntegerType
+    def array(elementType: DataType, containsNull: Boolean): DataType =
+      ArrayType(elementType, containsNull)
+    def map(valueType: DataType, valueContainsNull: Boolean): DataType =
+      MapType(StringType, valueType, valueContainsNull)
+    def struct(fieldType: DataType, nullable: Boolean): StructType =
+      new StructType().add("f", fieldType, nullable)
+
+    val cases = Seq(
+      NullabilityCase(
+        inputType = int,
+        expectedTypeAsNullable = int,
+        expectedTypeAsFullyNullable = int),
+      NullabilityCase(
+        inputType = array(int, false),
+        expectedTypeAsNullable = array(int, true),
+        expectedTypeAsFullyNullable = array(int, true)),
+      // typeAsNullable only makes the elements of the outer array nullable.
+      NullabilityCase(
+        inputType = array(array(int, false), false),
+        expectedTypeAsNullable = array(array(int, false), true),
+        expectedTypeAsFullyNullable = array(array(int, true), true)),
+      NullabilityCase(
+        inputType = array(struct(int, false), false),
+        expectedTypeAsNullable = array(struct(int, true), true),
+        expectedTypeAsFullyNullable = array(struct(int, true), true)),
+      // typeAsNullable leaves maps without struct keys or values as they are.
+      NullabilityCase(
+        inputType = map(int, false),
+        expectedTypeAsNullable = map(int, false),
+        expectedTypeAsFullyNullable = map(int, true)),
+      NullabilityCase(
+        inputType = map(array(int, false), false),
+        expectedTypeAsNullable = map(array(int, false), false),
+        expectedTypeAsFullyNullable = map(array(int, true), true)),
+      NullabilityCase(
+        inputType = map(map(int, false), false),
+        expectedTypeAsNullable = map(map(int, false), false),
+        expectedTypeAsFullyNullable = map(map(int, true), true)),
+      NullabilityCase(
+        inputType = map(struct(int, false), false),
+        expectedTypeAsNullable = map(struct(int, true), true),
+        expectedTypeAsFullyNullable = map(struct(int, true), true)),
+      NullabilityCase(
+        inputType = MapType(struct(int, false), int, valueContainsNull = false),
+        expectedTypeAsNullable = MapType(struct(int, true), int, valueContainsNull = true),
+        expectedTypeAsFullyNullable = MapType(struct(int, true), int, valueContainsNull = true)),
+      // Both make everything nested in a struct nullable.
+      NullabilityCase(
+        inputType = struct(map(array(int, false), false), false),
+        expectedTypeAsNullable = struct(map(array(int, true), true), true),
+        expectedTypeAsFullyNullable = struct(map(array(int, true), true), true)))
+
+    cases.foreach { testCase =>
+      val inputType = testCase.inputType
+      assert(SchemaUtils.typeAsNullable(inputType) == testCase.expectedTypeAsNullable,
+        s"typeAsNullable(${inputType.json})")
+      assert(SchemaUtils.typeAsFullyNullable(inputType) == testCase.expectedTypeAsFullyNullable,
+        s"typeAsFullyNullable(${inputType.json})")
+    }
+  }
+
   ////////////////////////////
   // checkFieldNames
   ////////////////////////////
