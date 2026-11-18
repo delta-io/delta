@@ -1555,6 +1555,7 @@ private[read] class DeltaV2MicroBatchStream(
                       endOffsetOpt.map[java.lang.Long](_.reservoirVersion).orElse(version)))
             }
           case protocol: Protocol =>
+            // TODO: Validate protocol read compatibility before processing CDC files.
             // Capture protocol-only changes so they also trigger a schema barrier.
             assert(
               protocolAction == null,

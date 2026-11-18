@@ -26,13 +26,10 @@ import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -41,6 +38,7 @@ import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.read.CDCDataFile;
@@ -61,24 +59,8 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
   private static final long MB = 1024 * 1024;
 
   private static final DeletionVectorDescriptor TEST_DV =
-      new DeletionVectorDescriptor("u", "ab^-rstxgiarsd", Optional.of(4), 40, 3L);
-
-  private static AddFile createAddFileForCDC(
-      String path, long size, long modificationTime, Optional<DeletionVectorDescriptor> dv) {
-    return new AddFile(
-        AddFile.createAddFileRow(
-            new io.delta.kernel.types.StructType(),
-            path,
-            VectorUtils.stringStringMapValue(Collections.emptyMap()),
-            size,
-            modificationTime,
-            /* dataChange= */ true,
-            dv,
-            /* tags= */ Optional.empty(),
-            /* baseRowId= */ Optional.empty(),
-            /* defaultRowCommitVersion= */ Optional.empty(),
-            /* stats= */ Optional.empty()));
-  }
+      new DeletionVectorDescriptor(
+          "u", "ab^-rstxgiarsd", scala.Option.apply((Object) 4), 40, 3L, scala.Option.empty());
 
   private static java.util.Map<String, Object> getFileMetadata(PartitionedFile pf) {
     return CollectionConverters.asJava(pf.otherConstantMetadataColumnValues());
@@ -768,10 +750,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
   @Test
   public void testBuildCDCPartitionedFile_dvDiff_setsOverrideDvAndIfNotContained() {
-    AddFile addFile = createAddFileForCDC("data.parquet", 1024, 100L, Optional.of(TEST_DV));
     CDCDataFile cdcFile =
         CDCDataFile.fromDVDiff(
-            addFile,
+            createTestAddFile("data.parquet", 1024, 100L, Optional.of(TEST_DV)),
             CDCReader.CDC_TYPE_DELETE_STRING(),
             /* commitTimestamp= */ 1000L,
             "override==");
@@ -790,8 +771,10 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
   @Test
   public void testBuildCDCPartitionedFile_regularAddFileWithDv_setsIfContained() {
-    AddFile addFile = createAddFileForCDC("data.parquet", 2048, 200L, Optional.of(TEST_DV));
-    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 2000L);
+    CDCDataFile cdcFile =
+        CDCDataFile.fromAddFile(
+            createTestAddFile("data.parquet", 2048, 200L, Optional.of(TEST_DV)),
+            /* commitTimestamp= */ 2000L);
 
     PartitionedFile pf =
         PartitionUtils.buildCDCPartitionedFile(
@@ -808,8 +791,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
   @Test
   public void testBuildCDCPartitionedFile_noDv_noFilterMetadata() {
-    AddFile addFile = createAddFileForCDC("data.parquet", 512, 300L, Optional.empty());
-    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 3000L);
+    CDCDataFile cdcFile =
+        CDCDataFile.fromAddFile(
+            createTestAddFile("data.parquet", 512, 300L), /* commitTimestamp= */ 3000L);
 
     PartitionedFile pf =
         PartitionUtils.buildCDCPartitionedFile(
