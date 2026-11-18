@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal.table;
 
+import static io.delta.kernel.internal.checkpoints.Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
@@ -53,6 +54,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     public List<ParsedLogData> logDatas = Collections.emptyList();
     public Optional<Tuple2<Protocol, Metadata>> protocolAndMetadataOpt = Optional.empty();
     public Optional<Long> maxCatalogVersion = Optional.empty();
+    public int checkpointSearchBatchSize = DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE;
 
     public Context(String unresolvedPath) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
@@ -73,6 +75,13 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   public SnapshotBuilderImpl atVersion(long version) {
     checkArgument(version >= 0, "version must be >= 0");
     ctx.versionOpt = Optional.of(version);
+    return this;
+  }
+
+  @Override
+  public SnapshotBuilderImpl withCheckpointSearchBatchSize(int batchSize) {
+    checkArgument(batchSize > 0, "checkpoint search batch size must be > 0");
+    ctx.checkpointSearchBatchSize = batchSize;
     return this;
   }
 

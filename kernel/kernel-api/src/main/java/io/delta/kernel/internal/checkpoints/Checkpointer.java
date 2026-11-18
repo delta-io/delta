@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
 import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.data.ColumnarBatch;
@@ -52,6 +53,9 @@ public class Checkpointer {
   private static final Logger logger = LoggerFactory.getLogger(Checkpointer.class);
 
   private static final int READ_LAST_CHECKPOINT_FILE_MAX_RETRIES = 3;
+
+  /** Default number of versions searched per batch when finding a checkpoint. */
+  public static final int DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE = 1000;
 
   /** The name of the last checkpoint file */
   public static final String LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint";
@@ -151,8 +155,8 @@ public class Checkpointer {
 
   /** Find the last complete checkpoint before (strictly less than) a given version. */
   public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
-      Engine engine, Path tableLogPath, long version) {
-    return findLastCompleteCheckpointBeforeHelper(engine, tableLogPath, version)._1;
+      Engine engine, Path tableLogPath, long version, int batchSize) {
+    return findLastCompleteCheckpointBeforeHelper(engine, tableLogPath, version, batchSize)._1;
   }
 
   /**
@@ -160,7 +164,8 @@ public class Checkpointer {
    * searched. This helps in testing
    */
   public static Tuple2<Optional<CheckpointInstance>, Long> findLastCompleteCheckpointBeforeHelper(
-      Engine engine, Path tableLogPath, long version) {
+      Engine engine, Path tableLogPath, long version, int batchSize) {
+    checkArgument(batchSize > 0, "checkpoint search batch size must be > 0");
     CheckpointInstance upperBoundCheckpoint = new CheckpointInstance(version);
     logger.info("Try to find the last complete checkpoint before version {}", version);
 
@@ -168,22 +173,18 @@ public class Checkpointer {
     long numberOfFilesSearched = 0;
     long currentVersion = version;
 
-    // Some cloud storage APIs make a calls to fetch 1000 at a time.
-    // To make use of that observation and to avoid making more listing calls than
-    // necessary, list 1000 at a time (backwards from the given version). Search
-    // within that list if a checkpoint is found. If found stop, otherwise list the previous
-    // 1000 entries. Repeat until a checkpoint is found or there are no more delta commits.
+    // Multipart checkpoints can add many files per version. Start each pass at most batchSize
+    // versions before currentVersion, and search earlier if no complete checkpoint is found.
     while (currentVersion >= 0) {
-      try {
-        long searchLowerBound = Math.max(0, currentVersion - 1000);
-        CloseableIterator<FileStatus> deltaLogFileIter =
-            wrapEngineExceptionThrowsIO(
-                () ->
-                    engine
-                        .getFileSystemClient()
-                        .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound)),
-                "Listing from %s",
-                FileNames.listingPrefix(tableLogPath, searchLowerBound));
+      long searchLowerBound = Math.max(0, currentVersion - batchSize);
+      try (CloseableIterator<FileStatus> deltaLogFileIter =
+          wrapEngineExceptionThrowsIO(
+              () ->
+                  engine
+                      .getFileSystemClient()
+                      .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound)),
+              "Listing from %s",
+              FileNames.listingPrefix(tableLogPath, searchLowerBound))) {
 
         List<CheckpointInstance> checkpoints = new ArrayList<>();
         while (deltaLogFileIter.hasNext()) {
@@ -228,7 +229,10 @@ public class Checkpointer {
               latestCheckpoint.get());
           return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
         }
-        currentVersion -= 1000; // search for checkpoint in previous 1000 entries
+        if (searchLowerBound == 0) {
+          break;
+        }
+        currentVersion -= batchSize;
       } catch (IOException e) {
         String msg =
             String.format(
