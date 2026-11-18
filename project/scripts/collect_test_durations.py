@@ -30,6 +30,7 @@ import tempfile
 import time
 import zipfile
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from xml.etree import ElementTree
 
 
@@ -52,16 +53,21 @@ def run_gh(args):
 
 
 def get_run_ids(last_n):
-    """Find the latest N successful workflow run IDs on master."""
-    runs_json = run_gh([
-        "run", "list", "--repo", REPO,
-        "--branch", "master",
-        "--workflow", "spark_test.yaml",
-        "--status", "success",
-        "--limit", str(last_n),
-        "--json", "databaseId,headSha,createdAt"
-    ])
-    runs = json.loads(runs_json)
+    """Find recent successful runs on the PR branch, with master as the fallback."""
+    def list_runs(branch):
+        return json.loads(run_gh([
+            "run", "list", "--repo", REPO,
+            "--branch", branch,
+            "--workflow", "spark_test.yaml",
+            "--status", "success",
+            "--limit", str(last_n),
+            "--json", "databaseId,headSha,createdAt"
+        ]))
+
+    branch = os.environ.get("GITHUB_HEAD_REF") or "master"
+    runs = list_runs(branch)
+    if not runs and branch != "master":
+        runs = list_runs("master")
     if not runs:
         print("No successful runs found on master", file=sys.stderr)
         sys.exit(1)
@@ -148,13 +154,17 @@ def collect_from_run(run_id, tmpdir):
         print(f"  No artifacts in run {run_id}", file=sys.stderr)
         return {}
 
-    run_durations = {}
-    for art in artifacts:
+    def collect_artifact(art):
         print(f"    Spark {art['spark_version']}, Shard {art['shard']}...")
         artifact_dir = download_and_extract(art["id"], tmpdir)
-        for name, dur in parse_junit_xmls(artifact_dir).items():
-            if name not in run_durations or dur > run_durations[name]:
-                run_durations[name] = dur
+        return parse_junit_xmls(artifact_dir)
+
+    run_durations = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for durations in pool.map(collect_artifact, artifacts):
+            for name, dur in durations.items():
+                if name not in run_durations or dur > run_durations[name]:
+                    run_durations[name] = dur
 
     return run_durations
 
@@ -173,7 +183,7 @@ def main():
     args = parser.parse_args()
 
     # Fetch run IDs
-    print("Finding recent successful runs on master...")
+    print("Finding recent successful runs...")
     run_ids = get_run_ids(args.last_n_runs)
 
     deadline = time.monotonic() + args.max_minutes * 60 if args.max_minutes > 0 else None
