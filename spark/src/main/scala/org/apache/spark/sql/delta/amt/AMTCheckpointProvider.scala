@@ -255,9 +255,10 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * Reconstructs the live-file AddFile actions from the AMT as a [[Dataset]].
    */
   private def liveAddSingleActions(
-      spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction] = {
     val root = rootLiveAddSingleActions(spark, deltaLog)
-    if (liveLeaves.isEmpty) root else root.union(leafLiveAddSingleActions(deltaLog))
+    if (liveLeaves.isEmpty) root else root.union(leafLiveAddSingleActions(spark, deltaLog))
   }
 
   /**
@@ -267,7 +268,9 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction]
 
   /** Reconstructs the AddFiles of every live leaf, taking care of inheritance. */
-  protected def leafLiveAddSingleActions(deltaLog: DeltaLog): Dataset[SingleAction]
+  protected def leafLiveAddSingleActions(
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction]
 
   /** The live AddFiles that the root holds, for the incremental writer. */
   private[amt] def readLiveRootDataEntries(
@@ -297,10 +300,17 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * entries of every status: callers filter by status after the row-ID prefix.
    */
   protected def leafEntriesWithRowIdPrefix(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
-      : DataFrame = {
-    val index = leafFileIndex(leavesWithRowIndexFilters)
+      : DataFrame =
+    leafEntriesWithRowIdPrefix(
+      deltaLog, leavesWithRowIndexFilters, leafFileIndex(spark, leavesWithRowIndexFilters))
+
+  private def leafEntriesWithRowIdPrefix(
+      deltaLog: DeltaLog,
+      leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])],
+      index: DeltaLogFileIndex): DataFrame = {
     val withPrefix =
       dataEntries(loadPersistedEntries(deltaLog, index, includeRowIndexFilterMarker = true))
         .withColumn(PRECEDING_RECORDS_COLUMN, precedingNullRowIdRecords())
@@ -547,10 +557,11 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * leaf without a filter is read unfiltered. The returned entries retain the computed prefix.
    */
   protected def loadLeafDataEntriesWithRowIdPrefix(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
       : Dataset[AMTDataEntryExtended] = {
-    val index = leafFileIndex(leavesWithRowIndexFilters)
+    val index = leafFileIndex(spark, leavesWithRowIndexFilters)
     val withPrefix = loadEntriesWithExtendedMetadata(
         deltaLog, index, checkpointAction.metaData, checkpointAction.protocol,
         includeRowIndexFilterMarker = true)
@@ -574,6 +585,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
 
   /** Builds an index over the given leaves that applies each leaf's row-index filter, if any. */
   protected def leafFileIndex(
+      spark: SparkSession,
       leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
       : DeltaLogFileIndex = {
     val files =
@@ -883,11 +895,12 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * their offset.
    */
   private[delta] def reconstructFileActions(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       dataChange: Boolean,
       commitTimestamp: Long,
       ordered: Boolean = true): Seq[FileAction] =
-    toChangeActions(reconstructChangeFiles(deltaLog), dataChange, commitTimestamp, ordered)
+    toChangeActions(reconstructChangeFiles(spark, deltaLog), dataChange, commitTimestamp, ordered)
       .collect().toSeq
       .map(_.unwrap.asInstanceOf[FileAction])
 
@@ -896,18 +909,21 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * partition of the sort at a time, so a large commit need not fit in driver memory.
    */
   private[delta] def reconstructFileActionsIterator(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       dataChange: Boolean,
       commitTimestamp: Long): Iterator[FileAction] =
     toChangeActions(
-        reconstructChangeFiles(deltaLog), dataChange, commitTimestamp, ordered = true)
+        reconstructChangeFiles(spark, deltaLog), dataChange, commitTimestamp, ordered = true)
       .toLocalIterator().asScala
       .map(_.unwrap.asInstanceOf[FileAction])
 
   /**
    * The changed files of the commit this tree describes.
    */
-  private[amt] def reconstructChangeFiles(deltaLog: DeltaLog): DataFrame = {
+  private[amt] def reconstructChangeFiles(
+      spark: SparkSession,
+      deltaLog: DeltaLog): DataFrame = {
     val addedLeaves = leaves.filter { leaf =>
       leaf.tracking.status == Tracking.Status.Added && !holdsOnlyExistingEntries(leaf)
     }
@@ -916,7 +932,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     assert(changedPositionsLeaves.forall(_.tracking.status != Tracking.Status.Added))
 
     (trackingDerivedChangeFiles(deltaLog, addedLeaves) +:
-      mdvDerivedChangeFiles(deltaLog, changedPositionsLeaves).toSeq)
+      mdvDerivedChangeFiles(spark, deltaLog, changedPositionsLeaves).toSeq)
       .reduce(_ union _)
   }
 
@@ -936,9 +952,13 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     if (addedLeaves.isEmpty) {
       rootChanges
     } else {
+      // TODO(v4amt): Reuse the manifest layout for tracking-derived change reconstruction too.
+      val leavesWithFilters = addedLeaves.map(_ -> None)
+      val leafIndex = DeltaLogFileIndex(
+        new AMTParquetFileFormat, addedLeaves.map(_.toFileStatus(tableRoot)).toArray)
       rootChanges.union(projectChangeFiles(
         withStatuses(
-          leafEntriesWithRowIdPrefix(deltaLog, addedLeaves.map(_ -> None)), changeStatuses),
+          leafEntriesWithRowIdPrefix(deltaLog, leavesWithFilters, leafIndex), changeStatuses),
         baseRowId = inheritedBaseRowId,
         removed = removed))
     }
@@ -949,6 +969,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * changed files [[projectChangeFiles]] selects.
    */
   private def mdvDerivedChangeFiles(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       touchedLeaves: Seq[DataManifestEntry]): Option[DataFrame] = {
     if (touchedLeaves.isEmpty) return None
@@ -957,7 +978,8 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
         leaf.changedPositionsBitmaps, tableRoot, inverse = true))
     }
     val entries = withStatuses(
-      leafEntriesWithRowIdPrefix(deltaLog, leavesWithFilters), Tracking.Status.liveEntryStatuses)
+      leafEntriesWithRowIdPrefix(spark, deltaLog, leavesWithFilters),
+      Tracking.Status.liveEntryStatuses)
     Some(projectChangeFiles(entries, baseRowId = inheritedBaseRowId, removed = lit(true)))
   }
 

@@ -482,7 +482,7 @@ class AMTIncrementalWriteInvariantSuite extends AMTIncrementalWriteTestBase {
     val deltaLog = deltaLogForName(tableName)
     val actions = amtProvider(deltaLog.update())
       .getOrElse(fail("expected an AMT-backed snapshot"))
-      .reconstructFileActions(deltaLog, dataChange = true, commitTimestamp = 0L)
+      .reconstructFileActions(spark, deltaLog, dataChange = true, commitTimestamp = 0L)
     def names(paths: Seq[String]): Set[String] = paths.map(fileName).toSet
     (names(actions.collect { case r: RemoveFile => r.path }),
       names(actions.collect { case a: AddFile => a.path }))
