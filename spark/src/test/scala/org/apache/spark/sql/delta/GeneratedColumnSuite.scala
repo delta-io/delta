@@ -448,28 +448,34 @@ trait GeneratedColumnSuiteBase
       "correct error") {
     withTableName("update_type_mismatch_generated") { table =>
       createTable(table, None, "c1 INT, arr ARRAY<INT>, g INT", Map("g" -> "c1 + 10"), Nil)
+      val updateSql = s"UPDATE $table SET arr = map('key', 'val')"
+      // MERGE update expressions also reference source columns.
+      val mergeSql =
+        s"""MERGE INTO $table t
+           |USING (SELECT 1 AS c1, map('key', 'val') AS m) s
+           |ON t.c1 = s.c1
+           |WHEN MATCHED THEN UPDATE SET arr = s.m""".stripMargin
       // With fix enabled: the correct type mismatch error is surfaced.
       withSQLConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN.key -> "true") {
-        val ex = intercept[AnalysisException] {
-          sql(s"UPDATE $table SET arr = map('key', 'val')")
+        Seq(updateSql -> "\"map(key, val)\"", mergeSql -> "\"m\"").foreach {
+          case (query, sqlExpr) =>
+            checkError(
+              intercept[AnalysisException](sql(query)),
+              "DATATYPE_MISMATCH.CAST_WITHOUT_SUGGESTION",
+              sqlState = Some("42K09"),
+              parameters = Map(
+                "sqlExpr" -> sqlExpr,
+                "srcType" -> "\"MAP<STRING, STRING>\"",
+                "targetType" -> "\"ARRAY<INT>\""),
+              queryContext = Array(ExpectedContext(query, 0, query.length - 1)))
         }
-        assert(ex.getErrorClass === "DATATYPE_MISMATCH.CAST_WITHOUT_SUGGESTION")
-        // MERGE update expressions also reference source columns.
-        val mergeEx = intercept[AnalysisException] {
-          sql(
-            s"""MERGE INTO $table t
-               |USING (SELECT 1 AS c1, map('key', 'val') AS m) s
-               |ON t.c1 = s.c1
-               |WHEN MATCHED THEN UPDATE SET arr = s.m""".stripMargin)
-        }
-        assert(mergeEx.getErrorClass === "DATATYPE_MISMATCH.CAST_WITHOUT_SUGGESTION")
       }
       // With fix disabled: the old misleading error is produced.
       withSQLConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN.key -> "false") {
-        val ex = intercept[AnalysisException] {
-          sql(s"UPDATE $table SET arr = map('key', 'val')")
-        }
-        assert(ex.getErrorClass === "DELTA_CANNOT_RESOLVE_EXPRESSION")
+        checkError(
+          intercept[AnalysisException](sql(updateSql)),
+          "DELTA_CANNOT_RESOLVE_EXPRESSION",
+          parameters = Map("expression" -> "('c1 + 10)"))
       }
     }
   }
