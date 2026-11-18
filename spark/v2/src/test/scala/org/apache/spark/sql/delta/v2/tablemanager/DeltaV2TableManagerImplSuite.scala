@@ -28,7 +28,6 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper
 import io.delta.kernel.exceptions.{
-  CommitRangeNotFoundException => KernelCommitRangeNotFoundException,
   InvalidTableException => KernelInvalidTableException,
   StartVersionNotFoundException => KernelStartVersionNotFoundException
 }
@@ -307,42 +306,6 @@ class DeltaV2TableManagerImplSuite
           }
         }
       }
-  }
-
-  for {
-    hasLaterCommit <- Seq(false, true)
-    failOnDataLoss <- Seq(false, true)
-  } {
-    test("getSingleCommitIterator handles a fully missing commit range " +
-        s"(hasLaterCommit=$hasLaterCommit, failOnDataLoss=$failOnDataLoss)") {
-      withSQLConf(
-          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
-          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false") {
-        withTempDir { dir =>
-          val path = dir.getCanonicalPath
-          spark.range(1).write.format("delta").save(path)
-          spark.range(1, 2).write.format("delta").mode("append").save(path)
-          spark.range(2, 3).write.format("delta").mode("append").save(path)
-          DeltaLog.forTable(spark, path).checkpoint()
-          val lastVersionToDelete = if (hasLaterCommit) 1L else 2L
-          (0L to lastVersionToDelete).foreach { version =>
-            Files.delete(new File(dir, f"_delta_log/$version%020d.json").toPath)
-          }
-
-          forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-            def readVersions(): List[Long] = manager.getSingleCommitIterator(
-              0L, Some(1L), DeltaV2QueryContext(catalogTableOpt), failOnDataLoss)
-              .processAndClose(_.map(_.version).toList)
-
-            if (failOnDataLoss) {
-              intercept[KernelCommitRangeNotFoundException] { readVersions() }
-            } else {
-              assert(readVersions().isEmpty)
-            }
-          }
-        }
-      }
-    }
   }
 
   Seq((false, false), (true, true), (false, true)).foreach {

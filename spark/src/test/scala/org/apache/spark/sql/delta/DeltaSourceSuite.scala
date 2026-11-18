@@ -2423,6 +2423,105 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  for (failOnDataLoss <- Seq(true, false)) {
+    test("incremental: whole planned commit range missing, " +
+        s"failOnDataLoss=$failOnDataLoss") {
+      // Exercise failOnDataLoss independently of the trailing-commit validator.
+      withSQLConf(
+          DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION.key -> "false",
+          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
+          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false") {
+        withTempDirs { (srcData, targetData, chkLocation) =>
+          def addData(version: Long): Unit = {
+            val numFiles = if (version == 2) 2 else 1
+            spark.range(version * 10, (version + 1) * 10).repartition(numFiles)
+              .write.format("delta").mode("append").save(srcData.getCanonicalPath)
+          }
+
+          addData(0)
+          val srcLog = DeltaLog.forTable(spark, srcData)
+          val df = loadStreamWithOptions(
+            srcData.getCanonicalPath,
+            Map("failOnDataLoss" -> failOnDataLoss.toString, "maxFilesPerTrigger" -> "2"))
+          val failureMessage = "fail before committing the planned batch"
+
+          def startStream(failBatch: Boolean = false): StreamingQuery = {
+            df.writeStream
+              .option("checkpointLocation", chkLocation.getCanonicalPath)
+              .foreachBatch { (batch: DataFrame, _: Long) =>
+                if (failBatch) throw new IllegalStateException(failureMessage)
+                batch.write.format("delta").mode("append").save(targetData.getCanonicalPath)
+              }
+              .start()
+          }
+
+          val initialQuery = startStream()
+          try {
+            initialQuery.processAllAvailable()
+          } finally {
+            initialQuery.stop()
+          }
+
+          addData(1)
+          addData(2)
+          val failedQuery = startStream(failBatch = true)
+          try {
+            val e = intercept[StreamingQueryException] {
+              failedQuery.processAllAvailable()
+            }
+            assert(ExceptionUtils.getRootCause(e).getMessage == failureMessage)
+          } finally {
+            failedQuery.stop()
+          }
+
+          // End inside version 2 so the bounded listing cannot include the retained version 3.
+          val offsetLog = new OffsetSeqLog(spark, new File(chkLocation, "offsets").toString)
+          def batchEndOffset(batchId: Long): DeltaSourceOffset = {
+            DeltaSourceOffset(srcLog.unsafeVolatileTableId,
+              offsetLog.get(batchId).get.offsets.head.get)
+          }
+          assert(batchEndOffset(0) == DeltaSourceOffset(
+            srcLog.unsafeVolatileTableId, 1, DeltaSourceOffset.BASE_INDEX, false))
+          assert(batchEndOffset(1) == DeltaSourceOffset(
+            srcLog.unsafeVolatileTableId, 2, 0, isInitialSnapshot = false))
+
+          // A later commit lets V1's unbounded listing detect the missing range. A checkpoint
+          // keeps the table snapshot readable after every commit in the planned range is deleted.
+          addData(3)
+          srcLog.checkpoint()
+          (1L to 2L).foreach { version =>
+            assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, version).toUri).delete())
+          }
+
+          val restartedQuery = startStream()
+          try {
+            if (failOnDataLoss) {
+              val e = intercept[StreamingQueryException] {
+                restartedQuery.processAllAvailable()
+              }
+              if (useDsv2) {
+                assert(e.getCause.getMessage.contains(
+                  "no log files found in the requested version range"))
+              } else {
+                checkError(e.getCause.asInstanceOf[DeltaIllegalStateException],
+                  "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
+                  Map("startVersion" -> "1", "earliestVersion" -> "3",
+                    "option" -> "failOnDataLoss"))
+              }
+            } else {
+              restartedQuery.processAllAvailable()
+            }
+            val expected = if (failOnDataLoss) 0L until 10L else (0L until 10L) ++ (30L until 40L)
+            checkAnswer(spark.read.format("delta").load(targetData.getCanonicalPath),
+              expected.map(Row(_)))
+          } finally {
+            restartedQuery.stop()
+          }
+        }
+      }
+    }
+  }
+
   test("incremental: first commit file missing, fails") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {

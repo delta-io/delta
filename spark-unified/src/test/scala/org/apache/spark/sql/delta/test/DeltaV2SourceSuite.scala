@@ -97,6 +97,8 @@ object DeltaV2SourceSuite {
       "equivalent to skipChangeCommits",
 
     // === Commit/Checkpoint file missing detection ===
+    "incremental: whole planned commit range missing, failOnDataLoss=true",
+    "incremental: whole planned commit range missing, failOnDataLoss=false",
     "incremental: first commit file missing, fails",
     "incremental: commit file gap between versions, fails",
     "incremental: first commit file missing, failOnDataLoss=false succeeds",
