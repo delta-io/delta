@@ -91,7 +91,7 @@ private[tablemanager] class DeltaV2TableManagerImpl(
         GetTableChangesParam(startVersion, endVersion, false, failOnDataLoss),
         queryContext)
     } catch {
-      case _: CommitRangeNotFoundException =>
+      case _: CommitRangeNotFoundException if !failOnDataLoss =>
         return new ClosableWrapper[DeltaSingleCommit](Iterator.empty).toClosable
     }
     val kernelCommitFiles = commitRange.getCommitFiles()
