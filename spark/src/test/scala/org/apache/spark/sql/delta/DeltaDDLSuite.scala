@@ -33,11 +33,11 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchPartitionException
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
-class DeltaDDLSuite
-  extends DeltaDDLTestBase
-    with DeltaSQLCommandTest {
+class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("Cannot change nullable column to non-nullable")
@@ -189,11 +189,8 @@ class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
 }
 
 
-abstract class DeltaDDLTestBase
-  extends QueryTest
-    with DeltaSQLCommandTest
-    with DeltaSQLTestUtils {
-  import deltaImplicits._
+abstract class DeltaDDLTestBase extends QueryTest with DeltaSQLTestUtils {
+  import testImplicits._
 
   protected def verifyDescribeTable(tblName: String): Unit = {
     val res = sql(s"DESCRIBE TABLE $tblName").collect()
