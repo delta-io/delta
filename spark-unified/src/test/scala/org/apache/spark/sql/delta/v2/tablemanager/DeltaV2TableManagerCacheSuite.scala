@@ -19,6 +19,8 @@ import java.util.Collections
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.util.matching.Regex
+
 import org.apache.spark.sql.delta.{DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore}
@@ -35,6 +37,7 @@ import org.apache.logging.log4j.Level
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
@@ -68,6 +71,29 @@ class DeltaV2TableManagerCacheSuite
       val second = cache.getOrCreate(key)
       assert(first eq second)
       assert(cache.size() == 1)
+    }
+  }
+
+  test("per-instance: cache hits do not evaluate path redaction") {
+    val redactionCalls = new AtomicInteger()
+    val sqlConf = new SQLConf {
+      override def stringRedactionPattern: Option[Regex] = {
+        redactionCalls.incrementAndGet()
+        super.stringRedactionPattern
+      }
+    }
+    val stub = new StubTableManager("redaction")
+    val cache = new DeltaV2TableManagerCache(
+      maxSize = 1000, ttlMinutes = 60,
+      managerFactory = (_, _) => stub)
+    withTempDir { dir =>
+      val key = makeKey(dir.getCanonicalPath)
+      assert(cache.getOrCreate(key, sqlConf = sqlConf) eq stub)
+      assert(redactionCalls.get() === 1)
+      assert(cache.getOrCreate(key, sqlConf = sqlConf) eq stub)
+      assert(redactionCalls.get() === 1, "cache hits must not redact the path again")
+      cache.invalidate(key)
+      assert(redactionCalls.get() === 1, "eviction must reuse the loading caller's redacted path")
     }
   }
 
@@ -192,6 +218,7 @@ class DeltaV2TableManagerCacheSuite
       assert(messages.size === 2)
       assert(messages.forall(!_.contains("loading-secret")))
       assert(messages.forall(_.contains("evicting-secret")))
+      assert(messages.forall(!_.contains("_delta_log")))
     }
   }
 
@@ -225,13 +252,15 @@ class DeltaV2TableManagerCacheSuite
       val creation = messages.filter(_.startsWith("Created Delta V2 table manager for "))
       val retirement = messages.filter(_.startsWith("Retired Delta V2 table manager for "))
       assert(creation.size === 1, "cache hits must not log a second creation")
-      assert(creation.head.endsWith("in 1000 ms"))
+      val dataPath = key.path.getParent.toUri.toString
+      assert(creation.head === s"Created Delta V2 table manager for $dataPath in 1000 ms")
       assert(retirement.size === 1)
-      assert(retirement.head.endsWith("in 2000 ms"))
+      assert(retirement.head === s"Retired Delta V2 table manager for $dataPath " +
+        "after cache eviction (EXPLICIT) in 2000 ms")
     }
   }
 
-  test("per-instance: retirement failure is logged once and does not stop cleanup") {
+  test("per-instance: retirement failure is logged once at WARN and does not stop cleanup") {
     val cause = new IllegalStateException("retirement-cause")
     val failing = new StubTableManager("failing") {
       override def retire(): Unit = throw cause
@@ -245,7 +274,8 @@ class DeltaV2TableManagerCacheSuite
     appender.setThreshold(Level.INFO)
     withTempDir { dirA =>
       withTempDir { dirB =>
-        cache.getOrCreate(makeKey(dirA.getCanonicalPath))
+        val failingKey = makeKey(dirA.getCanonicalPath)
+        cache.getOrCreate(failingKey)
         cache.getOrCreate(makeKey(dirB.getCanonicalPath))
         withLogAppender(
             appender,
@@ -260,9 +290,10 @@ class DeltaV2TableManagerCacheSuite
         assert(healthy.retired, "a failing retirement must not stop other entries retiring")
         val failures = appender.loggingEvents.filter(_.getThrown eq cause)
         assert(failures.size === 1, "retirement failure must not also escape to Guava logging")
-        assert(failures.head.getLevel === Level.ERROR)
-        assert(failures.head.getMessage.getFormattedMessage
-          .startsWith("Failed to retire Delta V2 table manager for "))
+        assert(failures.head.getLevel === Level.WARN)
+        assert(failures.head.getMessage.getFormattedMessage.startsWith(
+          s"Failed to retire Delta V2 table manager for ${failingKey.path.getParent.toUri} " +
+            "after cache eviction (EXPLICIT) in "))
       }
     }
   }

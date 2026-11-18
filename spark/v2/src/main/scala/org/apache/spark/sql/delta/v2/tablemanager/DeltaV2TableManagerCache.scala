@@ -78,7 +78,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
               "elapsedMs" -> elapsedMs))
         } catch {
           case NonFatal(e) =>
-            logError(log"Failed to retire Delta V2 table manager for " +
+            logWarning(log"Failed to retire Delta V2 table manager for " +
               log"${MDC(DeltaLogKeys.PATH, entry.redactedPath)} after cache eviction " +
               log"(${MDC(DeltaLogKeys.STATUS, notification.getCause)}) in " +
               log"${MDC(DeltaLogKeys.TIME_MS, elapsedTimeMs(startedAtNs, ticker.read()))} ms", e)
@@ -101,7 +101,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
       initialCatalogTableOpt: Option[CatalogTable] = None,
       sqlConf: SQLConf = SQLConf.get
   ): DeltaV2TableManager = {
-    val redactedPath = redactPath(key.path, sqlConf)
+    lazy val redactedPath = redactPath(key.path.getParent, sqlConf)
     try {
       cache.get(key, () => {
         recordFrameProfile("tableManagerCache.createManager") {
