@@ -130,7 +130,8 @@ private[read] class DeltaV2ScanBuilder(
   override def pruneColumns(requiredSchema: StructType): Unit =
     recordFrameProfile("scanBuilder.pruneColumns") {
       Objects.requireNonNull(requiredSchema, "requiredSchema is null")
-      // CDC columns are injected later by CDCReadFunction, so strip them here.
+      // Keep metadata `_metadata` distinct from partition `_Metadata` in case-sensitive queries.
+      // CDC filtering must match CDCSchemaContext's case-insensitive schema validation.
       requiredDataSchema = new StructType(
         requiredSchema.fields.filter { f =>
           !partitionColumnNames.contains(f.name) && !CDCSchemaContext.isCDCColumn(f.name)
