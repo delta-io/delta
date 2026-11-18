@@ -95,6 +95,8 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest with DeltaSQLCommandTest {
       expectErrorWithoutEvolutionContains: String = null,
       confs: Seq[(String, String)] = Seq(),
       partitionCols: Seq[String] = Seq.empty): Unit = {
+    val testConfs = Seq[(String, String)](
+    ) ++ confs
 
     def executeMergeAndAssert(df: DataFrame, schema: StructType, error: String): Unit = {
       append(targetData, partitionCols)
@@ -124,14 +126,14 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest with DeltaSQLCommandTest {
 
     val tagsWithSchemaEvolution = testTags :+ DSv2DMLSchemaEvolution
     test(s"schema evolution - $name - with evolution disabled", tagsWithSchemaEvolution: _*) {
-      withConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
+      withConf(testConfs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
         executeMergeAndAssert(expectedWithoutEvolution, expectedSchemaWithoutEvolution,
           expectErrorWithoutEvolutionContains)
       }
     }
 
     test(s"schema evolution - $name", tagsWithSchemaEvolution: _*) {
-      withConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
+      withConf((testConfs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
         executeMergeAndAssert(expected, expectedSchema, expectErrorContains)
       }
     }

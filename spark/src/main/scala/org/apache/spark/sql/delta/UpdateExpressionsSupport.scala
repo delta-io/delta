@@ -192,6 +192,12 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                   columnName
                 )
             }
+          case (from: ArrayType, to: ArrayType)
+              if from != to &&
+                castingBehavior.isInstanceOf[MergeOrUpdateCastingBehavior] &&
+                castingBehavior.resolveStructsByName &&
+                containsNestedStruct(from) && containsNestedStruct(to) =>
+            castArrayByName(fromExpression, from, to, castingBehavior, columnName)
           case (from: MapType, to: MapType) if !Cast.canCast(from, to) || (
               // Structs can be nested into the MapType, so if we need to do by-name casts,
               // we need to recurse into the children here.
@@ -314,6 +320,36 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
             cast(fromExpression, dataType, castingBehavior, columnName)
           case _ => fromExpression
         }
+    }
+  }
+
+  /** Convert uncovered array shapes while retaining each descendant collection's controls. */
+  private def castArrayByName(
+      fromExpression: Expression,
+      from: ArrayType,
+      to: ArrayType,
+      castingBehavior: CastingBehavior,
+      columnName: String): Expression = {
+    def castArray(expression: Expression): Expression =
+      castIfNeeded(expression, to, castingBehavior, columnName)
+
+    // As for direct arrays of structs, convert operands before applying set/removal operations.
+    fromExpression match {
+      case ArrayUnion(left, right) => ArrayUnion(castArray(left), castArray(right))
+      case ArrayIntersect(left, right) => ArrayIntersect(castArray(left), castArray(right))
+      case ArrayExcept(left, right) => ArrayExcept(castArray(left), castArray(right))
+      case ArrayRemove(left, right) =>
+        ArrayRemove(
+          castArray(left), castIfNeeded(right, to.elementType, castingBehavior, columnName))
+      case ArrayDistinct(child) => ArrayDistinct(castArray(child))
+      case _ =>
+        val element = NamedLambdaVariable("element", from.elementType, from.containsNull)
+        val converted = castIfNeeded(element, to.elementType, castingBehavior, columnName)
+        cast(
+          ArrayTransform(fromExpression, LambdaFunction(converted, Seq(element))),
+          to.asNullable,
+          castingBehavior,
+          columnName)
     }
   }
 
