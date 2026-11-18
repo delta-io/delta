@@ -456,7 +456,7 @@ case class CreateDeltaTableCommand(
           // from source table. It will override the `newProtocol` being created in the above
           // `txn.updateMetadataForNewTable`.
           // In order to enable [[CatalogOwnedTableFeature]] for target table w/ default
-          // spark configuration of CatalogOwned enabled, we need to manually append
+          // spark configuration of CatalogManaged enabled, we need to manually append
           // [[CatalogOwnedTableFeature]] here to the existing source table protocol.
           val finalizedProtocol = if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(
               spark = sparkSession)) {

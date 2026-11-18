@@ -54,18 +54,24 @@ private[delta] object KernelSnapshotUtils extends DeltaV2Logging {
       spark: SparkSession,
       engine: Engine,
       redactedPath: String): Dataset[AddFile] = {
-    try {
-      logInfo(log"Building Delta V2 table state for " +
-        log"${MDC(DeltaLogKeys.PATH, redactedPath)} at version " +
-        log"${MDC(DeltaLogKeys.VERSION, kernelSnapshot.getVersion)} with engine " +
-        log"${MDC(DeltaLogKeys.SYSTEM_CLASS_NAME, engine.getClass.getName)}")
-      spark.createDataset(collectV1AddFiles(kernelSnapshot, engine))
-    } catch {
-      case NonFatal(e) =>
-        logWarning(log"Failed to build Delta V2 table state for " +
-          log"${MDC(DeltaLogKeys.PATH, redactedPath)} at version " +
-          log"${MDC(DeltaLogKeys.VERSION, kernelSnapshot.getVersion)}", e)
-        throw e
+    recordDeltaOperationForTablePath(
+      kernelSnapshot.getDataPath.toString, "scan.buildAllFiles") {
+      def buildTableState(): Dataset[AddFile] = {
+        try {
+          logInfo(log"Building Delta V2 table state for " +
+            log"${MDC(DeltaLogKeys.PATH, redactedPath)} at version " +
+            log"${MDC(DeltaLogKeys.VERSION, kernelSnapshot.getVersion)} with engine " +
+            log"${MDC(DeltaLogKeys.SYSTEM_CLASS_NAME, engine.getClass.getName)}")
+          spark.createDataset(collectV1AddFiles(kernelSnapshot, engine))
+        } catch {
+          case NonFatal(e) =>
+            logWarning(log"Failed to build Delta V2 table state for " +
+              log"${MDC(DeltaLogKeys.PATH, redactedPath)} at version " +
+              log"${MDC(DeltaLogKeys.VERSION, kernelSnapshot.getVersion)}", e)
+            throw e
+        }
+      }
+      buildTableState()
     }
   }
 

@@ -682,13 +682,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val AMT_ROOT_CACHE_MAX_NUM_ENTRIES =
     buildConf("amt.rootCache.maxNumEntries")
       .internal()
-      .doc("Cache the persisted AMT root rows only when the entry count from the Parquet " +
-        "footer, including DATA and DATA_MANIFEST entries, is less than this threshold. " +
-        "Otherwise collect only leaf pointers during discovery and read the root again for " +
-        "reconstruction. Set to 0 to disable root row caching and skip the footer count check.")
+      .doc("Cache persisted AMT root rows only when columnar state reconstruction is enabled " +
+        "and the root has fewer entries than this threshold. Discovery reads the entry count " +
+        "from the Parquet footer. Writers use the number of rows written. Set to 0 to disable " +
+        "root row caching and skip the footer count check.")
       .intConf
       .checkValue(_ >= 0, "amt.rootCache.maxNumEntries must be non-negative.")
-      .createWithDefault(12000)
+      .createWithDefault(50000)
 
   val AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT =
     buildConf("amt.largeCommitActionsCountThresholdForInlineManifestCommit")
@@ -741,6 +741,34 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "AMT. When disabled, it reads each commit's log file as written.")
       .booleanConf
       .createWithDefault(false)
+
+  final object AMTBinaryJsonCompressionPolicy {
+    final val DISABLED = "disabled"
+    final val IF_BENEFICIAL = "if-beneficial"
+    final val VALUES = Set(DISABLED, IF_BENEFICIAL)
+  }
+
+  val AMT_BINARY_JSON_COMPRESSION_POLICY =
+    buildConf("amt.binaryJson.compressionPolicy")
+      .internal()
+      .doc("Compression policy for individual AMT binary payloads encoded as JSON strings. " +
+        "'disabled' stores raw bytes. 'if-beneficial' tries ZSTD once and uses it when the " +
+        "compressed payload reduces the final Z85 size, including the header and padding. " +
+        "Ties and empty payloads use raw encoding. Encoding returns a size-limit result if " +
+        "the selected payload exceeds the length header's capacity.")
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(AMTBinaryJsonCompressionPolicy.VALUES)
+      .createWithDefault(AMTBinaryJsonCompressionPolicy.IF_BENEFICIAL)
+
+  val AMT_BINARY_JSON_FORMAT_VERSION =
+    buildConf("amt.binaryJson.formatVersion")
+      .internal()
+      .doc("Envelope format version used to write AMT binary payloads as Z85 JSON strings. " +
+        "Readers use the stored version byte, independently of this writer setting.")
+      .intConf
+      .checkValues(Set(1))
+      .createWithDefault(1)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -1763,6 +1791,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If true, Delta commit will validate the commit checksum file content before and " +
         "after each incremental commit as part of Unit Tests. Note that this overrides any " +
         s"behaviour from ${INCREMENTAL_COMMIT_VERIFY.key} config.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val INCREMENTAL_COMMIT_SKIP_CHECKSUM_ON_NEGATIVE_FIELD =
+    buildConf("incremental.commit.skipChecksumOnNegativeField.enabled")
+      .internal()
+      .doc("An incrementally computed checksum with a negative counter (file count, table " +
+        "size, DV metrics, or a histogram bin) always emits a usage log. If true, that " +
+        "checksum is also discarded, so it is never written or reused for later incremental " +
+        "commits. If false, the checksum is only logged and used as is.")
       .booleanConf
       .createWithDefault(true)
 
@@ -3757,17 +3795,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT =
-    buildConf("spark.sql.delta.sharing.cdfStreamingAutoResolveResponseFormat")
-      .doc("When true, auto-resolve the Delta Sharing streaming CDF source format by calling " +
-        "getMetadata on the table and using the server's responded format (parquet or delta). " +
-        "When false, use the responseFormat option from the user. Gates the streaming CDF " +
-        "(readChangeFeed=true) path independently from the non-CDF streaming path controlled " +
-        "by spark.sql.delta.sharing.streamingAutoResolveResponseFormat.")
-      .internal()
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_SHARING_STREAMING_ENABLE_HISTORICAL_PROTOCOL =
     buildConf("spark.sql.delta.sharing.streamingEnableHistoricalProtocol")
       .doc("When true, a Delta Sharing streaming query (non-CDF, incremental getFiles) requests " +
@@ -3798,16 +3825,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "on the sharing server, passing that version to the wrapped DeltaSource. When false, the " +
         "wrapped DeltaSource resolves the timestamp again on the local delta log, where an empty " +
         "version range fails with DELTA_TIMESTAMP_GREATER_THAN_COMMIT.")
-      .internal()
-      .booleanConf
-      .createWithDefault(false)
-
-  val DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF =
-    buildConf("spark.sql.delta.sharing.enableAutoResolveForCdf")
-      .doc("When true, Delta Sharing CDF queries without an explicit responseFormat will " +
-        "call getMetadata on the sharing server and pick the parquet or delta CDF code path " +
-        "based on the server's responded format. When false, CDF queries without a response " +
-        "format fall back to the legacy parquet path.")
       .internal()
       .booleanConf
       .createWithDefault(false)
@@ -4085,6 +4102,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  // Named modes used by [[V2_ENABLE_MODE]].
+  val V2_ENABLE_MODE_NONE: String = "NONE"
+  val V2_ENABLE_MODE_AUTO: String = "AUTO"
+  val V2_ENABLE_MODE_STRICT: String = "STRICT"
+
   /**
    * Controls which connector implementation to use for Delta table operations.
    *
@@ -4111,8 +4133,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           "NONE (use v1 connector for all cases), AUTO (use v2 only for v2 " +
           "supported operations, default), STRICT (should ONLY be enabled for testing).")
       .stringConf
-      .checkValues(Set("AUTO", "NONE", "STRICT"))
-      .createWithDefault("AUTO")
+      .checkValues(Set(V2_ENABLE_MODE_AUTO, V2_ENABLE_MODE_NONE, V2_ENABLE_MODE_STRICT))
+      .createWithDefault(V2_ENABLE_MODE_AUTO)
 
   val V2_TRANSACTIONS_ENABLED =
     buildConf("v2.transactions.enabled")

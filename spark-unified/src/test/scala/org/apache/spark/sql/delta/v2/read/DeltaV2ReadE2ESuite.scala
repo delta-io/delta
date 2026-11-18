@@ -556,8 +556,8 @@ private[read] trait DeltaV2ReadE2ETests {
     checkRead(context)(sql(query)) { df =>
       checkAnswer(df, expectedRows)
     }
-    withDeltaV2ScanForSelectedFiles(sql(query), context) { scan =>
-      val numSelectedFiles = scan.preparedScan().files.size
+    withSelectedDeltaScan(sql(query), context) { deltaScan =>
+      val numSelectedFiles = deltaScan.files.size
       assert(
         numSelectedFiles == expectedSelectedFiles,
         s"expected $expectedSelectedFiles selected files for $context, got $numSelectedFiles")

@@ -17,7 +17,7 @@ package org.apache.spark.sql.delta.v2.tablemanager
 
 import java.io.File
 import java.net.URI
-import java.util.{Collections, Optional}
+import java.util.Collections
 import java.util.concurrent.{
   ConcurrentLinkedQueue,
   CopyOnWriteArrayList,
@@ -42,7 +42,9 @@ import org.apache.spark.sql.delta.v2.interop.{
 }
 import org.apache.spark.sql.delta.v2.kernel.{KernelContext, KernelEngineFactory}
 import org.apache.spark.sql.delta.v2.snapshot.SnapshotManagerFactory
-import org.mockito.Mockito.mockStatic
+import org.mockito.ArgumentMatchers.any
+import org.mockito.Mockito.doAnswer
+import org.mockito.MockitoSugar.withObjectSpied
 import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
 import io.delta.kernel.exceptions.KernelException
@@ -93,10 +95,14 @@ class CachedSnapshotManagerSuite
     spark.range(numRows).write.format("delta").mode("append").save(dir.getCanonicalPath)
   }
 
+  private def createManager(dir: File): CachedSnapshotManager =
+    createManager(
+      dir,
+      KernelContext(Map.empty, LogStore.createLogStore(spark)))
+
   private def createManager(
       dir: File,
-      kernelContext: KernelContext = KernelContext(Map.empty, LogStore.createLogStore(spark))
-  ): CachedSnapshotManager = {
+      kernelContext: KernelContext): CachedSnapshotManager = {
     new CachedSnapshotManager(
       new Path(dir.getCanonicalPath),
       kernelContext,
@@ -152,22 +158,19 @@ class CachedSnapshotManagerSuite
         storage = CatalogStorageFormat.empty,
         schema = new StructType())
       val observedCatalogTables = new ConcurrentLinkedQueue[Option[CatalogTable]]()
-      val factoryMock = mockStatic(
-        classOf[SnapshotManagerFactory],
+      withSnapshotManagerFactoryMock(
         new Answer[DeltaV2SnapshotManager] {
           override def answer(invocation: InvocationOnMock): DeltaV2SnapshotManager = {
-            val catalogTable = invocation.getArgument[Optional[CatalogTable]](2)
-            observedCatalogTables.add(
-              if (catalogTable.isPresent) Some(catalogTable.get()) else None)
+            val catalogTable = invocation.getArgument[Option[CatalogTable]](2)
+            observedCatalogTables.add(catalogTable)
             throw new IllegalStateException("recorded catalog metadata")
           }
-        })
-      val tableManager = new DeltaV2TableManagerImpl(
-        new Path(dir.getCanonicalPath),
-        Map.empty,
-        Some(legacyCatalogTable))
-      val manager = tableManager.snapshotManager(Some(legacyCatalogTable))
-      try {
+        }) {
+        val tableManager = new DeltaV2TableManagerImpl(
+          new Path(dir.getCanonicalPath),
+          Map.empty,
+          Some(legacyCatalogTable))
+        val manager = tableManager.snapshotManager(Some(legacyCatalogTable))
         val queryContext = DeltaV2QueryContext(Some(queryCatalogTable))
         val kernelEngine = tableManager.kernelContext.getDefaultEngine()
 
@@ -189,6 +192,7 @@ class CachedSnapshotManagerSuite
           assertRoutesWith(Some(legacyCatalogTable))(operation()))
 
         def contextualOperations(context: DeltaV2QueryContext): Seq[() => Any] = Seq(
+          () => tableManager.getSingleCommitIterator(0L, None, context),
           () => tableManager.loadLatestSnapshot(context),
           () => tableManager.loadSnapshotAt(0L, context),
           () => tableManager.getActiveCommitAtTime(0L, false, false, false, context),
@@ -203,8 +207,6 @@ class CachedSnapshotManagerSuite
         legacyOperations.foreach(operation =>
           assertRoutesWith(Some(legacyCatalogTable))(operation()))
         assert(observedCatalogTables.isEmpty)
-      } finally {
-        factoryMock.close()
       }
     }
   }
@@ -230,16 +232,14 @@ class CachedSnapshotManagerSuite
           val laterCatalogTable = spark.sessionState.catalog
             .getTableMetadata(TableIdentifier(laterTableName))
           val observedCatalogTables = new ConcurrentLinkedQueue[Option[CatalogTable]]()
-          val factoryMock = mockStatic(
-            classOf[SnapshotManagerFactory],
+          withSnapshotManagerFactoryMock(
             new Answer[DeltaV2SnapshotManager] {
               override def answer(invocation: InvocationOnMock): DeltaV2SnapshotManager = {
-                val catalogTable = invocation.getArgument[Optional[CatalogTable]](2)
-                observedCatalogTables.add(
-                  if (catalogTable.isPresent) Some(catalogTable.get()) else None)
+                val catalogTable = invocation.getArgument[Option[CatalogTable]](2)
+                observedCatalogTables.add(catalogTable)
                 invocation.callRealMethod().asInstanceOf[DeltaV2SnapshotManager]
               }
-            })
+            }) {
           DeltaV2TableManagerCache.clearCache()
           try {
             val originalTable = new DeltaV2Table(
@@ -268,11 +268,20 @@ class CachedSnapshotManagerSuite
             assert(observations.forall(
               _.exists(_.identifier == originalCatalogTable.identifier)))
           } finally {
-            factoryMock.close()
             DeltaV2TableManagerCache.clearCache()
+          }
           }
         }
       }
+    }
+  }
+
+  private def withSnapshotManagerFactoryMock(
+      answer: Answer[DeltaV2SnapshotManager])(f: => Unit): Unit = {
+    withObjectSpied[SnapshotManagerFactory.type] {
+      doAnswer(answer).when(SnapshotManagerFactory).create(
+        any[String](), any[KernelContext](), any[Option[CatalogTable]]())
+      f
     }
   }
 
@@ -382,7 +391,9 @@ class CachedSnapshotManagerSuite
         SparkSession.setActiveSession(constructionSession)
         setRecordingMarkers(constructionSession, "construction")
         val kernelContext =
-          KernelContext(invariantOptions, LogStore.createLogStore(constructionSession))
+          KernelContext(
+            invariantOptions,
+            LogStore.createLogStore(constructionSession))
         manager = createManager(dir, kernelContext)
 
         SparkSession.setActiveSession(firstOperationSession)

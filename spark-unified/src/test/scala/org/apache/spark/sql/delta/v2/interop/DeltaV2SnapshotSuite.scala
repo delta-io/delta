@@ -48,7 +48,8 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable
  */
 class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
 
-  private lazy val kernelContext = new KernelContext(Map.empty, LogStore(spark))
+  private lazy val kernelContext =
+    new KernelContext(Map.empty, LogStore(spark))
 
   private def engine: Engine = kernelContext.getDefaultEngine()
 

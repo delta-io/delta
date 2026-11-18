@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.v2.read
 
 import org.apache.spark.sql.delta.DeltaTableProvider
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
 import org.apache.spark.SparkConf
@@ -83,9 +84,17 @@ private[read] trait DeltaV2ScanE2ETestUtils
     }
   }
 
-  protected def withDeltaV2ScanForSelectedFiles[T](
+  /**
+   * Gives `body` the files that the one optimized Delta V2 scan in `query` selected.
+   *
+   * @param query the query that reads one Delta table
+   * @param context a description of the query for failure messages
+   * @param body the check to run on the selected files
+   * @return the result of `body`
+   */
+  protected def withSelectedDeltaScan[T](
       query: => DataFrame,
-      context: String)(body: DeltaV2Scan => T): T = {
+      context: String)(body: DeltaScan => T): T = {
     val df = query
     val plan = df.queryExecution.optimizedPlan
     val scans = plan.collect {
@@ -97,14 +106,14 @@ private[read] trait DeltaV2ScanE2ETestUtils
       scans.length == 1,
       s"expected one optimized DeltaV2Scan for $context, got " +
         s"${scans.length}:\n$plan")
-    body(scans.head)
+    body(scans.head.preparedScan())
   }
 
   private def selectedFileDeletionVectorFlags(
       query: => DataFrame,
       context: String): Seq[Boolean] = {
-    withDeltaV2ScanForSelectedFiles(query, context) { scan =>
-      scan.preparedScan().files.map(_.deletionVector != null)
+    withSelectedDeltaScan(query, context) { deltaScan =>
+      deltaScan.files.map(_.deletionVector != null)
     }
   }
 

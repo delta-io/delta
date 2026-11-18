@@ -60,6 +60,7 @@ private[tablemanager] class DeltaV2TableManagerCache(
   private val cache: Cache[CacheKey, CacheEntry] = {
     val listener: RemovalListener[CacheKey, CacheEntry] = notification => {
       val entry = notification.getValue
+      val key = notification.getKey
       if (entry != null) {
         val startedAtNs = ticker.read()
         try {
@@ -69,6 +70,12 @@ private[tablemanager] class DeltaV2TableManagerCache(
             log"${MDC(DeltaLogKeys.PATH, entry.redactedPath)} after cache eviction " +
             log"(${MDC(DeltaLogKeys.STATUS, notification.getCause)}) in " +
             log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms")
+          recordDeltaEventForTablePath(
+            tablePath = key.path.getParent,
+            opType = "cache.evict",
+            data = Map(
+              "cause" -> notification.getCause.toString,
+              "elapsedMs" -> elapsedMs))
         } catch {
           case NonFatal(e) =>
             logError(log"Failed to retire Delta V2 table manager for " +
@@ -104,6 +111,10 @@ private[tablemanager] class DeltaV2TableManagerCache(
           logInfo(log"Created Delta V2 table manager for " +
             log"${MDC(DeltaLogKeys.PATH, redactedPath)} in " +
             log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms")
+          recordDeltaEventForTablePath(
+            tablePath = key.path.getParent,
+            opType = "cache.create",
+            data = Map("elapsedMs" -> elapsedMs))
           CacheEntry(created, redactedPath)
         }
       }).manager
@@ -113,6 +124,9 @@ private[tablemanager] class DeltaV2TableManagerCache(
         val cause = Option(e.getCause).getOrElse(e)
         logWarning(log"Failed to load Delta V2 table manager for " +
           log"${MDC(DeltaLogKeys.PATH, redactedPath)}", cause)
+        recordDeltaEventForTablePath(
+          tablePath = key.path.getParent,
+          opType = "cache.load.failure")
         throw cause
     }
   }

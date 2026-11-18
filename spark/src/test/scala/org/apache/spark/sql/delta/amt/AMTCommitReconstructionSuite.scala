@@ -17,8 +17,11 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.implicits.singleActionEncoder
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.functions.col
 
 /**
  * Tests for reconstructing an inline manifest commit's file actions from the AMT it wrote.
@@ -59,6 +62,23 @@ class AMTCommitReconstructionSuite extends AMTIncrementalWriteTestBase {
       s"the tree of v$version must describe v$version, got ${checkpoint.contentRoot.version}")
     val provider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint, version)
     (version, provider.reconstructFileActions(deltaLog, dataChange, commitTimestamp))
+  }
+
+  /** `actions` as their sorted log JSON, which compares every field by value. */
+  private def asJson(actions: Seq[FileAction]): Seq[String] = actions.map(_.json).sorted
+
+  /** The live AddFiles state reconstruction builds from the tree of manifest commit `version`. */
+  private def addFilesAt(deltaLog: DeltaLog, version: Long): Seq[AddFile] = {
+    val checkpoint = checkpointAt(deltaLog, version)
+      .getOrElse(fail(s"v$version must be a manifest commit"))
+    AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint, version)
+      .loadActionsForStateReconstruction(spark, deltaLog)
+      .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+      .where(col("add").isNotNull)
+      .as[SingleAction]
+      .collect()
+      .map(_.add)
+      .toSeq
   }
 
   /**
@@ -183,17 +203,57 @@ class AMTCommitReconstructionSuite extends AMTIncrementalWriteTestBase {
 
   test("stamps the given dataChange and commit timestamp on every reconstructed action") {
     withLeafPackedAmtTable { deltaLog =>
-      // A compaction: the tree records its delete and insert even though neither changes data.
+      withInline { commitAmt(deltaLog, Seq(fakeAdd(31))) }
+      // A compaction: the tree records its deletes (from a leaf and, as a tombstone, from the
+      // root) and its insert even though none of them changes data.
       val actions = Seq[Action](
         removeOf(deltaLog, 1).copy(dataChange = false),
+        removeOf(deltaLog, 31).copy(dataChange = false),
         fakeAdd(200, dataChange = false))
       val (_, reconstructed) =
         commitAndReconstruct(deltaLog, actions, dataChange = false, commitTimestamp = 1234L)
       assert(reconstructed.map(a => (fileName(a), a.isInstanceOf[AddFile])).toSet ===
-        Set((fakeAdd(1).path, false), (fakeAdd(200).path, true)))
+        Set((fakeAdd(1).path, false), (fakeAdd(31).path, false), (fakeAdd(200).path, true)))
       assert(reconstructed.forall(!_.dataChange), s"got $reconstructed")
       assert(reconstructed.collect { case r: RemoveFile => r.deletionTimestamp } ===
-        Seq(Some(1234L)))
+        Seq(Some(1234L), Some(1234L)))
+    }
+  }
+
+  test("reconstructs the row tracking fields of AddFiles spilled into new leaves") {
+    withLeafPackedAmtTable { deltaLog =>
+      val leavesBefore = leafPointers(deltaLog.update()).size
+      // The new leaves leave first_row_id to inheritance, so their adds take it from the row-ID
+      // prefix over the leaf.
+      val (_, reconstructed) = commitAndReconstruct(deltaLog, (100 to 124).map(fakeAdd))
+      assert(leafPointers(deltaLog.update()).size > leavesBefore,
+        "the insert must spill at least one new leaf for this scenario to be meaningful.")
+      val adds = reconstructed.collect { case a: AddFile => a }
+      assert(adds.size == 25 && adds.size == reconstructed.size, s"got $reconstructed")
+      assert(adds.forall(a => a.baseRowId.isDefined && a.defaultRowCommitVersion.isDefined),
+        s"every add must carry its row tracking fields, got $adds")
+      assert(adds.flatMap(_.baseRowId).distinct.size == adds.size,
+        s"every add must have its own row IDs, got $adds")
+    }
+  }
+
+  test("reconstructs RemoveFiles as AddFile.removeWithTimestamp builds them") {
+    withLeafPackedAmtTable { deltaLog =>
+      withInline { commitAmt(deltaLog, Seq(fakeAdd(31))) }
+      val previousVersion = deltaLog.update().version
+      val deleted = Seq(removeOf(deltaLog, 1), removeOf(deltaLog, 31))
+      val (_, reconstructed) =
+        commitAndReconstruct(deltaLog, deleted, dataChange = false, commitTimestamp = 1234L)
+      val previousAdds = addFilesAt(deltaLog, previousVersion).map(a => a.path -> a).toMap
+      // Change files carry no back reference.
+      val expected = deleted.map { remove =>
+        previousAdds(remove.path).removeWithTimestamp(1234L, dataChange = false)
+          .copy(backReference = None)
+      }
+      val removes = reconstructed.collect { case r: RemoveFile => r }
+      assert(asJson(removes) === asJson(expected))
+      assert(removes.forall(r => r.extendedFileMetadata.contains(true) && r.snapshotId.isEmpty),
+        s"got $removes")
     }
   }
 }

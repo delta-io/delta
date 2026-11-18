@@ -192,7 +192,7 @@ trait DescribeDeltaHistorySuiteBase
       .asInstanceOf[Map[String, String]]
   }
 
-  // Returns necessary delta property json expected for the test. If Catalog-Owned is enabled,
+  // Returns necessary delta property json expected for the test. If Catalog-Managed is enabled,
   // a few properties will be automatically populated, and this method will take care of it.
   protected def getProperties(
       extraProperty: Option[Map[String, String]] = None): Map[String, String] = {
@@ -202,7 +202,7 @@ trait DescribeDeltaHistorySuiteBase
         => config.key -> value
       }.toMap ++
       // DV is explicitly disabled here b/c the current suite is incompatible
-      // w/ DV, and we automatically enable it as part of CatalogOwned QoL features.
+      // w/ DV, and we automatically enable it as part of CatalogManaged QoL features.
       Map(s"${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}" -> "false")
     } else {
       Map.empty[String, String]

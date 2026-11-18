@@ -92,7 +92,7 @@ import org.apache.spark.sql.types.StructType
  */
 trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaSource =>
 
-  protected def trackingMetadataChange: Boolean =
+  override protected def trackingMetadataChange: Boolean =
     DeltaSourceMetadataEvolutionSupport.shouldTrackMetadataChange(
       schemaReadOptions, metadataTrackingLog)
 
@@ -716,6 +716,7 @@ object DeltaSourceMetadataEvolutionSupport extends Logging {
         log.getCurrentTrackedMetadata.isEmpty && log.initMetadataLogEagerly
       }
   }
+
 
   /**
    * Check the table metadata or protocol changed since the initial read snapshot. We make sure:

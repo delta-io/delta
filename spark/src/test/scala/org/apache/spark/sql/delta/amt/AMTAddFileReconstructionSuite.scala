@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, BackReference, Checkpoint, C
 import org.apache.spark.sql.delta.implicits.singleActionEncoder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.functions.{col, lit, struct}
@@ -463,6 +464,40 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
         Seq(leafPointer(leaf).wrap),
         "Malformed AMT data entry 'data/a.parquet': amtPassthrough only supports parquet. got orc.",
         perRowMessage = Some("file_format must be missing or 'parquet'; got orc."))
+    }
+  }
+
+  test("a leaf entry read from a manifest that is not one of the leaves is rejected") {
+    // Both implementations look up a leaf entry's parent by the manifest it was read from. The
+    // leaf scan reads exactly the leaves the lookup is built from, so a miss is a bug: both fail.
+    withSyntheticTree("amt_add_file_unknown_leaf") { tree =>
+      val leaf = tree.writeLeaf(Seq(dataEntry("data/a.parquet", recordCount = 10L)))
+      val checkpoint = tree.checkpoint(Seq(leafPointer(leaf).wrap))
+      val provider = AMTCheckpointProvider.fromCheckpoint(
+        spark, tree.deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
+      val unknownLeaf =
+        SparkPath.fromPath(new Path(tree.deltaLog.dataPath, "unknown.parquet")).urlEncoded
+      val entries =
+        spark.createDataFrame(Seq(("data/a.parquet", unknownLeaf))).toDF("location", "leafPath")
+      val columnarError = intercept[Exception] {
+        provider.withLeafEntryContext(entries, leaves = Seq.empty).collect()
+      }
+      assert(causeMessages(columnarError).contains(
+        "Malformed AMT data entry 'data/a.parquet': no leaf manifest matches " + unknownLeaf + "."),
+        causeMessages(columnarError))
+
+      val perRowResolver = AMTCheckpointProvider.DataEntryResolverProvider(
+        tableRoot = tree.deltaLog.dataPath,
+        urlEncodedRootManifestPath = "unused",
+        parentTrackingByLeafLocation = Map.empty).createResolver()
+      val perRowError = intercept[NoSuchElementException] {
+        perRowResolver.resolve(AMTCheckpointProvider.AMTDataEntryExtended(
+          dataEntry("data/a.parquet", recordCount = 10L).wrap,
+          leafPath = unknownLeaf,
+          pos = 0L,
+          precedingNullFirstRowIdRecords = 0L))
+      }
+      assert(perRowError.getMessage.contains("unknown.parquet"), perRowError.getMessage)
     }
   }
 
