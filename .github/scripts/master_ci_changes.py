@@ -7,11 +7,11 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+from urllib.error import HTTPError
 
 
 WORKFLOWS = (
     "build",
-    "changelog_tests_spark42",
     "flink_test",
     "iceberg_test",
     "kernel_test",
@@ -28,7 +28,10 @@ def selections(paths):
     paths = set(paths)
     if any(
         path == ".github/workflows/master_ci.yaml"
-        or path == ".github/scripts/master_ci_changes.py"
+        or path in {
+            ".github/scripts/master_ci_changes.py",
+            ".github/scripts/test_master_ci_changes.py",
+        }
         for path in paths
     ):
         return {name: True for name in WORKFLOWS}
@@ -61,11 +64,7 @@ def selections(paths):
     return selected
 
 
-def latest_successful_head(repository, ref_name, token):
-    query = urllib.parse.urlencode(
-        {"branch": ref_name, "event": "push", "status": "success", "per_page": 100}
-    )
-    url = f"https://api.github.com/repos/{repository}/actions/runs?{query}"
+def _request_runs(url, token):
     request = urllib.request.Request(
         url,
         headers={
@@ -75,14 +74,55 @@ def latest_successful_head(repository, ref_name, token):
         },
     )
     with urllib.request.urlopen(request, timeout=30) as response:
-        runs = json.load(response)["workflow_runs"]
-    matching_runs = [run for run in runs if run["name"] == "Master CI"]
-    return matching_runs[0]["head_sha"] if matching_runs else None
+        return json.load(response)["workflow_runs"], response.headers.get("Link")
+
+
+def _next_url(link):
+    if not link:
+        return None
+    for item in link.split(","):
+        url, *parameters = item.split(";")
+        if any(parameter.strip() == 'rel="next"' for parameter in parameters):
+            return url.strip()[1:-1]
+    return None
+
+
+def _first_other_head(url, token, current_head, workflow_name=None):
+    while url:
+        runs, link = _request_runs(url, token)
+        for run in runs:
+            if (workflow_name is None or run["name"] == workflow_name) and run[
+                "head_sha"
+            ] != current_head:
+                return run["head_sha"]
+        url = _next_url(link)
+    return None
+
+
+def latest_successful_head(repository, ref_name, token, current_head):
+    query = urllib.parse.urlencode(
+        {"branch": ref_name, "event": "push", "status": "success", "per_page": 1}
+    )
+    workflow_url = (
+        f"https://api.github.com/repos/{repository}/actions/workflows/"
+        f"master_ci.yaml/runs?{query}"
+    )
+    try:
+        return _first_other_head(workflow_url, token, current_head)
+    except HTTPError as error:
+        if error.code != 404:
+            raise
+
+    fallback_query = urllib.parse.urlencode(
+        {"branch": ref_name, "event": "push", "status": "success", "per_page": 100}
+    )
+    fallback_url = f"https://api.github.com/repos/{repository}/actions/runs?{fallback_query}"
+    return _first_other_head(fallback_url, token, current_head, "Master CI")
 
 
 def changed_paths(base, head):
     output = subprocess.check_output(
-        ["git", "diff", "--name-only", "--diff-filter=ACDMRTUXB", base, head],
+        ["git", "diff", "--no-renames", "--name-only", base, head],
         text=True,
         stderr=subprocess.STDOUT,
     )
@@ -103,6 +143,10 @@ def write_outputs(selected, base=""):
 
 def main():
     all_workflows = {name: True for name in WORKFLOWS}
+    if os.environ.get("MASTER_CI_SELECTOR_TESTS_PASSED", "true") != "true":
+        print("Selector unit tests failed; running every workflow.", file=sys.stderr)
+        write_outputs(all_workflows)
+        return
     if os.environ.get("GITHUB_EVENT_NAME") != "push":
         write_outputs(all_workflows)
         return
@@ -112,6 +156,7 @@ def main():
             os.environ["GITHUB_REPOSITORY"],
             os.environ["GITHUB_REF_NAME"],
             os.environ["GITHUB_TOKEN"],
+            os.environ["GITHUB_SHA"],
         )
         if not base:
             print("No successful Master CI run found; running every workflow.")

@@ -13,7 +13,7 @@ on:
         required: false
         type: string
 
-# Cancel superseded PR runs; use a unique group for calls from Master CI.
+# Cancel superseded PR runs; use a unique group for Master CI calls and standalone dispatches.
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.event.pull_request.number) || format('spark-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
