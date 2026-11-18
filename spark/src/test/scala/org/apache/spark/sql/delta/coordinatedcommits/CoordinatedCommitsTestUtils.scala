@@ -22,7 +22,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable
 import scala.util.control.NonFatal
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.DeltaOperations._
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -95,7 +95,7 @@ trait CatalogOwnedTestBaseSuite
   with SharedSparkSession {
 
   val defaultCatalogOwnedFeatureEnabledKey: String =
-    TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
+    TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature)
 
   // If this config is not overridden, newly created table is not CatalogManaged by default.
   def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = None
@@ -130,7 +130,7 @@ trait CatalogOwnedTestBaseSuite
   }
 
   override def propertiesString: String =
-    s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')"
+    s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')"
 
   override protected def beforeEach(): Unit = {
     super.beforeEach()

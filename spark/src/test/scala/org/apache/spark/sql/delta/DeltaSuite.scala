@@ -2159,7 +2159,7 @@ class DeltaSuite extends QueryTest
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(
       featuresToExclude =
-        Seq(CatalogOwnedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
+        Seq(CatalogManagedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
       newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
