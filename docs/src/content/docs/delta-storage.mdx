@@ -185,13 +185,12 @@ Every writer on a table must use a compatible atomic commit protocol. Keep commi
    bin/spark-shell \
      --packages io.delta:delta-spark_2.13:4.5.0,org.apache.hadoop:hadoop-aws:3.4.2 \
      --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
-     --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog \
-     --conf spark.hadoop.fs.s3a.create.conditional.enabled=true
+     --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
    ```
 
    Use your IAM role or existing S3A credential configuration. This setup does not require the `delta-storage-s3-dynamodb` package or a LogStore override.
 
-1. Write and read a Delta table. For example:
+2. Write and read a Delta table. For example:
 
    ```scala
    val path = "s3a://<bucket>/<table-path>"
@@ -199,7 +198,7 @@ Every writer on a table must use a compatible atomic commit protocol. Keep commi
    spark.read.format("delta").load(path).show()
    ```
 
-1. Check the driver logs for `io.delta.storage.S3LogStore` for the S3 scheme you use. If the logs select `S3SingleDriverLogStore`, resolve the runtime or configuration issue before using independent writers.
+3. Check the driver logs for `io.delta.storage.S3LogStore` for the S3 scheme you use. If the logs select `S3SingleDriverLogStore`, resolve the runtime or configuration issue before using independent writers.
 
 <a id="logstore-selection-and-overrides"></a>
 
