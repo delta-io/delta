@@ -444,7 +444,8 @@ trait GeneratedColumnSuiteBase
     }
   }
 
-  test("UPDATE with type-incompatible SET on table with generated columns gives correct error") {
+  test("UPDATE and MERGE with type-incompatible SET on table with generated columns give " +
+      "correct error") {
     withTableName("update_type_mismatch_generated") { table =>
       createTable(table, None, "c1 INT, arr ARRAY<INT>, g INT", Map("g" -> "c1 + 10"), Nil)
       // With fix enabled: the correct type mismatch error is surfaced.
@@ -453,13 +454,40 @@ trait GeneratedColumnSuiteBase
           sql(s"UPDATE $table SET arr = map('key', 'val')")
         }
         assert(ex.getErrorClass === "DATATYPE_MISMATCH.CAST_WITHOUT_SUGGESTION")
+        // MERGE update expressions also reference source columns.
+        val mergeEx = intercept[AnalysisException] {
+          sql(
+            s"""MERGE INTO $table t
+               |USING (SELECT 1 AS c1, map('key', 'val') AS m) s
+               |ON t.c1 = s.c1
+               |WHEN MATCHED THEN UPDATE SET arr = s.m""".stripMargin)
+        }
+        assert(mergeEx.getErrorClass === "DATATYPE_MISMATCH.CAST_WITHOUT_SUGGESTION")
       }
       // With fix disabled: the old misleading error is produced.
       withSQLConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN.key -> "false") {
         val ex = intercept[AnalysisException] {
           sql(s"UPDATE $table SET arr = map('key', 'val')")
         }
-        assert(ex.getErrorClass === "_LEGACY_ERROR_TEMP_DELTA_0012")
+        assert(ex.getErrorClass === "DELTA_CANNOT_RESOLVE_EXPRESSION")
+      }
+    }
+  }
+
+  test("UPDATE and MERGE with implicit upcast under STRICT on table with generated columns") {
+    withTableName("update_upcast_generated") { table =>
+      createTable(table, None, "c1 INT, b BIGINT, g INT", Map("g" -> "c1 + 10"), Nil)
+      sql(s"INSERT INTO $table VALUES(1, 1, 11)")
+      // STRICT wraps the SET expressions in UpCast, which stays unresolved until analysis.
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "STRICT") {
+        sql(s"UPDATE $table SET b = 5")
+        checkAnswer(spark.table(table), Row(1, 5L, 11) :: Nil)
+        sql(
+          s"""MERGE INTO $table t
+             |USING (SELECT 1 AS c1, 6 AS b) s
+             |ON t.c1 = s.c1
+             |WHEN MATCHED THEN UPDATE SET b = s.b""".stripMargin)
+        checkAnswer(spark.table(table), Row(1, 6L, 11) :: Nil)
       }
     }
   }
