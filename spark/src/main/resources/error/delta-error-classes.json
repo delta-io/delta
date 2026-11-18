@@ -2821,6 +2821,25 @@
     ],
     "sqlState" : "44000"
   },
+  "DELTA_REPLACE_PARTITIONED_BY_ON_UNPARTITIONED_TABLE" : {
+    "message" : [
+      "ALTER TABLE REPLACE PARTITIONED BY can only be applied to a partitioned table."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_REPLACE_PARTITIONED_BY_PARTITION_COLUMNS_NOT_MATERIALIZED" : {
+    "message" : [
+      "Cannot replace the partitioning of the table because the partition column(s) <partitionColumns> are not stored in <numFiles> data file(s), for example: <examplePaths>.",
+      "ALTER TABLE REPLACE PARTITIONED BY requires every data file to store the partition columns. Delta stores them in the files it writes while the table property delta.writePartitionColumnsToParquet is enabled."
+    ],
+    "sqlState" : "55000"
+  },
+  "DELTA_REPLACE_PARTITIONED_BY_UNSUPPORTED_TABLE_FEATURE" : {
+    "message" : [
+      "ALTER TABLE REPLACE PARTITIONED BY is not supported on tables with <feature> enabled."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED" : {
     "message" : [
       "REPLACE TABLE cannot enable catalog-managed on the existing non-catalog-managed table <tableName>. Upgrade or recreate the table instead."

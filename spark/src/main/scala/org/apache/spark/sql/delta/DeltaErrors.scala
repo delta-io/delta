@@ -4356,6 +4356,28 @@ trait DeltaErrorsBase
       messageParameters = Array.empty)
   }
 
+  def replacePartitionedByOnUnpartitionedTableException(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_REPLACE_PARTITIONED_BY_ON_UNPARTITIONED_TABLE",
+      messageParameters = Array.empty)
+  }
+
+  def replacePartitionedByUnsupportedTableFeatureException(feature: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_REPLACE_PARTITIONED_BY_UNSUPPORTED_TABLE_FEATURE",
+      messageParameters = Array(feature))
+  }
+
+  def replacePartitionedByPartitionColumnsNotMaterializedException(
+      partitionColumns: Seq[String],
+      numFiles: Long,
+      examplePaths: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_REPLACE_PARTITIONED_BY_PARTITION_COLUMNS_NOT_MATERIALIZED",
+      messageParameters = Array(
+        partitionColumns.mkString(", "), numFiles.toString, examplePaths.mkString(", ")))
+  }
+
   def createTableWithDifferentClusteringException(
       path: Path,
       specifiedClusterBySpec: Option[ClusterBySpec],

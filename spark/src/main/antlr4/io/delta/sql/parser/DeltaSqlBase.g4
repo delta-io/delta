@@ -91,6 +91,9 @@ statement
     | ALTER TABLE table=qualifiedName
         (clusterBySpec | CLUSTER BY NONE)                               #alterTableClusterBy
     | ALTER TABLE table=qualifiedName
+        REPLACE PARTITIONED BY WITH
+        (clusterBySpec | CLUSTER BY NONE | CLUSTER BY)                  #alterTableReplacePartitionedBy
+    | ALTER TABLE table=qualifiedName
         (ALTER | CHANGE) COLUMN? column=qualifiedName SYNC IDENTITY     #alterTableSyncIdentity
     | OPTIMIZE (path=stringLit | table=qualifiedName) FULL?
         (WHERE partitionPredicate=predicateToken)?
@@ -272,6 +275,7 @@ nonReserved
     | CLONE | SHALLOW
     | FEATURE | TRUNCATE
     | CLUSTER | NONE
+    | WITH
     ;
 
 // Define how the keywords above should appear in a user's SQL statement.
@@ -345,6 +349,7 @@ USING: 'USING';
 VACUUM: 'VACUUM';
 VERSION: 'VERSION';
 WHERE: 'WHERE';
+WITH: 'WITH';
 ZORDER: 'ZORDER';
 STATISTICS: 'STATISTICS';
 
