@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.OptionalInt;
 import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.MetadataAttribute$;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.Snapshot;
@@ -99,6 +100,43 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
 
     assertNotNull(asDeltaV2Scan(scan));
     assertEquals(expectedSparkSchema, scan.readSchema());
+  }
+
+  @Test
+  public void testPruneColumns_preservesMetadataDifferingFromPartitionOnlyByCase(
+      @TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "scan_builder_metadata_partition_case_test";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (_metadata STRING, __Metadata INT) "
+                + "USING delta PARTITIONED BY (__Metadata) LOCATION '%s'",
+            tableName, path));
+    StructType dataSchema = new StructType().add("_metadata", DataTypes.StringType);
+    StructType partitionSchema = new StructType().add("__Metadata", DataTypes.IntegerType);
+    StructType tableSchema = dataSchema.add(partitionSchema.fields()[0]);
+    StructField metadataColumn =
+        DataTypes.createStructField(
+            "__metadata",
+            new StructType().add("file_path", DataTypes.StringType),
+            false,
+            MetadataAttribute$.MODULE$.metadata("_metadata"));
+    StructType expectedDataSchema = dataSchema.add(metadataColumn);
+    StructType requiredSchema = expectedDataSchema.add(partitionSchema.fields()[0]);
+
+    // Names are already resolved before pruning, regardless of the current resolver setting.
+    for (String caseSensitive : new String[] {"true", "false"}) {
+      withSQLConf(
+          "spark.sql.caseSensitive",
+          caseSensitive,
+          () -> {
+            DeltaV2ScanBuilder builder =
+                newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
+            builder.pruneColumns(requiredSchema);
+
+            assertEquals(expectedDataSchema, getRequiredDataSchema(builder));
+          });
+    }
   }
 
   @Test
