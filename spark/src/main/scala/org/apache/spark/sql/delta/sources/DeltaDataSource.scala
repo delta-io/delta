@@ -112,7 +112,7 @@ class DeltaDataSource
     DeltaTableV2(
       SparkSession.active,
       new Path(path),
-      options = options.asCaseSensitiveMap().asScala.toMap)
+      options = DeltaFileSystemOptions.toCaseSensitiveMap(options).asScala.toMap)
   }
 
   override def sourceSchema(

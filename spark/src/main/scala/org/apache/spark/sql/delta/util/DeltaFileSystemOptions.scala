@@ -15,12 +15,16 @@
  */
 package org.apache.spark.sql.delta.util
 
+import java.util.{Map => JMap}
+
 import org.apache.spark.sql.delta.DeltaTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Shared helpers for deriving Hadoop filesystem options from DataFrame options and catalog table
@@ -30,11 +34,31 @@ object DeltaFileSystemOptions {
 
   /**
    * Unwraps [[CaseInsensitiveMap]] to its underlying case-sensitive `originalMap` so that
-   * iterating or filtering the map does not lowercase keys.
+   * iterating or filtering the map does not lowercase keys, unless
+   * [[DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS]] is enabled.
    */
-  private[delta] def toCaseSensitiveMap(options: Map[String, String]): Map[String, String] = {
+  def toCaseSensitiveMap(options: Map[String, String]): Map[String, String] = {
     options match {
-      case ci: CaseInsensitiveMap[String @unchecked] => ci.originalMap
+      case ci: CaseInsensitiveMap[String @unchecked] =>
+        if (SQLConf.get.getConf(DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS)) {
+          ci.iterator.toMap
+        } else {
+          ci.originalMap
+        }
+      case other => other
+    }
+  }
+
+  /**
+   * Unwraps [[CaseInsensitiveStringMap]] via `asCaseSensitiveMap()` so that converting or copying
+   * the map does not lowercase keys, unless [[DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS]]
+   * is enabled.
+   */
+  def toCaseSensitiveMap(options: JMap[String, String]): JMap[String, String] = {
+    options match {
+      case ci: CaseInsensitiveStringMap
+        if !SQLConf.get.getConf(DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS) =>
+        ci.asCaseSensitiveMap()
       case other => other
     }
   }

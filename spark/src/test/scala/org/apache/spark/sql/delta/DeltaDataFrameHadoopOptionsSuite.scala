@@ -216,6 +216,29 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
       "fs.azure.skipUserGroupMetadataDuringInitialization" -> "true",
       "dfs.datatransfer.server.fixedBlackList.file" -> "/etc/blacklist"
     ))
+    withSQLConf(DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS.key -> "true") {
+      assert(DeltaFileSystemOptions.filterHadoopOptions(options) == Map(
+        "fs.azure.skipusergroupmetadataduringinitialization" -> "true",
+        "dfs.datatransfer.server.fixedblacklist.file" -> "/etc/blacklist",
+        "fs.uppercaseprefix" -> "ignored"
+      ))
+    }
+  }
+
+  test("legacy.lowercaseFileSystemOptions restores lowercased keys across DataFrame operations") {
+    withSQLConf(DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS.key -> "true") {
+      withTempPath { dir =>
+        val path = fakeFileSystemPath(dir)
+        val misCasedOptions = Map(
+          "fs.fake.Impl" -> classOf[FakeFileSystem].getName,
+          "fs.fake.Impl.Disable.Cache" -> "true"
+        )
+        clearCachedDeltaLogToForceReload()
+        spark.range(2).write.format("delta").options(misCasedOptions).save(path)
+        clearCachedDeltaLogToForceReload()
+        assert(spark.read.format("delta").options(misCasedOptions).load(path).count() == 2)
+      }
+    }
   }
 
   test("all operations should propagate Hadoop file system options") {
