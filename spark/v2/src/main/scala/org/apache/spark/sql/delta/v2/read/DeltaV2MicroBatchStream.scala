@@ -264,8 +264,7 @@ private[read] class DeltaV2MicroBatchStream(
           options,
           schemaReadOptions,
           metadataTrackingLog,
-          readSnapshotDescriptor.metadata,
-          readSnapshotDescriptor.protocol,
+          readSnapshotDescriptor,
           metadataPath)
   locally {
     val shouldValidateSchemaOnRestart: Boolean =
@@ -1255,6 +1254,8 @@ private[read] class DeltaV2MicroBatchStream(
                   endOffsetOpt,
                   verifyMetadataAction)
         } else if (action.isInstanceOf[Protocol]) {
+          Protocol.protocolRead(
+              spark, action.asInstanceOf[Protocol], tablePath, readSnapshotDescriptor)
           assert(
             protocolAction == null,
             s"Should not encounter two protocol actions in the same commit of version $version")
@@ -1500,7 +1501,9 @@ private[read] class DeltaV2MicroBatchStream(
                       Optional.of(Long.box(batchEndVersion.get)),
                       tableManager,
                       originalStreamingQueryContext,
-                      options.failOnDataLoss)
+                      options.failOnDataLoss,
+                      spark,
+                      readSnapshotDescriptor)
                   .entrySet())) {
             val version: Long = entry.getKey()
             val metadata: Metadata = entry.getValue()
