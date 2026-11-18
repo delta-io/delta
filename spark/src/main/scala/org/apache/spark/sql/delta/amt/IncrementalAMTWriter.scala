@@ -211,7 +211,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) extends Delt
       allLeafPointers.map(_.wrap) ++
         rootLiveEntries.map(_.wrap) ++
         rootRemoveEntries.map(_.wrap)
-    val contentRootBase = AMTWriteHelper.writeRoot(
+    val writtenRoot = AMTWriteHelper.writeRoot(
       spark, fs, hadoopConf, tableRoot, metadataDir, processedActions.postCommitMetadata,
       processedActions.postCommitProtocol, rootRows,
       version = contentTreeVersion)
@@ -221,8 +221,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) extends Delt
     val lastFullRewriteVersion =
       oldAMT.lastManifestCommitWithFullRewrite.getOrElse(contentTreeVersion)
     val contentRoot = ContentRoot(
-      path = contentRootBase.path,
-      sizeInBytes = contentRootBase.sizeInBytes,
+      path = writtenRoot.contentRoot.path,
+      sizeInBytes = writtenRoot.contentRoot.sizeInBytes,
       version = contentTreeVersion,
       isIncremental = true,
       lastManifestCommitWithFullRewrite = lastFullRewriteVersion,
@@ -284,7 +284,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) extends Delt
     AMTWriteResult(
       contentRootVersion = contentTreeVersion,
       checkpoint = checkpoint,
-      leaves = allLeafPointers,
+      rootInfo = new AMTRootInfo(allLeafPointers, writtenRoot.cachedRows),
       includeActionsInCommitJson = true,
       amtWriteMetrics = metric)
   }
