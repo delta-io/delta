@@ -26,6 +26,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.catalyst.expressions.StructsToJson
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.types.StructType
 
@@ -421,6 +422,28 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
         assert(paths.collect().map(_.getString(0)).toSet ==
           Set("data/root.parquet", "data/leaf.parquet"))
       }
+    }
+  }
+
+  test("a path projection skips the masked leaf entries without reading the row index") {
+    withSyntheticTree("amt_add_file_path_projection_masked") { tree =>
+      val leaf = tree.writeLeaf(Seq(
+        dataEntry("data/a.parquet", recordCount = 10L),
+        dataEntry("data/masked.parquet", recordCount = 20L),
+        dataEntry("data/c.parquet", recordCount = 30L),
+        dataEntry("data/masked2.parquet", recordCount = 40L),
+        dataEntry("data/e.parquet", recordCount = 50L)))
+      val checkpoint =
+        tree.checkpoint(Seq(leafPointer(leaf, mdvPositions = Seq(1L, 3L)).wrap))
+      val (_, columnar) = providers(tree.deltaLog, checkpoint, checkpoint.version)
+      val paths = columnar.loadActionsForStateReconstruction(spark, tree.deltaLog)
+        .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+        .where(col("add").isNotNull)
+        .select(col("add.path"))
+      val plan = paths.queryExecution.executedPlan.toString
+      assert(!plan.contains(ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME), plan)
+      assert(paths.collect().map(_.getString(0)).toSet ==
+        Set("data/a.parquet", "data/c.parquet", "data/e.parquet"))
     }
   }
 
