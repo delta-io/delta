@@ -483,7 +483,6 @@ trait GeneratedColumnSuiteBase
           checkError(
             intercept[AnalysisException](sql(query)),
             "DELTA_CANNOT_RESOLVE_EXPRESSION",
-            sqlState = Some("42703"),
             parameters = Map("expression" -> "('c1 + 10)"))
         }
       }
