@@ -663,7 +663,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
               } catch {
                 case e: AnalysisException
                     if e.getErrorClass == "DELTA_CANNOT_RESOLVE_EXPRESSION" &&
-                      conf.getConf(DeltaSQLConf.GENERATED_COLUMN_REPORT_UPDATE_EXPRESSION_ERROR) =>
+                      conf.getConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN) =>
                   // An unresolved update expression, such as an invalid cast, blocks resolution.
                   // CheckAnalysis reports the error of that expression. If it finds none, keep `e`.
                   sparkSession.sessionState.analyzer.checkAnalysis(fakePlan)

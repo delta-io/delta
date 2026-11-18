@@ -458,7 +458,7 @@ trait GeneratedColumnSuiteBase
            |WHEN MATCHED THEN UPDATE SET arr = s.m""".stripMargin
       // With fix enabled: the correct type mismatch error is surfaced.
       withSQLConf(
-        DeltaSQLConf.GENERATED_COLUMN_REPORT_UPDATE_EXPRESSION_ERROR.key -> "true",
+        DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN.key -> "true",
         SQLConf.STORE_ASSIGNMENT_POLICY.key -> "ANSI"
       ) {
         Seq(updateSql -> "\"map(key, val)\"", mergeSql -> "\"m\"").foreach {
@@ -476,7 +476,7 @@ trait GeneratedColumnSuiteBase
       }
       // With fix disabled: the old misleading error is produced.
       withSQLConf(
-        DeltaSQLConf.GENERATED_COLUMN_REPORT_UPDATE_EXPRESSION_ERROR.key -> "false",
+        DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN.key -> "false",
         SQLConf.STORE_ASSIGNMENT_POLICY.key -> "ANSI"
       ) {
         Seq(updateSql, mergeSql).foreach { query =>

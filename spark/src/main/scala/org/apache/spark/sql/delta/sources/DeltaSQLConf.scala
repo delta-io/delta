@@ -984,8 +984,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
-  val GENERATED_COLUMN_REPORT_UPDATE_EXPRESSION_ERROR =
-    buildConf("generatedColumn.reportUpdateExpressionError.enabled")
+  val DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN =
+    buildConf("generatedColumn.eagerAnalyzePlan")
       .internal()
       .doc("When enabled, UPDATE and MERGE on a table with generated columns report the " +
         "analysis error of an update expression. When disabled, they report " +
