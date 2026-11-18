@@ -66,7 +66,7 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
   test("invariantCheckWithLogging: succeeds when the invariant holds") {
     AMTUtils.invariantCheckWithLogging(
       checkInvariant = true,
-      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      opTypeSuffix = AMTUsageLogs.ALERT_MDV_WITHOUT_LIVE_FILES,
       message = "valid AMT invariant")
   }
 
@@ -78,7 +78,7 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
         checkCount += 1
         true
       },
-      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
+      opTypeSuffix = AMTUsageLogs.ALERT_MDV_WITHOUT_LIVE_FILES,
       message = "valid AMT invariant")
     assert(checkCount === 1)
   }

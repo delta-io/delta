@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, RangedSingl
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -75,7 +76,7 @@ import org.apache.spark.sql.SparkSession
  *   - MODIFIED / EXISTING / DELETED -- same rule as ADDED, from this commit's masking.
  * - DELETED is terminal: the tombstone pointer is emitted once, then dropped from the next AMT.
  */
-class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
+class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) extends DeltaLogging {
 
   private def entriesPerLeaf: Int =
     spark.sessionState.conf.getConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF)
@@ -322,6 +323,20 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
     val deletedPositionsByLeaf = positionsByLeaf(cdfDeletedBackrefs)
     val replacedPositionsByLeaf = positionsByLeaf(cdfReplacedBackrefs)
     val carriedLeaves = oldLeaves.filter(_.tracking.status != Tracking.Status.Deleted)
+    // Leaves from other engines can hold both live files and tombstones. Log how often they
+    // reach this writer.
+    val numMixedLeaves = carriedLeaves.count { leaf =>
+      leaf.manifest_info.liveFilesCount > 0 && leaf.manifest_info.tombstoneFilesCount > 0
+    }
+    if (numMixedLeaves > 0) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = AMTUsageLogs.INCREMENTAL_WRITE_MIXED_LEAVES_CARRIED,
+        data = Map(
+          "oldAMTVersion" -> oldAMTVersion,
+          "numMixedLeaves" -> numMixedLeaves,
+          "numCarriedLeaves" -> carriedLeaves.size))
+    }
     // This writer masks positions only in the live leaves of the base tree. A back reference to
     // any other leaf manifest masks nothing, so its file stays live in this tree and every later
     // tree.
@@ -360,15 +375,11 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
       snapshotId: Long): DataManifestEntry = {
     // The file counts in manifest_info describe the leaf when it was initially created. They are
     // not updated when the leaf is carried forward; only its manifest deletion vector can grow.
+    // This writer creates each leaf with only live files or only tombstones, but the V4 spec
+    // allows a leaf to hold both, and other engines write such leaves (e.g. Iceberg after a
+    // delete + insert).
     val liveFileCount = pointer.manifest_info.liveFilesCount
     val tombstoneFileCount = pointer.manifest_info.tombstoneFilesCount
-    AMTUtils.invariantCheckWithLogging(
-      checkInvariant = liveFileCount == 0 || tombstoneFileCount == 0,
-      opTypeSuffix = AMTUsageLogs.ALERT_MIXED_LEAF_CONTENT,
-      message = "ManifestInfo representing a leaf's initial state must not contain both live " +
-        "files and tombstones.",
-      deltaLog = deltaLog,
-      data = Map("liveFileCount" -> liveFileCount, "tombstoneFileCount" -> tombstoneFileCount))
     AMTUtils.invariantCheckWithLogging(
       checkInvariant = newMdvPositions.isEmpty || liveFileCount > 0,
       opTypeSuffix = AMTUsageLogs.ALERT_MDV_WITHOUT_LIVE_FILES,
@@ -380,22 +391,34 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) {
         "tombstoneFileCount" -> tombstoneFileCount,
         "newMdvPositionCount" -> newMdvPositions.size))
     val (tracking, manifestInfo) =
-      if (tombstoneFileCount > 0) {
+      if (liveFileCount == 0) {
         // A carried leaf with no live file -- a tombstone-only leaf born ADDED last commit --
         // decays to DELETED so the next AMT drops it.
         AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer, snapshotId)
       } else {
-        // this case means tombstoneFileCount = 0 and liveFileCount >= 0
-        // In this scenario, mark the leaf as DELETED if any of below is true:
-        // a) all live files are marked for deletion in this commit (with newMdvPositions) OR
-        // b) all the live files were already striked off in previous commit itself but the
-        //    leaf was not marked as DELETED then (this is not done by our implementation but
-        //    could be done by external engine).
+        // The leaf holds live files, and maybe tombstones from another engine. Its MDV masks only
+        // live files, so the MDV cardinality counts the masked live files.
+        val mdvCardinality = pointer.manifest_info.dvCardinality
+        AMTUtils.invariantCheckWithLogging(
+          checkInvariant = mdvCardinality <= liveFileCount,
+          opTypeSuffix = AMTUsageLogs.ALERT_MDV_EXCEEDS_LIVE_FILES,
+          message = s"Leaf ${pointer.location} has an MDV that masks $mdvCardinality entries " +
+            s"but holds only $liveFileCount live files.",
+          deltaLog = deltaLog,
+          data = Map(
+            "leafLocation" -> pointer.location,
+            "liveFileCount" -> liveFileCount,
+            "tombstoneFileCount" -> tombstoneFileCount,
+            "mdvCardinality" -> mdvCardinality))
+        // Mark the leaf as DELETED if any of below is true:
+        // a) this commit masks its last live files (with newMdvPositions) OR
+        // b) an earlier commit masked every live file but left the leaf live. This writer does
+        //    not do that, but other engines can.
         if (newMdvPositions.nonEmpty) {
           // The MDV grew this commit: MODIFIED, or DELETED once every live entry is masked.
           AMTWriteHelper.modifiedOrDeletedTrackingForLeaf(
             pointer, newMdvPositions, deletedPositions, replacedPositions, snapshotId)
-        } else if (pointer.manifest_info.dvCardinality == pointer.record_count) {
+        } else if (mdvCardinality == liveFileCount) {
           AMTWriteHelper.deletedTrackingForCarriedLeaf(pointer, snapshotId)
         } else {
           // Untouched leaf (no new MDVs) that still holds live files: carry it forward EXISTING.
