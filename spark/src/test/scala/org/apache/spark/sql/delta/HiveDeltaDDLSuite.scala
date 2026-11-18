@@ -24,7 +24,6 @@ import org.apache.spark.sql.hive.test.TestHiveSingleton
 
 abstract class HiveDeltaDDLSuiteBase
   extends DeltaDDLTestBase {
-  import testImplicits._
 
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("not supported for changing column")
