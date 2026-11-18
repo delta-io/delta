@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogManagedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest

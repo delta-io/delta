@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider,
-  CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CommitCoordinatorProvider,
+  CatalogManagedTableUtils, CatalogOwnedTestBaseSuite, CommitCoordinatorProvider,
   CommitCoordinatorUtilBase, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -1943,7 +1943,7 @@ class InCommitTimestampWithCatalogOwnedBatch5Suite extends InCommitTimestampSuit
   test("getActiveCommitAtTime works correctly within catalog owned range") {
     CatalogManagedCommitCoordinatorProvider.clearBuilders()
     CatalogManagedCommitCoordinatorProvider.registerBuilder(
-      catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
       commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
     )
     withTempTable(createTable = false) { tableName =>
@@ -1951,7 +1951,7 @@ class InCommitTimestampWithCatalogOwnedBatch5Suite extends InCommitTimestampSuit
       val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
       val commit0 = DeltaHistoryManager.Commit(0, snapshot.timestamp)
       val tableCommitCoordinatorClient =
-        CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
           spark,
           catalogTableOpt = deltaLog.initialCatalogTable,
           snapshot

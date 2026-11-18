@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, DeltaConfigs, DeltaLog, DeltaTable, DeltaTestUtils, RowCommitVersion, RowId, Snapshot}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider, CatalogOwnedTableUtils, TrackingInMemoryCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider, CatalogManagedTableUtils, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -70,7 +70,7 @@ trait AMTDMLTestUtils extends AMTCheckpointTestBase {
     CatalogManagedCommitCoordinatorProvider.clearBuilders()
     catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
       CatalogManagedCommitCoordinatorProvider.registerBuilder(
-        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize))
     }
     super.beforeAll()

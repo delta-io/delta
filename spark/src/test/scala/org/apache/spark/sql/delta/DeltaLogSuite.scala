@@ -27,7 +27,7 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -522,7 +522,7 @@ class DeltaLogSuite extends QueryTest
         // 00000000002.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
         val oc = getCatalogOwnedCommitCoordinatorClient(
-          catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+          catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         val tableDesc =
           new TableDescriptor(deltaLog.logPath, Optional.empty(), Map.empty[String, String].asJava)
         val commitResponse = oc.getCommits(tableDesc, 2, null)
@@ -553,7 +553,7 @@ class DeltaLogSuite extends QueryTest
         .foreach(f => fs.delete(f.getPath, true))
       if (catalogOwnedDefaultCreationEnabledInTests) {
         val oc = getCatalogOwnedCommitCoordinatorClient(
-          catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+          catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         oc.asInstanceOf[TrackingCommitCoordinatorClient]
           .delegatingCommitCoordinatorClient
           .asInstanceOf[InMemoryCommitCoordinator]
@@ -634,7 +634,7 @@ class DeltaLogSuite extends QueryTest
         // 00000000001.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
         val oc = getCatalogOwnedCommitCoordinatorClient(
-          catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+          catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         val tableDesc =
           new TableDescriptor(log.logPath, Optional.empty(), Map.empty[String, String].asJava)
         val commitResponse = oc.getCommits(tableDesc, 1, null)
