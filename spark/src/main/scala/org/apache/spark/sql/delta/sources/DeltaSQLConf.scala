@@ -984,12 +984,12 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN =
-    buildConf("generatedColumn.eagerAnalyzePlan")
+  val GENERATED_COLUMN_REPORT_UPDATE_EXPRESSION_ERROR =
+    buildConf("generatedColumn.reportUpdateExpressionError.enabled")
       .internal()
       .doc("When enabled, UPDATE and MERGE on a table with generated columns report the " +
-        "analysis error of an update expression, such as a type mismatch, instead of " +
-        "DELTA_CANNOT_RESOLVE_EXPRESSION for a generation expression.")
+        "analysis error of an update expression. When disabled, they report " +
+        "DELTA_CANNOT_RESOLVE_EXPRESSION for a generation expression instead.")
       .booleanConf
       .createWithDefault(true)
 

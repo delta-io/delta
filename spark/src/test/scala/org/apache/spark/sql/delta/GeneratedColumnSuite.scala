@@ -444,8 +444,8 @@ trait GeneratedColumnSuiteBase
     }
   }
 
-  test("UPDATE and MERGE with type-incompatible SET on table with generated columns give " +
-      "correct error") {
+  test("UPDATE and MERGE with type-incompatible SET on table with generated columns report " +
+      "DATATYPE_MISMATCH") {
     withTableName("update_type_mismatch_generated") { table =>
       createTable(table, None, "c1 INT, arr ARRAY<INT>, g INT", Map("g" -> "c1 + 10"), Nil)
       val updateSql = s"UPDATE $table SET arr = map('key', 'val')"
@@ -456,7 +456,10 @@ trait GeneratedColumnSuiteBase
            |ON t.c1 = s.c1
            |WHEN MATCHED THEN UPDATE SET arr = s.m""".stripMargin
       // With fix enabled: the correct type mismatch error is surfaced.
-      withSQLConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN.key -> "true") {
+      withSQLConf(
+        DeltaSQLConf.GENERATED_COLUMN_REPORT_UPDATE_EXPRESSION_ERROR.key -> "true",
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> "ANSI"
+      ) {
         Seq(updateSql -> "\"map(key, val)\"", mergeSql -> "\"m\"").foreach {
           case (query, sqlExpr) =>
             checkError(
@@ -471,16 +474,22 @@ trait GeneratedColumnSuiteBase
         }
       }
       // With fix disabled: the old misleading error is produced.
-      withSQLConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN.key -> "false") {
-        checkError(
-          intercept[AnalysisException](sql(updateSql)),
-          "DELTA_CANNOT_RESOLVE_EXPRESSION",
-          parameters = Map("expression" -> "('c1 + 10)"))
+      withSQLConf(
+        DeltaSQLConf.GENERATED_COLUMN_REPORT_UPDATE_EXPRESSION_ERROR.key -> "false",
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> "ANSI"
+      ) {
+        Seq(updateSql, mergeSql).foreach { query =>
+          checkError(
+            intercept[AnalysisException](sql(query)),
+            "DELTA_CANNOT_RESOLVE_EXPRESSION",
+            sqlState = Some("42703"),
+            parameters = Map("expression" -> "('c1 + 10)"))
+        }
       }
     }
   }
 
-  test("UPDATE and MERGE with implicit upcast under STRICT on table with generated columns") {
+  test("UPDATE and MERGE under STRICT accept upcasts and preserve generated column values") {
     withTableName("update_upcast_generated") { table =>
       createTable(table, None, "c1 INT, b BIGINT, g INT", Map("g" -> "c1 + 10"), Nil)
       sql(s"INSERT INTO $table VALUES(1, 1, 11)")
