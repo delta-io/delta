@@ -29,7 +29,8 @@ import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedLogData, ParsedPublishedDeltaData}
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
-import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, MockSnapshotUtils, VectorTestUtils}
+import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, MockListFromFileSystemClient, MockSnapshotUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
 
@@ -65,6 +66,34 @@ class SnapshotBuilderSuite extends AnyFunSuite
     }.getMessage
 
     assert(exMsg === "version must be >= 0")
+  }
+
+  test("withCheckpointSearchBatchSize: searches older batches with the supplied width") {
+    val files = deltaFileStatuses(Seq.range(0, 26)) ++ singularCheckpointFileStatuses(Seq(20))
+    val fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))
+    val engine = mockEngine(fileSystemClient = fileSystemClient)
+
+    val snapshot = TableManager.loadSnapshot(dataPath.toString)
+      .asInstanceOf[SnapshotBuilderImpl]
+      .atVersion(25)
+      .withCheckpointSearchBatchSize(5)
+      .withProtocolAndMetadata(protocol, metadata)
+      .build(engine)
+
+    assert(snapshot.getLogSegment.getCheckpointVersionOpt.get() === 20L)
+    assert(fileSystemClient.getListFromCalls === Seq(21L, 16L, 20L)
+      .map(version => FileNames.listingPrefix(logPath, version)))
+  }
+
+  test("withCheckpointSearchBatchSize: rejects nonpositive values") {
+    Seq(0, -1).foreach { batchSize =>
+      val exMsg = intercept[IllegalArgumentException] {
+        TableManager.loadSnapshot(dataPath.toString)
+          .withCheckpointSearchBatchSize(batchSize)
+      }.getMessage
+
+      assert(exMsg === "checkpoint search batch size must be > 0")
+    }
   }
 
   // ===== Timestamp Tests ===== //
