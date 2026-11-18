@@ -37,6 +37,7 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.quietly
+import org.apache.spark.sql.errors.QueryExecutionErrors.toSQLType
 import org.apache.spark.sql.functions.{lit, make_dt_interval, struct, typedLit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
@@ -468,8 +469,8 @@ trait GeneratedColumnSuiteBase
               sqlState = Some("42K09"),
               parameters = Map(
                 "sqlExpr" -> sqlExpr,
-                "srcType" -> "\"MAP<STRING, STRING>\"",
-                "targetType" -> "\"ARRAY<INT>\""),
+                "srcType" -> toSQLType("MAP<STRING, STRING>"),
+                "targetType" -> toSQLType("ARRAY<INT>")),
               queryContext = Array(ExpectedContext(query, 0, query.length - 1)))
         }
       }
