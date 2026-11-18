@@ -984,6 +984,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN =
+    buildConf("generatedColumn.eagerAnalyzePlan")
+      .internal()
+      .doc("When enabled, UPDATE and MERGE on a table with generated columns report the " +
+        "analysis error of an update expression. When disabled, they report " +
+        "DELTA_CANNOT_RESOLVE_EXPRESSION for a generation expression instead.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS =
     buildConf("merge.insert.fixCaseSensitiveDuplicateColumns")
       .internal()
