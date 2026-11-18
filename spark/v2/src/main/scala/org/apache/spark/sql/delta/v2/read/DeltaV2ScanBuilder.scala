@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.v2.read
 
-import java.util.{Locale, Objects, OptionalInt}
+import java.util.{Objects, OptionalInt}
 
 import scala.jdk.OptionConverters._
 
@@ -98,8 +98,7 @@ private[read] class DeltaV2ScanBuilder(
   Objects.requireNonNull(catalogStats, "catalogStats is null")
   Objects.requireNonNull(options, "options is null")
 
-  private val partitionColumnSet: Set[String] =
-    partitionSchema.fields.map(_.name.toLowerCase(Locale.ROOT)).toSet
+  private val partitionColumnNames: Set[String] = partitionSchema.names.toSet
 
   private var requiredDataSchema: StructType = dataSchema
 
@@ -134,8 +133,7 @@ private[read] class DeltaV2ScanBuilder(
       // CDC columns are injected later by CDCReadFunction, so strip them here.
       requiredDataSchema = new StructType(
         requiredSchema.fields.filter { f =>
-          val name = f.name.toLowerCase(Locale.ROOT)
-          !partitionColumnSet.contains(name) && !CDCSchemaContext.isCDCColumn(name)
+          !partitionColumnNames.contains(f.name) && !CDCSchemaContext.isCDCColumn(f.name)
         })
     }
 
