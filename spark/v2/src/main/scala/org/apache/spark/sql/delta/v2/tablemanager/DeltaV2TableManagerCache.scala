@@ -181,9 +181,7 @@ private[v2] object DeltaV2TableManagerCache extends DeltaV2Logging {
         catalogTableOpt: Option[CatalogTable] = None
     ): CacheKey = {
       val sessionInvariantFsOptions = DeltaFileSystemOptions.buildFsOptions(
-        spark,
-        DeltaFileSystemOptions.toCaseSensitiveMap(options).asScala.toMap,
-        catalogTableOpt)
+        spark, options.asScala.toMap, catalogTableOpt)
       val rawLogPath = DeltaTableUtils.safeConcatPaths(new Path(dataPath), "_delta_log")
       // Snapshot the session's Hadoop config with fs options overlaid.
       // Used only for qualification; not retained in the key.

@@ -151,7 +151,7 @@ class DeltaV2Table private (
       mapAsJavaMap(
         DeltaFileSystemOptions.extractCatalogTableFsOptions(catalogTableOpt)))
     // User options override catalog properties
-    merged.putAll(DeltaFileSystemOptions.toCaseSensitiveMap(userOptions))
+    merged.putAll(userOptions)
     val options = Collections.unmodifiableMap[String, String](merged)
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(toScalaMap(options))
     val tableManager =

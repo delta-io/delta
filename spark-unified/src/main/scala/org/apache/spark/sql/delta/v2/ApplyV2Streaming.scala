@@ -79,7 +79,8 @@ class ApplyV2Streaming(
       val catalogTable = s.dataSource.catalogTable.get
       val ident =
         Identifier.of(catalogTable.identifier.database.toArray, catalogTable.identifier.table)
-      val caseSensitiveOptions = DeltaFileSystemOptions.toCaseSensitiveMap(s.dataSource.options)
+      val caseSensitiveOptions =
+        DeltaFileSystemOptions.toCaseSensitiveMap(s.dataSource.options, session.sessionState.conf)
       val table =
         new DeltaV2Table(
           ident,

@@ -2244,9 +2244,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     buildConf("legacy.lowercaseFileSystemOptions")
       .internal()
       .doc(
-        """When true, DataFrame options passed to Delta's Hadoop file system configuration and
-          |table resolution are lowercased, restoring the legacy behavior where case-insensitive
-          |map wrappers lowercased option keys.""".stripMargin)
+        """When true, DataFrame option keys passed to Delta's Hadoop file system configuration and
+          |table resolution are lowercased, restoring the legacy behavior of case-insensitive map
+          |wrappers.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 

@@ -605,9 +605,7 @@ class DeltaAnalysis(protected val session: SparkSession)
       ResolvedTable.create(catalog, u.identifier, table)
 
     case u: UnresolvedPathBasedDeltaTableRelation =>
-      val table = getPathBasedDeltaTable(
-        u.path,
-        DeltaFileSystemOptions.toCaseSensitiveMap(u.options).asScala.toMap)
+      val table = getPathBasedDeltaTable(u.path, u.options.asScala.toMap)
       if (!table.tableExists) {
         throw DeltaErrors.notADeltaTableException(u.deltaTableIdentifier)
       }

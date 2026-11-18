@@ -125,11 +125,11 @@ private[read] class DeltaV2Scan(
   Objects.requireNonNull(catalogStats, "catalogStats is null")
   Objects.requireNonNull(options, "options is null")
   Objects.requireNonNull(pushedLimit, "pushedLimit is null")
+  private val sqlConf: SQLConf = SQLConf.get
   private val scalaOptions: Map[String, String] =
-    ScalaUtils.toScalaMap(DeltaFileSystemOptions.toCaseSensitiveMap(options))
+    ScalaUtils.toScalaMap(DeltaFileSystemOptions.toCaseSensitiveMap(options, sqlConf))
   private val hadoopConf: Configuration =
     SparkSession.active.sessionState.newHadoopConfWithOptions(scalaOptions)
-  private val sqlConf: SQLConf = SQLConf.get
   private val deltaOptions: DeltaOptions = new DeltaOptions(scalaOptions, sqlConf)
   private[this] val cdcReadEnabled: Boolean = deltaOptions.readChangeFeed
   private val zoneId: ZoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone)

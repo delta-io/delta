@@ -237,6 +237,10 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
         spark.range(2).write.format("delta").options(misCasedOptions).save(path)
         clearCachedDeltaLogToForceReload()
         assert(spark.read.format("delta").options(misCasedOptions).load(path).count() == 2)
+        withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "delta") {
+          clearCachedDeltaLogToForceReload()
+          assert(spark.read.format("delta").options(misCasedOptions).load(path).count() == 2)
+        }
       }
     }
   }
