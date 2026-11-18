@@ -97,12 +97,12 @@ object DeltaV2SourceSuite {
       "equivalent to skipChangeCommits",
 
     // === Commit/Checkpoint file missing detection ===
-    "incremental: whole planned commit range missing, failOnDataLoss=true",
-    "incremental: whole planned commit range missing, failOnDataLoss=false",
-    "incremental: first commit file missing, fails",
-    "incremental: commit file gap between versions, fails",
-    "incremental: first commit file missing, failOnDataLoss=false succeeds",
-    "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
+    "incremental: missing commit files, failOnDataLoss=true, dataLossType=first",
+    "incremental: missing commit files, failOnDataLoss=true, dataLossType=middle",
+    "incremental: missing commit files, failOnDataLoss=true, dataLossType=whole",
+    "incremental: missing commit files, failOnDataLoss=false, dataLossType=first",
+    "incremental: missing commit files, failOnDataLoss=false, dataLossType=middle",
+    "incremental: missing commit files, failOnDataLoss=false, dataLossType=whole",
     "initial snapshot: commit file missing but checkpoint intact, succeeds",
     "initial snapshot: checkpoint missing but all commit files intact, succeeds",
     "initial snapshot: both checkpoint and commit file missing, fails",
