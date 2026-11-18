@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.v2.read
 
-import java.util.{Locale, Objects, OptionalInt}
+import java.util.{Objects, OptionalInt}
 
 import scala.jdk.OptionConverters._
 
@@ -98,8 +98,7 @@ private[read] class DeltaV2ScanBuilder(
   Objects.requireNonNull(catalogStats, "catalogStats is null")
   Objects.requireNonNull(options, "options is null")
 
-  private val partitionColumnSet: Set[String] =
-    partitionSchema.fields.map(_.name.toLowerCase(Locale.ROOT)).toSet
+  private val partitionColumnNames: Set[String] = partitionSchema.names.toSet
 
   private var requiredDataSchema: StructType = dataSchema
 
@@ -131,11 +130,11 @@ private[read] class DeltaV2ScanBuilder(
   override def pruneColumns(requiredSchema: StructType): Unit =
     recordFrameProfile("scanBuilder.pruneColumns") {
       Objects.requireNonNull(requiredSchema, "requiredSchema is null")
-      // CDC columns are injected later by CDCReadFunction, so strip them here.
+      // Keep metadata `_metadata` distinct from partition `_Metadata` in case-sensitive queries.
+      // CDC filtering must match CDCSchemaContext's case-insensitive schema validation.
       requiredDataSchema = new StructType(
         requiredSchema.fields.filter { f =>
-          val name = f.name.toLowerCase(Locale.ROOT)
-          !partitionColumnSet.contains(name) && !CDCSchemaContext.isCDCColumn(name)
+          !partitionColumnNames.contains(f.name) && !CDCSchemaContext.isCDCColumn(f.name)
         })
     }
 
@@ -208,8 +207,9 @@ private[read] class DeltaV2ScanBuilder(
       val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
 
       // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
-      // requires partition-only filters and prunes files by accumulating record counts until the
-      // limit is satisfied.
+      // requires partition-only filters (guaranteed by build(): effectiveLimit is only set when
+      // there are no residual data filters) and prunes files by accumulating record counts until
+      // the limit is satisfied.
       def selectFiles(): DeltaScan =
         if (effectiveLimit.isPresent) {
           recordFrameProfile("filesForScan.limitAndFilters") {
@@ -265,30 +265,6 @@ private[read] object DeltaV2ScanBuilder {
   def normalizeForEquality(expr: Expression): Expression = expr.transformUp {
     case a: AttributeReference => a.withExprId(ExprId(0L)).withQualifier(Nil)
   }
-
-  def create(
-      tableName: String,
-      initialSnapshot: Snapshot,
-      kernelEngine: Engine,
-      catalogTable: Option[CatalogTable],
-      tableManager: DeltaV2TableManager,
-      dataSchema: StructType,
-      partitionSchema: StructType,
-      tableSchema: StructType,
-      catalogStats: Option[Statistics],
-      options: CaseInsensitiveStringMap): DeltaV2ScanBuilder =
-    new DeltaV2ScanBuilder(
-      tableName = tableName,
-      initialSnapshot = initialSnapshot,
-      kernelEngine = kernelEngine,
-      catalogTable = catalogTable,
-      snapshotManager = tableManager.snapshotManager(catalogTable),
-      tableManager = Some(tableManager),
-      dataSchema = dataSchema,
-      partitionSchema = partitionSchema,
-      tableSchema = tableSchema,
-      catalogStats = catalogStats,
-      options = options)
 
   /**
    * Adapter for callers that hold a Kernel snapshot but push no filters -- currently Delta Sharing

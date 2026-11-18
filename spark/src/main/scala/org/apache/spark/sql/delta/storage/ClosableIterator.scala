@@ -18,17 +18,25 @@ package org.apache.spark.sql.delta.storage
 
 import java.io.Closeable
 
+import org.apache.spark.util.Utils
+
 trait SupportsRewinding[T] extends Iterator[T] {
   // Overrides if class supports rewinding the iterator to the beginning efficiently.
   def rewind(): Unit
 }
 
 trait ClosableIterator[T] extends Iterator[T] with Closeable {
-  /** Calls f(this) and always closes the iterator afterwards. */
+  /**
+   * Calls `f` with this iterator and always closes it afterwards.
+   *
+   * @return the result of `f`
+   * @throws Throwable if processing or closing fails. A processing failure takes precedence,
+   *   with any close failure attached as a suppressed exception.
+   */
   def processAndClose[R](f: Iterator[T] => R): R = {
-    try {
+    Utils.tryWithSafeFinally {
       f(this)
-    } finally {
+    } {
       close()
     }
   }
@@ -46,8 +54,11 @@ object ClosableIterator {
           f(closableIter)
         } catch {
           case e: Throwable =>
-            closableIter.close()
-            throw e
+            Utils.tryWithSafeFinally {
+              throw e
+            } {
+              closableIter.close()
+            }
         }
       override def next(): B = iter.next()
       override def hasNext: Boolean = iter.hasNext

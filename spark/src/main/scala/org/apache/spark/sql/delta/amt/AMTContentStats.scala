@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.stats.{DeltaStatistics, SkippingEligibleDataType, StatisticsCollection, StatsCollectionUtils}
 
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
@@ -43,7 +44,7 @@ import org.apache.spark.sql.types.{BooleanType, ByteType, DataType, DateType, De
  * `upper_bound`. The remaining spec-optional statistics (`value_count`, `nan_value_count`,
  * `total_bytes`) are omitted.
  */
-private[amt] object AMTContentStats {
+private[amt] object AMTContentStats extends DeltaLogging {
 
   /** Names of the [[AMTSingleAction]] fields this object shapes. */
   private val CONTENT_STATS_FIELD = "content_stats"
@@ -94,8 +95,6 @@ private[amt] object AMTContentStats {
       name: String,
       path: Seq[String],
       boundType: Option[DataType]) {
-    def hasBounds: Boolean = boundType.isDefined
-
     /**
      * The sub-struct's field name in the persisted schema: the logical name with the (unique)
      * field id attached. Iceberg resolves content_stats entries by field id and treats the name as
@@ -311,30 +310,97 @@ private[amt] object AMTContentStats {
   /** The persisted `content_stats` of an entry row as the JSON that [[forRead]] decodes it to. */
   private def statsJson(spark: SparkSession, metadata: Metadata, protocol: Protocol): Column = {
     val stats = statisticsCollection(spark, metadata, protocol)
-    val columns = statsColumns(stats.statCollectionPhysicalSchema)
-    if (columns.isEmpty) {
+    if (statsColumns(stats.statCollectionPhysicalSchema).isEmpty) {
       // No per-column stats were persisted (`content_stats` was dropped from the schema); the
       // encoder decodes `None` and `toStatsJson` supplies the record count and `tightBounds`.
       lit(null).cast(StringType)
     } else {
-      val typedStats = col(CONTENT_STATS_FIELD)
-
-      // Rebuild the nested minValues/maxValues/nullCount shape from each column's recorded path,
-      // then serialize it back to the JSON string Delta expects. minValues/maxValues cover only the
-      // columns that carry bounds, matching the sub-schemas Delta itself builds.
-      val bounded = columns.filter(_.hasBounds)
-      val statsFields =
-        bounded.headOption.toSeq.flatMap { _ =>
-          Seq(
-            nestByPath(bounded, statOf(typedStats, _, LOWER_BOUND)).as(DeltaStatistics.MIN),
-            nestByPath(bounded, statOf(typedStats, _, UPPER_BOUND)).as(DeltaStatistics.MAX))
-        } ++ columns.headOption.toSeq.map { _ =>
-          nestByPath(columns, statOf(typedStats, _, NULL_VALUE_COUNT))
-            .as(DeltaStatistics.NULL_COUNT)
-        } :+ tightBounds
-      val encoded = to_json(struct(numRecords +: statsFields: _*))
-      when(typedStats.isNull, lit(null).cast(StringType)).otherwise(encoded)
+      // Delta's stats schema of the manifests' own metadata, so that every persisted statistic is
+      // matched; `to_json` leaves out the null ones, as Delta writes no stats it does not have.
+      val encoded = to_json(parsedStats(stats, stats.statsSchema, omitMissing = true))
+      when(col(CONTENT_STATS_FIELD).isNull, lit(null).cast(StringType)).otherwise(encoded)
     }
+  }
+
+  /**
+   * The persisted stats of an entry row as Delta's parsed stats struct of type `statsSchema`, built
+   * out of plain field accesses into the typed `content_stats` struct.
+   *
+   * Statistics are matched by their physical path, so `statsSchema` may come from newer metadata
+   * than `stats` describes: statistics `content_stats` lacks, or that AMT does not persist (e.g.
+   * collation statistics), are null. A matched statistic of another type is cast: with column
+   * mapping in `id` mode, a column keeps its physical path only through a type widening, and Delta
+   * only allows widenings that up-cast. `numRecords` is the entry's `record_count` and
+   * `tightBounds` is [[tightBounds]], both set even when the entry has no `content_stats`.
+   *
+   * @param stats       the stats the manifests were written with
+   * @param omitMissing whether a struct of statistics none of which `content_stats` persists, e.g.
+   *                    the `minValues` of columns AMT keeps no bounds for, is null rather than a
+   *                    struct of nulls, so that `to_json` leaves it out
+   */
+  private def parsedStats(
+      stats: StatisticsCollection,
+      statsSchema: StructType,
+      omitMissing: Boolean): Column = {
+    val columns = statsColumns(stats.statCollectionPhysicalSchema)
+    // With no per-column stats, `content_stats` is dropped from the persisted schema.
+    val typedStatsOpt = if (columns.isEmpty) None else Some(col(CONTENT_STATS_FIELD))
+    val columnByPath = columns.map(column => column.path -> column).toMap
+
+    // The persisted `statName` of the column at `path` as a `dataType`, or None if AMT keeps none
+    // for it. Each column's stats are a sub-struct of `content_stats` keyed by its `fieldName`.
+    def persistedStat(statName: String, path: Seq[String], dataType: DataType): Option[Column] =
+      for {
+        typedStats <- typedStatsOpt
+        column <- columnByPath.get(path)
+        statType <- if (statName == NULL_VALUE_COUNT) Some(LongType) else column.boundType
+      } yield {
+        val stat = typedStats.getField(column.fieldName).getField(statName)
+        if (statType == dataType) stat else stat.cast(dataType)
+      }
+
+    // The `statName` of every column of `schema`, nested like `schema`, or None if `omitMissing`
+    // and no column has a persisted value.
+    def perColumnStats(statName: String, schema: StructType, prefix: Seq[String])
+        : Option[Column] = {
+      val values = schema.fields.toIndexedSeq.map { field =>
+        val path = prefix :+ field.name
+        field -> (field.dataType match {
+          case nested: StructType if !columnByPath.contains(path) =>
+            perColumnStats(statName, nested, path)
+          case dataType => persistedStat(statName, path, dataType)
+        })
+      }
+      if (omitMissing && values.forall { case (_, value) => value.isEmpty }) {
+        None
+      } else {
+        Some(struct(values.map { case (field, value) =>
+          value.getOrElse(lit(null).cast(field.dataType)).as(field.name)
+        }: _*))
+      }
+    }
+
+    struct(statsSchema.fields.toIndexedSeq.map { field =>
+      val value = (field.name, field.dataType) match {
+        case (DeltaStatistics.NUM_RECORDS, dataType) => col("record_count").cast(dataType)
+        case (DeltaStatistics.MIN, schema: StructType) =>
+          perColumnStats(LOWER_BOUND, schema, Nil).getOrElse(lit(null).cast(schema))
+        case (DeltaStatistics.MAX, schema: StructType) =>
+          perColumnStats(UPPER_BOUND, schema, Nil).getOrElse(lit(null).cast(schema))
+        case (DeltaStatistics.NULL_COUNT, schema: StructType) =>
+          perColumnStats(NULL_VALUE_COUNT, schema, Nil).getOrElse(lit(null).cast(schema))
+        case (DeltaStatistics.TIGHT_BOUNDS, dataType) => tightBounds.cast(dataType)
+        case (name, dataType) =>
+          // Fails tests, so that a statistic Delta adds gets mapped here; null in production.
+          deltaAssert(
+            check = false,
+            name = "amt.unmappedStatistic",
+            msg = "The Delta statistic " + name + " is not mapped to AMT content stats; map it " +
+              "in AMTContentStats.parsedStats.")
+          lit(null).cast(dataType)
+      }
+      value.as(field.name)
+    }: _*)
   }
 
   /**
@@ -353,57 +419,6 @@ private[amt] object AMTContentStats {
    */
   private def statPath(parsed: Column, statName: String, path: Seq[String]): Column =
     path.foldLeft(parsed.getField(statName))((column, name) => column.getField(name))
-
-  /**
-   * Reads one statistic out of a column's typed, flat `content_stats` sub-struct (used on read) --
-   * the inverse shape of [[statPath]]. The sub-struct is keyed by the column's unique `fieldName`.
-   *
-   * Example: statOf(typed, column(fieldName="d_nested_inner_4"), "lower_bound") reads the
-   * `lower_bound` of the sub-struct field named "d_nested_inner_4".
-   */
-  private def statOf(typed: Column, column: StatsColumn, statName: String): Column =
-    typed.getField(column.fieldName).getField(statName)
-
-  /**
-   * Rebuilds Delta's nested stats shape from the flat columns, grouping by each column's recorded
-   * path so a struct column's per-field statistics land back under that struct.
-   *
-   * Example -- rebuilding `minValues` from the three bounded columns below, where `value` reads
-   * each column's `lower_bound` out of the typed `content_stats` sub-struct (e.g. value of id 1
-   * = typed.`1`.lower_bound):
-   *
-   *   StatsColumn(1, ["col-1"])
-   *   StatsColumn(2, ["col-2"])
-   *   StatsColumn(4, ["col-3","col-4"])
-   *
-   * Group by the first path segment -> col-1, col-2, col-3. col-1 and col-2 have a length-1 path so
-   * they take their value directly; col-3 has no length-1 entry, so it recurses on the remaining
-   * path ["col-4"] and builds a sub-struct. The result is:
-   *
-   *   struct(
-   *     "col-1" -> typed.`1`.lower_bound,
-   *     "col-2" -> typed.`2`.lower_bound,
-   *     "col-3" -> struct("col-4" -> typed.`4`.lower_bound))
-   *
-   * which `to_json`s to {"col-1":.., "col-2":.., "col-3":{"col-4":..}} -- the physical-keyed,
-   * nested shape Delta writes minValues/maxValues/nullCount in, with col-4 back under col-3.
-   */
-  private def nestByPath(columns: Seq[StatsColumn], value: StatsColumn => Column): Column = {
-    def build(entries: Seq[(Seq[String], StatsColumn)]): Column = {
-      val fields = entries
-        .groupBy(_._1.head)
-        .toSeq
-        .sortBy { case (_, group) => group.map(_._2.fieldId).min }
-        .map { case (name, group) =>
-          group.find(_._1.length == 1) match {
-            case Some((_, column)) => value(column).as(name)
-            case None => build(group.map { case (path, column) => (path.tail, column) }).as(name)
-          }
-        }
-      struct(fields: _*)
-    }
-    build(columns.map(column => (column.path, column)))
-  }
 
   private def replaceContentStats(df: DataFrame, contentStats: Column): DataFrame =
     df.select(df.columns.map { name =>

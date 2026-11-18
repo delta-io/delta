@@ -325,7 +325,7 @@ class CatalogOwnedSuite
   with CatalogOwnedTestBaseSuite {
 
   override def sparkConf: SparkConf = {
-    // Make sure all new tables in tests use CatalogOwned table feature by default.
+    // Make sure all new tables in tests use CatalogManaged table feature by default.
     super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
   }
 }
@@ -344,7 +344,7 @@ abstract class CommitCoordinatorSuiteBase
   test("0th commit happens via filesystem") {
     val commitCoordinatorName = "tracking-in-memory"
     object NoBackfillingCommitCoordinatorBuilder$
-        extends CatalogOwnedCommitCoordinatorBuilder {
+        extends CatalogManagedCommitCoordinatorBuilder {
 
       override def getName: String = commitCoordinatorName
 
@@ -737,7 +737,7 @@ abstract class CommitCoordinatorSuiteBase
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, CatalystTableIdentifier("t1"))
         if (isCatalogOwnedTest) {
           assert(snapshot.isCatalogOwned)
-          // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogOwned
+          // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogManaged
           // since we don't support upgrade yet.
           assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
         } else {

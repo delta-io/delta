@@ -1,12 +1,15 @@
 name: "Set up pinned Unity Catalog build"
 description: >-
-  Publishes Unity Catalog jars from the commit pinned in project/scripts/setup_unitycatalog_main.sh
-  (the UC_PIN_SHA= line) to the runner's local Ivy / Maven caches, using GitHub Actions cache so the
-  slow UC build only runs the first time a pin is seen. Reads SPARK_VERSION (Spark major.minor
-  short form) from the calling job's env to pick the Spark variant UC builds against; matrix
-  workflows set this from `matrix.spark_version`, other workflows leave it unset and inherit the
-  script's default. The cache key reflects SPARK_VERSION literally - workflows that share the
-  default share one cache entry under an empty `spark-` segment.
+  Publishes the pinned Unity Catalog jars to the runner's local Ivy and Maven repositories.
+  Restores the cache for SPARK_VERSION (major.minor) and builds missing jars. When SPARK_VERSION
+  is unset, the setup script uses its default version and those callers share a cache.
+  Only designated producers save caches on master pushes.
+
+inputs:
+  save-cache:
+    description: Whether this job produces the shared UC cache on a master push.
+    required: false
+    default: 'false'
 
 runs:
   using: "composite"
@@ -26,12 +29,9 @@ runs:
       shell: bash
       run: bash project/scripts/setup_unitycatalog_main.sh
     - name: Save pinned UC cache
-      # Only attempt a save when the restore missed. When multiple parallel matrix jobs all see
-      # a cache miss (first CI run after a pin bump), only the first to reach this step wins the
-      # GHA cache reservation; the rest log "another job may be creating this cache" warnings.
-      # Gating on cache-hit means cached runs (the common steady state) skip the save entirely,
-      # which eliminates those warnings on every subsequent run.
-      if: steps.uc-cache.outputs.cache-hit != 'true'
+      if: >-
+        inputs.save-cache == 'true' && github.event_name == 'push' &&
+        github.ref == 'refs/heads/master' && steps.uc-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |

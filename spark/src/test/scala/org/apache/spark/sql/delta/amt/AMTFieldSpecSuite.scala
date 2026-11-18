@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{ContentRoot, Metadata}
 import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.databind.JsonNode
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.format.converter.ParquetMetadataConverter
@@ -31,7 +32,7 @@ import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.schema.{GroupType, LogicalTypeAnnotation, MessageType, PrimitiveType, Type}
 
 import org.apache.spark.SparkRuntimeException
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -400,6 +401,76 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
       s"the renamed partition value should be lost without field-id read: $degraded")
     assert(degraded.exists(_.values.exists(_ == null)),
       s"the renamed partition value should read null without field-id read: $degraded")
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "content stats of a dropped column do not apply to a re-added column of the same name",
+      "amt_drop_readd",
+      sqlConfs = leafPackingConfs,
+      tableSchema = "id INT, c INT")(
+      setup = name => {
+        appendRowsAsSeparateFiles(
+          name,
+          numFiles = leafPackedFiles,
+          columnExprs = Seq("CAST(id AS INT)", "CAST(100 + id AS INT)"))
+        commitCheckpoint(deltaLogForName(name), incremental = false)
+        sql(s"ALTER TABLE $name DROP COLUMN c")
+        sql(s"ALTER TABLE $name ADD COLUMN c INT")
+      },
+      inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+        s"INSERT INTO $name VALUES ($leafPackedFiles, 5)"))) { context =>
+    val deltaLog = context.postCheckpointSnapshot.deltaLog
+    // Reconstruct the live AddFiles of `provider` under `meta`, parsing the stats of each file.
+    def reconstructStats(provider: AMTCheckpointProvider, meta: Metadata): Seq[JsonNode] =
+      reconstructAddFiles(provider, deltaLog, meta)
+        .select("add.stats").collect().toSeq
+        .map(row => JsonUtils.mapper.readTree(
+          Option(row.getString(0)).getOrElse(fail("a live file has no stats"))))
+
+    // The tree written before the drop holds the dropped `c`'s stats in its leaves.
+    val preDropTree = amtProvider(context.postSetupSnapshot).getOrElse(
+      fail("expected the tree written before the drop"))
+    assertLeafCount(preDropTree.leaves)
+    val preDropMetadata = preDropTree.checkpointAction.metaData
+    val droppedPhysicalName = DeltaColumnMapping.getPhysicalName(preDropMetadata.schema("c"))
+    val preDropStats = reconstructStats(preDropTree, preDropMetadata)
+    assert(preDropStats.size == leafPackedFiles, s"expected $leafPackedFiles files: $preDropStats")
+    preDropStats.foreach { stats =>
+      Seq("minValues", "maxValues", "nullCount").foreach { statName =>
+        assert(stats.path(statName).has(droppedPhysicalName),
+          s"a file written before the drop has no $statName for the dropped `c`: $stats")
+      }
+    }
+
+    val metadata = context.postCheckpointSnapshot.metadata
+    val droppedColumnId = DeltaColumnMapping.getColumnId(preDropMetadata.schema("c"))
+    assert(DeltaColumnMapping.getColumnId(metadata.schema("c")) != droppedColumnId)
+    val idPhysicalName = DeltaColumnMapping.getPhysicalName(metadata.schema("id"))
+    val cPhysicalName = DeltaColumnMapping.getPhysicalName(metadata.schema("c"))
+
+    BOOLEAN_DOMAIN.foreach { fieldIdRead =>
+      withSQLConf(SQLConf.PARQUET_FIELD_ID_READ_ENABLED.key -> fieldIdRead.toString) {
+        val fileStats = reconstructStats(context.provider, metadata)
+        val (newFileStats, oldFileStats) = fileStats.partition(
+          _.path("minValues").path(idPhysicalName).asInt() == leafPackedFiles)
+        assert(oldFileStats.size == leafPackedFiles && newFileStats.size == 1,
+          s"expected $leafPackedFiles old files and 1 new file: $fileStats")
+        oldFileStats.foreach { stats =>
+          Seq("minValues", "maxValues", "nullCount").foreach { statName =>
+            assert(!stats.path(statName).has(cPhysicalName),
+              s"an old file has $statName for the re-added `c` (fieldIdRead=$fieldIdRead): $stats")
+          }
+        }
+        assert(newFileStats.head.path("minValues").path(cPhysicalName).asInt() == 5,
+          s"the new file lost its `c` stats (fieldIdRead=$fieldIdRead): $newFileStats")
+      }
+    }
+
+    // The re-added `c` is null in every old file, so data skipping must keep them all.
+    checkAnswer(
+      spark.table(context.tableName).where("c IS NULL").select("id"),
+      (0 until leafPackedFiles).map(Row(_)))
+    checkAnswer(spark.table(context.tableName).where("c = 5"), Row(leafPackedFiles, 5))
   }
 
   testAcrossAMTCheckpointScenarios(

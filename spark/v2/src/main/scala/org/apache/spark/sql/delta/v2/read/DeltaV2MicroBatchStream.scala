@@ -27,7 +27,6 @@ import scala.jdk.javaapi.CollectionConverters
 import scala.util.Using
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.DeltaSingleCommit
@@ -48,6 +47,7 @@ import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.sources.DeltaSource
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset
+import org.apache.spark.sql.delta.sources.DeltaSourceOffsetLogic
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils
@@ -90,7 +90,7 @@ private[read] class DeltaV2MicroBatchStream(
       tableManager: DeltaV2TableManager,
       snapshotAtSourceInit: Snapshot,
       hadoopConf: Configuration,
-      spark: SparkSession,
+      override protected val spark: SparkSession,
       options: DeltaOptions,
       inputTablePath: String,
       dataSchema: StructType,
@@ -104,7 +104,8 @@ private[read] class DeltaV2MicroBatchStream(
       originalStreamingQueryContext: DeltaV2QueryContext)
     extends MicroBatchStream
         with SupportsAdmissionControl
-        with SupportsTriggerAvailableNow {
+        with SupportsTriggerAvailableNow
+        with DeltaSourceOffsetLogic {
 
   private val logger: Logger = LoggerFactory.getLogger(classOf[DeltaV2MicroBatchStream])
 
@@ -229,7 +230,7 @@ private[read] class DeltaV2MicroBatchStream(
    * Configuration options for handling schema changes behavior. Controls unsafe operations like
    * column mapping changes, partition column changes, nullability changes, and type widening.
    */
-  private val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
+  override protected val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
     val isStreamingFromColumnMappingTable: Boolean =
         this.snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
     val isTypeWideningSupportedInProtocol: Boolean =
@@ -250,9 +251,12 @@ private[read] class DeltaV2MicroBatchStream(
           options,
           schemaReadOptions,
           metadataTrackingLog,
-          readSnapshotDescriptor.metadata,
-          readSnapshotDescriptor.protocol,
+          readSnapshotDescriptor,
           metadataPath)
+
+  override protected def trackingMetadataChange: Boolean =
+      metadataEvolutionHandler.shouldTrackMetadataChange()
+
   locally {
     val shouldValidateSchemaOnRestart: Boolean =
         spark
@@ -1143,6 +1147,8 @@ private[read] class DeltaV2MicroBatchStream(
                   endOffsetOpt,
                   verifyMetadataAction)
         } else if (action.isInstanceOf[Protocol]) {
+          Protocol.protocolRead(
+              spark, action.asInstanceOf[Protocol], tablePath, readSnapshotDescriptor)
           assert(
             protocolAction == null,
             s"Should not encounter two protocol actions in the same commit of version $version")
@@ -1226,7 +1232,10 @@ private[read] class DeltaV2MicroBatchStream(
       oldPartitionColumns = oldMetadata.partitionColumns.toList
     }
 
-    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart)
+    checkNonAdditiveSchemaChanges(
+        oldMetadata,
+        newMetadata,
+        validatedDuringStreamStart)
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
@@ -1260,37 +1269,6 @@ private[read] class DeltaV2MicroBatchStream(
                 Some.apply(version),
                 options.containsStartingVersionOrTimestamp)
       }
-    }
-  }
-
-  // Non-additive schema changes include rename column, drop column and change column type.
-  // When schema tracking is enabled, this method is NOT called - the MetadataEvolutionHandler
-  // manages these changes through the barrier protocol instead.
-  private def checkNonAdditiveSchemaChanges(
-      oldMetadata: Metadata, newMetadata: Metadata, validatedDuringStreamStart: Boolean): Unit = {
-    var shouldTrackSchema: Boolean = false
-    if (schemaReadOptions.typeWideningEnabled
-        && schemaReadOptions.enableSchemaTrackingForTypeWidening
-        && TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
-      // If schema tracking is enabled for type widening, we will detect widening type changes and
-      // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
-      // DROP/RENAME for column mapping.
-      shouldTrackSchema = true
-    } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
-      shouldTrackSchema = false
-    } else {
-      // Delegate to the shared utility which handles all column mapping mode transitions
-      // (both enabled, upgrade from none, downgrade to none).
-      shouldTrackSchema =
-          !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(
-              newMetadata,
-              oldMetadata,
-              schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges)
-    }
-
-    if (shouldTrackSchema) {
-      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-              spark, oldMetadata.schema, newMetadata.schema, !validatedDuringStreamStart)
     }
   }
 
@@ -1388,7 +1366,9 @@ private[read] class DeltaV2MicroBatchStream(
                       Optional.of(Long.box(batchEndVersion.get)),
                       tableManager,
                       originalStreamingQueryContext,
-                      options.failOnDataLoss)
+                      options.failOnDataLoss,
+                      spark,
+                      readSnapshotDescriptor)
                   .entrySet())) {
             val version: Long = entry.getKey()
             val metadata: Metadata = entry.getValue()

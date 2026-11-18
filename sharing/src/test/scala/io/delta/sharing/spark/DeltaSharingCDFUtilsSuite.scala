@@ -177,6 +177,26 @@ class DeltaSharingCDFUtilsSuite
     with DeltaSharingTestSparkUtils {
 
   import CDFTesTUtils._
+  import java.util.concurrent.ConcurrentLinkedQueue
+  import java.util.concurrent.atomic.AtomicBoolean
+
+  import scala.concurrent.duration._
+  import scala.jdk.CollectionConverters._
+
+  import org.apache.spark.sql.delta.DeltaLog
+  import org.apache.spark.sql.delta.util.DeltaFileOperations
+  import io.delta.sharing.spark.model.{
+    DeltaSharingFileAction,
+    DeltaSharingMetadata,
+    DeltaSharingProtocol
+  }
+
+  import org.apache.spark.delta.sharing.CachedTableManager
+  import org.apache.spark.sql.Row
+  import org.apache.spark.sql.catalyst.TableIdentifier
+  import org.apache.spark.sql.execution.datasources.HadoopFsRelation
+  import org.apache.spark.sql.types.TimestampType
+
 
   private val shareName = "share"
   private val schemaName = "default"
@@ -188,6 +208,186 @@ class DeltaSharingCDFUtilsSuite
       .set("spark.delta.sharing.driver.refreshCheckIntervalMs", "1000")
       .set("spark.delta.sharing.driver.refreshThresholdMs", "2000")
       .set("spark.delta.sharing.driver.accessThresholdToExpireMs", "60000")
+  }
+
+  for (empty <- Seq(false, true); cache <- Seq(false, true)) test(
+    "versionless CDF reads a native Delta snapshot with column mapping " +
+      s"(empty=$empty, cache=$cache)") {
+    withTempDir { tempDir =>
+      val materializedTable = "versionless_cdf_rows"
+      withTable(materializedTable) {
+        sql(s"""CREATE TABLE $materializedTable
+               |(value STRING, _change_type STRING, _commit_timestamp TIMESTAMP)
+               |USING DELTA PARTITIONED BY (value)
+               |TBLPROPERTIES ('delta.columnMapping.mode' = 'name',
+               |'delta.enableChangeDataFeed' = 'false', 'delta.enableDeletionVectors' = 'false')
+               |""".stripMargin)
+        val expected = if (empty) {
+          Seq.empty[Row]
+        } else {
+          sql(s"""INSERT INTO $materializedTable VALUES
+                 |('first', 'insert', TIMESTAMP '2026-01-01 00:00:01'),
+                 |('second', 'delete', TIMESTAMP '2026-01-01 00:00:02')
+                 |""".stripMargin)
+          Seq(
+            Row("first", "insert", sqlTimestamp("2026-01-01 00:00:01")),
+            Row("second", "delete", sqlTimestamp("2026-01-01 00:00:02")))
+        }
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(materializedTable))
+        def snapshotResponse(): DeltaTableFiles = {
+          val snapshot = deltaLog.update()
+          val fileLines = snapshot.allFiles.collect().toSeq.map { add =>
+            val file = new File(
+              DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, add.path).toUri)
+            val fileId = file.getName
+            // Serve the real Delta files through the existing sharing test filesystem.
+            DeltaSharingUtils.overrideIteratorBlock[Byte](
+              TestDeltaSharingFileSystem.getBlockId(sharedTableName, fileId),
+              FileUtils.readFileToByteArray(file).toIterator)
+            DeltaSharingFileAction(
+              id = fileId,
+              expirationTimestamp = System.currentTimeMillis() + 60000,
+              deltaSingleAction = add.copy(
+                path = TestDeltaSharingFileSystem.encode(sharedTableName, fileId)).wrap).json
+          }
+          DeltaTableFiles(
+            version = 0L,
+            lines = Seq(
+              DeltaSharingProtocol(snapshot.protocol).json,
+              DeltaSharingMetadata(deltaMetadata = snapshot.metadata).json) ++ fileLines,
+            respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
+            isVersionlessCDF = true)
+        }
+        var response = snapshotResponse()
+        val profilePath = prepareProfileFile(tempDir).getCanonicalPath
+        val tablePath = s"$profilePath#$shareName.$schemaName.$sharedTableName"
+        withSQLConf(
+          "spark.delta.sharing.client.sparkParquetIOCache.enabled" -> cache.toString,
+          "fs.delta-sharing.impl" -> classOf[TestDeltaSharingFileSystem].getName,
+          "fs.delta-sharing-log.impl" -> classOf[DeltaSharingLogFileSystem].getName,
+          "spark.delta.sharing.profile.provider.class" ->
+            "io.delta.sharing.client.DeltaSharingFileProfileProvider"
+        ) {
+          PreSignedUrlCache.registerIfNeeded(SparkEnv.get)
+          val provider = DeltaSharingRestClient(profilePath, Map.empty, false, "delta")
+            .getProfileProvider
+          // Snapshot and metadata RPCs are unsupported by this client, so extra requests fail.
+          val client = new TestDeltaSharingClientForCDFUtils(provider) {
+            override def getCDFFiles(
+                table: Table,
+                cdfOptions: Map[String, String],
+                includeHistoricalMetadata: Boolean,
+                fileIdHash: Option[String],
+                includeHistoricalProtocol: Boolean = false): DeltaTableFiles = {
+              numGetFileCalls += 1
+              response
+            }
+          }
+          client.numGetFileCalls = 0
+          val options = new DeltaSharingOptions(Map(
+            "path" -> tablePath,
+            "readChangeFeed" -> "true",
+            "startingTimestamp" -> "2026-01-01T00:00:00Z",
+            "endingTimestamp" -> "2026-01-01T00:00:03Z"))
+            val relation = DeltaSharingCDFUtils.prepareCDFRelation(
+              spark.sqlContext,
+              options,
+              Table(share = shareName, schema = schemaName, name = sharedTableName),
+              client)
+            assert(relation.schema.fieldNames.toSeq ==
+              Seq("value", "_change_type", "_commit_timestamp"))
+            assert(relation.schema("_commit_timestamp").dataType == TimestampType)
+            val firstRead = spark.sqlContext.baseRelationToDataFrame(relation)
+            checkAnswer(firstRead, expected)
+            assert(client.numGetFileCalls == 1)
+            if (!empty) {
+              sql(s"""INSERT OVERWRITE $materializedTable VALUES
+                     |('third', 'update_postimage', TIMESTAMP '2026-01-01 00:00:03')
+                     |""".stripMargin)
+              response = snapshotResponse()
+              val nextRelation = DeltaSharingCDFUtils.prepareCDFRelation(
+                spark.sqlContext,
+                options,
+                Table(share = shareName, schema = schemaName, name = sharedTableName),
+                client)
+              checkAnswer(spark.sqlContext.baseRelationToDataFrame(nextRelation),
+                Seq(Row("third", "update_postimage", sqlTimestamp("2026-01-01 00:00:03"))))
+              checkAnswer(firstRead, expected)
+              assert(client.numGetFileCalls == 2)
+            }
+        }
+      }
+    }
+  }
+
+  test("versionless CDF refresh preserves timestamp bounds and isolates queries") {
+    withTempDir { tempDir =>
+      val profilePath = prepareProfileFile(tempDir).getCanonicalPath
+      val tablePath = s"$profilePath#$shareName.$schemaName.$sharedTableName"
+      val calls = new ConcurrentLinkedQueue[Map[String, String]]()
+      val refresh = new AtomicBoolean(false)
+      withSQLConf(
+        "fs.delta-sharing-log.impl" -> classOf[DeltaSharingLogFileSystem].getName,
+        "spark.delta.sharing.profile.provider.class" ->
+          "io.delta.sharing.client.DeltaSharingFileProfileProvider"
+      ) {
+        val provider = DeltaSharingRestClient(profilePath, Map.empty, false, "delta")
+          .getProfileProvider
+        val client = new TestDeltaSharingClientForCDFUtils(provider) {
+          override def getCDFFiles(
+              table: Table,
+              cdfOptions: Map[String, String],
+              includeHistoricalMetadata: Boolean,
+              fileIdHash: Option[String],
+              includeHistoricalProtocol: Boolean = false): DeltaTableFiles = {
+            assert(includeHistoricalMetadata)
+            calls.add(cdfOptions)
+            val prefix = if (refresh.get()) "refreshed" else "original"
+            val path = s"http://$prefix/${cdfOptions("startingTimestamp")}"
+            DeltaTableFiles(
+              version = 0L,
+              lines = Seq(
+                """{"protocol":{"deltaProtocol":{"minReaderVersion":1,"minWriterVersion":1}}}""",
+                metaDataStr,
+                getAddFileStr1(path, returnExpTime = true)),
+              respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
+              isVersionlessCDF = true)
+          }
+        }
+        val table = Table(share = shareName, schema = schemaName, name = sharedTableName)
+        val options = Seq("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z").map { start =>
+          new DeltaSharingOptions(Map(
+            "path" -> tablePath,
+            "readChangeFeed" -> "true",
+            "startingTimestamp" -> start,
+            "endingTimestamp" -> "2026-01-03T00:00:00Z"))
+        }
+        val relations = options.map { queryOptions =>
+          DeltaSharingCDFUtils.prepareCDFRelation(spark.sqlContext, queryOptions, table, client)
+        }
+        val keys = relations.map { relation =>
+          DeltaSharingLogFileSystem.decode(
+            relation.asInstanceOf[HadoopFsRelation].location.rootPaths.head)
+        }
+        assert(keys.distinct.size == 2)
+        keys.zip(options).foreach { case (key, queryOptions) =>
+          val expectedUrl = s"http://original/${queryOptions.cdfOptions("startingTimestamp")}"
+          assert(CachedTableManager.INSTANCE.getPreSignedUrl(key, fileStr1Id)._1 == expectedUrl)
+        }
+        refresh.set(true)
+        eventually(timeout(20.seconds), interval(100.millis)) {
+          keys.zip(options).foreach { case (key, queryOptions) =>
+            val expectedUrl = s"http://refreshed/${queryOptions.cdfOptions("startingTimestamp")}"
+            assert(CachedTableManager.INSTANCE.getPreSignedUrl(key, fileStr1Id)._1 == expectedUrl)
+          }
+        }
+        val recordedOptions = calls.asScala.toSeq
+        assert(recordedOptions.forall(call => options.exists(_.cdfOptions == call)))
+        options.foreach { queryOptions =>
+          assert(recordedOptions.count(_ == queryOptions.cdfOptions) >= 2)
+        }
+      }
+    }
   }
 
   test("refresh works") {

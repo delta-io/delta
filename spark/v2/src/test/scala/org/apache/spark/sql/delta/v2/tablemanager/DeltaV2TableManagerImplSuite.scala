@@ -379,10 +379,10 @@ class DeltaV2TableManagerImplSuite
           val error = intercept[IllegalArgumentException] {
             if (actionName == "metaData") {
               StreamingHelper.collectMetadataActions(
-                1L, Optional.of(Long.box(1L)), manager, queryContext, true)
+                1L, Optional.of(Long.box(1L)), manager, queryContext, true, spark, snapshot)
             } else {
               StreamingHelper.collectProtocolActions(
-                1L, Optional.of(Long.box(1L)), manager, queryContext, true)
+                1L, Optional.of(Long.box(1L)), manager, queryContext, true, spark, snapshot)
             }
           }
           assert(error.getMessage ===
@@ -411,11 +411,11 @@ class DeltaV2TableManagerImplSuite
       forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
         val queryContext = DeltaV2QueryContext(catalogTableOpt)
         val metadataActions = StreamingHelper.collectMetadataActions(
-          1L, Optional.of(Long.box(1L)), manager, queryContext, true)
+          1L, Optional.of(Long.box(1L)), manager, queryContext, true, spark, snapshot)
         assert(metadataActions.size() === 1)
         assert(metadataActions.get(1L).schemaString === metadata.schemaString)
         val protocols = StreamingHelper.collectProtocolActions(
-          1L, Optional.of(Long.box(1L)), manager, queryContext, true)
+          1L, Optional.of(Long.box(1L)), manager, queryContext, true, spark, snapshot)
         assert(protocols.size() === 1)
         assert(protocols.get(1L) === snapshot.protocol)
       }

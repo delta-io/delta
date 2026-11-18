@@ -269,7 +269,7 @@ case class IncrementalAMTWriteMetrics(
  *
  * @param contentRootVersion          the table version the manifest tree describes
  * @param checkpoint                  the inline [[Checkpoint]] action to embed in the commit JSON
- * @param leaves                      the root's `DATA_MANIFEST` pointer entries, one per leaf
+ * @param rootInfo                    the root's leaf pointers and cached rows, when retained
  * @param includeActionsInCommitJson  whether the transaction should still write the commit's file
  *                                    actions inline in the commit JSON.
  * @param amtWriteMetrics             metrics for the materialization that produced this result
@@ -277,9 +277,11 @@ case class IncrementalAMTWriteMetrics(
 case class AMTWriteResult(
     contentRootVersion: Long,
     checkpoint: Checkpoint,
-    leaves: Seq[DataManifestEntry],
+    rootInfo: AMTRootInfo,
     includeActionsInCommitJson: Boolean,
-    amtWriteMetrics: SingleAMTWriteMetrics)
+    amtWriteMetrics: SingleAMTWriteMetrics) {
+  def leaves: Seq[DataManifestEntry] = rootInfo.leaves
+}
 
 /** A lazily-materialized [[AMTCheckpointProvider]] for `checkpointOpt`. */
 class LazyAMTCheckpointProvider(
@@ -335,7 +337,7 @@ class AMTWriterManager(
 
   /** The read snapshot's own AMT checkpoint, if it is AMT-backed. */
   private def readSnapshotAMTCheckpointOpt: Option[Checkpoint] = {
-    if (!AMTUtils.amtEnabled(readSnapshot)) return None
+    if (!AMTUtils.amtEnabled(readSnapshot, isPreviewCompatible = true)) return None
     readSnapshot.checkpointProvider match {
       case amt: AMTCheckpointProviderBase => Some(amt.checkpointAction)
       case _ => None
@@ -382,7 +384,7 @@ class AMTWriterManager(
       currentTransactionInfo: CurrentTransactionInfo,
       preCommitLogSegment: LogSegment,
       winningCommitMetricsForConflictedRange: Seq[WinningCommitMetrics]): Option[AMTWriteResult] = {
-    if (!AMTUtils.amtEnabled(readSnapshot)) return None
+    if (!AMTUtils.amtEnabled(readSnapshot, isPreviewCompatible = true)) return None
     val actionsToCommit = currentTransactionInfo.actions
     val roundId = nextRoundId
     nextRoundId += 1
@@ -818,7 +820,7 @@ class AMTWriterManager(
     pendingBackRefRebaseMetrics =
       BackRefRebaseMetrics(SKIP_REASON_NO_NEW_TREE)
     val actions = currentTransactionInfo.actions
-    if (!AMTUtils.amtEnabled(readSnapshot)) {
+    if (!AMTUtils.amtEnabled(readSnapshot, isPreviewCompatible = true)) {
       return currentTransactionInfo
     }
     if (!winningCommitInstalledNewAMTTree(currentTransactionInfo)) {
@@ -1062,7 +1064,7 @@ object AMTWriterManager extends DeltaLogging {
       postCommitSnapshot: Snapshot): MaintenanceOperation = {
     // if the commit itself was to do a checkpoint, don't schedule any maintenance as part
     // of its post-commit hook.
-    if (!AMTUtils.amtEnabled(readSnapshot)
+    if (!AMTUtils.amtEnabled(readSnapshot, isPreviewCompatible = true)
         || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
       return MaintenanceOperation()
     }
@@ -1089,7 +1091,7 @@ object AMTWriterManager extends DeltaLogging {
       commitVersion: Long,
       postCommitSnapshot: Snapshot): MaintenanceOperation = {
     // The follow-up OPTIMIZE CHECKPOINT commit itself must never schedule more maintenance.
-    if (!AMTUtils.amtEnabled(readSnapshot)
+    if (!AMTUtils.amtEnabled(readSnapshot, isPreviewCompatible = true)
         || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
       return MaintenanceOperation()
     }
