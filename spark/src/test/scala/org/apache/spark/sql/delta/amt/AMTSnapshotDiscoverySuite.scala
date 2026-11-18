@@ -1640,7 +1640,7 @@ class AMTSnapshotDiscoverySuite
       sql(s"INSERT INTO $name VALUES (1)")
       val deltaLog = deltaLogForName(name)
       val snapshot = deltaLog.unsafeVolatileSnapshot
-      assert(AMTUtils.amtEnabled(snapshot))
+      assert(AMTUtils.amtEnabled(snapshot, isPreviewCompatible = true))
       assert(snapshot.version == 1)
       assert(snapshot.checksumOpt.isDefined)
       assert(snapshot.lastManifestCommitOpt.isEmpty)
