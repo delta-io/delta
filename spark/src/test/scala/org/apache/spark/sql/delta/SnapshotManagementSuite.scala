@@ -22,15 +22,13 @@ import java.util.concurrent.CountDownLatch
 import scala.collection.mutable
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
-import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTestBaseSuite, CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorBuilder, CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.storage.LogStore.logStoreClassConfKey
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{Commit, CommitCoordinatorClient, GetCommitsResponse, TableDescriptor}
@@ -44,6 +42,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkException
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.storage.StorageLevel
 
@@ -771,7 +770,7 @@ class CountDownLatchLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   }
 }
 object CountDownLatchLogStore {
-  val listFromCalled = new CountDownLatch(1)
+  @volatile var listFromCalled = new CountDownLatch(1)
 }
 
 case class ConcurrentBackfillCommitCoordinatorClient(
@@ -811,14 +810,21 @@ object ConcurrentBackfillCommitCoordinatorClient {
   var beginConcurrentBackfills = false
 }
 
-object ConcurrentBackfillCommitCoordinatorBuilder extends CommitCoordinatorBuilder {
+object ConcurrentBackfillCommitCoordinatorBuilder extends CatalogOwnedCommitCoordinatorBuilder {
   val batchSize = 5
-  private lazy val concurrentBackfillCommitCoordinatorClient =
+  private var concurrentBackfillCommitCoordinatorClient =
     ConcurrentBackfillCommitCoordinatorClient(synchronousBackfillThreshold = 2, batchSize)
+  def resetClient(): Unit = {
+    concurrentBackfillCommitCoordinatorClient =
+      ConcurrentBackfillCommitCoordinatorClient(synchronousBackfillThreshold = 2, batchSize)
+  }
   override def getName: String = "awaiting-commit-coordinator"
   override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
     concurrentBackfillCommitCoordinatorClient
   }
+  override def buildForCatalog(
+      spark: SparkSession,
+      catalogName: String): CommitCoordinatorClient = concurrentBackfillCommitCoordinatorClient
 }
 
 /**
@@ -847,22 +853,27 @@ class SnapshotManagementParallelListingSuite extends QueryTest
 
   override protected def beforeEach(): Unit = {
     super.beforeEach()
-    CommitCoordinatorProvider.clearNonDefaultBuilders()
-    CommitCoordinatorProvider.registerBuilder(ConcurrentBackfillCommitCoordinatorBuilder)
+    ConcurrentBackfillCommitCoordinatorBuilder.resetClient()
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+      CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      ConcurrentBackfillCommitCoordinatorBuilder)
     ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills = false
     ConcurrentBackfillCommitCoordinatorClient.deferBackfills = false
+    CountDownLatchLogStore.listFromCalled = new CountDownLatch(1)
   }
 
-  private def writeDeltaData(path: String, endVersion: Long): Unit = {
-    spark.range(10).write.format("delta").save(path)
+  private def writeDeltaData(tableName: String, endVersion: Long): Unit = {
+    val featureKey = s"delta.feature.${CatalogOwnedTableFeature.name}"
+    spark.range(10).write.format("delta").option(featureKey, "supported").saveAsTable(tableName)
     (1L to endVersion).foreach(
-      _ => spark.range(10).write.format("delta").mode("append").save(path))
+      _ => spark.range(10).write.format("delta").mode("append").saveAsTable(tableName))
   }
 
-  private def captureUsageRecordsAndGetSnapshot(dataPath: Path): (Snapshot, Seq[UsageRecord]) = {
+  private def captureUsageRecordsAndGetSnapshot(tableName: String): (Snapshot, Seq[UsageRecord]) = {
     var snapshot: Snapshot = null
     val records = Log4jUsageLogger.track {
-      snapshot = DeltaLog.forTable(spark, dataPath).update()
+      snapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
     }
     (snapshot, records)
   }
@@ -900,20 +911,18 @@ class SnapshotManagementParallelListingSuite extends QueryTest
         val batchSize = ConcurrentBackfillCommitCoordinatorBuilder.batchSize
         val endVersion = if (tryIncludeGapAtTheEnd) { batchSize } else { batchSize + 3 }
         withSQLConf(
-            COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-              ConcurrentBackfillCommitCoordinatorBuilder.getName,
             DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
-          withTempDir { tempDir =>
-            val path = tempDir.getCanonicalPath
-            val dataPath = new Path(path)
-
-            writeDeltaData(path, endVersion)
+          val tableName = "snapshot_listing_catalog_managed"
+          withTable(tableName) {
+            writeDeltaData(tableName, endVersion)
+            val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+            assert(deltaLog.update().isCatalogOwned)
 
             // Invalidate cache to ensure re-listing.
-            DeltaLog.invalidateCache(spark, dataPath)
+            DeltaLog.invalidateCache(spark, deltaLog.dataPath)
             ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills = true
 
-            val (snapshot, records) = captureUsageRecordsAndGetSnapshot(dataPath)
+            val (snapshot, records) = captureUsageRecordsAndGetSnapshot(tableName)
             val expectedNeedAdditionalFsListingCount = if (concurrentBackfills) { 1 } else { 0 }
             verifyUsageRecords(records, expectedNeedAdditionalFsListingCount)
             verifySnapshotBackfills(snapshot, backfillUntilInclusive = batchSize)
@@ -927,26 +936,22 @@ class SnapshotManagementParallelListingSuite extends QueryTest
     val batchSize = ConcurrentBackfillCommitCoordinatorBuilder.batchSize
     val endVersion = batchSize + 3
     withSQLConf(
-        COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-          ConcurrentBackfillCommitCoordinatorBuilder.getName,
         DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
-      withTempDir { tempDir =>
-        val path = tempDir.getCanonicalPath
-        val dataPath = new Path(path)
-
-        writeDeltaData(path, endVersion)
+      val tableName = "snapshot_listing_catalog_managed"
+      withTable(tableName) {
+        writeDeltaData(tableName, endVersion)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(deltaLog.update().isCatalogOwned)
 
         // Delete 5.json to create a permanent gap between file-system i.e. [0, 4] and
         // commit-store [6, 8] which would even an additional listing won't be able to reconcile.
-        val deltaLog = DeltaLog.forTable(spark, dataPath)
         deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf()).delete(
           FileNames.unsafeDeltaFile(deltaLog.logPath, batchSize), true)
 
         // Invalidate cache to ensure re-listing.
-        DeltaLog.invalidateCache(spark, dataPath)
-
+        DeltaLog.invalidateCache(spark, deltaLog.dataPath)
         val e = intercept[IllegalStateException] {
-          DeltaLog.forTable(spark, dataPath).update()
+          DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
         }
         assert(e.getMessage.contains("unexpectedly still requires additional file-system listing"))
       }

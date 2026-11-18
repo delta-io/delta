@@ -22,29 +22,31 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import io.delta.kernel.CommitActions;
+import io.delta.kernel.CommitFileStatus;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.io.IOException;
-import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
@@ -53,8 +55,8 @@ import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.storage.LogStore;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
-import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
@@ -201,262 +203,6 @@ public class StreamingHelperTest extends DeltaV2TestBase {
     }
   }
 
-  private void setupTableWithDeletedVersions(String testTablePath, String testTableName) {
-    createEmptyTestTable(testTablePath, testTableName);
-    for (int i = 0; i < 10; i++) {
-      spark.sql(
-          String.format("INSERT INTO %s VALUES (%d, 'User%d')", testTableName, 100 + i, 100 + i));
-    }
-    File deltaLogDir = new File(testTablePath, "_delta_log");
-    File version0File = new File(deltaLogDir, "00000000000000000000.json");
-    File version1File = new File(deltaLogDir, "00000000000000000001.json");
-    assertTrue(version0File.exists());
-    assertTrue(version1File.exists());
-    version0File.delete();
-    version1File.delete();
-    assertFalse(version0File.exists());
-    assertFalse(version1File.exists());
-  }
-
-  @Test
-  public void testGetActiveCommitAtTime_pastTimestamp(@TempDir File tempDir) throws Exception {
-    String testTablePath = tempDir.getAbsolutePath();
-    String testTableName = "test_commit_past";
-    setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
-
-    Thread.sleep(100);
-    Timestamp timestamp = new Timestamp(System.currentTimeMillis());
-    spark.sql(String.format("INSERT INTO %s VALUES (200, 'NewUser')", testTableName));
-
-    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.DeltaHistoryManager.Commit deltaCommit =
-        deltaLog
-            .history()
-            .getActiveCommitAtTime(
-                timestamp,
-                Option.empty() /* catalogTable */,
-                false /* canReturnLastCommit */,
-                true /* mustBeRecreatable */,
-                false /* canReturnEarliestCommit */);
-
-    DeltaHistoryManager.Commit kernelCommit =
-        snapshotManager.getActiveCommitAtTime(
-            timestamp.getTime(),
-            false /* canReturnLastCommit */,
-            true /* mustBeRecreatable */,
-            false /* canReturnEarliestCommit */);
-
-    assertEquals(deltaCommit.version(), kernelCommit.getVersion());
-    assertEquals(deltaCommit.timestamp(), kernelCommit.getTimestamp());
-  }
-
-  @Test
-  public void testGetActiveCommitAtTime_futureTimestamp_canReturnLast(@TempDir File tempDir)
-      throws Exception {
-    String testTablePath = tempDir.getAbsolutePath();
-    String testTableName = "test_commit_future_last";
-    setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
-
-    Timestamp futureTimestamp = new Timestamp(System.currentTimeMillis() + 10000);
-
-    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.DeltaHistoryManager.Commit deltaCommit =
-        deltaLog
-            .history()
-            .getActiveCommitAtTime(
-                futureTimestamp,
-                Option.empty() /* catalogTable */,
-                true /* canReturnLastCommit */,
-                true /* mustBeRecreatable */,
-                false /* canReturnEarliestCommit */);
-
-    DeltaHistoryManager.Commit kernelCommit =
-        snapshotManager.getActiveCommitAtTime(
-            futureTimestamp.getTime(),
-            true /* canReturnLastCommit */,
-            true /* mustBeRecreatable */,
-            false /* canReturnEarliestCommit */);
-
-    assertEquals(deltaCommit.version(), kernelCommit.getVersion());
-    assertEquals(deltaCommit.timestamp(), kernelCommit.getTimestamp());
-  }
-
-  @Test
-  public void testGetActiveCommitAtTime_futureTimestamp_notMustBeRecreatable(@TempDir File tempDir)
-      throws Exception {
-    String testTablePath = tempDir.getAbsolutePath();
-    String testTableName = "test_commit_future_not_recreatable";
-    setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
-
-    Timestamp futureTimestamp = new Timestamp(System.currentTimeMillis() + 10000);
-
-    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.DeltaHistoryManager.Commit deltaCommit =
-        deltaLog
-            .history()
-            .getActiveCommitAtTime(
-                futureTimestamp,
-                Option.empty() /* catalogTable */,
-                true /* canReturnLastCommit */,
-                false /* mustBeRecreatable */,
-                false /* canReturnEarliestCommit */);
-
-    DeltaHistoryManager.Commit kernelCommit =
-        snapshotManager.getActiveCommitAtTime(
-            futureTimestamp.getTime(),
-            true /* canReturnLastCommit */,
-            false /* mustBeRecreatable */,
-            false /* canReturnEarliestCommit */);
-
-    assertEquals(deltaCommit.version(), kernelCommit.getVersion());
-    assertEquals(deltaCommit.timestamp(), kernelCommit.getTimestamp());
-  }
-
-  @Test
-  public void testGetActiveCommitAtTime_earlyTimestamp_canReturnEarliest(@TempDir File tempDir)
-      throws Exception {
-    String testTablePath = tempDir.getAbsolutePath();
-    String testTableName = "test_commit_early";
-    setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
-
-    Timestamp earlyTimestamp = new Timestamp(0);
-
-    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.DeltaHistoryManager.Commit deltaCommit =
-        deltaLog
-            .history()
-            .getActiveCommitAtTime(
-                earlyTimestamp,
-                Option.empty() /* catalogTable */,
-                false /* canReturnLastCommit */,
-                true /* mustBeRecreatable */,
-                true /* canReturnEarliestCommit */);
-
-    DeltaHistoryManager.Commit kernelCommit =
-        snapshotManager.getActiveCommitAtTime(
-            earlyTimestamp.getTime(),
-            false /* canReturnLastCommit */,
-            true /* mustBeRecreatable */,
-            true /* canReturnEarliestCommit */);
-
-    assertEquals(deltaCommit.version(), kernelCommit.getVersion());
-    assertEquals(deltaCommit.timestamp(), kernelCommit.getTimestamp());
-  }
-
-  @Test
-  public void testGetActiveCommitAtTime_earlyTimestamp_notMustBeRecreatable_canReturnEarliest(
-      @TempDir File tempDir) throws Exception {
-    String testTablePath = tempDir.getAbsolutePath();
-    String testTableName = "test_commit_early_not_recreatable";
-    setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
-
-    Timestamp earlyTimestamp = new Timestamp(0);
-
-    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-    org.apache.spark.sql.delta.DeltaHistoryManager.Commit deltaCommit =
-        deltaLog
-            .history()
-            .getActiveCommitAtTime(
-                earlyTimestamp,
-                Option.empty() /* catalogTable */,
-                false /* canReturnLastCommit */,
-                false /* mustBeRecreatable */,
-                true /* canReturnEarliestCommit */);
-
-    DeltaHistoryManager.Commit kernelCommit =
-        snapshotManager.getActiveCommitAtTime(
-            earlyTimestamp.getTime(),
-            false /* canReturnLastCommit */,
-            false /* mustBeRecreatable */,
-            true /* canReturnEarliestCommit */);
-
-    assertEquals(deltaCommit.version(), kernelCommit.getVersion());
-    assertEquals(deltaCommit.timestamp(), kernelCommit.getTimestamp());
-  }
-
-  private static Stream<Arguments> checkVersionExistsTestCases() {
-    return Stream.of(
-        Arguments.of(
-            "current",
-            10L /* versionToCheck */,
-            true /* mustBeRecreatable */,
-            false /* allowOutOfRange */,
-            false /* shouldThrow */),
-        Arguments.of(
-            "notAllowOutOfRange",
-            21L /* versionToCheck */,
-            true /* mustBeRecreatable */,
-            false /* allowOutOfRange */,
-            true /* shouldThrow */),
-        Arguments.of(
-            "allowOutOfRange",
-            21L /* versionToCheck */,
-            true /* mustBeRecreatable */,
-            true /* allowOutOfRange */,
-            false /* shouldThrow */),
-        Arguments.of(
-            "belowEarliest",
-            1L /* versionToCheck */,
-            true /* mustBeRecreatable */,
-            false /* allowOutOfRange */,
-            true /* shouldThrow */),
-        Arguments.of(
-            "mustBeRecreatable_false",
-            2L /* versionToCheck */,
-            false /* mustBeRecreatable */,
-            false /* allowOutOfRange */,
-            false /* shouldThrow */),
-        Arguments.of(
-            "mustBeRecreatable_true",
-            2L /* versionToCheck */,
-            true /* mustBeRecreatable */,
-            false /* allowOutOfRange */,
-            true /* shouldThrow */));
-  }
-
-  @ParameterizedTest(name = "{0}")
-  @MethodSource("checkVersionExistsTestCases")
-  public void testCheckVersionExists(
-      String testName,
-      long versionToCheck,
-      boolean mustBeRecreatable,
-      boolean allowOutOfRange,
-      boolean shouldThrow,
-      @TempDir File tempDir)
-      throws Exception {
-    String testTablePath = tempDir.getAbsolutePath();
-    String testTableName = "test_version_" + testName;
-    setupTableWithDeletedVersions(testTablePath, testTableName);
-    snapshotManager = new PathBasedSnapshotManager(testTablePath, createKernelContext());
-    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
-
-    if (shouldThrow) {
-      assertThrows(
-          VersionNotFoundException.class,
-          () ->
-              snapshotManager.checkVersionExists(
-                  versionToCheck, mustBeRecreatable, allowOutOfRange));
-
-      assertThrows(
-          org.apache.spark.sql.delta.VersionNotFoundException.class,
-          () ->
-              deltaLog
-                  .history()
-                  .checkVersionExists(
-                      versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange));
-    } else {
-      snapshotManager.checkVersionExists(versionToCheck, mustBeRecreatable, allowOutOfRange);
-      deltaLog
-          .history()
-          .checkVersionExists(versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange);
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // Metadata and protocol action collectors
   // ---------------------------------------------------------------------------
@@ -468,19 +214,32 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   }
 
   private DeltaV2TableManager mockTableManager(
-      CloseableIterator<CommitActions> commits, boolean failOnDataLoss) {
+      CloseableIterator<CommitFileStatus> commits, boolean failOnDataLoss) {
+    return mockTableManager(
+        commits,
+        failOnDataLoss,
+        defaultKernelContext.logStore(),
+        defaultKernelContext.materializeHadoopConf());
+  }
+
+  private DeltaV2TableManager mockTableManager(
+      CloseableIterator<CommitFileStatus> commits,
+      boolean failOnDataLoss,
+      LogStore logStore,
+      Configuration conf) {
     DeltaV2TableManager manager = mock(DeltaV2TableManager.class);
     ClosableIterator<DeltaSingleCommit> v1Commits =
-        ScalaUtils.toClosableIterator(commits.map(DeltaV2SingleCommit$.MODULE$::apply));
+        ScalaUtils.toClosableIterator(
+            commits.map(file -> DeltaV2SingleCommit$.MODULE$.apply(file, logStore, conf)));
     when(manager.getSingleCommitIterator(
-            7L, Option.apply((Object) 7L), queryContext.catalogTableOpt(), failOnDataLoss))
+            7L, Option.apply((Object) 7L), queryContext, failOnDataLoss))
         .thenReturn(v1Commits);
     return manager;
   }
 
   @Test
   public void testProtocolCollector_closesEmptyCommitIterator() throws IOException {
-    CloseableIterator<CommitActions> commits = mockIterator();
+    CloseableIterator<CommitFileStatus> commits = mockIterator();
 
     assertTrue(
         StreamingHelper.collectProtocolActions(
@@ -495,7 +254,7 @@ public class StreamingHelperTest extends DeltaV2TestBase {
       throws IOException {
     IOException readFailure = new IOException("commit iterator read failed");
     IOException closeFailure = new IOException("commit iterator close failed");
-    CloseableIterator<CommitActions> commits = mockIterator();
+    CloseableIterator<CommitFileStatus> commits = mockIterator();
     when(commits.hasNext())
         .thenAnswer(
             ignored -> {
@@ -517,29 +276,36 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testProtocolCollector_closesCommitWhenOpeningActionsFails() throws Exception {
+  public void testProtocolCollector_closesFileIteratorWhenOpeningActionsFails() throws Exception {
     IOException readFailure = new IOException("action iterator open failed");
-    CommitActions kernelCommit = mock(CommitActions.class);
-    when(kernelCommit.getVersion()).thenReturn(7L);
-    when(kernelCommit.getActions())
+    CommitFileStatus kernelCommit =
+        new CommitFileStatus(
+            7L, // version
+            io.delta.kernel.utils.FileStatus.of("/table/7.json", 1L, 0L));
+    CloseableIterator<CommitFileStatus> commits = mockIterator();
+    when(commits.hasNext()).thenReturn(true);
+    when(commits.next()).thenReturn(kernelCommit);
+    LogStore store = mock(LogStore.class);
+    Configuration conf = defaultKernelContext.materializeHadoopConf();
+    when(store.readAsIterator(any(FileStatus.class), same(conf)))
         .thenAnswer(
             ignored -> {
               throw readFailure;
             });
-    CloseableIterator<CommitActions> commits = mockIterator();
-    when(commits.hasNext()).thenReturn(true);
-    when(commits.next()).thenReturn(kernelCommit);
 
     RuntimeException error =
         assertThrows(
             RuntimeException.class,
             () ->
                 StreamingHelper.collectProtocolActions(
-                    7L, Optional.of(7L), mockTableManager(commits, true), queryContext, true));
+                    7L,
+                    Optional.of(7L),
+                    mockTableManager(commits, true, store, conf),
+                    queryContext,
+                    true));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
-    verify(kernelCommit).close();
     verify(commits).close();
   }
 

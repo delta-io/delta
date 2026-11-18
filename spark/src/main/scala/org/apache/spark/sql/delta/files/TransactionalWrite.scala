@@ -85,7 +85,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def makeOutputNullable(output: Seq[Attribute]): Seq[Attribute] = {
     output.map {
       case ref: AttributeReference =>
-        val nullableDataType = SchemaUtils.typeAsNullable(ref.dataType)
+        val nullableDataType = SchemaUtils.typeAsFullyNullable(ref.dataType)
         ref.copy(dataType = nullableDataType, nullable = true)(ref.exprId, ref.qualifier)
       case attr => attr.withNullability(true)
     }

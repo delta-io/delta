@@ -18,9 +18,13 @@ package org.apache.spark.sql.delta.storage
 
 import java.io.{Reader, StringReader}
 
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.delta.sources.DeltaSource
+import org.apache.spark.sql.delta.storage.ClosableIterator._
 
-abstract class LineClosableIteratorSuiteBase extends SparkFunSuite {
+import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.delta.test.shims.GridTestShim
+
+abstract class LineClosableIteratorSuiteBase extends SparkFunSuite with GridTestShim {
 
   protected def createIter(_reader: Reader): ClosableIterator[String]
 
@@ -121,6 +125,89 @@ abstract class LineClosableIteratorSuiteBase extends SparkFunSuite {
     assert(iter.toList == "foo" :: Nil)
     iter.close()
     assert(closed == 1)
+  }
+
+  for (operation <- Seq("processAndClose", "iteratorLast")) {
+    gridTest(s"$operation preserves processing failures")(Seq(false, true)) { failOnClose =>
+      val processingFailure = new RuntimeException("processing failed")
+      val closeFailure = new RuntimeException("close failed")
+      var closeCount = 0
+      val reader = new StringReader("foo") {
+        override def read(buffer: Array[Char], offset: Int, length: Int): Int = {
+          throw processingFailure
+        }
+        override def close(): Unit = {
+          super.close()
+          closeCount += 1
+          if (failOnClose) throw closeFailure
+        }
+      }
+      val iter = createIter(reader)
+      val thrown = intercept[RuntimeException] {
+        if (operation == "processAndClose") {
+          iter.processAndClose(_.toList)
+        } else {
+          DeltaSource.iteratorLast(iter)
+        }
+      }
+      assert(thrown eq processingFailure)
+      assert(thrown.getSuppressed.toSeq == (if (failOnClose) Seq(closeFailure) else Seq.empty))
+      assert(closeCount == 1)
+    }
+  }
+
+  test("processAndClose propagates a close failure after successful processing") {
+    val closeFailure = new RuntimeException("close failed")
+    var processed = false
+    val iter = createIter(new StringReader("foo") {
+      override def close(): Unit = {
+        super.close()
+        throw closeFailure
+      }
+    })
+    val thrown = intercept[RuntimeException] {
+      iter.processAndClose { actions =>
+        assert(actions.next() == "foo")
+        processed = true
+      }
+    }
+    assert(processed)
+    assert(thrown eq closeFailure)
+    assert(thrown.getSuppressed.isEmpty)
+  }
+
+  test("withClose preserves a construction failure when closing also fails") {
+    val processingFailure = new RuntimeException("construction failed")
+    val closeFailure = new RuntimeException("close failed")
+    val iter = createIter(new StringReader("foo") {
+      override def close(): Unit = {
+        super.close()
+        throw closeFailure
+      }
+    })
+    val thrown = intercept[RuntimeException] {
+      iter.withClose[String](_ => throw processingFailure)
+    }
+    assert(thrown eq processingFailure)
+    assert(thrown.getSuppressed.toSeq == Seq(closeFailure))
+  }
+
+  test("withClose keeps a successfully constructed iterator open") {
+    var closeCount = 0
+    val iter = createIter(new StringReader("foo") {
+      override def close(): Unit = {
+        super.close()
+        closeCount += 1
+      }
+    }).withClose(_.map(_ + "!"))
+    try {
+      assert(closeCount == 0)
+      assert(iter.next() == "foo!")
+      assert(closeCount == 0)
+    } finally {
+      iter.close()
+    }
+    assert(closeCount == 1)
   }
 
   test("flatMapWithClose does not open any iterators on creation") {

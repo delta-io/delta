@@ -237,6 +237,16 @@ public class SchemaUtilsTest {
   }
 
   @Test
+  public void testUtf8BinaryCollatedStringSchemasConvertThroughMetadata() {
+    StringType kernelString = new StringType("SPARK.UTF8_BINARY");
+    Stream.of(
+            new StructType().add("s", kernelString),
+            new StructType().add("a", new ArrayType(kernelString, true)),
+            new StructType().add("outer", new StructType().add("s", kernelString)))
+        .forEach(SchemaUtilsTest::convertKernelSchemaThroughMetadata);
+  }
+
+  @Test
   public void testSchemaRoundTripWithFieldMetadata() {
     // Schema with field metadata (e.g., column mapping)
     org.apache.spark.sql.types.StructType sparkSchema =

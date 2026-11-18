@@ -270,7 +270,7 @@ trait DeltaSourceBase extends Source
         isInitialSnapshot,
         endOffset = Some(endOffset)
       )
-      try {
+      Utils.tryWithSafeFinally {
         // Versions before startVersion have already been processed, so we treat
         // startVersion - 1 as already "seen".
         var maxVersionSeen = startVersion - 1
@@ -311,7 +311,7 @@ trait DeltaSourceBase extends Source
           log"endOffset=${MDC(DeltaLogKeys.END_INDEX, endOffset)} took timeMs=" +
           log"${MDC(DeltaLogKeys.DURATION, duration)} ms")
         result
-      } finally {
+      } {
         fileActionsIter.close()
       }
     }
@@ -1514,13 +1514,13 @@ object DeltaSource extends DeltaLogging {
    * Scan and get the last item of the iterator.
    */
   def iteratorLast[T](iter: ClosableIterator[T]): Option[T] = {
-    try {
+    Utils.tryWithSafeFinally {
       var last: Option[T] = None
       while (iter.hasNext) {
         last = Some(iter.next())
       }
       last
-    } finally {
+    } {
       iter.close()
     }
   }

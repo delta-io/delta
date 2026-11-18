@@ -1221,6 +1221,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
         amtFeatureName, metadata.columnMappingMode.name)
     }
 
+    // The AMT property is false when unset, and only `adaptiveMetadata-dev` reads it. CREATE sets
+    // it to true. REPLACE keeps the value of the table it replaces, so it does not turn AMT writes
+    // on or off.
+    val amtPropertyKey = DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key
+    if (isCreatingNewTable && amtFeature == AdaptiveMetadataTableFeature &&
+        !metadata.configuration.contains(amtPropertyKey)) {
+      val valueOpt =
+        if (readVersion >= 0) snapshot.metadata.configuration.get(amtPropertyKey) else Some("true")
+      valueOpt.foreach(value => updatedConfig += (amtPropertyKey -> value))
+    }
+
     metadata.copy(configuration = updatedConfig)
   }
 
@@ -2857,7 +2868,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Invariant check that the tree of an inline manifest commit reconstructs the commit's own
+   * Test-only invariant check that an inline manifest commit's tree reconstructs the commit's own
    * AddFiles and RemoveFiles, compared by (path, dv, add or remove). `AddCDCFile`s are not recorded
    * in the tree, so they are left out of the comparison.
    */
@@ -2865,6 +2876,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       actionsToCommit: Seq[Action],
       attemptVersion: Long,
       amtWriteResultOpt: Option[AMTWriteResult]): Unit = {
+    if (!DeltaUtils.isTesting) return
     // Only an incremental AMT that describes this commit records the commit's changes:
     //  - A deferred tree describes the previous table version.
     //  - A full rewrite marks every live entry EXISTING and has no tombstones or changed positions.
@@ -2905,10 +2917,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       checkpointAction = result.checkpoint,
       leaves = result.leaves,
       tableRoot = tableRoot)
-    // Only file identities are compared, so the deletion timestamp stamped on the reconstructed
-    // RemoveFiles does not matter.
+    // Only file identities are compared, so neither the deletion timestamp stamped on the
+    // reconstructed RemoveFiles nor the order of the actions matters.
     val treeKeys =
-        provider.reconstructFileActions(deltaLog, dataChange, commitTimestamp = 0L)
+        provider.reconstructFileActions(
+          deltaLog, dataChange, commitTimestamp = 0L, ordered = false)
         .map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     if (treeKeys != committedKeys) {
       val onlyInTree = treeKeys -- committedKeys
