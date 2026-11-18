@@ -21,6 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.delta.kernel.internal.actions.Format;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BinaryType;
 import io.delta.kernel.types.BooleanType;
@@ -40,6 +42,8 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.types.VariantType;
+import java.util.Collections;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.types.DataTypes;
@@ -218,6 +222,31 @@ public class SchemaUtilsTest {
   }
 
   @Test
+  public void testConvertKernelMetadataToSparkSchema() {
+    StructType kernelSchema =
+        new StructType().add("a", IntegerType.INTEGER, true).add("b", StringType.STRING, false);
+
+    org.apache.spark.sql.types.StructType expectedSparkSchema =
+        DataTypes.createStructType(
+            new org.apache.spark.sql.types.StructField[] {
+              DataTypes.createStructField("a", DataTypes.IntegerType, true),
+              DataTypes.createStructField("b", DataTypes.StringType, false)
+            });
+
+    assertEquals(expectedSparkSchema, convertKernelSchemaThroughMetadata(kernelSchema));
+  }
+
+  @Test
+  public void testUtf8BinaryCollatedStringSchemasConvertThroughMetadata() {
+    StringType kernelString = new StringType("SPARK.UTF8_BINARY");
+    Stream.of(
+            new StructType().add("s", kernelString),
+            new StructType().add("a", new ArrayType(kernelString, true)),
+            new StructType().add("outer", new StructType().add("s", kernelString)))
+        .forEach(SchemaUtilsTest::convertKernelSchemaThroughMetadata);
+  }
+
+  @Test
   public void testSchemaRoundTripWithFieldMetadata() {
     // Schema with field metadata (e.g., column mapping)
     org.apache.spark.sql.types.StructType sparkSchema =
@@ -245,12 +274,34 @@ public class SchemaUtilsTest {
     // Verify Spark → Kernel conversion
     StructType actualKernelSchema = SchemaUtils.convertSparkSchemaToKernelSchema(sparkSchema);
     assertEquals(expectedKernelSchema, actualKernelSchema);
+
+    // Verify Kernel -> Spark conversion through the table schema string
+    assertEquals(sparkSchema, convertKernelSchemaThroughMetadata(actualKernelSchema));
   }
 
   private void checkConversion(
       org.apache.spark.sql.types.DataType sparkDataType, DataType kernelDataType) {
     DataType toKernel = SchemaUtils.convertSparkDataTypeToKernelDataType(sparkDataType);
     assertEquals(kernelDataType, toKernel);
+    assertEquals(
+        new org.apache.spark.sql.types.StructType().add("c", sparkDataType),
+        convertKernelSchemaThroughMetadata(new StructType().add("c", kernelDataType)));
+  }
+
+  /** Converts {@code kernelSchema} the way V2 reads a table schema: from its log schema string. */
+  private static org.apache.spark.sql.types.StructType convertKernelSchemaThroughMetadata(
+      StructType kernelSchema) {
+    return SchemaUtils.convertKernelMetadataToSparkSchema(
+        new io.delta.kernel.internal.actions.Metadata(
+            "id",
+            Optional.empty() /* name */,
+            Optional.empty() /* description */,
+            new Format(),
+            kernelSchema.toJson(),
+            kernelSchema,
+            VectorUtils.buildArrayValue(Collections.emptyList(), StringType.STRING),
+            Optional.empty() /* createdTime */,
+            VectorUtils.stringStringMapValue(Collections.emptyMap())));
   }
 
   ////////////////////////////////
@@ -377,6 +428,9 @@ public class SchemaUtilsTest {
       String typeName, Metadata sparkMetadata, FieldMetadata kernelMetadata) {
     assertEquals(
         kernelMetadata, SchemaUtils.convertSparkMetadataToKernelFieldMetadata(sparkMetadata));
+    StructType kernelSchema = new StructType().add("c", IntegerType.INTEGER, true, kernelMetadata);
+    assertEquals(
+        sparkMetadata, convertKernelSchemaThroughMetadata(kernelSchema).apply("c").metadata());
   }
 
   @Test

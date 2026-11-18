@@ -238,7 +238,7 @@ class Snapshot(
 
   /** Returns the lastManifestCommit reliably for this snapshot's version. */
   lazy val lastManifestCommitOpt: Option[LastManifestCommit] =
-    Option.when(AMTUtils.amtSupported(protocol)) {
+    Option.when(AMTUtils.amtSupported(protocol, isPreviewCompatible = true)) {
       _reconstructedProtocolMetadataICTAndLMC.bestEffortLastManifestCommit.orElse {
         // Only fallback to direct CommitInfo read if there are no trailing deltas.
         // This avoids unnecessary I/O when there isn't any AMT checkpoint yet.
@@ -517,7 +517,7 @@ class Snapshot(
       case _ => None
     }
 
-    if (!AMTUtils.amtSupported(protocol)) {
+    if (!AMTUtils.amtSupported(protocol, isPreviewCompatible = true)) {
       deltaAssert(
         check = amtCheckpointProviderOpt.isEmpty,
         name = AMTUsageLogs.AMT_CHECKPOINT_PROVIDER_WITH_FEATURE_DISABLED,
@@ -1075,7 +1075,7 @@ object Snapshot extends DeltaLogging {
     // back-reference-free list that matches state reconstruction.
     // The tree is checked even when the read snapshot is not AMT because the commit that upgrades
     // the table to AMT can land a leaf bearing tree.
-    if ((AMTUtils.amtSupported(snapshot.protocol) ||
+    if ((AMTUtils.amtSupported(snapshot.protocol, isPreviewCompatible = true) ||
         effectiveLatestAMTCheckpointAtCommitVersion.isDefined) &&
         !AMTUtils.isRootOnlyCheckpoint(effectiveLatestAMTCheckpointAtCommitVersion)) {
       return false

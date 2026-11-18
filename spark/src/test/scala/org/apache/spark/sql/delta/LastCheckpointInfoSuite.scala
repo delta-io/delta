@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot, DomainMetadata, Metadata, Protocol, SetTransaction, SidecarFile, SidecarType}
-import org.apache.spark.sql.delta.amt.{AMTLeafComparisons, AMTSingleAction, AMTWriteResult, DataManifestEntry, ManifestInfo, SingleAMTWriteMetrics, Tracking}
+import org.apache.spark.sql.delta.amt.{AMTLeafComparisons, AMTRootInfo, AMTSingleAction, AMTWriteResult, DataManifestEntry, ManifestInfo, SingleAMTWriteMetrics, Tracking}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -321,7 +321,7 @@ class LastCheckpointInfoSuite extends SharedSparkSession
     AMTWriteResult(
       contentRootVersion = contentRootVersion,
       checkpoint = sampleCheckpointAction(contentRootVersion),
-      leaves = leaves,
+      rootInfo = new AMTRootInfo(leaves, cachedRows = None),
       includeActionsInCommitJson = true,
       amtWriteMetrics = sampleAMTWriteMetrics)
 
@@ -408,7 +408,9 @@ class LastCheckpointInfoSuite extends SharedSparkSession
       val newer = AMTWriteResult(
         contentRootVersion = 5,
         checkpoint = sampleCheckpointAction(version = 5, rootPath = "metadata/root-def.parquet"),
-        leaves = Seq(sampleLeaf("metadata/leaf-9.parquet")),
+        rootInfo = new AMTRootInfo(
+          leaves = Seq(sampleLeaf("metadata/leaf-9.parquet")),
+          cachedRows = None),
         includeActionsInCommitJson = true,
         amtWriteMetrics = sampleAMTWriteMetrics)
       log.writeLastCheckpointFileForAMT(manifestCommitVersion = 6, newer)

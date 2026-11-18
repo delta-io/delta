@@ -19,6 +19,9 @@ package org.apache.spark.sql.delta
 
 package object coordinatedcommits {
   // The old names, kept until their callers use the new ones.
+  val CatalogOwnedCommitCoordinatorProvider: CatalogManagedCommitCoordinatorProvider.type =
+    CatalogManagedCommitCoordinatorProvider
+  type CatalogOwnedCommitCoordinatorBuilder = CatalogManagedCommitCoordinatorBuilder
   val CatalogOwnedTableUtils: CatalogManagedTableUtils.type = CatalogManagedTableUtils
   val CatalogOwnedUsageLogs: CatalogManagedUsageLogs.type = CatalogManagedUsageLogs
 }
