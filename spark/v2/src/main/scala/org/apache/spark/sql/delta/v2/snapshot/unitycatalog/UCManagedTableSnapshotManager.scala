@@ -24,7 +24,6 @@ import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
-import org.apache.spark.sql.delta.v2.snapshot.SnapshotTimeTravelUtils
 import io.delta.kernel.{CommitRange => KernelCommitRange}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.internal.{
@@ -117,7 +116,7 @@ class UCManagedTableSnapshotManager(
       canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit = {
     val snapshot = loadKernelSnapshot(None)
     val catalogCommits = snapshot.getLogSegment.getAllCatalogCommits
-    SnapshotTimeTravelUtils.getActiveCommitAtTime(
+    getActiveCommitAtTimeInSnapshot(
       kernelContext.getDefaultEngine,
       snapshot,
       catalogCommits,
@@ -151,7 +150,7 @@ class UCManagedTableSnapshotManager(
     // Get the earliest version among catalog commits. This bounds the Kernel's filesystem search
     // for the earliest available version (e.g., if catalog has v0, no filesystem search is needed).
     val catalogCommits = snapshot.getLogSegment.getAllCatalogCommits
-    SnapshotTimeTravelUtils.checkVersionExists(
+    checkVersionExistsInSnapshot(
       kernelContext.getDefaultEngine,
       snapshot,
       catalogCommits,

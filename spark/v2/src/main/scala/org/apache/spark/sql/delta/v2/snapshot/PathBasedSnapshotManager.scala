@@ -92,7 +92,7 @@ class PathBasedSnapshotManager(tablePath: String, kernelContext: KernelContext)
       mustBeRecreatable: Boolean,
       canReturnEarliestCommit: Boolean): KernelDeltaHistoryManager.Commit = {
     val kernelSnapshot = loadLatestKernelSnapshot()
-    SnapshotTimeTravelUtils.getActiveCommitAtTime(
+    getActiveCommitAtTimeInSnapshot(
       kernelContext.getDefaultEngine,
       kernelSnapshot,
       List.empty[KernelParsedCatalogCommitData].asJava,
@@ -118,7 +118,7 @@ class PathBasedSnapshotManager(tablePath: String, kernelContext: KernelContext)
       mustBeRecreatable: Boolean,
       allowOutOfRange: Boolean): Unit = {
     val kernelSnapshot = loadLatestKernelSnapshot()
-    SnapshotTimeTravelUtils.checkVersionExists(
+    checkVersionExistsInSnapshot(
       kernelContext.getDefaultEngine,
       kernelSnapshot,
       List.empty[KernelParsedCatalogCommitData].asJava,
