@@ -100,7 +100,7 @@ trait AMTDMLTestUtils extends AMTCheckpointTestBase {
         fail(s"DML target $target resolves to a Delta table accessed by path, but AMT tables " +
           "are catalog-managed and accessed by name"))
       val amtTarget = AMTTarget(index.deltaLog, catalogTable)
-      assert(AMTUtils.amtEnabled(amtTarget.snapshot),
+      assert(AMTUtils.amtEnabled(amtTarget.snapshot, isPreviewCompatible = true),
         s"DML target $target resolves to a Delta table without AMT")
       amtTarget
     }

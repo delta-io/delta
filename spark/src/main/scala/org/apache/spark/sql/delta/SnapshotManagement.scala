@@ -1619,7 +1619,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
         // The supplied provider is the latest checkpoint through committedVersion.
         val shouldReconcileAMTCheckpointProvider =
-          AMTUtils.amtSupported(previousSnapshot.protocol) &&
+          AMTUtils.amtSupported(previousSnapshot.protocol, isPreviewCompatible = true) &&
           amtCheckpointProviderForPostCommitSnapshot.isEmpty
         val newSnapshot = createSnapshotAfterCommit(
           segment,
@@ -1703,7 +1703,7 @@ trait SnapshotManagement { self: DeltaLog =>
       // because we have the precise pointer to the last manifest commit as of the target version.
       // We assume that there is no AMT upgrade/downgrade for now, and if the upper-bound snapshot
       // is AMT-enabled, then the target version is also AMT-enabled.
-      case _ if AMTUtils.amtEnabled(upperBoundSnapshot) =>
+      case _ if AMTUtils.amtEnabled(upperBoundSnapshot, isPreviewCompatible = true) =>
         computeLastCheckpointHintsForAMT(version, upperBoundSnapshot)
       case _ =>
         val lastCheckpointInfoForListing = lastCheckpointHint
