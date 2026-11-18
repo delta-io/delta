@@ -48,6 +48,15 @@ object AMTUsageLogs {
   /** Usage log emitted when an AMT write fails unexpectedly. */
   val WRITE_FAILED = s"$PREFIX.writeFailed"
 
+  /** Usage log emitted when the first tree of an upgrade is committed. */
+  val UPGRADE_FIRST_TREE_BUILT = s"$PREFIX.upgrade.firstTreeBuilt"
+
+  /** Usage log emitted when the first tree build of an upgrade fails. */
+  val UPGRADE_FIRST_TREE_FAILED = s"$PREFIX.upgrade.firstTreeFailed"
+
+  /** Usage log emitted when the upgrade rejects a table because it has inline DVs. */
+  val UPGRADE_INLINE_DVS_FOUND = s"$PREFIX.upgrade.inlineDVsFound"
+
   /**
    * Usage log emitted when an incremental AMT write carries forward leaves that hold both live
    * files and tombstones. Other engines write such leaves; this writer never does.

@@ -20,6 +20,7 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
@@ -992,6 +993,17 @@ object AdaptiveMetadataPreviewTableFeature
 
 object AdaptiveMetadataTableFeature
   extends AdaptiveMetadataTableFeatureBase(name = "adaptiveMetadata-dev")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  // Setting the AMT property to true on an existing table upgrades it to AMT.
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean =
+    AMTUtils.amtPropertyValue(metadata.configuration).contains(true)
+}
 
 object AdaptiveMetadataTableFeatureBase {
   /** All AMT table features. */

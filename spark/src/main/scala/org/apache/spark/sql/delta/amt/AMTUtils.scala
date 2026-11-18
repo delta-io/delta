@@ -70,6 +70,14 @@ object AMTUtils extends DeltaLogging {
     }
 
   /**
+   * The value of the AMT property that `configuration` sets. `fromMetaData` returns the default
+   * when the property is unset. The upgrade reads this value instead, because only a command that
+   * sets the property to true upgrades a table.
+   */
+  def amtPropertyValue(configuration: Map[String, String]): Option[Boolean] =
+    configuration.get(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key).map(_.toBoolean)
+
+  /**
    * Whether AMT writes are enabled for `snapshot`. See [[amtSupported]] for `isPreviewCompatible`.
    */
   def amtEnabled(snapshot: SnapshotDescriptor, isPreviewCompatible: Boolean): Boolean =
@@ -91,7 +99,8 @@ object AMTUtils extends DeltaLogging {
    * Asserts that a commit taking a table from `snapshot` to `protocol` and `metadata` follows the
    * rules for the AMT table features (see [[AdaptiveMetadataTableFeatureBase]]):
    *  - a table has at most one of them;
-   *  - AMT cannot be added to an existing table, including through REPLACE and REPLACE CLONE;
+   *  - AMT cannot be added to an existing table, including through REPLACE and REPLACE CLONE.
+   *    The one exception is the enablement commit of an upgrade to `adaptiveMetadata-dev`;
    *  - adding an AMT feature needs its creation SQL conf (`creationConf`). Tables that already
    *    have it stay readable and writable with the conf off;
    *  - an AMT table cannot add a feature AMT is incompatible with, either to the protocol or by
@@ -124,10 +133,15 @@ object AMTUtils extends DeltaLogging {
         tableName, feature1 = amtFeatures(0).name, feature2 = amtFeatures(1).name)
     }
     amtFeatures.foreach { amtFeature =>
-      // Adding AMT to an existing table is an unsupported upgrade. `updateMetadata` already rejects
-      // it, but CLONE adds the source's protocol after that, so REPLACE CLONE is caught here.
+      // Only the enablement commit of an upgrade adds AMT to an existing table. `updateMetadata`
+      // already rejects other commits, but CLONE adds the source's protocol after that, so
+      // REPLACE CLONE is caught here.
       if (snapshot.version >= 0 && !amtSupported(snapshot.protocol, isPreviewCompatible = true)) {
-        throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeature.name)
+        val isEnablementCommit = false
+        val amtUpgradesDisabled = true
+        if (!isEnablementCommit || amtUpgradesDisabled) {
+          throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeature.name)
+        }
       }
       val creationConf = AdaptiveMetadataTableFeatureBase.creationConf(amtFeature)
       if (added(amtFeature) && !spark.sessionState.conf.getConf(creationConf)) {

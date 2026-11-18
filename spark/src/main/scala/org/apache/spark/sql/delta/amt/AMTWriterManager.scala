@@ -70,6 +70,11 @@ object AMTTriggerMode {
   case object OnDemandCheckpointFull extends AMTTriggerMode(
     name = "ON_DEMAND_CHECKPOINT_FULL",
     isIncremental = false)
+
+  /** The first tree of an upgraded table, after the enablement commit: full rewrite. */
+  case object UpgradeFirstTree extends AMTTriggerMode(
+    name = "UPGRADE_FIRST_TREE",
+    isIncremental = false)
 }
 
 /** Metrics for one complete round of AMT conflict resolution. */
@@ -1003,6 +1008,27 @@ object AMTWriterManager extends DeltaLogging {
       snapshot: Snapshot,
       catalogTableOpt: Option[CatalogTable],
       amtTriggerModeOpt: Option[AMTTriggerMode]): Unit = {
+    if (!amtTriggerModeOpt.contains(AMTTriggerMode.UpgradeFirstTree)) {
+      return commitAMTCheckpoint(snapshot, catalogTableOpt, amtTriggerModeOpt)
+    }
+    val (data, deltaLog) = (Map("enablementVersion" -> snapshot.version), snapshot.deltaLog)
+    try {
+      val startNs = System.nanoTime()
+      commitAMTCheckpoint(snapshot, catalogTableOpt, amtTriggerModeOpt)
+      recordDeltaEvent(deltaLog, AMTUsageLogs.UPGRADE_FIRST_TREE_BUILT,
+        data = data + ("durationMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)))
+    } catch {
+      case NonFatal(e) =>
+        recordDeltaEvent(deltaLog, AMTUsageLogs.UPGRADE_FIRST_TREE_FAILED,
+          data = data + ("exception" -> e.getMessage))
+        throw e
+    }
+  }
+
+  private def commitAMTCheckpoint(
+      snapshot: Snapshot,
+      catalogTableOpt: Option[CatalogTable],
+      amtTriggerModeOpt: Option[AMTTriggerMode]): Unit = {
     val triggerMode = amtTriggerModeOpt.getOrElse(AMTTriggerMode.OnDemandCheckpointFull)
     val deltaLog = snapshot.deltaLog
     var attemptsRemaining = math.max(1, SparkSession.active.sessionState.conf.getConf(
@@ -1062,6 +1088,18 @@ object AMTWriterManager extends DeltaLogging {
       initialOperation: DeltaOperations.Operation,
       commitVersion: Long,
       postCommitSnapshot: Snapshot): MaintenanceOperation = {
+    require(AMTUtils.amtEnabled(postCommitSnapshot, isPreviewCompatible = true),
+      s"AMT writes are off after commit $commitVersion; there is no AMT maintenance to plan.")
+    // The enablement commit of an upgrade: the table existed without AMT, and this commit added
+    // AMT. Its post-commit hook builds the first tree. This case comes before the check below,
+    // which schedules nothing for a commit whose read snapshot has AMT writes off.
+    val isUpgradeEnablementCommit = readSnapshot.version >= 0 &&
+      !AMTUtils.amtSupported(readSnapshot.protocol, isPreviewCompatible = true) &&
+      AMTUtils.amtSupported(postCommitSnapshot.protocol, isPreviewCompatible = false)
+    if (isUpgradeEnablementCommit && spark.conf.get(DeltaSQLConf.AMT_UPGRADE_BUILD_FIRST_TREE)) {
+      return MaintenanceOperation(
+        shouldCheckpoint = true, amtTriggerModeOpt = Some(AMTTriggerMode.UpgradeFirstTree))
+    }
     // if the commit itself was to do a checkpoint, don't schedule any maintenance as part
     // of its post-commit hook.
     if (!AMTUtils.amtEnabled(readSnapshot, isPreviewCompatible = true)
