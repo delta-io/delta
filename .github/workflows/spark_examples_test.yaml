@@ -77,7 +77,8 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          key: delta-sbt-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}-${{ hashFiles('build.sbt', 'version.sbt', 'project/*.scala', 'project/*.sbt', 'project/project/*.sbt', 'project/build.properties', 'project/scripts/setup_unitycatalog_main.sh') }}
+          # The examples build resolves its own dependencies in addition to the root build.
+          key: delta-sbt-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}-${{ hashFiles('build.sbt', 'version.sbt', 'project/*.scala', 'project/*.sbt', 'project/project/*.sbt', 'project/build.properties', 'project/scripts/setup_unitycatalog_main.sh', 'examples/scala/build.sbt', 'examples/scala/project/build.properties') }}
           restore-keys: delta-sbt-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}-
       - name: Install Job dependencies
         run: |

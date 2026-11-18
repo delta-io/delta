@@ -49,10 +49,14 @@ runs:
       id: compiled-key
       shell: bash
       env:
-        CACHE_PREFIX: delta-spark-compiled-v1-ubuntu24.04-${{ runner.arch }}-spark${{ inputs.spark-version }}-scala${{ inputs.scala }}-${{ env.SPARK_COMMIT || 'published' }}-${{ hashFiles('build.sbt', 'version.sbt', 'project/*.scala', 'project/*.sbt', 'project/project/*.sbt', 'project/build.properties', 'project/scripts/setup_unitycatalog_main.sh', 'build/sbt', 'build/sbt-launch-lib.bash', 'build/sbt-config/**', 'run-tests.py', '.github/actions/run-delta-spark-tests/action.yml') }}
+        CACHE_PREFIX: delta-spark-compiled-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ inputs.spark-version }}-scala${{ inputs.scala }}
       run: |
-        java_hash=$(sha256sum "$JAVA_HOME/release" | cut -d ' ' -f 1)
-        echo "prefix=${CACHE_PREFIX}-${java_hash}-" >> "$GITHUB_OUTPUT"
+        # Keep compiled classes and Zinc metadata within the same JDK and sbt version.
+        toolchain_hash=$(
+          cat "$JAVA_HOME/release" project/build.properties |
+            sha256sum | cut -d ' ' -f 1
+        )
+        echo "prefix=${CACHE_PREFIX}-${toolchain_hash}-" >> "$GITHUB_OUTPUT"
 
     - name: Restore compiled Spark outputs
       id: compiled-cache
@@ -74,7 +78,7 @@ runs:
           !project/target/**
           !project/project/target/**
         key: ${{ steps.compiled-key.outputs.prefix }}${{ github.sha }}
-        # Reuse earlier source revisions only with the same JDK, Spark, Scala and build settings.
+        # Reuse earlier revisions with the same toolchain; sbt checks changed build inputs.
         restore-keys: ${{ steps.compiled-key.outputs.prefix }}
 
     - name: Scala structured logging style check
