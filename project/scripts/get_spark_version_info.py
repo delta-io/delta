@@ -32,7 +32,7 @@ Usage:
       --artifact-base-version 4.2.0 --spark-sha <full-sha>
 
     # Get a specific field for a Spark version (using short version or "master")
-    python project/scripts/get_spark_version_info.py --get-field 4.0 targetJvm
+    python project/scripts/get_spark_version_info.py --get-field 4.1 targetJvm
     python project/scripts/get_spark_version_info.py --get-field master targetJvm
     # Output: "17"
 """
@@ -243,7 +243,7 @@ def main():
     parser.add_argument(
         "--all-spark-versions",
         action="store_true",
-        help="Output all Spark versions as JSON array (e.g., [\"4.0\", \"4.1\"] or [\"master\", \"4.0\"])"
+        help="Output all Spark versions as JSON array (e.g., [\"4.1\", \"4.2\"] or [\"master\", \"4.1\"])"
     )
     parser.add_argument(
         "--released-spark-versions",
@@ -264,7 +264,7 @@ def main():
         "--get-field",
         nargs=2,
         metavar=("SPARK_VERSION", "FIELD"),
-        help="Get a specific field for a Spark version (e.g., --get-field 4.0 targetJvm or --get-field master targetJvm)"
+        help="Get a specific field for a Spark version (e.g., --get-field 4.1 targetJvm or --get-field master targetJvm)"
     )
     parser.add_argument(
         "--resolve-source-build",

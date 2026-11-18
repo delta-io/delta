@@ -15,86 +15,38 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
+import static org.apache.spark.sql.delta.v2.DeltaV2TestBase.createTestAddFile;
+import static org.apache.spark.sql.delta.v2.DeltaV2TestBase.createTestCDCFile;
+import static org.apache.spark.sql.delta.v2.DeltaV2TestBase.createTestRemoveFile;
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.actions.AddCDCFile;
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import io.delta.kernel.internal.actions.GenerateIcebergCompatActionUtils;
-import io.delta.kernel.internal.actions.RemoveFile;
-import io.delta.kernel.internal.data.GenericRow;
-import io.delta.kernel.internal.util.VectorUtils;
-import io.delta.kernel.types.StructType;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.actions.AddCDCFile;
+import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor;
+import org.apache.spark.sql.delta.actions.RemoveFile;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.junit.jupiter.api.Test;
+import scala.Option;
+import scala.collection.JavaConverters;
 
 /** Unit tests for {@link CDCDataFile}. */
 public class CDCDataFileTest {
 
-  private static final StructType EMPTY_SCHEMA = new StructType();
-
   private static final DeletionVectorDescriptor TEST_DV =
-      new DeletionVectorDescriptor("u", "ab^-rstxgiarsd", Optional.of(4), 40, 3L);
+      new DeletionVectorDescriptor(
+          "u", "ab^-rstxgiarsd", Option.apply((Object) 4), 40, 3L, Option.empty());
 
-  private static AddFile createTestAddFile(String path, long size, long modificationTime) {
-    return createTestAddFile(path, size, modificationTime, /* deletionVector= */ Optional.empty());
+  private static AddCDCFile createCDCFile(long size) {
+    return createTestCDCFile("cdc-file.parquet", size);
   }
 
-  private static AddFile createTestAddFile(
-      String path,
-      long size,
-      long modificationTime,
-      Optional<DeletionVectorDescriptor> deletionVector) {
-    return new AddFile(
-        AddFile.createAddFileRow(
-            EMPTY_SCHEMA,
-            path,
-            VectorUtils.stringStringMapValue(Collections.emptyMap()),
-            size,
-            modificationTime,
-            /* dataChange= */ true,
-            deletionVector,
-            /* tags= */ Optional.empty(),
-            /* baseRowId= */ Optional.empty(),
-            /* defaultRowCommitVersion= */ Optional.empty(),
-            /* stats= */ Optional.empty()));
-  }
-
-  private static RemoveFile createTestRemoveFile(String path, long size) {
-    return createTestRemoveFile(path, size, /* deletionVector= */ Optional.empty());
-  }
-
-  private static RemoveFile createTestRemoveFile(
-      String path, long size, Optional<DeletionVectorDescriptor> deletionVector) {
-    Row row =
-        GenerateIcebergCompatActionUtils.createRemoveFileRowWithExtendedFileMetadata(
-            path,
-            /* deletionTimestamp= */ 100L,
-            /* dataChange= */ true,
-            VectorUtils.stringStringMapValue(Collections.emptyMap()),
-            size,
-            /* stats= */ Optional.empty(),
-            /* physicalSchema= */ null,
-            /* baseRowId= */ Optional.empty(),
-            /* defaultRowCommitVersion= */ Optional.empty(),
-            deletionVector);
-    return new RemoveFile(row);
-  }
-
-  private static Row createCDCRow(long size) {
-    Map<Integer, Object> fieldMap = new HashMap<>();
-    fieldMap.put(AddCDCFile.FULL_SCHEMA.indexOf("path"), "cdc-file.parquet");
-    fieldMap.put(
-        AddCDCFile.FULL_SCHEMA.indexOf("partitionValues"),
-        VectorUtils.stringStringMapValue(Collections.emptyMap()));
-    fieldMap.put(AddCDCFile.FULL_SCHEMA.indexOf("size"), size);
-    return new GenericRow(AddCDCFile.FULL_SCHEMA, fieldMap);
+  private static AddCDCFile createCDCFile(long size, Map<String, String> partitionValues) {
+    return createTestCDCFile("cdc-file.parquet", size, partitionValues);
   }
 
   @Test
@@ -159,21 +111,43 @@ public class CDCDataFileTest {
 
   @Test
   public void testHasDeletionVector_addCDCFile() {
-    Row cdcRow = createCDCRow(/* size= */ 8192);
-    CDCDataFile cdcFile = CDCDataFile.fromAddCDCFile(cdcRow, /* commitTimestamp= */ 100L);
+    AddCDCFile cdcFileAction = createCDCFile(/* size= */ 8192);
+    CDCDataFile cdcFile = CDCDataFile.fromAddCDCFile(cdcFileAction, /* commitTimestamp= */ 100L);
     assertFalse(cdcFile.hasDeletionVector());
   }
 
   @Test
   public void testFromAddCDCFile() {
-    Row cdcRow = createCDCRow(/* size= */ 8192);
-    CDCDataFile cdcFile = CDCDataFile.fromAddCDCFile(cdcRow, /* commitTimestamp= */ 55555L);
+    AddCDCFile cdcFileAction = createCDCFile(/* size= */ 8192);
+    CDCDataFile cdcFile = CDCDataFile.fromAddCDCFile(cdcFileAction, /* commitTimestamp= */ 55555L);
 
     assertNull(cdcFile.getAddFile());
     assertNull(cdcFile.getChangeType());
     assertEquals(55555L, cdcFile.getCommitTimestamp());
     assertEquals(8192, cdcFile.getFileSize());
     assertTrue(cdcFile.isAddCDCFile());
+  }
+
+  @Test
+  public void testCDCPartitionValuesPreserveNullAndEmptyValues() {
+    Map<String, String> expected = new HashMap<>();
+    expected.put("country", "US");
+    expected.put("empty", "");
+    expected.put("nullable", null);
+    assertPartitionValues(expected);
+  }
+
+  @Test
+  public void testEmptyCDCPartitionValues() {
+    assertPartitionValues(Collections.emptyMap());
+  }
+
+  private static void assertPartitionValues(Map<String, String> expected) {
+    CDCDataFile cdcFile = CDCDataFile.fromAddCDCFile(createCDCFile(8192, expected), 55555L);
+    assertEquals(expected, JavaConverters.mapAsJavaMap(cdcFile.getPartitionValues()));
+    assertEquals("cdc-file.parquet", cdcFile.getPath());
+    assertEquals(8192, cdcFile.getFileSize());
+    assertEquals(55555L, cdcFile.getCommitTimestamp());
   }
 
   @Test

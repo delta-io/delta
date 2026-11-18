@@ -63,7 +63,7 @@ case class ChecksDeltaMetrics(reason: String = "checks Delta metrics")
 /**
  * Tag for tests that exercise DSv2 DML schema evolution. Schema evolution in DSv2 DML commands
  * is only available starting with Spark 4.2, so tests tagged with this are automatically skipped
- * when running against Spark 4.0/4.1.
+ * when running against Spark 4.1.
  */
 case object DSv2DMLSchemaEvolution extends org.scalatest.Tag("DSv2DMLSchemaEvolution")
 

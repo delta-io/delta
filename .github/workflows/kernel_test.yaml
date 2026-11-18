@@ -70,11 +70,15 @@ jobs:
       # so that resolution doesn't miss.
       - name: Set up pinned Unity Catalog
         uses: ./.github/actions/setup-unitycatalog
+        with:
+          save-cache: ${{ matrix.shard == 0 }}
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
       - name: Save SBT cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/master' &&
+          matrix.shard == 0 && steps.cache-sbt.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |

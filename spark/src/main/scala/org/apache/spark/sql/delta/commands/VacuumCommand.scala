@@ -237,7 +237,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
-      val isAdaptiveMetadataTable = AMTUtils.amtSupported(snapshot.protocol)
+      val isAdaptiveMetadataTable =
+        AMTUtils.amtSupported(snapshot.protocol, isPreviewCompatible = true)
       val shouldIcebergMetadataDirBeHidden =
          isAdaptiveMetadataTable || UniversalFormat.icebergEnabled(snapshot.metadata)
       val latestCommitVersionOutsideOfRetentionWindowOpt: Option[Long] =
@@ -993,7 +994,7 @@ trait VacuumCommandImpl extends DeltaCommand {
     // do not carry tombstones, so the checkpoint state cannot supply them. Evaluated per snapshot
     // so the base table and each clone independently pick the right source for their own protocol.
     val sourceTombstonesFromCommits = config.sourceTombstonesFromCommits ||
-      AMTUtils.amtEnabled(snapshot)
+      AMTUtils.amtEnabled(snapshot, isPreviewCompatible = true)
 
     val files = snapshot.stateDS.mapPartitions { actions =>
       val reservoirBase = new Path(basePath)

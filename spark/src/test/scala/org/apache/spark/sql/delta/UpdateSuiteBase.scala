@@ -405,7 +405,6 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
   }
 
   test("basic case with NullType") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
       append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
       checkUpdate(condition = None, setClauses = "value = 2",
@@ -414,7 +413,6 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
   }
 
   test("basic case with condition on NullType") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
       append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
       checkUpdate(condition = Some("key is null"), setClauses = "value = 2",
@@ -423,7 +421,6 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
   }
 
   test("basic case with nested NullType") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withConf(
       DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
     ) {

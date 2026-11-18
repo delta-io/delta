@@ -27,9 +27,10 @@ import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.test.{BaseMockFileSystemClient, BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.test.{BaseMockFileSystemClient, BaseMockJsonHandler, MockFileSystemClientUtils, MockListFromFileSystemClient, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
@@ -141,6 +142,57 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       case (beforeVersion, expNumFilesListed) =>
         assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
     }
+  }
+
+  test("findLastCompleteCheckpointBefore - small batches list zero prefix once") {
+    val deltas = deltaFileStatuses(0L until 25L)
+    val incompleteCheckpoint = multiCheckpointFileStatuses(Seq(10L), 3).take(2)
+
+    Seq(Seq.empty[FileStatus], incompleteCheckpoint).foreach { checkpoints =>
+      val fileSystemClient = new MockListFromFileSystemClient(
+        listFromProvider(deltas ++ checkpoints))
+      val result = findLastCompleteCheckpointBeforeHelper(
+        mockEngine(fileSystemClient = fileSystemClient),
+        logPath,
+        25L,
+        5)
+
+      assert(!result._1.isPresent)
+      assert(fileSystemClient.getListFromCalls === Seq(20L, 15L, 10L, 5L, 0L)
+        .map(version => FileNames.listingPrefix(logPath, version)))
+    }
+  }
+
+  test("findLastCompleteCheckpointBefore - closes listing iterators across batches") {
+    val files = deltaFileStatuses(0L until 25L) ++ singularCheckpointFileStatuses(Seq(10L))
+    var events = Seq.empty[String]
+    val fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files)) {
+      override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+        events = events :+ s"open $filePath"
+        val delegate = super.listFrom(filePath)
+        new CloseableIterator[FileStatus] {
+          override def hasNext: Boolean = delegate.hasNext
+          override def next(): FileStatus = delegate.next()
+          override def close(): Unit = {
+            events = events :+ s"close $filePath"
+            delegate.close()
+          }
+        }
+      }
+    }
+
+    val result = findLastCompleteCheckpointBeforeHelper(
+      mockEngine(fileSystemClient = fileSystemClient),
+      logPath,
+      25L,
+      5)
+
+    assert(result._1.isPresent && result._1.get().version == 10L)
+    val expectedEvents = Seq(20L, 15L, 10L).flatMap { version =>
+      val prefix = FileNames.listingPrefix(logPath, version)
+      Seq(s"open $prefix", s"close $prefix")
+    }
+    assert(events === expectedEvents)
   }
 
   test("findLastCompleteCheckpointBefore - single checkpoint") {
@@ -279,7 +331,11 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expCheckpointVersion: Long,
       expNumFilesListed: Long): Unit = {
     val engine = createMockFSListFromEngine(deltaLogFiles)
-    val result = findLastCompleteCheckpointBeforeHelper(engine, logPath, beforeVersion)
+    val result = findLastCompleteCheckpointBeforeHelper(
+      engine,
+      logPath,
+      beforeVersion,
+      Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE)
     assert(result._1.isPresent, s"Checkpoint should be found for version=$beforeVersion")
     assert(
       result._1.get().version === expCheckpointVersion,
@@ -292,7 +348,11 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       beforeVersion: Long,
       expNumFilesListed: Long): Unit = {
     val engine = createMockFSListFromEngine(deltaLogFiles)
-    val result = findLastCompleteCheckpointBeforeHelper(engine, logPath, beforeVersion)
+    val result = findLastCompleteCheckpointBeforeHelper(
+      engine,
+      logPath,
+      beforeVersion,
+      Checkpointer.DEFAULT_CHECKPOINT_SEARCH_BATCH_SIZE)
     assert(!result._1.isPresent, s"No checkpoint should be found for version=$beforeVersion")
     assert(result._2 == expNumFilesListed, s"Invalid number of files listed: $beforeVersion")
   }

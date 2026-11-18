@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta.v2.read
 
-import java.util.{Locale, Objects, OptionalInt}
+import java.util.{Objects, OptionalInt}
 
 import scala.jdk.OptionConverters._
+import scala.util.control.NonFatal
 
 import io.delta.kernel.engine.Engine
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext
@@ -31,6 +32,7 @@ import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapsh
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExprId}
@@ -98,10 +100,10 @@ private[read] class DeltaV2ScanBuilder(
   Objects.requireNonNull(catalogStats, "catalogStats is null")
   Objects.requireNonNull(options, "options is null")
 
-  private val partitionColumnSet: Set[String] =
-    partitionSchema.fields.map(_.name.toLowerCase(Locale.ROOT)).toSet
+  private val partitionColumnNames: Set[String] = partitionSchema.names.toSet
 
   private var requiredDataSchema: StructType = dataSchema
+  private lazy val tablePathForLogging: Path = initialSnapshot.dataPath
 
   // Pushed partition + data catalyst filters (their union drives V1 filesForScan skipping).
   private var partitionCatalystFilters: Array[Expression] = Array.empty
@@ -131,11 +133,11 @@ private[read] class DeltaV2ScanBuilder(
   override def pruneColumns(requiredSchema: StructType): Unit =
     recordFrameProfile("scanBuilder.pruneColumns") {
       Objects.requireNonNull(requiredSchema, "requiredSchema is null")
-      // CDC columns are injected later by CDCReadFunction, so strip them here.
+      // Keep metadata `_metadata` distinct from partition `_Metadata` in case-sensitive queries.
+      // CDC filtering must match CDCSchemaContext's case-insensitive schema validation.
       requiredDataSchema = new StructType(
         requiredSchema.fields.filter { f =>
-          val name = f.name.toLowerCase(Locale.ROOT)
-          !partitionColumnSet.contains(name) && !CDCSchemaContext.isCDCColumn(name)
+          !partitionColumnNames.contains(f.name) && !CDCSchemaContext.isCDCColumn(f.name)
         })
     }
 
@@ -155,6 +157,10 @@ private[read] class DeltaV2ScanBuilder(
    */
   override def pushLimit(limit: Int): Boolean = {
     if (limit < 0) {
+      recordDeltaEventForTablePath(
+        tablePath = tablePathForLogging,
+        opType = "scan.pushLimit.failure",
+        data = Map("limit" -> limit))
       throw new IllegalArgumentException("Pushed limit must be non-negative, but got: " + limit)
     }
     if (SQLConf.get.getConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)) {
@@ -168,7 +174,7 @@ private[read] class DeltaV2ScanBuilder(
   // isPartiallyPushed() intentionally uses the interface default (true). Because pruning happens at
   // file granularity, the scan may produce more rows than requested, so Spark must reapply LIMIT.
 
-  override def build(): Scan =
+  override def build(): Scan = withScanFailureEvent("scan.build.failure") {
     recordFrameProfile("scanBuilder.build") {
       // Capture the planning inputs here, but defer constructing the Kernel-backed V1 snapshot and
       // running filesForScan until DeltaV2Scan actually plans a batch. A MicroBatchStream performs
@@ -195,6 +201,7 @@ private[read] class DeltaV2ScanBuilder(
         keepNumRecords,
         effectiveLimit)
     }
+  }
 
   private def createDeltaV2Scan(
       partitionFilters: Array[Expression],
@@ -204,7 +211,7 @@ private[read] class DeltaV2ScanBuilder(
     val originalQueryContext = DeltaV2QueryContext(catalogTable)
     val partitionFiltersForScan = partitionFilters.toIndexedSeq
     val catalystFilters = partitionFiltersForScan ++ dataFilters
-    val deltaScanSupplier = () => {
+    val deltaScanSupplier = () => withScanFailureEvent("scan.selectFiles.failure") {
       val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
 
       // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
@@ -252,6 +259,21 @@ private[read] class DeltaV2ScanBuilder(
   private[read] def getPartitionSchema: StructType = partitionSchema
 
   private[read] def getPushedLimit: OptionalInt = pushedLimit
+
+  private def withScanFailureEvent[T](opType: String)(body: => T): T = {
+    val startedAtNs = System.nanoTime()
+    try {
+      body
+    } catch {
+      case NonFatal(error) =>
+        recordDeltaEventForTablePath(
+          tablePath = tablePathForLogging,
+          opType = opType,
+          data = Map("elapsedMs" -> elapsedTimeMs(startedAtNs)))
+        throw error
+    }
+  }
+
 }
 
 private[read] object DeltaV2ScanBuilder {
