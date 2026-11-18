@@ -297,6 +297,19 @@ class DeltaDynamicPartitionOverwriteSuite
   }
 
   for {
+    sessionMode <- PartitionOverwriteMode.values.toSeq
+    optionMode <- PartitionOverwriteMode.values.toSeq
+  } test(s"DataframeV2: overwritePartitions stays dynamic with $optionMode " +
+      s"partitionOverwriteMode option in $sessionMode session") {
+    withSQLConf(PARTITION_OVERWRITE_MODE.key -> sessionMode.toString) {
+      sourceData.writeTo(tempTable)
+        .option("partitionOverwriteMode", optionMode.toString)
+        .overwritePartitions()
+      checkAnswer(expectedDpoData)
+    }
+  }
+
+  for {
     overwriteSchema <- BOOLEAN_DOMAIN
     mergeSchema <- BOOLEAN_DOMAIN
   } dpoTest("DataframeV2: overwritePartitions with different additive schema, " +
