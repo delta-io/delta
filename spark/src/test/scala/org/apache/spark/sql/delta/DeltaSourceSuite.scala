@@ -2425,7 +2425,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   for {
     failOnDataLoss <- Seq(true, false)
     (dataLossType, missingVersions) <- Seq(
-      "first" -> Seq(1L), "middle" -> Seq(2L), "whole" -> Seq(1L, 2L, 3L))
+      "missing_start_commit" -> Seq(1L),
+      "missing_middle_commit" -> Seq(2L),
+      "missing_entire_range" -> Seq(1L, 2L, 3L))
   } {
     test(s"incremental: missing commit files, failOnDataLoss=$failOnDataLoss, " +
         s"dataLossType=$dataLossType") {
@@ -2505,9 +2507,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
               }
               if (useDsv2) {
                 val expectedMessage = dataLossType match {
-                  case "first" => "no log file found for version"
-                  case "middle" => "versions are not contiguous"
-                  case "whole" => "no log files found in the requested version range"
+                  case "missing_start_commit" => "no log file found for version"
+                  case "missing_middle_commit" => "versions are not contiguous"
+                  case "missing_entire_range" => "no log files found in the requested version range"
                 }
                 assert(e.getCause.getMessage.contains(expectedMessage))
               } else {
