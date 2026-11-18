@@ -496,7 +496,7 @@ public class PartitionUtils {
     for (Map.Entry<String, Object> entry : cdcConstants.entrySet()) {
       metadata = metadata.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
     }
-    MapValue partitionValues = cdcFile.getPartitionValues();
+    scala.collection.immutable.Map<String, String> partitionValues = cdcFile.getPartitionValues();
     if (partitionValues == null) {
       // Only RemoveFile reaches here, when extendedFileMetadata is absent. Match V1's
       // TahoeRemoveFileIndex behaviour rather than silently consuming missing metadata.
@@ -506,7 +506,7 @@ public class PartitionUtils {
         caster.numFields() > 0 ? getPartitionRow(partitionValues, caster) : emptyPartitionRow(0);
     long modificationTime =
         cdcFile.getAddFile() != null
-            ? cdcFile.getAddFile().getModificationTime()
+            ? cdcFile.getAddFile().modificationTime()
             : cdcFile.getCommitTimestamp();
     return makePartitionedFile(
         new Path(tablePath, cdcFile.getPath()).toString(),

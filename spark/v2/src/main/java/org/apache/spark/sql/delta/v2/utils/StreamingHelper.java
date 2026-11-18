@@ -42,7 +42,6 @@ import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
-import org.apache.spark.sql.delta.v2.read.CDCDataFile;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 
 /**
@@ -331,23 +330,6 @@ public class StreamingHelper {
       throw new RuntimeException("Failed to process commits", e);
     }
     return versionToAction;
-  }
-
-  /** Get explicit CDC file (AddCDCFile) from a batch at the specified row, if present. */
-  public static Optional<CDCDataFile> getCDCFile(
-      ColumnarBatch batch, int rowId, long commitTimestamp) {
-    int cdcIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.CDC.colName);
-    ColumnVector cdcVector = batch.getColumnVector(cdcIdx);
-    if (cdcVector.isNullAt(rowId)) {
-      return Optional.empty();
-    }
-
-    Row cdcRow = StructRow.fromStructVector(cdcVector, rowId);
-    checkState(
-        cdcRow != null,
-        String.format("Failed to extract CDC struct from batch at rowId=%d.", rowId));
-
-    return Optional.of(CDCDataFile.fromAddCDCFile(cdcRow, commitTimestamp));
   }
 
   /** Private constructor to prevent instantiation of this utility class. */
