@@ -299,7 +299,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
    * with their entry context (see [[withLeafEntryContext]]), rather than decoded ones, and keeps
    * entries of every status: callers filter by status after the row-ID prefix.
    */
-  protected def leafEntriesWithRowIdPrefix(
+  private[amt] def leafEntriesWithRowIdPrefix(
       spark: SparkSession,
       deltaLog: DeltaLog,
       leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
@@ -324,7 +324,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     entries.where(col("content_type") === lit(AMTSingleAction.ContentType.Type.Data))
 
   /** The entries of persisted manifest rows whose status is one of `statuses`. */
-  protected def withStatuses(entries: DataFrame, statuses: Set[Int]): DataFrame =
+  private[amt] def withStatuses(entries: DataFrame, statuses: Set[Int]): DataFrame =
     entries.where(col("tracking.status").isin(statuses.toSeq: _*))
 
   /**
@@ -521,7 +521,7 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
         "every other status must materialize it."))
 
   /** The `first_row_id` of a leaf entry row, inheriting its parent's plus the row-ID prefix. */
-  protected def inheritedBaseRowId: Column =
+  private[amt] def inheritedBaseRowId: Column =
     inheritedTrackingField(
       "first_row_id", col(PARENT_FIRST_ROW_ID_COLUMN) + col(PRECEDING_RECORDS_COLUMN))
 
