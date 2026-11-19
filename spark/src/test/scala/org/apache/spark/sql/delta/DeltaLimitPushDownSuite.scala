@@ -41,7 +41,7 @@ trait DeltaLimitPushDownTests extends QueryTest
     with DeltaSQLCommandTest
     with CatalogOwnedTestBaseSuite {
 
-  import testImplicits._
+  import deltaImplicits._
 
 
   test("no filter or projection") {

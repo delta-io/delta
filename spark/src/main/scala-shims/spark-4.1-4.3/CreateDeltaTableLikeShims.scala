@@ -29,16 +29,14 @@ object CreateDeltaTableLikeShims {
    * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
    * should overwrite schema and/or partitioning. Therefore we have this hack.
    *
-   * In Spark 4.1+, DataFrameWriter provides the option "__v1_save_as_table_overwrite", because
-   * the stack trace does not indicate the calling API anymore in connect mode - planning and
-   * execution has been separated.
+   * DataFrameWriter provides the option "__v1_save_as_table_overwrite", because the stack trace
+   * does not indicate the calling API anymore in connect mode - planning and execution has been
+   * separated.
    *
-   * TODO: Shim no longer needed once spark-4.0 is removed.
+   * TODO: this shim is now the same for every supported Spark version and can be inlined.
    */
   def isV1WriterSaveAsTableOverwrite(options: DeltaOptions, mode: SaveMode): Boolean = {
     // Note: Spark is setting this only for SaveMode.Overwrite anyway, but we double check.
-    // The 4.0 shim relies on stack trace analysis instead, so it has to check.
-    // After 4.0 is dropped, we can simplify.
     options.isDataFrameWriterV1SaveAsTableOverwrite && mode == SaveMode.Overwrite
   }
 }

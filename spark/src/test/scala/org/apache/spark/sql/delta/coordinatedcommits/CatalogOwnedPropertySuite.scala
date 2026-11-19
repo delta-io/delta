@@ -120,7 +120,7 @@ class CatalogOwnedPropertySuite extends QueryTest
     // E.g., If the 0th commit enables ICT, then we will not need the above
     //       two properties for the table in subsequent commits.
     // See [[InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo]] for details.
-    CatalogOwnedTableUtils.ICT_TABLE_PROPERTY_KEYS.filter { k =>
+    CatalogManagedTableUtils.ICT_TABLE_PROPERTY_KEYS.filter { k =>
       k != DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key
     }.foreach { key =>
       assert(conf.contains(key) === expectedEnablementInfo)

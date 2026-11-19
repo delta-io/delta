@@ -47,7 +47,7 @@ class DeltaTimeTravelSuite extends QueryTest
   with DeltaSQLCommandTest
   with CatalogOwnedTestBaseSuite {
 
-  import testImplicits._
+  import deltaImplicits._
 
   private val timeFormatter = new SimpleDateFormat("yyyyMMddHHmmssSSS")
 

@@ -55,7 +55,7 @@ class DeletionVectorsSuite extends QueryTest
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews
   with DeltaExceptionTestUtils {
-  import testImplicits._
+  import deltaImplicits._
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -574,7 +574,7 @@ class DeletionVectorsSuite extends QueryTest
     withDeletionVectorsEnabled() {
       withTempDir { dir =>
         val tablePath = dir.getAbsolutePath
-        import testImplicits._
+        import deltaImplicits._
         val data = (0 until 10).map(i => (i, s"/path/to/value/$i"))
         data.toDF("value", "path").write.format("delta").save(tablePath)
 

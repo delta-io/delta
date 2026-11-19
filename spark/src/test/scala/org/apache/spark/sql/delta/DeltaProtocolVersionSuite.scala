@@ -956,7 +956,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  import testImplicits._
+  import deltaImplicits._
   /** Creates a Delta table and checks the expected protocol version */
   private def testCreation(tableName: String, writerVersion: Int, tableInitialized: Boolean = false)
                           (fn: String => Unit): Unit = {
@@ -3801,7 +3801,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Register a temporary InMemory-CC builder to support CatalogManaged table creation.
       CatalogManagedCommitCoordinatorProvider.clearBuilders()
       CatalogManagedCommitCoordinatorProvider.registerBuilder(
-        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1)
       )
       val finalAdditionalTableProperty = if (enableFeatureInitially) {

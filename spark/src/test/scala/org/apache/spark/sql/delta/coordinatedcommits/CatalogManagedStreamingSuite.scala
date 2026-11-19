@@ -38,7 +38,7 @@ trait CatalogManagedStreamingSuiteBase
   with StreamTest {
 
 
-  import testImplicits._
+  import deltaImplicits._
   import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
   protected def assertNumCommitsCalled(expectedNumCommits: Int): Unit = {
@@ -56,7 +56,7 @@ trait CatalogManagedStreamingSuiteBase
   protected def getTrackingClient: Option[TrackingCommitCoordinatorClient] =
     if (catalogOwnedDefaultCreationEnabledInTests) {
       Some(getCatalogOwnedCommitCoordinatorClient(
-        CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+        CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
           .asInstanceOf[TrackingCommitCoordinatorClient])
     } else {
       None

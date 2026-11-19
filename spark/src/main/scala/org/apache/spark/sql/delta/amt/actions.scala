@@ -724,24 +724,40 @@ object AMTSnapshotId {
     }
 
     actions.map {
-      case add: AddFile =>
-        // If an AddFile carries modification metadata (for example, a DV or column updates) and
-        // both snapshot IDs are missing, initialize both to the current snapshotId. This can happen
-        // in RESTORE / CLONE when a file is introduced with an existing DV or column file.
-        add.copy(
-          snapshotId = add.snapshotId.orElse(Some(snapshotId)),
-          modifiedSnapshotId =
-            add.modifiedSnapshotId.orElse(
-              if (hasModificationMetadata(add)) Some(snapshotId) else None))
-
-      case remove: RemoveFile =>
-        remove.copy(
-          snapshotId = remove.snapshotId.orElse(Some(snapshotId)),
-          modifiedSnapshotId =
-            remove.modifiedSnapshotId.orElse(
-              if (hasModificationMetadata(remove)) Some(snapshotId) else None))
-
+      case add: AddFile => assignIfMissing(add, snapshotId)
+      case remove: RemoveFile => assignIfMissing(remove, snapshotId)
       case action => action
+    }
+  }
+
+  /**
+   * `add` with `snapshotId` for each snapshot ID it is missing. A file with modification metadata
+   * (for example, a DV or column updates) also gets `modifiedSnapshotId`. RESTORE and CLONE add
+   * such a file with an existing DV or column file.
+   */
+  def assignIfMissing(add: AddFile, snapshotId: Long): AddFile = {
+    val modifiedSnapshotId =
+      add.modifiedSnapshotId.orElse(
+        if (hasModificationMetadata(add)) Some(snapshotId) else None)
+    if (add.snapshotId.isDefined && modifiedSnapshotId == add.modifiedSnapshotId) {
+      add
+    } else {
+      add.copy(
+        snapshotId = add.snapshotId.orElse(Some(snapshotId)),
+        modifiedSnapshotId = modifiedSnapshotId)
+    }
+  }
+
+  private def assignIfMissing(remove: RemoveFile, snapshotId: Long): RemoveFile = {
+    val modifiedSnapshotId =
+      remove.modifiedSnapshotId.orElse(
+        if (hasModificationMetadata(remove)) Some(snapshotId) else None)
+    if (remove.snapshotId.isDefined && modifiedSnapshotId == remove.modifiedSnapshotId) {
+      remove
+    } else {
+      remove.copy(
+        snapshotId = remove.snapshotId.orElse(Some(snapshotId)),
+        modifiedSnapshotId = modifiedSnapshotId)
     }
   }
 }

@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.{InternalRow, SQLConfHelper}
 import org.apache.spark.sql.catalyst.analysis.Resolver
 import org.apache.spark.sql.catalyst.expressions._
@@ -634,6 +634,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       generatedColumns: Seq[StructField],
       updateExprs: Seq[Option[Expression]],
       postEvolutionTargetSchema: Option[StructType] = None): Seq[Expression] = {
+    val sparkSession = SparkSession.active
     val targetSchema = postEvolutionTargetSchema.getOrElse(updateTarget.schema)
     assert(
       targetSchema.size == updateExprs.length,
@@ -657,7 +658,18 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
           generatedColumns.find(f => conf.resolver(f.name, targetCol.name)) match {
             case Some(field) =>
               val expr = GeneratedColumn.getGenerationExpression(field).get
-              resolveReferencesForExpressions(SparkSession.active, expr :: Nil, fakePlan).head
+              try {
+                resolveReferencesForExpressions(sparkSession, expr :: Nil, fakePlan).head
+              } catch {
+                case e: AnalysisException
+                    if e.getErrorClass == "DELTA_CANNOT_RESOLVE_EXPRESSION" &&
+                      !fakePlan.resolved &&
+                      conf.getConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN) =>
+                  // An unresolved update expression, such as an invalid cast, blocks resolution.
+                  // CheckAnalysis reports the error of that expression. If it finds none, keep `e`.
+                  sparkSession.sessionState.analyzer.checkAnalysis(fakePlan)
+                  throw e
+              }
             case None =>
               // Should not happen
               throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression(targetCol.name)

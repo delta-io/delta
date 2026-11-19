@@ -61,6 +61,10 @@ class AMTUtilsSuite extends QueryTest with SharedSparkSession {
           (enabled && !isPreview),
         clue)
     }
+    val key = DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key
+    assert(AMTUtils.amtPropertyValue(Map(key -> "true")) === Some(true))
+    assert(AMTUtils.amtPropertyValue(Map(key -> "false")) === Some(false))
+    assert(AMTUtils.amtPropertyValue(Map.empty).isEmpty)
   }
 
   test("invariantCheckWithLogging: succeeds when the invariant holds") {

@@ -42,7 +42,7 @@ class DeltaParquetFormatVersionSuite
     with SharedSparkSession
     with DeltaSQLCommandTest
     with GridTestShim {
-  import testImplicits._
+  import deltaImplicits._
 
   val v1Format: ParquetFormatVersion = ParquetFormatVersion.V1_0_0
   val v2Format: ParquetFormatVersion = ParquetFormatVersion.V2_12_0

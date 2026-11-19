@@ -44,7 +44,7 @@ trait TypeWideningTestMixin
   extends DeltaSQLCommandTest
   with DeltaDMLTestUtilsPathBased { self: QueryTest =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf

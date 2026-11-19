@@ -53,7 +53,7 @@ class CoordinatedCommitsSuite
   extends CommitCoordinatorSuiteBase
   with CoordinatedCommitsBaseSuite {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override def sparkConf: SparkConf = {
     // Make sure all new tables in tests use tracking-in-memory commit-coordinator by default.
@@ -326,7 +326,7 @@ class CatalogOwnedSuite
 
   override def sparkConf: SparkConf = {
     // Make sure all new tables in tests use CatalogManaged table feature by default.
-    super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    super.sparkConf.set(defaultCatalogManagedFeatureEnabledKey, "supported")
   }
 }
 
@@ -339,7 +339,7 @@ abstract class CommitCoordinatorSuiteBase
   with DeltaSQLCommandTest
   with DeltaExceptionTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("0th commit happens via filesystem") {
     val commitCoordinatorName = "tracking-in-memory"

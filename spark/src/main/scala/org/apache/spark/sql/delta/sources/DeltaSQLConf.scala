@@ -662,6 +662,31 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val AMT_UPGRADE_ENABLED =
+    buildConf("amt.upgrade.enabled")
+      .internal()
+      .doc("When true, setting `delta.enableAdaptiveMetadata` to true on an existing table " +
+        "upgrades it to AMT.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val AMT_UPGRADE_BUILD_FIRST_TREE =
+    buildConf("amt.upgrade.buildFirstTree")
+      .internal()
+      .doc("When true, the post-commit checkpoint hook of the enablement commit of an upgrade " +
+        "runs an OPTIMIZE CHECKPOINT that builds the first AMT tree. When false, the first tree " +
+        "comes from a later scheduled checkpoint.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val AMT_UPGRADE_CHECK_INLINE_DVS =
+    buildConf("amt.upgrade.checkInlineDVs")
+      .internal()
+      .doc("When true, the upgrade to AMT scans all files of the table and rejects the table if " +
+        "a file has an inline deletion vector.")
+      .booleanConf
+      .createWithDefault(true)
+
   val AMT_ENTRIES_PER_LEAF =
     buildConf("amt.entriesPerLeaf")
       .internal()
@@ -983,6 +1008,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If true, enables schema merging on appends and on overwrites.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN =
+    buildConf("generatedColumn.eagerAnalyzePlan")
+      .internal()
+      .doc("When enabled, UPDATE and MERGE on a table with generated columns report the " +
+        "analysis error of an update expression. When disabled, they report " +
+        "DELTA_CANNOT_RESOLVE_EXPRESSION for a generation expression instead.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS =
     buildConf("merge.insert.fixCaseSensitiveDuplicateColumns")
@@ -3053,11 +3087,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
     buildConf("createDataFrame.dropNullColumns")
       .internal()
-      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame. Defaults to " +
-        "dropping (no NullType column support) on Spark 4.0, which lacks the Parquet read " +
-        "support for materializing NullType columns, and to keeping them on Spark 4.1+.")
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
       .booleanConf
-      .createWithDefault(org.apache.spark.SPARK_VERSION.startsWith("4.0"))
+      .createWithDefault(false)
 
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
@@ -3911,18 +3943,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
     .booleanConf
     .createWithDefault(true)
-
-  val DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 =
-    buildConf("variant.disableVariantTableFeatureForSpark40")
-    .internal()
-    .doc(
-      """
-        | If true, disables support for the 'variantType' and 'variantType-preview' table
-        | features on Spark 4.0 clients. Spark 4.0 does not support the parquet variant
-        | logical type annotation, which causes interoperability issues with Spark 4.1+.
-        |""".stripMargin)
-    .booleanConf
-    .createWithDefault(false)
 
   val COLLECT_VARIANT_DATA_SKIPPING_STATS =
     buildConf("variantShredding.collectVariantDataSkippingStats")

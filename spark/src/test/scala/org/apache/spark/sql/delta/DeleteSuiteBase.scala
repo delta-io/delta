@@ -34,7 +34,7 @@ trait DeleteBaseMixin
   with DeltaDMLTestUtils
   with DeltaTestUtilsForTempViews {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def executeDelete(target: String, where: String = null): Unit
 
@@ -106,7 +106,7 @@ trait DeleteBaseMixin
 }
 
 trait DeleteTempViewTests extends DeleteBaseMixin with DeltaDMLTestUtilsPathBased {
-  import testImplicits._
+  import deltaImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
     val name = s"test delete on temp view - basic - Partition=$isPartitioned"
@@ -141,7 +141,7 @@ trait DeleteTempViewTests extends DeleteBaseMixin with DeltaDMLTestUtilsPathBase
 }
 
 trait DeleteBaseTests extends DeleteBaseMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
     test(s"basic case - Partition=$isPartitioned") {
@@ -240,7 +240,6 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   }
 
   test("basic case with NullType") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
       append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
       checkDelete(condition = None, Nil)
@@ -248,7 +247,6 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   }
 
   test("basic case with condition on NullType") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
       append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
       checkDelete(condition = Some("key is null"), Nil)
@@ -256,7 +254,6 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   }
 
   test("basic case with nested NullType") {
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withConf(
       DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
     ) {
@@ -666,7 +663,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
  * Base mixin for subquery DELETE tests. Provides helpers shared by all subquery test traits.
  */
 trait DeleteSubqueryBaseMixin extends DeleteBaseMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   protected def checkDeleteResult(
       target: Seq[(Any, String)],
@@ -723,7 +720,7 @@ trait DeleteSubqueryBaseMixin extends DeleteBaseMixin {
  * EXISTS/NOT EXISTS subquery tests.
  */
 trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   testWithPartitioning("exists/notexists subquery") {
     checkDeleteResult(
@@ -832,7 +829,7 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
   }
 
   testWithPartitioning("NOT EXISTS with empty source deletes all rows") {
-    import testImplicits._
+    import deltaImplicits._
     Seq((1, "a"), (2, "b"), (3, "c"))
       .toDF("c", "t1")
       .coalesce(1)
@@ -857,7 +854,7 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
   testWithPartitioning("exists with multi-file target") {
     // Write multiple files to exercise getFileMetadataColumn + distinct()
     // in the first pass across multiple data files.
-    import testImplicits._
+    import deltaImplicits._
     (1 to 20)
       .map(i => (i, s"v$i"))
       .toDF("c", "t1")

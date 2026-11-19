@@ -32,18 +32,17 @@ import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogV2Util, Id
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{LongType, StringType, StructType}
 
 // These tests are copied from Apache Spark (minus partition by expressions) and should work exactly
 // the same with Delta minus some writer options
 trait OpenSourceDataFrameWriterV2Tests
-    extends QueryTest
-    with SharedSparkSession
+  extends QueryTest
+    with DeltaSQLCommandTest
     with BeforeAndAfter
     with DeltaTableProvider {
 
-  import testImplicits._
+  import deltaImplicits._
 
   before {
     val df = spark.createDataFrame(Seq((1L, "a"), (2L, "b"), (3L, "c"))).toDF("id", "data")
@@ -541,7 +540,7 @@ class DeltaDataFrameWriterV2Suite
   extends OpenSourceDataFrameWriterV2Tests
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   import org.apache.spark.sql.delta.sources.DeltaSQLConf.{
     REPLACEWHERE_CONSTRAINT_CHECK_ENABLED,

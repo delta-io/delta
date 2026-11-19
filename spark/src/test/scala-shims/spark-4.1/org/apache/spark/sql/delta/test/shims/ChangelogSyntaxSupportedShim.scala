@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,11 @@
 
 package org.apache.spark.sql.delta.test.shims
 
-import org.scalatest.Tag
-import org.apache.spark.SparkFunSuite
-
 /**
- * Shim for SparkFunSuite as gridTest doesn't exist in Spark 4.0 but we rely on it
- * in tests.
+ * Shim indicating whether the running Spark supports the `SELECT ... CHANGES` clause used by the
+ * V2 changelog read path. Spark 4.1 lacks the parser support, so this variant returns
+ * false, letting changelog tests cancel. The spark-4.2 variant returns true.
  */
-trait GridTestShim { self: SparkFunSuite =>
-  def gridTest[A](testNamePrefix: String, testTags: Tag*)(params: Seq[A])(
-    testFun: A => Unit): Unit = {
-    for (param <- params) {
-      test(testNamePrefix + s" ($param)", testTags: _*)(testFun(param))
-    }
-  }
+trait ChangelogSyntaxSupportedShim {
+  def supportsChangelogSyntax: Boolean = false
 }
-
