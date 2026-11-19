@@ -226,8 +226,8 @@ class HudiConverter
     val maxCommitsToConvert =
       spark.sessionState.conf.getConf(DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT)
 
-    // Nth to convert
-    if (lastDeltaVersionConverted.exists(_ == snapshotToConvert.version)) {
+    // Nth to convert. A late post-commit hook can enqueue a snapshot older than the Hudi table.
+    if (lastDeltaVersionConverted.exists(_ >= snapshotToConvert.version)) {
       return None
     }
 
