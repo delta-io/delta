@@ -78,8 +78,10 @@ VERSION_PATTERN = r"[0-9A-Za-z][0-9A-Za-z._-]{0,31}"
 TEST_JOB_RE = re.compile(
     r"^DS: Spark (?P<version>" + VERSION_PATTERN + r"), Scala (?P<scala>[0-9.]+), "
     r"Shard (?P<shard>\d{1,3})$")
+# The compile job has the static name "DS: Spark compile-only"; GitHub appends the matrix
+# values (spark_version, scala) when the job runs. A skipped job keeps the bare name.
 COMPILE_JOB_RE = re.compile(
-    r"^DS: Spark (?P<version>" + VERSION_PATTERN + r"), Scala (?P<scala>[0-9.]+), Compile$")
+    r"^DS: Spark compile-only \((?P<version>" + VERSION_PATTERN + r"), (?P<scala>[0-9.]+)\)$")
 VERSION_RE = re.compile("^" + VERSION_PATTERN + "$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$")
@@ -301,7 +303,8 @@ def matrix_from_jobs(jobs: Sequence[dict]) -> RunMatrix:
     """Recompute the matrix mode and versions from the run's own job names.
 
     A reduced run is one with compile jobs: the full matrix tests every version and
-    compiles none. Skipped matrix jobs keep an unexpanded name, so they don't match.
+    compiles none. A skipped compile job has no matrix values in its name, so it doesn't
+    match.
     """
     test_jobs: Dict[str, List[dict]] = {}
     compile_versions = set()

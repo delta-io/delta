@@ -108,7 +108,7 @@ class RunBuilder:
         for version in self.compile_versions:
             next_id += 1
             self.jobs.append(self._job(
-                next_id, f"DS: Spark {version}, Scala 2.13.16, Compile", "success"))
+                next_id, f"DS: Spark compile-only ({version}, 2.13.16)", "success"))
         self.pr = {
             "number": 42, "state": "open", "labels": [{"name": "Spark"}],
             "user": {"login": "contributor-1"},
@@ -439,9 +439,19 @@ class ContextTest(unittest.TestCase):
 
     def test_skipped_compile_job_means_full_mode(self):
         b = RunBuilder(self.DIVERGENT, compile_versions=())
-        b.jobs.append({"id": 9, "name": "DS: Spark ${{ matrix.spark_version }}, Scala "
-                       "${{ matrix.scala }}, Compile", "conclusion": "skipped"})
+        b.jobs.append({"id": 9, "name": "DS: Spark compile-only", "conclusion": "skipped"})
         self.assertFalse(b.analyze().label)
+
+    def test_compile_job_name_format(self):
+        # Matches the static `name:` of the compile job in spark_test.yaml plus the matrix
+        # values GitHub appends.
+        m = afc.COMPILE_JOB_RE.match("DS: Spark compile-only (4.2, 2.13.16)")
+        self.assertEqual((m.group("version"), m.group("scala")), ("4.2", "2.13.16"))
+        for name in ["DS: Spark compile-only",
+                     "DS: Spark 4.2, Scala 2.13.16, Compile",
+                     "DS: Spark compile-only (4.2)"]:
+            with self.subTest(name=name):
+                self.assertIsNone(afc.COMPILE_JOB_RE.match(name))
 
     def test_artifact_claiming_full_mode_doesnt_matter(self):
         # Mode comes from the jobs; a disagreeing artifact makes the run untrusted.
