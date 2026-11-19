@@ -81,6 +81,47 @@ import scala.Option;
  */
 public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
 
+  @Test
+  public void testBuild_returnsScanWithExpectedSchema(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "scan_builder_test";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
+            tableName, path));
+    StructType dataSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true)
+            });
+    StructType partitionSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
+    DeltaV2ScanBuilder builder =
+        newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
+
+    StructType expectedSparkSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true /*nullable*/),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
+
+    builder.pruneColumns(expectedSparkSchema);
+    Scan scan = builder.build();
+
+    assertNotNull(asDeltaV2Scan(scan));
+    assertEquals(expectedSparkSchema, scan.readSchema());
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"id", "dep_id"})
   public void testDebugFilterRenderingFailurePreservesClassification(
@@ -229,47 +270,6 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
       logger.removeAppender(appender);
       appender.stop();
     }
-  }
-
-  @Test
-  public void testBuild_returnsScanWithExpectedSchema(@TempDir File tempDir) {
-    String path = tempDir.getAbsolutePath();
-    String tableName = "scan_builder_test";
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
-            tableName, path));
-    StructType dataSchema =
-        DataTypes.createStructType(
-            new StructField[] {
-              DataTypes.createStructField("id", DataTypes.IntegerType, true),
-              DataTypes.createStructField("name", DataTypes.StringType, true)
-            });
-    StructType partitionSchema =
-        DataTypes.createStructType(
-            new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
-    StructType tableSchema =
-        DataTypes.createStructType(
-            new StructField[] {
-              DataTypes.createStructField("id", DataTypes.IntegerType, true),
-              DataTypes.createStructField("name", DataTypes.StringType, true),
-              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
-            });
-    DeltaV2ScanBuilder builder =
-        newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
-
-    StructType expectedSparkSchema =
-        DataTypes.createStructType(
-            new StructField[] {
-              DataTypes.createStructField("id", DataTypes.IntegerType, true /*nullable*/),
-              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
-            });
-
-    builder.pruneColumns(expectedSparkSchema);
-    Scan scan = builder.build();
-
-    assertNotNull(asDeltaV2Scan(scan));
-    assertEquals(expectedSparkSchema, scan.readSchema());
   }
 
   @Test
