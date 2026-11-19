@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.v2.interop
 
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.OptionConverters._
-import scala.util.control.NonFatal
 
 import io.delta.kernel.data.MapValue
 import io.delta.kernel.engine.Engine
@@ -27,12 +26,9 @@ import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, DeletionVecto
 
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor => V1DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.implicits._
-import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 
-import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.util.Utils
 
 /**
  * Helpers for code that has a Kernel snapshot but still needs V1 file actions.
@@ -54,20 +50,12 @@ private[delta] object KernelSnapshotUtils extends DeltaV2Logging {
       kernelSnapshot: SnapshotImpl,
       spark: SparkSession,
       engine: Engine): Dataset[AddFile] = {
-    val redactedPath = Utils.redact(
-      spark.sessionState.conf.stringRedactionPattern, kernelSnapshot.getDataPath.toString)
-    try {
-      logInfo(log"Building Delta V2 table state for " +
-        log"${MDC(DeltaLogKeys.PATH, redactedPath)} at version " +
-        log"${MDC(DeltaLogKeys.VERSION, kernelSnapshot.getVersion)} with engine " +
-        log"${MDC(DeltaLogKeys.SYSTEM_CLASS_NAME, engine.getClass.getName)}")
-      spark.createDataset(collectV1AddFiles(kernelSnapshot, engine))
-    } catch {
-      case NonFatal(e) =>
-        logError(log"Failed to construct Delta V2 table state for " +
-          log"${MDC(DeltaLogKeys.PATH, redactedPath)} at version " +
-          log"${MDC(DeltaLogKeys.VERSION, kernelSnapshot.getVersion)}", e)
-        throw e
+    recordDeltaOperationForTablePath(
+      kernelSnapshot.getDataPath.toString, "scan.buildAllFiles") {
+      def buildTableState(): Dataset[AddFile] = {
+        spark.createDataset(collectV1AddFiles(kernelSnapshot, engine))
+      }
+      buildTableState()
     }
   }
 

@@ -20,6 +20,7 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
@@ -400,7 +401,7 @@ object TableFeature {
       VariantShreddingPreviewTableFeature,
       VariantShreddingTableFeature,
       FileTypePreviewTableFeature,
-      CatalogOwnedTableFeature,
+      CatalogManagedTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
     if (isTesting && testingFeaturesEnabled) {
@@ -924,7 +925,10 @@ object DeletionVectorsTableFeature
    */
   override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = {
     val dvsWritable = DeletionVectorUtils.deletionVectorsWritable(snapshot)
-    val dvsExist = snapshot.numDeletionVectorsOpt.getOrElse(0L) > 0
+    // Log replay counts DVs only while DVs are writable. After DROP FEATURE turns DVs off, the DV
+    // count is known only from a checksum, and a RESTORE commit can have none.
+    val dvsExist = snapshot.numDeletionVectorsOpt.map(_ > 0)
+      .getOrElse(!DeletionVectorUtils.isTableDVFree(snapshot))
 
     !(dvsWritable || dvsExist)
   }
@@ -967,7 +971,7 @@ sealed abstract class AdaptiveMetadataTableFeatureBase(name: String)
   //    must be present. Note that presence alone is not enough; `id` mode is enforced separately
   //    in [[OptimisticTransaction.scala]].
   override def requiredFeatures: Set[TableFeature] = Set(
-    CatalogOwnedTableFeature,
+    CatalogManagedTableFeature,
     RowTrackingFeature,
     DomainMetadataTableFeature,
     DeletionVectorsTableFeature,
@@ -989,6 +993,17 @@ object AdaptiveMetadataPreviewTableFeature
 
 object AdaptiveMetadataTableFeature
   extends AdaptiveMetadataTableFeatureBase(name = "adaptiveMetadata-dev")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  // Setting the AMT property to true on an existing table upgrades it to AMT.
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean =
+    AMTUtils.amtPropertyValue(metadata.configuration).contains(true)
+}
 
 object AdaptiveMetadataTableFeatureBase {
   /** All AMT table features. */
@@ -1356,7 +1371,7 @@ object CoordinatedCommitsTableFeature
 }
 
 /** Table feature to represent tables that commits are managed by catalog */
-object CatalogOwnedTableFeature
+object CatalogManagedTableFeature
   extends ReaderWriterFeature(name = "catalogManaged")
   with RemovableFeature {
 

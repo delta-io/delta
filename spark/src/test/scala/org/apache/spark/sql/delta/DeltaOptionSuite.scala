@@ -38,7 +38,7 @@ class DeltaOptionSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
 
 

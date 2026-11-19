@@ -43,13 +43,7 @@ public class CDCSchemaContext implements Serializable {
   public static final int COMMIT_VERSION_IDX = 1;
   public static final int COMMIT_TIMESTAMP_IDX = 2;
 
-  private static final StructField[] CDC_FIELDS =
-      new StructField[] {
-        DataTypes.createStructField(CDC_TYPE_COLUMN, DataTypes.StringType, /* nullable= */ true),
-        DataTypes.createStructField(CDC_COMMIT_VERSION, DataTypes.LongType, /* nullable= */ true),
-        DataTypes.createStructField(
-            CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, /* nullable= */ true)
-      };
+  private static final StructField[] CDC_FIELDS = appendCDCColumns(new StructType()).fields();
 
   /** Read data schema augmented with CDC columns (for Parquet reader). */
   private final StructType readDataSchemaWithCDC;
@@ -105,20 +99,31 @@ public class CDCSchemaContext implements Serializable {
     return CDC_FIELDS.clone();
   }
 
+  /**
+   * Appends nullable CDC columns for the Parquet read path, where schema evolution null-fills
+   * missing columns before {@link CDCReadFunction} fills them, matching V1 {@link
+   * CDCReader#cdcReadSchema}.
+   */
+  public static StructType appendCDCColumns(StructType schema) {
+    return schema
+        .add(CDC_TYPE_COLUMN, DataTypes.StringType, true)
+        .add(CDC_COMMIT_VERSION, DataTypes.LongType, true)
+        .add(CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, true);
+  }
+
+  /** Appends non-null CDC columns for changelog readers, which set all values for every file. */
+  public static StructType appendNonNullableCDCColumns(StructType schema) {
+    return schema
+        .add(CDC_TYPE_COLUMN, DataTypes.StringType, false)
+        .add(CDC_COMMIT_VERSION, DataTypes.LongType, false)
+        .add(CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, false);
+  }
+
   /** Returns true if the given field name is a CDC column. */
   public static boolean isCDCColumn(String name) {
     return CDC_TYPE_COLUMN.equalsIgnoreCase(name)
         || CDC_COMMIT_VERSION.equalsIgnoreCase(name)
         || CDC_COMMIT_TIMESTAMP.equalsIgnoreCase(name);
-  }
-
-  /** Appends the three CDC columns to the given schema. */
-  public static StructType appendCDCColumns(StructType schema) {
-    StructType result = schema;
-    for (StructField field : CDC_FIELDS) {
-      result = result.add(field);
-    }
-    return result;
   }
 
   public StructType getReadDataSchemaWithCDC() {

@@ -61,7 +61,7 @@ class TruncateTableSuite extends QueryTest
 
   test("path") {
     withTempDir { dir =>
-      import testImplicits._
+      import deltaImplicits._
       val path = dir.getCanonicalPath
       Seq((1, 2)).toDF("key", "value")
         .write.format(writeFormat).partitionBy("key").save(path)
@@ -89,7 +89,7 @@ class TruncateTableSuite extends QueryTest
 
   test("truncate should refresh DF cache - path") {
     withTempDir { dir =>
-      import testImplicits._
+      import deltaImplicits._
       val path = dir.getCanonicalPath
       Seq((1, 2)).toDF("key", "value")
         .write.format(writeFormat).partitionBy("key").save(path)

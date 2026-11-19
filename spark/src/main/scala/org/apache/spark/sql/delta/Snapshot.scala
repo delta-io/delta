@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCheckpointProviderBase, AMTUsageLogs, AMTUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
@@ -82,11 +82,14 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
 
-  /** Whether the table has [[CatalogOwnedTableFeature]] enabled */
-  def isCatalogOwned: Boolean = {
+  /** Whether the table has [[CatalogManagedTableFeature]] enabled */
+  def isCatalogManaged: Boolean = {
     version >= 0 &&
-      protocol.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
+      protocol.readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name)
   }
+
+  // The old name, kept until its callers use the new one.
+  def isCatalogOwned: Boolean = isCatalogManaged
 
   /**
    * Recording tags for this snapshot, anchored to the snapshot's own `metadata.id` (as opposed to
@@ -238,7 +241,7 @@ class Snapshot(
 
   /** Returns the lastManifestCommit reliably for this snapshot's version. */
   lazy val lastManifestCommitOpt: Option[LastManifestCommit] =
-    Option.when(AMTUtils.amtEnabled(this)) {
+    Option.when(AMTUtils.amtSupported(protocol, isPreviewCompatible = true)) {
       _reconstructedProtocolMetadataICTAndLMC.bestEffortLastManifestCommit.orElse {
         // Only fallback to direct CommitInfo read if there are no trailing deltas.
         // This avoids unnecessary I/O when there isn't any AMT checkpoint yet.
@@ -517,7 +520,7 @@ class Snapshot(
       case _ => None
     }
 
-    if (!AMTUtils.amtEnabled(this)) {
+    if (!AMTUtils.amtSupported(protocol, isPreviewCompatible = true)) {
       deltaAssert(
         check = amtCheckpointProviderOpt.isEmpty,
         name = AMTUsageLogs.AMT_CHECKPOINT_PROVIDER_WITH_FEATURE_DISABLED,
@@ -900,8 +903,9 @@ class Snapshot(
 
   /** Ensures that commit files are backfilled up to the current version in the snapshot. */
   def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
-    val tableCommitCoordinatorClientOpt = if (isCatalogOwned) {
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(spark, catalogTableOpt, this)
+    val tableCommitCoordinatorClientOpt = if (isCatalogManaged) {
+      CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        spark, catalogTableOpt, this)
     } else {
       getTableCommitCoordinatorForWrites
     }
@@ -1075,7 +1079,8 @@ object Snapshot extends DeltaLogging {
     // back-reference-free list that matches state reconstruction.
     // The tree is checked even when the read snapshot is not AMT because the commit that upgrades
     // the table to AMT can land a leaf bearing tree.
-    if ((AMTUtils.amtEnabled(snapshot) || effectiveLatestAMTCheckpointAtCommitVersion.isDefined) &&
+    if ((AMTUtils.amtSupported(snapshot.protocol, isPreviewCompatible = true) ||
+        effectiveLatestAMTCheckpointAtCommitVersion.isDefined) &&
         !AMTUtils.isRootOnlyCheckpoint(effectiveLatestAMTCheckpointAtCommitVersion)) {
       return false
     }

@@ -15,10 +15,12 @@
  */
 package io.delta.kernel.defaults
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, TableManager}
+import io.delta.kernel.{Operation, Table, TableManager}
 import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
@@ -202,6 +204,69 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
     }
   }
 
+  test("CreateTableTransactionBuilder writes the table description") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+        .withDescription("table description")
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      assert(getMetadata(engine, tablePath).getDescription === Optional.of("table description"))
+      // Delta Spark reads it as the table description
+      assert(sparkDescription(tablePath) === Some("table description"))
+    }
+
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+
+      assert(!getMetadata(engine, tablePath).getDescription.isPresent)
+      assert(sparkDescription(tablePath) === None)
+    }
+  }
+
+  test("UpdateTableTransactionBuilder changes the table description") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      def updateDescription(description: String): Long = {
+        TableManager.loadSnapshot(tablePath)
+          .build(engine)
+          .buildUpdateTableTransaction(testEngineInfo, Operation.MANUAL_UPDATE)
+          .withDescription(description)
+          .build(engine)
+          .commit(engine, emptyIterable())
+          .getVersion
+      }
+      def commitHasMetadata(version: Long): Boolean = {
+        getMetadataActionFromCommit(engine, Table.forPath(engine, tablePath), version).isDefined
+      }
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = Map("key" -> "value"))
+      val metadataBefore = getMetadata(engine, tablePath)
+
+      // A new description commits a metadata action that keeps the rest of the metadata
+      val newDescriptionVersion = updateDescription("new description")
+      assert(commitHasMetadata(newDescriptionVersion))
+      val metadataAfter = getMetadata(engine, tablePath)
+      assert(metadataAfter.getDescription === Optional.of("new description"))
+      assert(metadataAfter.getId === metadataBefore.getId)
+      assert(metadataAfter.getSchema === metadataBefore.getSchema)
+      assert(metadataAfter.getConfiguration === metadataBefore.getConfiguration)
+      assert(sparkDescription(tablePath) === Some("new description"))
+
+      // The same description again does not commit a metadata action
+      val sameDescriptionVersion = updateDescription("new description")
+      assert(!commitHasMetadata(sameDescriptionVersion))
+
+      // Later metadata changes keep the description
+      updateTableMetadata(engine, tablePath, tableProperties = Map("key" -> "newValue"))
+      assert(getMetadata(engine, tablePath).getDescription === Optional.of("new description"))
+      assert(sparkDescription(tablePath) === Some("new description"))
+    }
+  }
+
   test("Can evolve schema using withUpdatedSchema") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(
@@ -297,5 +362,9 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
       // Check the txn returns the correct committer
       assert(txn.getCommitter == DefaultFileSystemManagedTableOnlyCommitter.INSTANCE)
     }
+  }
+
+  private def sparkDescription(tablePath: String): Option[String] = {
+    Option(DeltaLog.forTable(spark, new Path(tablePath)).update().metadata.description)
   }
 }

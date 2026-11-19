@@ -89,7 +89,7 @@ private[read] final class DeltaV2Batch(
   private val kernelPushedFilterSet = kernelPushedFilters.toSet
   private val filterSet = allFilters.toSet
   private[this] val sqlConf: SQLConf = SQLConf.get
-  private lazy val tablePathForLogging = new Path(tablePath)
+  private lazy val tablePathForLogging = redactPath(new Path(tablePath), sqlConf)
 
   private def kernelSnapshot: KernelSnapshot =
     DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
@@ -97,15 +97,17 @@ private[read] final class DeltaV2Batch(
   override def planInputPartitions(): Array[InputPartition] = {
     val startedAtNs = System.nanoTime()
     try {
-      val partitions = recordFrameProfile("batchScan.planInputPartitions") {
-        PartitionUtils.planInputPartitions(
-          SparkSession.active,
-          deltaScan,
-          partitionSchema,
-          tablePath,
-          zoneId,
-          hadoopConf,
-          sqlConf)
+      val partitions = recordDeltaOperationForTablePath(tablePath, "scan.planPartitions") {
+        recordFrameProfile("batchScan.planInputPartitions") {
+          PartitionUtils.planInputPartitions(
+            SparkSession.active,
+            deltaScan,
+            partitionSchema,
+            tablePath,
+            zoneId,
+            hadoopConf,
+            sqlConf)
+        }
       }
       logDebug(log"Planned Delta V2 input partitions for " +
         log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)}: " +

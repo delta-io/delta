@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ColumnMappingTableFeature, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaConfigs, DomainMetadataTableFeature, RowTrackingFeature}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, ColumnMappingTableFeature, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaConfigs, DomainMetadataTableFeature, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.JsonNode
@@ -44,7 +44,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
   /**
    * The `content_stats` sub-struct field name for logical column `name`. Sub-structs are named by
-   * the logical name with the (unique) field id attached (see `StatsLeaf.fieldName`) -- e.g.
+   * the logical name with the (unique) field id attached (see `StatsColumn.fieldName`) -- e.g.
    * `d_int_1` -- so a test refers to a column by its logical name and this resolves the id suffix.
    * The logical names used here are unique, so exactly one sub-struct matches.
    */
@@ -227,7 +227,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
    */
   private def amtProtocol: Protocol =
     Protocol(3, 7)
-      .withFeature(CatalogOwnedTableFeature)
+      .withFeature(CatalogManagedTableFeature)
       .withFeature(RowTrackingFeature)
       .withFeature(DomainMetadataTableFeature)
       .withFeature(DeletionVectorsTableFeature)
@@ -356,6 +356,30 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     }
   }
 
+  test("forRead leaves out minValues and maxValues when no column has bounds") {
+    // Delta's stats schema has min/max for these columns, but AMT persists no bounds for them, so
+    // the groups (here, also the nested struct's) must be left out rather than written as {}.
+    val metadata = metadataWithColumnIds(
+      new StructType()
+        .add("ts", TimestampType)
+        .add("nested", new StructType().add("inner_ts", TimestampType)))
+    val ts = DeltaColumnMapping.getPhysicalName(metadata.dataSchema("ts"))
+    val nestedField = metadata.dataSchema("nested")
+    val nested = DeltaColumnMapping.getPhysicalName(nestedField)
+    val innerTs = DeltaColumnMapping.getPhysicalName(
+      nestedField.dataType.asInstanceOf[StructType]("inner_ts"))
+    val nullCount = s"""{"$ts":1,"$nested":{"$innerTs":2}}"""
+    val bounds = s"""{"$ts":"2020-01-01T00:00:00.000Z","$nested":""" +
+      s"""{"$innerTs":"2020-01-01T00:00:00.000Z"}}"""
+    val persisted = writeStats(
+      s"""{"numRecords":10,"minValues":$bounds,"maxValues":$bounds,""" +
+        s""""nullCount":$nullCount,"tightBounds":true}""",
+      metadata, amtProtocol)
+    assert(JsonUtils.mapper.readTree(readStats(persisted, metadata, amtProtocol)) ==
+      JsonUtils.mapper.readTree(
+        s"""{"numRecords":10,"nullCount":$nullCount,"tightBounds":false}"""))
+  }
+
   test("content stats adapter round-trips a table that collects no statistics") {
     // numIndexedCols = 0 means Delta collects only numRecords, so there are no per-column stats and
     // `content_stats` is dropped from the schema (an empty struct is not Parquet-writable).
@@ -407,9 +431,10 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
   test("reading back with fewer indexed columns than were written keeps only the read subset") {
     // Written with 3 indexed columns, then read back after the stats-columns config was lowered to
-    // 2 (same table, physical names/ids unchanged). `forRead` derives its leaves from the read
-    // metadata, so it projects only a and b; c's typed sub-struct is still on disk but drops out of
-    // the reconstructed Delta stats. A superset of persisted stats is never an error, just unused.
+    // 2 (same table, physical names/ids unchanged). `forRead` derives its stats columns from the
+    // read metadata, so it projects only a and b; c's typed sub-struct is still on disk but drops
+    // out of the reconstructed Delta stats. A superset of persisted stats is never an error, just
+    // unused.
     val schema = new StructType().add("a", LongType).add("b", LongType).add("c", LongType)
     val writeMetadata = metadataWithColumnIds(
       schema, configuration = Map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.key -> "3"))
@@ -457,8 +482,8 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       "null_value_count" -> (LongType, "0")))
   }
 
-  test("content stats round-trip a schema whose flattened leaf names collide") {
-    // A top-level column `a_b` and a nested leaf `a`.`b` both flatten to the logical name "a_b".
+  test("content stats round-trip a schema whose flattened column names collide") {
+    // A top-level column `a_b` and a nested column `a`.`b` both flatten to the logical name "a_b".
     // Naming each content_stats sub-struct by that flattened name makes the two collide: the
     // persisted struct gets two "a_b" fields and `forRead`'s by-name lookup is ambiguous. Keying
     // the sub-structs by the (unique) column id keeps them distinct. This asserts each column's

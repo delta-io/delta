@@ -36,7 +36,7 @@ trait OptimizeMetricsSuiteBase extends QueryTest
     with SharedSparkSession
     with DeletionVectorsTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("optimize metrics") {
     withTempDir { tempDir =>

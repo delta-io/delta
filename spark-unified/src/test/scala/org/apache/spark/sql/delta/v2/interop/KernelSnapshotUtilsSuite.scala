@@ -33,7 +33,7 @@ import io.delta.kernel.internal.SnapshotImpl
 class KernelSnapshotUtilsSuite extends DeltaSQLCommandTest {
 
   private lazy val kernelContext =
-    new KernelContext(Map.empty, LogStore(spark), "file:/tmp/kernel-snapshot-utils-suite")
+    new KernelContext(Map.empty, LogStore(spark))
 
   private def engine: Engine = kernelContext.getDefaultEngine()
 

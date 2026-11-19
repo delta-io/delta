@@ -250,7 +250,11 @@ public class SnapshotFactory {
                       () ->
                           new SnapshotManager(tablePath)
                               .getLogSegmentForVersion(
-                                  engine, timeTravelVersion, ctx.logDatas, ctx.maxCatalogVersion));
+                                  engine,
+                                  timeTravelVersion,
+                                  ctx.logDatas,
+                                  ctx.maxCatalogVersion,
+                                  ctx.checkpointSearchBatchSize));
 
           snapshotCtx.setResolvedVersion(logSegment.getVersion());
           snapshotCtx.setCheckpointVersion(logSegment.getCheckpointVersionOpt());

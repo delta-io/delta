@@ -31,15 +31,16 @@ import org.apache.spark.sql.SparkSession
  */
 final class KernelContext(
     private[v2] val sessionInvariantFsOptions: Map[String, String],
-    private[v2] val logStore: LogStore,
-    tablePath: String)
+    private[v2] val logStore: LogStore)
 {
   require(sessionInvariantFsOptions != null, "sessionInvariantFsOptions must not be null")
   require(logStore != null, "logStore must not be null")
-  require(tablePath != null, "tablePath must not be null")
 
+  // No DeltaLog is available; overlay table options on the active session configuration.
+  // scalastyle:off deltahadoopconfiguration
   private[v2] def materializeHadoopConf() =
     SparkSession.active.sessionState.newHadoopConfWithOptions(sessionInvariantFsOptions)
+  // scalastyle:on deltahadoopconfiguration
 
   private def createDefaultEngine(): KernelEngine = {
     val hadoopConf = materializeHadoopConf()
@@ -54,12 +55,9 @@ final class KernelContext(
 }
 
 private[v2] object KernelContext {
-  def empty(logStore: LogStore, tablePath: String): KernelContext =
-    new KernelContext(Map.empty[String, String], logStore, tablePath)
+  def empty(logStore: LogStore): KernelContext =
+    new KernelContext(Map.empty[String, String], logStore)
 
-  def apply(
-      sessionInvariantFsOptions: Map[String, String],
-      logStore: LogStore,
-      tablePath: String): KernelContext =
-    new KernelContext(sessionInvariantFsOptions, logStore, tablePath)
+  def apply(sessionInvariantFsOptions: Map[String, String], logStore: LogStore): KernelContext =
+    new KernelContext(sessionInvariantFsOptions, logStore)
 }

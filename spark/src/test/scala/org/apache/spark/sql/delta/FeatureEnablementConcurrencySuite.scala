@@ -367,8 +367,8 @@ class FeatureEnablementConcurrencySuite
 
     // Tests 14-16: UC_TABLE_ID_KEY per-key validator. Mirroring the rebase path,
     // currentTransactionInfo.protocol reflects the winning commit's enabled
-    // CatalogOwnedTableFeature, so we construct a conflict checker with CO in protocol.
-    val coProtocol = Protocol.forTableFeature(CatalogOwnedTableFeature)
+    // CatalogManagedTableFeature, so we construct a conflict checker with CO in protocol.
+    val coProtocol = Protocol.forTableFeature(CatalogManagedTableFeature)
     val conflictCheckerWithCO = new ConflictChecker(
       spark,
       initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = coProtocol),
@@ -404,7 +404,7 @@ class FeatureEnablementConcurrencySuite
   }
 
   test("CatalogOwned and VacuumProtocolCheck features allow concurrent txns at upgrade") {
-    assert(!CatalogOwnedTableFeature.failConcurrentTransactionsAtUpgrade)
+    assert(!CatalogManagedTableFeature.failConcurrentTransactionsAtUpgrade)
     assert(!VacuumProtocolCheckTableFeature.failConcurrentTransactionsAtUpgrade)
   }
 

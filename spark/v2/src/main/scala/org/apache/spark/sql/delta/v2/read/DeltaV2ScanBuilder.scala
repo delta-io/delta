@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.v2.read
 
-import java.util.{Locale, Objects, OptionalInt}
+import java.util.{Objects, OptionalInt}
 
 import scala.jdk.OptionConverters._
 import scala.util.control.NonFatal
@@ -25,8 +25,8 @@ import io.delta.kernel.engine.Engine
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext
 
 import org.apache.spark.sql.delta.Snapshot
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapshot}
@@ -102,11 +102,13 @@ private[read] class DeltaV2ScanBuilder(
   Objects.requireNonNull(catalogStats, "catalogStats is null")
   Objects.requireNonNull(options, "options is null")
 
-  private val partitionColumnSet: Set[String] =
-    partitionSchema.fields.map(_.name.toLowerCase(Locale.ROOT)).toSet
+  private val partitionColumnNames: Set[String] = partitionSchema.names.toSet
 
   private var requiredDataSchema: StructType = dataSchema
   private lazy val tablePathForLogging: Path = initialSnapshot.dataPath
+  private val loggingSqlConf: SQLConf = SQLConf.get
+  private lazy val redactedTablePathForLogging: String =
+    redactPath(tablePathForLogging, loggingSqlConf)
 
   // Pushed partition + data catalyst filters (their union drives V1 filesForScan skipping).
   private var partitionCatalystFilters: Array[Expression] = Array.empty
@@ -134,7 +136,7 @@ private[read] class DeltaV2ScanBuilder(
           log"Classified Delta V2 scan filters without post-scan residuals for "
         }
         logDebug(residualMessage +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)}: partition filters " +
+          log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)}: partition filters " +
           log"${MDC(DeltaLogKeys.PARTITION_FILTER, partitionFilters.map(_.sql).mkString(", "))}, " +
           log"data-skipping filters " +
           log"${MDC(DeltaLogKeys.DATA_FILTER, dataFilters.map(_.sql).mkString(", "))}")
@@ -148,18 +150,18 @@ private[read] class DeltaV2ScanBuilder(
   override def pruneColumns(requiredSchema: StructType): Unit =
     recordFrameProfile("scanBuilder.pruneColumns") {
       Objects.requireNonNull(requiredSchema, "requiredSchema is null")
-      // CDC columns are injected later by CDCReadFunction, so strip them here.
+      // Keep metadata `_metadata` distinct from partition `_Metadata` in case-sensitive queries.
+      // CDC filtering must match CDCSchemaContext's case-insensitive schema validation.
       requiredDataSchema = new StructType(
         requiredSchema.fields.filter { f =>
-          val name = f.name.toLowerCase(Locale.ROOT)
-          !partitionColumnSet.contains(name) && !CDCSchemaContext.isCDCColumn(name)
+          !partitionColumnNames.contains(f.name) && !CDCSchemaContext.isCDCColumn(f.name)
         })
       if (log.isDebugEnabled) {
         logDebug(log"Pruned Delta V2 scan schema request for " +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)}: requested output schema " +
+          log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)}: requested output schema " +
           log"${MDC(DeltaLogKeys.SCHEMA, requiredSchema)}")
         logDebug(log"Pruned Delta V2 scan schema result for " +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)}: pruned data schema " +
+          log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)}: pruned data schema " +
           log"${MDC(DeltaLogKeys.SCHEMA, requiredDataSchema)}")
       }
     }
@@ -180,6 +182,10 @@ private[read] class DeltaV2ScanBuilder(
    */
   override def pushLimit(limit: Int): Boolean = {
     if (limit < 0) {
+      recordDeltaEventForTablePath(
+        tablePath = tablePathForLogging,
+        opType = "scan.pushLimit.failure",
+        data = Map("limit" -> limit))
       throw new IllegalArgumentException("Pushed limit must be non-negative, but got: " + limit)
     }
     if (SQLConf.get.getConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)) {
@@ -231,12 +237,13 @@ private[read] class DeltaV2ScanBuilder(
     val originalQueryContext = DeltaV2QueryContext(catalogTable)
     val partitionFiltersForScan = partitionFilters.toIndexedSeq
     val catalystFilters = partitionFiltersForScan ++ dataFilters
-    val deltaScanSupplier = () => {
+    val deltaScanSupplier = () => selectFilesWithLogging {
       val snapshot = initialSnapshot.asInstanceOf[DeltaV2Snapshot]
 
       // When a limit is pushed, route selection through V1's limit-aware filesForScan. It
-      // requires partition-only filters and prunes files by accumulating record counts until the
-      // limit is satisfied.
+      // requires partition-only filters (guaranteed by build(): effectiveLimit is only set when
+      // there are no residual data filters) and prunes files by accumulating record counts until
+      // the limit is satisfied.
       def selectFiles(): DeltaScan =
         if (effectiveLimit.isPresent) {
           recordFrameProfile("filesForScan.limitAndFilters") {
@@ -251,7 +258,7 @@ private[read] class DeltaV2ScanBuilder(
         }
 
       // Select files inline on this path.
-      selectFilesWithLogging(selectFiles())
+      selectFiles()
     }
 
     new DeltaV2Scan(
@@ -285,56 +292,74 @@ private[read] class DeltaV2ScanBuilder(
       if (effectiveLimit.isPresent) {
         logDebug(log"Accepted Delta V2 scan limit " +
           log"${MDC(DeltaLogKeys.NUM_RECORDS, limit)} for file selection on " +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)}")
+          log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)}")
       } else {
         logDebug(log"Rejected Delta V2 scan limit " +
           log"${MDC(DeltaLogKeys.NUM_RECORDS, limit)} for file selection on " +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)} because of " +
+          log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)} because of " +
           log"${MDC(DeltaLogKeys.STATUS, "post-scan-residual-filters")}")
       }
     }
   }
 
   private def withScanBuildLogging(body: => Scan): Scan = {
+    withScanFailureEvent("scan.build.failure") {
+      val startedAtNs = System.nanoTime()
+      try {
+        val scan = body
+        if (log.isDebugEnabled) {
+          logDebug(log"Built Delta V2 scan for " +
+            log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)} with output schema " +
+            log"${MDC(DeltaLogKeys.SCHEMA, scan.readSchema())} in " +
+            log"${MDC(DeltaLogKeys.TIME_MS, elapsedTimeMs(startedAtNs))} ms")
+        }
+        scan
+      } catch {
+        case NonFatal(error) =>
+          val elapsedMs = elapsedTimeMs(startedAtNs)
+          logError(log"Failed to build Delta V2 scan for " +
+            log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)} in " +
+            log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms", error)
+          throw error
+      }
+    }
+  }
+
+  private def withScanFailureEvent[T](opType: String)(body: => T): T = {
     val startedAtNs = System.nanoTime()
     try {
-      val scan = body
-      if (log.isDebugEnabled) {
-        logDebug(log"Built Delta V2 scan for " +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)} with output schema " +
-          log"${MDC(DeltaLogKeys.SCHEMA, scan.readSchema())} in " +
-          log"${MDC(DeltaLogKeys.TIME_MS, elapsedTimeMs(startedAtNs))} ms")
-      }
-      scan
+      body
     } catch {
       case NonFatal(error) =>
-        val elapsedMs = elapsedTimeMs(startedAtNs)
-        logError(log"Failed to build Delta V2 scan for " +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)} in " +
-          log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms", error)
+        recordDeltaEventForTablePath(
+          tablePath = tablePathForLogging,
+          opType = opType,
+          data = Map("elapsedMs" -> elapsedTimeMs(startedAtNs)))
         throw error
     }
   }
 
   private def selectFilesWithLogging(body: => DeltaScan): DeltaScan = {
-    val startedAtNs = System.nanoTime()
-    try {
-      val deltaScan = body
-      if (log.isDebugEnabled) {
-        logDebug(log"Selected Delta V2 scan files for " +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)} at version " +
-          log"${MDC(DeltaLogKeys.VERSION, deltaScan.version)}: selected " +
-          log"${MDC(DeltaLogKeys.NUM_FILES, deltaScan.files.size.toLong)} files in " +
-          log"${MDC(DeltaLogKeys.TIME_MS, elapsedTimeMs(startedAtNs))} ms")
+    withScanFailureEvent("scan.selectFiles.failure") {
+      val startedAtNs = System.nanoTime()
+      try {
+        val deltaScan = body
+        if (log.isDebugEnabled) {
+          logDebug(log"Selected Delta V2 scan files for " +
+            log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)} at version " +
+            log"${MDC(DeltaLogKeys.VERSION, deltaScan.version)}: selected " +
+            log"${MDC(DeltaLogKeys.NUM_FILES, deltaScan.files.size.toLong)} files in " +
+            log"${MDC(DeltaLogKeys.TIME_MS, elapsedTimeMs(startedAtNs))} ms")
+        }
+        deltaScan
+      } catch {
+        case NonFatal(error) =>
+          val elapsedMs = elapsedTimeMs(startedAtNs)
+          logError(log"Failed to select Delta V2 scan files for " +
+            log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)} in " +
+            log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms", error)
+          throw error
       }
-      deltaScan
-    } catch {
-      case NonFatal(error) =>
-        val elapsedMs = elapsedTimeMs(startedAtNs)
-        logError(log"Failed to select Delta V2 scan files for " +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)} in " +
-          log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms", error)
-        throw error
     }
   }
 }
@@ -351,30 +376,6 @@ private[read] object DeltaV2ScanBuilder {
   def normalizeForEquality(expr: Expression): Expression = expr.transformUp {
     case a: AttributeReference => a.withExprId(ExprId(0L)).withQualifier(Nil)
   }
-
-  def create(
-      tableName: String,
-      initialSnapshot: Snapshot,
-      kernelEngine: Engine,
-      catalogTable: Option[CatalogTable],
-      tableManager: DeltaV2TableManager,
-      dataSchema: StructType,
-      partitionSchema: StructType,
-      tableSchema: StructType,
-      catalogStats: Option[Statistics],
-      options: CaseInsensitiveStringMap): DeltaV2ScanBuilder =
-    new DeltaV2ScanBuilder(
-      tableName = tableName,
-      initialSnapshot = initialSnapshot,
-      kernelEngine = kernelEngine,
-      catalogTable = catalogTable,
-      snapshotManager = tableManager.snapshotManager(catalogTable),
-      tableManager = Some(tableManager),
-      dataSchema = dataSchema,
-      partitionSchema = partitionSchema,
-      tableSchema = tableSchema,
-      catalogStats = catalogStats,
-      options = options)
 
   /**
    * Adapter for callers that hold a Kernel snapshot but push no filters -- currently Delta Sharing
