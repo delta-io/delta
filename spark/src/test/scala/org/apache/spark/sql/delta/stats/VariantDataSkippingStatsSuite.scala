@@ -49,7 +49,7 @@ class VariantDataSkippingStatsSuite
     with DeltaSQLTestUtils
     with ParquetTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override def beforeAll(): Unit = {
     super.beforeAll()

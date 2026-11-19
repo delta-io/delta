@@ -29,14 +29,15 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogV2Util, TableCatalog}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
-trait DeltaDDLUsingPathTests extends QueryTest
-    with SharedSparkSession with DeltaColumnMappingTestUtils {
+trait DeltaDDLUsingPathTests
+  extends QueryTest
+    with DeltaSQLCommandTest
+    with DeltaColumnMappingTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def catalogName: String = {
     CatalogManager.SESSION_CATALOG_NAME

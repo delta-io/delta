@@ -31,7 +31,7 @@ class ShowDeltaTableColumnsSuite extends QueryTest
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
 
-  import testImplicits._
+  import deltaImplicits._
 
   private val outputColumnNames = Seq("col_name")
   private val outputColumnValues = Seq(Seq("column1"), Seq("column2"))

@@ -40,7 +40,7 @@ trait UpdateBaseMixin
   with DeltaDMLTestUtils
   with DeltaSQLTestUtils
   with DeltaTestUtilsForTempViews {
-  import testImplicits._
+  import deltaImplicits._
 
   protected def executeUpdate(target: String, set: Seq[String], where: String): Unit = {
     executeUpdate(target, set.mkString(", "), where)
@@ -98,7 +98,7 @@ trait UpdateBaseMixin
 }
 
 trait UpdateBaseTempViewTests extends UpdateBaseMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   test("different variations of column references - TempView") {
     append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
@@ -199,7 +199,7 @@ trait UpdateBaseTempViewTests extends UpdateBaseMixin {
 }
 
 trait UpdateBaseMiscTests extends UpdateBaseMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   val fileFormat: String = "parquet"
 

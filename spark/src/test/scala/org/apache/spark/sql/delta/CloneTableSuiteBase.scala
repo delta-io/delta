@@ -46,7 +46,7 @@ trait CloneTableSuiteBase extends QueryTest
   with CoordinatedCommitsTestUtils
   with DeletionVectorsTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def deleteSourceAndCompareData(
       source: String,
@@ -621,7 +621,7 @@ trait CloneTableColumnMappingSuiteBase
     "block changing column mapping mode and modify max id modes under CLONE"
   )
 
-  import testImplicits._
+  import deltaImplicits._
 
   testAllClones("block changing column mapping mode and modify max id modes under CLONE") {
     (_, _, isShallow) =>

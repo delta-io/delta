@@ -47,7 +47,7 @@ trait MergeIntoSuiteBaseMixin
     with ScanReportHelper
     with MergeIntoTestUtils
     with MergeIntoSchemaEvolutionMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   // Maps expected error classes to actual error classes. Used to handle error classes that are
   // different when running using SQL vs. Scala.
@@ -457,7 +457,7 @@ trait MergeIntoSuiteBaseMixin
 }
 
 trait MergeIntoBasicTests extends MergeIntoSuiteBaseMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
     test(s"basic case - merge to Delta table by path, isPartitioned: $isPartitioned",
@@ -971,7 +971,7 @@ trait MergeIntoBasicTests extends MergeIntoSuiteBaseMixin {
 }
 
 trait MergeIntoTempViewsTests extends MergeIntoSuiteBaseMixin with DeltaTestUtilsForTempViews {
-  import testImplicits._
+  import deltaImplicits._
 
   Seq(true, false).foreach { skippingEnabled =>
     Seq(true, false).foreach { partitioned =>
@@ -2008,7 +2008,7 @@ trait MergeIntoAnalysisExceptionTests extends MergeIntoSuiteBaseMixin {
 }
 
 trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   private def testMergeErrorOnMultipleMatches(
       name: String,
@@ -2400,7 +2400,7 @@ trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
 }
 
 trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   test("same column names in source and target") {
     withTable("source") {
@@ -3475,7 +3475,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
 }
 
 trait MergeIntoNullTypeTests extends MergeIntoSuiteBaseMixin { self: MergeIntoTestUtils =>
-  import testImplicits._
+  import deltaImplicits._
 
   protected override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false")

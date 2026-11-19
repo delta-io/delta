@@ -810,7 +810,7 @@ class CheckpointsSuite
       }
 
       // Make sure the contents are the same
-      import testImplicits._
+      import deltaImplicits._
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
         (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())

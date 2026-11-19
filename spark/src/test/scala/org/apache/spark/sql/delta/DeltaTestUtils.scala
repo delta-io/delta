@@ -908,9 +908,10 @@ trait DeltaDMLTestUtils
   with DeltaTestUtilsBase
   with DeltaTableProvider
   with BeforeAndAfterEach
+  with DeltaSQLCommandTest
   with CDCTestMixin {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def tableSQLIdentifier: String
 
@@ -980,7 +981,7 @@ trait DeltaDMLTestUtils
       targetKeyValueNames: (String, String) = ("key", "value"))(
       thunk: (String, String) => Unit = null): Unit = {
 
-    import testImplicits._
+    import deltaImplicits._
 
     append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
       if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)

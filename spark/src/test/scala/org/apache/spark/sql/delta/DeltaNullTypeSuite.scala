@@ -35,7 +35,7 @@ class DeltaNullTypeSuite
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
   with ParquetTest {
-  import testImplicits._
+  import deltaImplicits._
 
   override protected def test(testName: String, testTags: Tag*)(testFun: => Any)
       (implicit pos: Position): Unit = {

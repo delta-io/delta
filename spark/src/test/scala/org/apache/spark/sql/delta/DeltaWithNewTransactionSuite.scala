@@ -58,7 +58,7 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
     val tableName = "NewTransactionTest"
     require(currentThreadCommitOperation != null)
 
-    import testImplicits._
+    import deltaImplicits._
 
     test(s"withNewTransaction - $name") {
       withSQLConf(confs.toSeq: _*) { withTable(tableName) {
@@ -330,7 +330,7 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
     def nonTxnTable: DataFrame = spark.read.format("delta").load(nonTxnTablePath)
 
     def writeToNonTxnTable(ds: Dataset[java.lang.Long]): Unit = {
-      import testImplicits._
+      import deltaImplicits._
       ds.toDF("key").select('key, 'key as "value")
         .write.format("delta").mode("append").partitionBy("key").save(nonTxnTablePath)
       DeltaLog.forTable(spark, nonTxnTablePath).update(stalenessAcceptable = false)

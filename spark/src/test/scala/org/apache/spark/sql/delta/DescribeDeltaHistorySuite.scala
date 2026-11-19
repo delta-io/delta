@@ -39,20 +39,18 @@ import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{BooleanType, LongType, MapType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.util.Utils
 
 trait DescribeDeltaHistorySuiteBase
   extends QueryTest
-  with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
   with MergeIntoMetricsBase
   with CatalogOwnedTestBaseSuite
   with WriteOptionsTestBase {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected val evolvabilityResource = {
     new File("src/test/resources/delta/history/delta-0.2.0").getAbsolutePath()
@@ -2021,8 +2019,8 @@ case class WriteOptionsAssertion(
  * Shared test utilities for validating write options in DESCRIBE HISTORY / commit stats.
  */
 trait WriteOptionsTestBase {
-  this: QueryTest with SharedSparkSession =>
-  import testImplicits._
+  this: DeltaSQLCommandTest =>
+  import deltaImplicits._
 
   // Execute a write operation and run assertions.
   protected def executePathWriteTest(write: String => Unit)(assertions: WriteOptionsAssertion): Unit
