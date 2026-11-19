@@ -33,7 +33,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 
 /**
- * On a Catalog Owned table the fs listing must not promote a staged-commit file
+ * On a Catalog Managed table the fs listing must not promote a staged-commit file
  * (`_staged_commits/N.<uuid>.json`) to a commit. [[RecursiveListingLocalLogStore]] reproduces a
  * recursive-listing LogStore hermetically (no real object store).
  */
@@ -45,7 +45,7 @@ class StagedCommitListingSuite extends QueryTest
   override protected def sparkConf: SparkConf =
     super.sparkConf.set(logStoreClassConfKey, classOf[RecursiveListingLocalLogStore].getName)
 
-  /** Runs `f` with Catalog Owned (CCv2) and staged-commit filtering enabled. */
+  /** Runs `f` with Catalog Managed (CCv2) and staged-commit filtering enabled. */
   private def withCatalogOwnedCommits(f: => Unit): Unit = withDefaultCCTableFeature {
     withSQLConf(
       DeltaSQLConf.DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED.key ->
@@ -77,7 +77,7 @@ class StagedCommitListingSuite extends QueryTest
   /** The [[InMemoryCommitCoordinator]] backing the builder, for manipulating its ledger. */
   private def getInMemoryCoordinator: InMemoryCommitCoordinator = {
     val client = getCatalogOwnedCommitCoordinatorClient(
-      CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+      CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
     client match {
       case tracking: TrackingCommitCoordinatorClient =>
         tracking.delegatingCommitCoordinatorClient.asInstanceOf[InMemoryCommitCoordinator]

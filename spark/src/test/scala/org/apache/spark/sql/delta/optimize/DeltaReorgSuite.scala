@@ -99,7 +99,7 @@ class DeltaReorgSuite extends QueryTest
   with DeltaTableProvider
   with DeletionVectorsTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   def executePurge(table: String, condition: Option[String] = None): Unit = {
     condition match {

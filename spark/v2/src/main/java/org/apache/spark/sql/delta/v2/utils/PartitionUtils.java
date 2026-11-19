@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
@@ -233,9 +234,15 @@ public class PartitionUtils {
             partitionValues.size(),
             numPartCols);
 
+    return getPartitionRow(key -> partitionValues.get(key), caster);
+  }
+
+  private static InternalRow getPartitionRow(
+      Function<String, String> partitionValue, PartitionValueCaster caster) {
+    final int numPartCols = caster.numFields();
     final Object[] values = new Object[numPartCols];
     for (int index = 0; index < numPartCols; index++) {
-      values[index] = caster.cast(index, partitionValues.get(caster.physicalName(index)));
+      values[index] = caster.cast(index, partitionValue.apply(caster.physicalName(index)));
     }
     return new GenericInternalRow(values);
   }
@@ -456,13 +463,8 @@ public class PartitionUtils {
    */
   public static InternalRow getPartitionRow(
       scala.collection.immutable.Map<String, String> partitionValues, PartitionValueCaster caster) {
-    final int numPartCols = caster.numFields();
-    final Object[] values = new Object[numPartCols];
     final Map<String, String> javaPartitionValues = CollectionConverters.asJava(partitionValues);
-    for (int i = 0; i < numPartCols; i++) {
-      values[i] = caster.cast(i, javaPartitionValues.get(caster.physicalName(i)));
-    }
-    return new GenericInternalRow(values);
+    return getPartitionRow(key -> javaPartitionValues.get(key), caster);
   }
 
   /**
@@ -494,7 +496,7 @@ public class PartitionUtils {
     for (Map.Entry<String, Object> entry : cdcConstants.entrySet()) {
       metadata = metadata.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
     }
-    MapValue partitionValues = cdcFile.getPartitionValues();
+    scala.collection.immutable.Map<String, String> partitionValues = cdcFile.getPartitionValues();
     if (partitionValues == null) {
       // Only RemoveFile reaches here, when extendedFileMetadata is absent. Match V1's
       // TahoeRemoveFileIndex behaviour rather than silently consuming missing metadata.
@@ -504,7 +506,7 @@ public class PartitionUtils {
         caster.numFields() > 0 ? getPartitionRow(partitionValues, caster) : emptyPartitionRow(0);
     long modificationTime =
         cdcFile.getAddFile() != null
-            ? cdcFile.getAddFile().getModificationTime()
+            ? cdcFile.getAddFile().modificationTime()
             : cdcFile.getCommitTimestamp();
     return makePartitionedFile(
         new Path(tablePath, cdcFile.getPath()).toString(),

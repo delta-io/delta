@@ -45,7 +45,7 @@ trait RestoreTableSuiteBase
   with DeltaSQLCommandTest
   with CatalogOwnedTestBaseSuite {
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Will be overridden in sub-class
   /**

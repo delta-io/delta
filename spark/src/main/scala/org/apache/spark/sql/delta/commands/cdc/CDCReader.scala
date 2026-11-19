@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, 
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.util.ScalaExtensions.OptionExt
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession, SQLContext}
@@ -786,22 +787,12 @@ trait CDCReaderImpl extends CDCReaderBase {
       case (Some(removeDv), None) =>
         newActions += add.copy(deletionVector = removeDv)
       case (Some(removeDv), Some(addDv)) =>
-        val removeBitmap = dvStore.read(removeDv, deltaLog.dataPath)
-        val addBitmap = dvStore.read(addDv, deltaLog.dataPath)
+        // Case 4a and 4b
+        val (finalRemovedRowsBitmap, finalReAddedRowsBitmap) =
+          diffDeletionVectors(removeDv, addDv, dvStore, deltaLog.dataPath)
 
-        // Case 4a
-        val finalRemovedRowsBitmap = getDeletionVectorsDiff(addBitmap, removeBitmap)
-        // Case 4b
-        val finalReAddedRowsBitmap = getDeletionVectorsDiff(removeBitmap, addBitmap)
-
-        val finalRemovedRowsDv = DeletionVectorDescriptor.inlineInLog(
-          DeletionVectorUtils.serialize(
-            finalRemovedRowsBitmap, RoaringBitmapArrayFormat.Portable, Some(deltaLog.dataPath)),
-          finalRemovedRowsBitmap.cardinality)
-        val finalReAddedRowsDv = DeletionVectorDescriptor.inlineInLog(
-          DeletionVectorUtils.serialize(
-            finalReAddedRowsBitmap, RoaringBitmapArrayFormat.Portable, Some(deltaLog.dataPath)),
-          finalReAddedRowsBitmap.cardinality)
+        val finalRemovedRowsDv = inlineDeletionVector(finalRemovedRowsBitmap, deltaLog.dataPath)
+        val finalReAddedRowsDv = inlineDeletionVector(finalReAddedRowsBitmap, deltaLog.dataPath)
 
         newActions += remove.copy(deletionVector = finalRemovedRowsDv)
         newActions += add.copy(deletionVector = finalReAddedRowsDv)
@@ -816,6 +807,35 @@ trait CDCReaderImpl extends CDCReaderBase {
   private def fileActionsToIfNotContainedRowIndexFilters(
       actions: Seq[FileAction]): Map[String, RowIndexFilterType] = {
     actions.map(f => f.path -> RowIndexFilterType.IF_NOT_CONTAINED).toMap
+  }
+
+  /**
+   * Given the DVs of the `remove` and `add` actions of the same file, read both and return
+   * `(removedRows, reAddedRows)`: the rows masked by `addDv` but not by `removeDv` (deleted), and
+   * the rows masked by `removeDv` but not by `addDv` (re-added, e.g. when restoring a table).
+   * Also used by the DSv2 CDC reader.
+   */
+  private[delta] def diffDeletionVectors(
+      removeDv: DeletionVectorDescriptor,
+      addDv: DeletionVectorDescriptor,
+      dvStore: DeletionVectorStore,
+      dataPath: Path): (RoaringBitmapArray, RoaringBitmapArray) = {
+    val removeBitmap = dvStore.read(removeDv, dataPath)
+    val addBitmap = dvStore.read(addDv, dataPath)
+    (getDeletionVectorsDiff(addBitmap, removeBitmap),
+      getDeletionVectorsDiff(removeBitmap, addBitmap))
+  }
+
+  /**
+   * Serialize `bitmap` into an inline [[DeletionVectorDescriptor]] masking exactly its rows.
+   * Also used by the DSv2 CDC reader.
+   */
+  private[delta] def inlineDeletionVector(
+      bitmap: RoaringBitmapArray,
+      dataPath: Path): DeletionVectorDescriptor = {
+    DeletionVectorDescriptor.inlineInLog(
+      DeletionVectorUtils.serialize(bitmap, RoaringBitmapArrayFormat.Portable, Some(dataPath)),
+      bitmap.cardinality)
   }
 
   /**

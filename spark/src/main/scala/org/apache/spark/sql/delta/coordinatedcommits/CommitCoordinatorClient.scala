@@ -47,9 +47,11 @@ trait CommitCoordinatorBuilder {
   def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient
 }
 
-/** An extended builder interface for [[CommitCoordinatorClient]] with CatalogOwned table feature */
-trait CatalogOwnedCommitCoordinatorBuilder extends CommitCoordinatorBuilder {
-  /** Returns a catalog-owned commit-coordinator client based for the given catalog. */
+/**
+ * An extended builder interface for [[CommitCoordinatorClient]] with CatalogManaged table feature
+ */
+trait CatalogManagedCommitCoordinatorBuilder extends CommitCoordinatorBuilder {
+  /** Returns a catalog-managed commit-coordinator client based for the given catalog. */
   def buildForCatalog(spark: SparkSession, catalogName: String): CommitCoordinatorClient
 }
 
@@ -115,11 +117,13 @@ object CommitCoordinatorProvider {
   initialCommitCoordinatorBuilders.foreach(registerBuilder)
 }
 
-/** Factory to get the correct [[CatalogOwnedCommitCoordinatorBuilder]] for a catalog-owned table */
-object CatalogOwnedCommitCoordinatorProvider {
-  // mapping from catalog names to the corresponding [[CatalogOwnedCommitCoordinatorBuilder]]s.
+/**
+ * Factory to get the correct [[CatalogManagedCommitCoordinatorBuilder]] for a catalog-managed table
+ */
+object CatalogManagedCommitCoordinatorProvider {
+  // mapping from catalog names to the corresponding [[CatalogManagedCommitCoordinatorBuilder]]s.
   private val catalogNameToBuilderMapping =
-    mutable.Map.empty[String, CatalogOwnedCommitCoordinatorBuilder]
+    mutable.Map.empty[String, CatalogManagedCommitCoordinatorBuilder]
 
   // Visible only for UTs
   private[delta] def clearBuilders(): Unit = synchronized {
@@ -128,7 +132,7 @@ object CatalogOwnedCommitCoordinatorProvider {
 
   /** Registers a new [[CommitCoordinatorBuilder]] with the [[CommitCoordinatorProvider]] */
   def registerBuilder(
-      catalogName: String, commitCoordinatorBuilder: CatalogOwnedCommitCoordinatorBuilder): Unit =
+      catalogName: String, commitCoordinatorBuilder: CatalogManagedCommitCoordinatorBuilder): Unit =
     synchronized {
       catalogNameToBuilderMapping.get(catalogName) match {
         case Some(existingBuilder: CommitCoordinatorBuilder) =>
@@ -140,6 +144,6 @@ object CatalogOwnedCommitCoordinatorProvider {
       }
     }
 
-  def getBuilder(catalogName: String): Option[CatalogOwnedCommitCoordinatorBuilder] =
+  def getBuilder(catalogName: String): Option[CatalogManagedCommitCoordinatorBuilder] =
     catalogNameToBuilderMapping.get(catalogName)
 }

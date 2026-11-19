@@ -97,7 +97,7 @@ def get_local_package(package_name, spark_version, root_dir):
 
     Args:
         package_name: Name of the package (e.g., "delta-spark", "delta-connect-server")
-        spark_version: Spark version string (e.g., "4.0", "4.1", or "default")
+        spark_version: Spark version string (e.g., "4.1", "4.2", or "default")
         root_dir: Root directory of the Delta repository
 
     Returns:

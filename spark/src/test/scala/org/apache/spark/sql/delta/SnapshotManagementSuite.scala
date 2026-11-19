@@ -499,7 +499,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
     //    and `cachedSnapshot`.
     withTempDir { dir =>
       val path = dir.getCanonicalPath
-      import testImplicits._
+      import deltaImplicits._
       // Commit 0 - to trigger the initial snapshot construction for version 0
       Seq(1).toDF().write.format("delta").mode("overwrite").save(path)
       val snapshot = DeltaLog.forTable(spark, path).update()
@@ -848,6 +848,12 @@ class SnapshotManagementParallelListingSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
+  private val testTableIdentifier = TableIdentifier(
+    "snapshot_listing_catalog_managed",
+    Some("default"),
+    Some(CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING))
+  private val qualifiedTableName = testTableIdentifier.unquotedString
+
   override protected def sparkConf: SparkConf =
     super.sparkConf.set(logStoreClassConfKey, classOf[CountDownLatchLogStore].getName)
 
@@ -870,10 +876,10 @@ class SnapshotManagementParallelListingSuite extends QueryTest
       _ => spark.range(10).write.format("delta").mode("append").saveAsTable(tableName))
   }
 
-  private def captureUsageRecordsAndGetSnapshot(tableName: String): (Snapshot, Seq[UsageRecord]) = {
+  private def captureUsageRecordsAndGetSnapshot(): (Snapshot, Seq[UsageRecord]) = {
     var snapshot: Snapshot = null
     val records = Log4jUsageLogger.track {
-      snapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+      snapshot = DeltaLog.forTable(spark, testTableIdentifier).update()
     }
     (snapshot, records)
   }
@@ -912,17 +918,16 @@ class SnapshotManagementParallelListingSuite extends QueryTest
         val endVersion = if (tryIncludeGapAtTheEnd) { batchSize } else { batchSize + 3 }
         withSQLConf(
             DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
-          val tableName = "snapshot_listing_catalog_managed"
-          withTable(tableName) {
-            writeDeltaData(tableName, endVersion)
-            val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          withTable(qualifiedTableName) {
+            writeDeltaData(qualifiedTableName, endVersion)
+            val deltaLog = DeltaLog.forTable(spark, testTableIdentifier)
             assert(deltaLog.update().isCatalogOwned)
 
             // Invalidate cache to ensure re-listing.
             DeltaLog.invalidateCache(spark, deltaLog.dataPath)
             ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills = true
 
-            val (snapshot, records) = captureUsageRecordsAndGetSnapshot(tableName)
+            val (snapshot, records) = captureUsageRecordsAndGetSnapshot()
             val expectedNeedAdditionalFsListingCount = if (concurrentBackfills) { 1 } else { 0 }
             verifyUsageRecords(records, expectedNeedAdditionalFsListingCount)
             verifySnapshotBackfills(snapshot, backfillUntilInclusive = batchSize)
@@ -937,10 +942,9 @@ class SnapshotManagementParallelListingSuite extends QueryTest
     val endVersion = batchSize + 3
     withSQLConf(
         DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
-      val tableName = "snapshot_listing_catalog_managed"
-      withTable(tableName) {
-        writeDeltaData(tableName, endVersion)
-        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      withTable(qualifiedTableName) {
+        writeDeltaData(qualifiedTableName, endVersion)
+        val deltaLog = DeltaLog.forTable(spark, testTableIdentifier)
         assert(deltaLog.update().isCatalogOwned)
 
         // Delete 5.json to create a permanent gap between file-system i.e. [0, 4] and
@@ -951,7 +955,7 @@ class SnapshotManagementParallelListingSuite extends QueryTest
         // Invalidate cache to ensure re-listing.
         DeltaLog.invalidateCache(spark, deltaLog.dataPath)
         val e = intercept[IllegalStateException] {
-          DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+          DeltaLog.forTable(spark, testTableIdentifier).update()
         }
         assert(e.getMessage.contains("unexpectedly still requires additional file-system listing"))
       }

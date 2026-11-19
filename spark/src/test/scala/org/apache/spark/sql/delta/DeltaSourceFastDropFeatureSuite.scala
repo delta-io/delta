@@ -35,7 +35,7 @@ class DeltaSourceFastDropFeatureSuite
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override def beforeAll(): Unit = {
     super.beforeAll()

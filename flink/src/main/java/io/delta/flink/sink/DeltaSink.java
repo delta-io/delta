@@ -118,7 +118,6 @@ public class DeltaSink
   public Committer<DeltaCommittable> createCommitter(CommitterInitContext context) {
     this.deltaTable.open();
     return new DeltaCommitter.Builder()
-        .withJobId(context.getJobInfo().getJobId().toString())
         .withTaskIndex(context.getTaskInfo().getIndexOfThisSubtask())
         .withDeltaTable(deltaTable)
         .withConf(conf)

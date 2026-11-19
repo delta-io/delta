@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.test.shims
 
-/**
- * Shim indicating whether the running Spark supports the `SELECT ... CHANGES` clause used by the
- * V2 changelog read path. Spark 4.0 and 4.1 lack the parser support, so this variant returns
- * false, letting changelog tests cancel. The spark-4.2 variant returns true.
- */
-trait ChangelogSyntaxSupportedShim {
-  def supportsChangelogSyntax: Boolean = false
+package org.apache.spark.sql.delta
+
+package object coordinatedcommits {
+  // The old names, kept until their callers use the new ones.
+  val CatalogOwnedCommitCoordinatorProvider: CatalogManagedCommitCoordinatorProvider.type =
+    CatalogManagedCommitCoordinatorProvider
+  type CatalogOwnedCommitCoordinatorBuilder = CatalogManagedCommitCoordinatorBuilder
+  val CatalogOwnedTableUtils: CatalogManagedTableUtils.type = CatalogManagedTableUtils
+  val CatalogOwnedUsageLogs: CatalogManagedUsageLogs.type = CatalogManagedUsageLogs
 }

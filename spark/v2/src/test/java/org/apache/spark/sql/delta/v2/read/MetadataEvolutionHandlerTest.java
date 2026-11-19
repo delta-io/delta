@@ -17,6 +17,7 @@ package org.apache.spark.sql.delta.v2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.util.*;
@@ -123,6 +124,9 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             invocation -> {
               throw new UnsupportedOperationException("not expected in this test");
             });
+    SnapshotDescriptor readSnapshot = mock(SnapshotDescriptor.class);
+    when(readSnapshot.metadata()).thenReturn(DEFAULT_METADATA);
+    when(readSnapshot.protocol()).thenReturn(DEFAULT_PROTOCOL);
     return new MetadataEvolutionHandler(
         spark,
         "test-table-id",
@@ -133,8 +137,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         emptyDeltaOptions(),
         readOptions,
         trackingLog,
-        DEFAULT_METADATA,
-        DEFAULT_PROTOCOL,
+        readSnapshot,
         "/tmp/fake-table/_delta_log/_streaming_metadata");
   }
 
@@ -192,8 +195,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             emptyDeltaOptions(),
             schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false),
             Option.apply(trackingLog),
-            tableMetadata,
-            tableProtocol,
+            snapshot,
             tablePath + "/_delta_log/_streaming_metadata");
 
     return new HandlerWithLog(handler, trackingLog);

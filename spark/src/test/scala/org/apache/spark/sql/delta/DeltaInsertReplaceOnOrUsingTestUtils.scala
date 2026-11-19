@@ -85,7 +85,7 @@ trait DeltaInsertReplaceOnOrUsingTestUtils
       materializeSource: String,
       injectSourceMaterializationFailure: Boolean)(
       executeInsertReplace: String => Unit): Unit = {
-    import testImplicits._
+    import deltaImplicits._
 
     withSQLConf(
         DeltaSQLConf.INSERT_REPLACE_ON_OR_USING_PIN_STATEMENT_TIME_ENABLED.key ->

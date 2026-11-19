@@ -354,7 +354,6 @@ The root manifest contains entries of the following types:
 |----------|------------|------------|----------|---------------|-------------|
 | 147 | `tracking` | Struct ([Tracking](#tracking)) | Required | All | Tracking information for this entry |
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
-| 157 | `format_version` | Int | Required | All | Iceberg writer format version; 0: for ≤v3, 4 for V4. |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
 | 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
@@ -383,14 +382,14 @@ The root manifest contains entries of the following types:
 
 **Status values:** `status` is required and always materialized (never null). Each entry has exactly one status.
 
-Only `EXISTING` and `ADDED` entries are live (visible to scans). `DELETED` and `REPLACED` entries are not live and exist only for change data feed (CDF) reconstruction. A file path has at most one live entry in the tree at any time.
+Only `EXISTING`, `ADDED`, and `MODIFIED` entries are live (visible to scans). `DELETED` and `REPLACED` entries are not live and exist only for change data feed (CDF) reconstruction. A file path has at most one live entry in the tree at any time.
 
 - `EXISTING` (0): Unchanged from previous commit. Live.
 - `ADDED` (1): New in this commit. Live.
 - `DELETED` (2): Removed in this commit. Not live.
 - `REPLACED` (3): Superseded (e.g., DV added/changed). Not live. A
   new DATA entry with updated metadata exists elsewhere in the tree as the live entry for this file path.
-- `MODIFIED` (4): When a data file's deletion vector is updated.
+- `MODIFIED` (4): When a data file's deletion vector is updated. Live.
 
 Non-live entries are transient: they are dropped in the next manifest commit that rewrites the affected manifest (root or leaf).
 
@@ -430,27 +429,27 @@ Tracks where a DV blob can be read. Only for `content_type` = DATA entries.
 
 ### Manifest Info
 
-Summary information for `content_type` = DATA_MANIFEST entries. Includes file/row counts and the Manifest Deletion Vector (MDV).
+Summary information for `content_type` = DATA_MANIFEST entries. Includes the manifest format version, file/row counts, and the Manifest Deletion Vector (MDV). Field IDs and semantics follow the [`manifest_info` struct](https://iceberg.apache.org/spec/#manifest-info-fields) in the Iceberg V4 specification.
 
 | Field ID | Field Name | Delta Type | Required | Description |
 |----------|------------|------------|----------|-------------|
+| 521 | `format_version` | Int | Required | Iceberg format version used to write the manifest. Should be set to 4, referring to Iceberg V4. |
 | 504 | `added_files_count` | Int | Required | Number of files added |
 | 505 | `existing_files_count` | Int | Required | Number of existing files |
 | 506 | `deleted_files_count` | Int | Required | Number of deleted files |
-| 520 | `replaced_files_count` | Int | Required | Number of replaced files |
-| 524 | `modified_files_count` | Int | Required | Number of modified files |
+| 523 | `replaced_files_count` | Int | Required | Number of replaced files |
+| 525 | `modified_files_count` | Int | Required | Number of modified files |
 | 512 | `added_rows_count` | Long | Required | Number of rows in added files |
 | 513 | `existing_rows_count` | Long | Required | Number of rows in existing files |
 | 514 | `deleted_rows_count` | Long | Required | Number of rows in deleted files |
-| 521 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
-| 525 | `modified_rows_count` | Long | Required | Number of rows in modified files |
+| 524 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
+| 526 | `modified_rows_count` | Long | Required | Number of rows in modified files |
 | 516 | `min_sequence_number` | Long | Required | Minimum data sequence number of all live entries in the manifest |
-| 522 | `dv` | Binary | Optional | MDV bitmap marking deleted positions in leaf manifest. Must be non-null if and only if `dv_cardinality` is non-null. |
-| 523 | `dv_cardinality` | Long | Optional | Number of entries marked as deleted in the MDV. Must be non-null if and only if `dv` is non-null. |
+| 522 | `dv` | Binary | Optional | MDV bitmap of positions in the referenced leaf manifest that are not live. The number of marked positions is stored in the bitmap header (see the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec). |
 
 ### Manifest Deletion Vectors (MDVs)
 
-MDVs track which entries in a leaf manifest have been deleted or replaced. The `dv` field in `manifest_info` contains all invalidated positions (cumulative, used for reading). The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF). All three bitmaps are encoded using the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec:
+MDVs track which entries in a leaf manifest are not live. The `dv` field in `manifest_info` contains all invalidated positions (cumulative, used for reading). The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF). All three bitmaps are encoded using the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec:
 
 - **`manifest_info.dv`**: Cumulative set of all invalidated positions. Grows
   monotonically. Used by readers to skip entries.
@@ -606,7 +605,7 @@ A standalone checkpoint uses the classic single-file checkpoint naming (`n.check
 
 ## Manifest Deletion Vectors (MDVs)
 
-MDVs reduce the write amplification: instead of rewriting a leaf manifest to remove a file, the root manifest records an MDV that marks row positions in the leaf manifest as deleted.
+MDVs reduce the write amplification: instead of rewriting a leaf manifest to remove a file, the root manifest records an MDV that marks positions in the leaf manifest that are not live.
 
 MDVs are stored in `manifest_info.dv` on `DATA_MANIFEST` entries in the root manifest. See [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs) for field definitions and CDF bitmap semantics.
 
@@ -620,7 +619,6 @@ DATA_MANIFEST entry:
     status: EXISTING
   manifest_info:
     dv: <bitmap marking positions 2, 17>
-    dv_cardinality: 2
 ```
 
 When reading a leaf manifest, readers must check the `DATA_MANIFEST` entry for a non-null `manifest_info.dv`. If present, deserialize the bitmap and skip entries at positions marked in it.

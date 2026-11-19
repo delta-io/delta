@@ -67,6 +67,7 @@ public class ReplaceTableTransactionBuilderV2Impl implements ReplaceTableTransac
   private final String engineInfo;
 
   private Optional<Map<String, String>> tableProperties = Optional.empty();
+  private Optional<String> description = Optional.empty();
   private Optional<DataLayoutSpec> dataLayoutSpec = Optional.empty();
   private Optional<Integer> userProvidedMaxRetries = Optional.empty();
 
@@ -86,6 +87,12 @@ public class ReplaceTableTransactionBuilderV2Impl implements ReplaceTableTransac
         Optional.of(
             java.util.Collections.unmodifiableMap(
                 TableConfig.validateAndNormalizeDeltaProperties(properties)));
+    return this;
+  }
+
+  @Override
+  public ReplaceTableTransactionBuilder withDescription(String description) {
+    this.description = Optional.of(requireNonNull(description, "description cannot be null"));
     return this;
   }
 
@@ -123,6 +130,7 @@ public class ReplaceTableTransactionBuilderV2Impl implements ReplaceTableTransac
             snapshot,
             schema,
             tableProperties.orElse(emptyMap()),
+            description,
             partitionColumns,
             clusteringColumns);
 

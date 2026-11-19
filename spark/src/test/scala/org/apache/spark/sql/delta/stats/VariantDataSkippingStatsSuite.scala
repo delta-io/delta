@@ -22,7 +22,6 @@ import scala.util.Random
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.shims.VariantStatsShims
-import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.Codec
@@ -50,7 +49,7 @@ class VariantDataSkippingStatsSuite
     with DeltaSQLTestUtils
     with ParquetTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -200,7 +199,7 @@ class VariantDataSkippingStatsSuite
       case _: BigDecimal =>
         assert(expectedDecimalType != -1)
         assert(typeInfo == expectedDecimalType)
-        VariantShreddingTestShims.getDecimalWithOriginalScale(field)
+        field.getDecimalWithOriginalScale()
       case _ => fail(s"Unexpected value type: $expectedValue")
     }
 
@@ -236,7 +235,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("basic variant stats") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableAndExtractStats(
       s"""select
          |  to_variant_object(named_struct('int_field', id, 'str_field', cast(id as string))) as v
@@ -246,7 +244,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("nested variant stats") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableAndExtractStats(
       s"""select
          |  struct(to_variant_object(
@@ -266,7 +263,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("Non-objects in variant") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableAndExtractStats(
       s"""select
          |  to_variant_object(array(id, id + 1, id + 2)) as v_array,
@@ -279,7 +275,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("null counts") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableAndExtractStats(
       s"""select
          |  cast(null as variant) as v_all_null,
@@ -298,7 +293,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("variant stats with different data types") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableAndExtractStats(
       s"""select
          |  to_variant_object(named_struct(
@@ -340,7 +334,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("variant stats with multiple partitions") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableWithPartitionsAndExtractStats(numPartitions = 5,
       s"""select
          |    id long_field,
@@ -417,7 +410,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("more than 10 fields") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val fields = (0 until 50).map { i =>
       s"'field_$i', $i"
     }.mkString(", ")
@@ -444,7 +436,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("more than 32 variant columns") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val columns = (0 until 50).map { i =>
       s"to_variant_object(named_struct('id', id + $i, 'name', 'col_$i')) as v$i"
     }.mkString(", ")
@@ -485,7 +476,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("unusual characters") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     // First element is the name in the query, second is the escaped name in the JSON path.
     // scalastyle:off nonascii
     val unusualNames = Seq(
@@ -530,7 +520,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("nested fields") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableAndExtractStats(
       s"""select
          |  to_variant_object(named_struct(
@@ -553,7 +542,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("no stats for arrays") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableAndExtractStats(
       s"""select
          |  to_variant_object(named_struct(
@@ -570,7 +558,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("missing values") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableAndExtractStats(
       s"""select
          |  parse_json( '{' ||
@@ -590,7 +577,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("mixed types") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val json = createVariantTableAndExtractStats(
       // Use 10000 rows so that the shredding decision isn't affected by the mismatched type in row
       // 9999.
@@ -621,7 +607,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("conf disables stats") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     for (stats <- Seq(false, true)) {
       for (shredding <- Seq(false, true)) {
         withSQLConf(
@@ -656,7 +641,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("parse footer conf disables variant stats") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     withSQLConf(
       DeltaSQLConf.PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS.key -> "false") {
       val json = createVariantTableAndExtractStats(
@@ -676,7 +660,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("extreme values") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     withSQLConf(DeltaSQLConf.DELTA_STATS_LIMIT_PER_VARIANT.key -> "11") {
       val json = createVariantTableAndExtractStats(
         s"""select
@@ -742,7 +725,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("range of different data types") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     // Generate jumbled data - the second column can be cast to any data type
     // We jumble so the max can come from any row group
     val data = (0L until 20000L).zip(Random.shuffle((-10000L until 10000L).toList))
@@ -810,7 +792,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("shredding with mixed decimals") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     withSQLConf("parquet.block.size" -> "10") {
       // decimal16 towards the end - doesn't get buffered so the inferred type will be too narrow
       // => no stats because one row does not fit with the rest.
@@ -841,7 +822,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("force narrow int/decimal types in shredding") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     // Currently, we never choose the narrower int8, int16, int32 or dec4 types during schema
     // inference. This test makes sure that stats would work well for these columns as well if the
     // shredding strategy is altered in the future.
@@ -877,7 +857,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("rebasing dates in write") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val modes = Seq(LEGACY, CORRECTED)
     Seq(false, true).foreach { dictionaryEncoding =>
       modes.foreach { writeMode =>
@@ -899,7 +878,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("rebasing timestamps in write") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     val modes = Seq(LEGACY, CORRECTED)
     Seq(VariantUtil.Type.TIMESTAMP, VariantUtil.Type.TIMESTAMP_NTZ).foreach { timestampType =>
       Seq(false, true).foreach { dictionaryEncoding =>
@@ -929,7 +907,6 @@ class VariantDataSkippingStatsSuite
   }
 
   test("json path escaper test") {
-    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     // scalastyle:off nonascii
     Seq(
       ("normal_field", "normal_field"),
@@ -953,19 +930,5 @@ class VariantDataSkippingStatsSuite
       assert(VariantStatsUtils.escapeJsonField(source) == result)
     }
     // scalastyle:on nonascii
-  }
-
-  test("Spark 4.0: variant stats are not collected even when shredding is forced") {
-    assume(org.apache.spark.SPARK_VERSION.startsWith("4.0"))
-    withSQLConf(
-      SQLConf.VARIANT_FORCE_SHREDDING_SCHEMA_FOR_TEST.key -> "a LONG",
-      "spark.sql.variant.writeShredding.enabled" -> "true",
-      "spark.sql.variant.inferShreddingSchema" -> "false") {
-      val json = createVariantTableAndExtractStats(
-        "select to_variant_object(named_struct('a', id)) as v from range(3)")
-      implicit val formats = DefaultFormats
-      assert((json \ "minValues" \ "v") == JNothing)
-      assert((json \ "maxValues" \ "v") == JNothing)
-    }
   }
 }
