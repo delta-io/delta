@@ -138,7 +138,7 @@ def full_matrix_trigger(path: str) -> bool:
 
 
 def _version_sort_key(version: str):
-    """Sort "4.0" < "4.1" < "4.10" < "master" (master is the newest)."""
+    """Sort "4.1" < "4.2" < "4.10" < "master" (master is the newest)."""
     if version == "master":
         return (1, ())
     parts = []

@@ -205,7 +205,10 @@ jobs:
   # Builds ~/.m2/repository/org/apache/spark once per source-build Spark version so the
   # sharded source_spark_test jobs all restore the same cache instead of rebuilding 8x.
   # prepare_spark_source_cache:
-  #   name: "Prepare Spark ${{ matrix.spark_version }} source cache"
+  #   # Static name: this job is skipped when no source-build version is configured, and a
+  #   # skipped job's matrix is never expanded (see the compile job). GitHub appends the
+  #   # matrix values when it runs, e.g. "Prepare Spark source cache (master)".
+  #   name: "Prepare Spark source cache"
   #   runs-on: ubuntu-24.04
   #   needs: generate-matrix
   #   if: ${{ needs.generate-matrix.outputs.source_test_spark_versions != '[]' }}
@@ -227,6 +230,9 @@ jobs:
   #         cache-key-suffix: ${{ github.event.inputs['source-cache-key-suffix'] || '' }}
 
   # Published Spark artifacts only. This job does not depend on prepare_spark_source_cache.
+  # Its name keeps the matrix expressions: branch protection requires shard checks by these
+  # names (e.g. "DS: Spark 4.1, Scala 2.13.16, Shard 0"). test_spark_versions is empty, and
+  # the name would show unexpanded, only if no published Spark version is configured.
   test:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
@@ -261,8 +267,12 @@ jobs:
   # Reduced PR matrix only: compile main and test sources of the sparkGroup projects (the
   # projects the test shards build and test) for the Spark versions that aren't tested.
   # Catches shim / API compile breaks on those versions without running tests.
+  # The name has no matrix expressions on purpose. The job is skipped whenever the compile
+  # list is empty (every full-matrix run), and GitHub never expands the matrix of a skipped
+  # job, so a templated name would show up raw. With a static name, GitHub appends the
+  # matrix values when it does expand, e.g. "DS: Spark compile-only (4.2, 2.13.16)".
   compile:
-    name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Compile"
+    name: "DS: Spark compile-only"
     runs-on: ubuntu-24.04
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.compile_spark_versions != '[]' }}
@@ -358,7 +368,9 @@ jobs:
   # all shards for every source-build version in both matrix modes (see the policy above);
   # the summary job makes the result blocking.
   # source_spark_test:
-  #   name: "DS Source Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
+  #   # Static name for the same reason as prepare_spark_source_cache; GitHub appends the
+  #   # matrix values when it runs, e.g. "DS: Source Spark tests (master, 2.13.16, 0)".
+  #   name: "DS: Source Spark tests"
   #   runs-on: ubuntu-24.04
   #   needs: [generate-matrix, prepare_spark_source_cache]
   #   # Run even if the prepare job failed. If no cache was produced, each shard fails during
