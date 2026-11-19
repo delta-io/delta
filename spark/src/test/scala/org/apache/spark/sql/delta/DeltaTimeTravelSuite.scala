@@ -934,8 +934,8 @@ class DeltaTimeTravelSuite extends QueryTest
         val t4 = new Timestamp(start + 2.5.days.toMillis).toString
         val t6 = new Timestamp(start + 5.days.toMillis).toString
 
-        spark.sql(s"CREATE TABLE $tableName(id LONG) USING delta LOCATION '$tblLoc'")
-        spark.sql(s"ALTER TABLE $tableName" +
+        setupSql(s"CREATE TABLE $tableName(id LONG) USING delta LOCATION '$tblLoc'")
+        setupSql(s"ALTER TABLE $tableName" +
           s" SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')")
 
         testBody(tableName, t4, t6)
@@ -964,7 +964,7 @@ class DeltaTimeTravelSuite extends QueryTest
         s"SELECT * FROM $tbl TIMESTAMP AS OF '$t6'" -> false
       ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
 
-      spark.sql(s"ALTER TABLE $tbl " +
+      setupSql(s"ALTER TABLE $tbl " +
         s"SET TBLPROPERTIES ('delta.deletedFileRetentionDuration' = 'interval 0 HOURS')")
       // Even after lowering retention to zero, a simple select * should still work
       // which references the latest version
