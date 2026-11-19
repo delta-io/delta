@@ -2792,7 +2792,8 @@ The original declaration can be retained as a string under the key `__CHAR_VARCH
 The annotation is interpreted on that top-level field and describes its complete type, including any nested structs, arrays, and maps.
 Replacing its `CHAR` and `VARCHAR` declarations with `string` gives the serialized field's type structure, including nested field names and order; nullability and other field metadata are specified separately by the serialized schema.
 Preserving character semantics after a schema change depends on keeping the annotation consistent with the updated type structure.
-A stale annotation can cause a character-aware reader to omit newly added fields or misinterpret reordered fields.
+A stale annotation can cause reads to fail, omit fields, or associate values with the wrong fields.
+In affected implementations, write-time validation can apply length checks to the wrong field or lose existing checks, and subsequent metadata updates can persist a schema that drops newly added nested fields.
 Removing the annotation instead removes the length checks and padding supplied by it; this does not preserve the character semantics of the affected fields.
 
 In these declarations, `n` is a non-negative integer specifying the maximum number of Unicode code points in a non-null input string, including leading and trailing spaces.
