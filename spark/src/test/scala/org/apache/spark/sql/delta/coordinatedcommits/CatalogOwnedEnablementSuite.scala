@@ -266,7 +266,7 @@ class CatalogOwnedEnablementSuite
         val qolTableFeatures =
           CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._1)
             .toSet
-        withSQLConf(defaultCatalogOwnedFeatureEnabledKey -> "supported") {
+        withSQLConf(defaultCatalogManagedFeatureEnabledKey -> "supported") {
           sql(s"CREATE TABLE t1 SHALLOW CLONE $tableName")
         }
         sql(s"CREATE TABLE t2 SHALLOW CLONE $tableName TBLPROPERTIES " +
