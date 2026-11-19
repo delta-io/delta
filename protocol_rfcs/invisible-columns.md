@@ -48,6 +48,20 @@ data files.
 | Existing table that enables the feature (mix of old and new files) | Existing columns can change visibility without rewriting their data. Newly added invisible columns may be missing from existing files; the normal missing-column rules apply. |
 | Checkpoint writer that doesn't know the feature | Rejected by the existing writer-feature requirements. Being allowed to read the table does not authorize writing its checkpoints. |
 
+### Engine integration
+
+Engines can integrate Invisible Columns in several ways:
+
+- **Separate schemas.** Expose the visible schema by default and provide a separate way to access
+  invisible columns.
+- **Append-only writes.** Keep invisible columns hidden and support only appends, applying the
+  table's value-generation and constraint requirements to invisible columns in newly inserted rows.
+- **Combined schema.** Expose the complete data schema, including invisible columns, as the
+  engine's schema for reads and writes.
+
+These choices are local to the engine. They do not change the visibility recorded in table
+metadata or relax the table's reader and writer requirements.
+
 ## Interactions with other features
 
 | Feature | Interaction |
@@ -202,6 +216,10 @@ A reader that chooses to expose invisible columns SHOULD:
 - Exclude invisible fields from default schema inspection and implicit column selection, including
   star expansion.
 
+A reader that understands Invisible Columns MAY instead expose the complete data schema as its
+default schema, including invisible columns in implicit column selection. Such exposure does not
+change the visibility recorded in table metadata.
+
 When reading invisible columns, a reader MUST:
 
 - Resolve an explicitly requested invisible field against the invisible schema.
@@ -222,9 +240,14 @@ A writer that supports Invisible Columns MUST apply all Delta Protocol writer re
 complete data schema. Values for invisible columns are validated and written under the same
 protocol rules as values for visible columns.
 
+A writer MAY support only append operations on tables with Invisible Columns. Such a writer MUST
+support the `invisibleColumns` writer feature, satisfy all applicable writer requirements, and
+reject unsupported write operations.
+
 Default-column, generated-column, identity-column, and nullability requirements apply to invisible
 columns in the same way as to visible columns. Writers MUST apply any applicable default or
 value-generation rules before validating the resulting values against nullability requirements.
+A writer MUST reject an append if it cannot satisfy these requirements for newly inserted rows.
 
 A writer that supports Invisible Columns MUST reject a write if `metaData.invisibleSchemaString`
 is malformed or the snapshot violates the [schema requirements](#schema) or
