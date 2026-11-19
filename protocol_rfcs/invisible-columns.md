@@ -25,13 +25,17 @@ the table's data columns.
 - Readers and writers, or writers only: Writer-only. See [Compatibility](#compatibility).
 - Minimum protocol versions: Reader Version 1 and Writer Version 7. Invisible Columns do not
   require a reader-version increase; other table features may require a higher reader version.
-- Required features: None. Other features used by the table retain their own prerequisites.
+- Required features: None for using Invisible Columns. Removing the feature while retaining
+  history containing invisible columns requires [Checkpoint Protection](checkpoint-protection.md).
+  See [Removing the feature](#removing-the-feature). Other features used by the table retain their
+  own prerequisites.
 - Features it can't be used with: See
   [Constraints and interactions with other features](#constraints-and-interactions-with-other-features).
 - Supported vs enabled: Supported when `invisibleColumns` is listed in `writerFeatures`, and
   active when the invisible schema contains at least one invisible field. There is no separate
   enabling table property. See [Enablement](#enablement).
-- Table properties: None.
+- Table properties: No new properties. Feature removal may use Checkpoint Protection's
+  `delta.requireCheckpointProtectionBeforeVersion` property as specified below.
 
 ## Compatibility
 
@@ -47,6 +51,7 @@ data files.
 | New writer, table without this feature | Writes normally without enabling Invisible Columns. If it adds invisible columns, it must enable the feature in the table protocol before or in the same commit. |
 | Existing table that enables the feature (mix of old and new files) | Existing columns can change visibility without rewriting their data. Newly added invisible columns may be missing from existing files; the normal missing-column rules apply. |
 | Checkpoint writer that doesn't know the feature | Rejected by the existing writer-feature requirements. Being allowed to read the table does not authorize writing its checkpoints. |
+| Writer after feature removal | May write the current table if it supports the remaining protocol requirements. If history containing invisible columns is retained, the writer must support Checkpoint Protection and validate the protocol of the historical version before checkpointing it. Otherwise, that history must be safely truncated before feature removal. |
 
 ### Engine integration
 
@@ -69,9 +74,10 @@ metadata or relax the table's reader and writer requirements.
 | Column mapping | See the Column mapping requirements under [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). |
 | Deletion vectors | Apply to rows, including their invisible-column values. Row positions, deletion-vector encoding, and statistics requirements are unchanged. |
 | Checkpoints (classic, multi-part, V2, sidecars) | Existing [checkpoint requirements](#checkpoints-1) preserve the entire `metaData` action, including `invisibleSchemaString`, in all checkpoint formats. In V2 checkpoints, metadata remains in the top-level checkpoint, not a sidecar. See the Checkpoint Schema edit under [Appendix changes](#appendix-changes). |
+| [Checkpoint Protection](checkpoint-protection.md) (proposed) | Removing Invisible Columns while retaining history containing invisible columns requires Checkpoint Protection, including its protected checkpoint boundary, historical-version feature checks, and cleanup requirements. See [Removing the feature](#removing-the-feature). |
 | [Adaptive Metadata](iceberg-v4-metadata.md) (proposed) | Embedded and standalone checkpoints preserve the entire `metaData` action, including `invisibleSchemaString`. Invisible-column statistics follow the proposal's normal rules: column-mapping field IDs for manifest `content_stats` and physical names for log `add.stats`, resolved against the complete data schema. |
 | Log compaction | The reconciled `metaData` action retains both schema strings under the existing [log compaction](#log-compaction-files) rules. No new action or compaction rule is introduced. |
-| Metadata cleanup and VACUUM | No new retention rules or files. Both schemas are retained as table metadata under the existing log-retention rules; invisible-column values remain in data files subject to normal file-retention rules. |
+| Metadata cleanup and VACUUM | No new file types or data-file-retention requirements. Both schemas are retained as table metadata under the existing log-retention rules; invisible-column values remain in data files subject to normal file-retention rules. On feature removal, history containing invisible columns must either be safely truncated or retained under Checkpoint Protection, as described in [Removing the feature](#removing-the-feature). |
 | Version checksum (`.crc`) | The existing `metadata` field contains the table metadata, including `invisibleSchemaString`. No new checksum field or metric is introduced. |
 | Action reconciliation | The latest `metaData` action determines both schemas. The schema strings are not reconciled independently across commits. |
 | Row tracking | Existing row-ID and row-commit-version assignment, preservation, and materialization rules are unchanged. Materialized-column names must remain distinct from names in the complete data schema, including physical names when Column Mapping is enabled. |
@@ -269,7 +275,8 @@ satisfy the table's reader requirements, as required by [Table Features](#table-
 
 The existing metadata-preservation rules for [checkpoints](#checkpoints-1) and
 [log compaction](#log-compaction-files) apply to both schema strings. Invisible Columns introduce
-no additional metadata-cleanup or data-file-retention requirements.
+no additional data-file-retention requirements. Metadata cleanup after feature removal MUST also
+satisfy the requirements in [Removing the feature](#removing-the-feature).
 
 ### Constraints and interactions with other features
 
@@ -306,8 +313,25 @@ invisible schema is empty. Each invisible field MUST either be moved into the vi
 explicitly dropped under the normal column-drop requirements. These schema changes MUST be
 committed before or together with the protocol change.
 
+An empty current invisible schema is not sufficient to protect historical versions. Before
+removing `invisibleColumns`, a writer MUST either:
+
+- Safely truncate all historical versions containing invisible columns, respecting the applicable
+  log-retention and concurrency requirements; or
+- Protect retained history using [Checkpoint Protection](checkpoint-protection.md). The writer MUST
+  establish protected checkpoints before the feature-removal commit. In the commit that removes
+  `invisibleColumns`, it MUST include `checkpointProtection` in `writerFeatures` and set
+  `delta.requireCheckpointProtectionBeforeVersion` to that commit's version. Writers MUST follow
+  Checkpoint Protection's requirements for historical checkpoint creation and metadata cleanup.
+
+Removing Invisible Columns does not require adding Checkpoint Protection if no retained historical
+version contains invisible columns. When history is retained under Checkpoint Protection, creating
+a checkpoint for an earlier version requires support for that version's writer features, including
+`invisibleColumns` when present.
+
 After removal, writers that do not support Invisible Columns MAY write to the table, provided
-they support the table's remaining protocol requirements.
+they support the table's remaining protocol requirements, including `checkpointProtection` when
+present.
 
 ## Examples
 
