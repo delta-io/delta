@@ -767,7 +767,7 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
         // The actions follow the manifest path, then the position, of the entries recording them.
         val provider = providerAt(amtDeltaLog, version)
         val byManifestPosition = provider.reconstructChangeFiles(spark, amtDeltaLog)
-          .select("leafPath", "pos", "add.path", provider.REMOVED_COLUMN)
+          .select("leafPath", "pos", "add.path", AMTManifestReader.REMOVED_COLUMN)
           .collect()
           .sortBy(row => (row.getString(0), row.getLong(1)))
           .map(row => (row.getString(2), row.getBoolean(3)))
