@@ -58,6 +58,7 @@ import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseOp
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamInterruptUtils._
 import org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamUtils._
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils
@@ -358,16 +359,7 @@ private[read] class DeltaV2MicroBatchStream(
       }
       endOffset
     } catch { case e: Exception =>
-      // Kernel's DefaultJsonHandler wraps ClosedByInterruptException (thrown by NIO
-      // channels on thread interrupt) inside KernelEngineException (a RuntimeException).
-      // Spark's StreamExecution.isInterruptionException recognizes
-      // ClosedByInterruptException and UncheckedIOException but not
-      // KernelEngineException. Re-wrap so Spark's isInterruptedByStop - which also
-      // verifies state == TERMINATED - handles it as a clean stream shutdown.
-      val interruptCause: Optional[ClosedByInterruptException] = findClosedByInterruptCause(e)
-      if (interruptCause.isPresent()) {
-        throw new UncheckedIOException(interruptCause.get())
-      }
+      throwIfKernelWrappedInterrupt(e)
       // Translate Kernel's protocol-version error into Delta's InvalidProtocolVersionException.
       val protocolCause: Optional[UnsupportedProtocolVersionException] =
           findUnsupportedProtocolCause(e)
@@ -512,26 +504,28 @@ private[read] class DeltaV2MicroBatchStream(
     val zoneId: ZoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone)
     val caster: PartitionValueCaster = new PartitionValueCaster(partitionSchema, zoneId)
 
-    try Using.resource(
-        if (isCDC) {
-            getFileChangesWithRateLimitForCDC(
-                fromVersion,
-                fromIndex,
-                isInitialSnapshot,
-                /* limits= */ Optional.empty(),
-                Optional.of(endOffset))
-        } else {
-          getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))
-            .withClose[(IndexedFile, CDCDataFile)](_.map(file => (file, null)))
-        }) {
-      fileChanges =>
-      while (fileChanges.hasNext) {
-        val (indexedFile, cdcFile) = fileChanges.next()
-        buildPartitionedFile(indexedFile, isCDC, cdcFile, caster).foreach { pf =>
-          // Also check replay of an already planned batch, which skips latestOffset validation.
-          checkDeletionVectorsReadable(indexedFile, cdcFile)
-          totalBytesToRead += pf.fileSize
-          partitionedFiles.add(pf)
+    try withKernelInterruptTranslation {
+      Using.resource(
+          if (isCDC) {
+              getFileChangesWithRateLimitForCDC(
+                  fromVersion,
+                  fromIndex,
+                  isInitialSnapshot,
+                  /* limits= */ Optional.empty(),
+                  Optional.of(endOffset))
+          } else {
+            getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))
+              .withClose[(IndexedFile, CDCDataFile)](_.map(file => (file, null)))
+          }) {
+        fileChanges =>
+        while (fileChanges.hasNext) {
+          val (indexedFile, cdcFile) = fileChanges.next()
+          buildPartitionedFile(indexedFile, isCDC, cdcFile, caster).foreach { pf =>
+            // Also check replay of an already planned batch, which skips latestOffset validation.
+            checkDeletionVectorsReadable(indexedFile, cdcFile)
+            totalBytesToRead += pf.fileSize
+            partitionedFiles.add(pf)
+          }
         }
       }
     } catch { case e: IOException =>
@@ -540,15 +534,6 @@ private[read] class DeltaV2MicroBatchStream(
               "Failed to get file changes for table %s from version %d index %d to offset %s",
               tablePath, Long.box(fromVersion), Long.box(fromIndex), endOffset),
           e)
-    case e: RuntimeException =>
-      // Same interrupt handling as latestOffset(): Kernel wraps ClosedByInterruptException
-      // in KernelEngineException (a RuntimeException). Re-wrap as UncheckedIOException so
-      // Spark's isInterruptedByStop recognizes it as a clean shutdown.
-      val interruptCause: Optional[ClosedByInterruptException] = findClosedByInterruptCause(e)
-      if (interruptCause.isPresent()) {
-        throw new UncheckedIOException(interruptCause.get())
-      }
-      throw e
     }
 
     PartitionUtils.planInputPartitions(
@@ -1771,5 +1756,33 @@ private[read] class DeltaV2MicroBatchStream(
           /* validatedDuringStreamStart= */ false)
     }
     metadata
+  }
+}
+
+private[read] object DeltaV2MicroBatchStreamInterruptUtils {
+  /**
+   * Kernel's KernelEngineException can wrap a ClosedByInterruptException raised by an interrupted
+   * NIO channel. Re-wrap that direct cause as UncheckedIOException so StreamExecution's
+   * interruption classifier recognizes it as a clean stream shutdown.
+   */
+  @SuppressWarnings(Array(
+    "RuntimeErrorClassConstructor",
+    "reason: UncheckedIOException is required by StreamExecution's interruption classifier"))
+  def throwIfKernelWrappedInterrupt(e: Exception): Unit = {
+    val interruptCause: Optional[ClosedByInterruptException] = findClosedByInterruptCause(e)
+    if (interruptCause.isPresent()) {
+      throw new UncheckedIOException(interruptCause.get())
+    }
+  }
+
+  /**
+   * Evaluates `body`, translating a RuntimeException that directly wraps a Kernel interrupt.
+   * Any other exception is rethrown unchanged.
+   */
+  def withKernelInterruptTranslation[T](body: => T): T = {
+    try body catch { case e: RuntimeException =>
+      throwIfKernelWrappedInterrupt(e)
+      throw e
+    }
   }
 }
