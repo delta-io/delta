@@ -533,11 +533,11 @@ The `amtPassthrough` struct on `add` and `remove` actions holds content entry fi
 | `spec_id` | Int | 141 `spec_id` | Partition spec ID of the file |
 | `sort_order_id` | Int | 140 `sort_order_id` | Sort order ID of the file |
 | `key_metadata` | Binary | 131 `key_metadata` | Encryption key metadata of the file |
-| `split_offsets` | Array\<Long\> | 132 `split_offsets` | Split offsets of the file, sorted ascending |
+| `split_offsets` | Array\<Long\> | 132 `split_offsets` | Split offsets of the file |
 
 All fields are optional. Writers should omit the struct when every field is null. In JSON, `key_metadata` is a base64-encoded string.
 
-Delta does not interpret these fields. A writer that commits an `add` or `remove` for a file that is live in the table must copy them unchanged from the file's current `add` or content entry. An `add` for a newly written file must not copy them from another file.
+Delta does not transform these fields. A writer that commits an `add` or `remove` for a file that is live in the table must copy them unchanged from the file's current `add` or content entry. An `add` for a newly written file must not copy them from another file.
 
 When converting an `add` or `remove` to a content entry, writers copy each non-null passthrough field into its entry field. When producing an `add` from a content entry, readers and writers copy each non-null entry field into the passthrough after resolving inheritence.
 
