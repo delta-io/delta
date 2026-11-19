@@ -48,6 +48,8 @@ This design enables:
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the leaf-manifest entry this add supersedes in place, without a paired `remove` (e.g., a stats backfill). Null otherwise, including a DV update, where the backreference is on the paired `remove`. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
 | <ins>amtPassthrough</ins> | <ins>Struct</ins> | <ins>Content entry fields that describe the physical file and have no native `add` field. See [Passthrough Fields](#passthrough-fields).</ins> |
 
+<ins>When the `adaptiveMetadata` table feature is enabled, `modificationTime` is the In-Commit Timestamp of the commit that added the file, replacing the Delta protocol's meaning of the time the file was created. Writers must set the `modificationTime` of each `add` action to the In-Commit Timestamp of the commit that contains it, including an `add` that restores a previously removed file. An `add` that replaces a file's metadata without changing its rows (a DV update or a stats backfill) is the exception: it keeps the file's existing `modificationTime`. See [Modification Time](#modification-time).</ins>
+
 ### Remove File
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#remove-file)***
@@ -259,7 +261,7 @@ The `checkpoint` action is an array of action entries. Each entry is one of:
 | Action | Description |
 |--------|-------------|
 | `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be non-decreasing across all checkpoint actions in the log. |
-| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, `commitTimestamp`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). A metadata tree can only be produced as of a version at which In-Commit Timestamps are enabled. `commitTimestamp` is the in-commit timestamp (milliseconds since the Unix epoch) of the commit at `version`. `tags` allow writers to record additional optional metadata about the manifest tree. |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, `version`, `commitTimestamp`, and `tags` (`Map[String, String]`). `version` is the table version the root reflects and must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). A metadata tree can only be produced as of a version at which In-Commit Timestamps are enabled. `commitTimestamp` is required and is the in-commit timestamp (milliseconds since the Unix epoch) of the commit at `version`. `tags` allow writers to record additional optional metadata about the manifest tree. |
 | `protocol` | The Protocol action at this checkpoint version. |
 | `metaData` | The Metadata action at this checkpoint version. |
 | `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
@@ -382,6 +384,7 @@ The root manifest contains entries of the following types:
 | 142 | `first_row_id` | Long | Optional | Starting row ID for this file (DATA) or manifest (DATA_MANIFEST) |
 | 6 | `deleted_positions` | Binary | Optional | Bitmap of positions deleted in this commit (DATA_MANIFEST only, for CDF) |
 | 7 | `replaced_positions` | Binary | Optional | Bitmap of positions replaced in this commit (DATA_MANIFEST only, for CDF) |
+| 8 | `snapshot_timestamp` | Timestamp | Optional | When the commit that added or last modified the file's data was committed, in microseconds since the Unix epoch. Inherited when null (see [Inheritance](#inheritance)). |
 
 **Status values:** `status` is required and always materialized (never null). Each entry has exactly one status.
 
@@ -396,7 +399,7 @@ Only `EXISTING`, `ADDED`, and `MODIFIED` entries are live (visible to scans). `D
 
 Non-live entries are transient: they are dropped in the next manifest commit that rewrites the affected manifest (root or leaf).
 
-**Inheritance:** Inheritance applies only to leaf manifest entries inheriting from the root. Following the [Iceberg specification](https://iceberg.apache.org/spec/#sequence-number-inheritance):
+**Inheritance:** Inheritance applies only to leaf manifest entries inheriting from the root, except for `snapshot_timestamp` (see below). Following the [Iceberg specification](https://iceberg.apache.org/spec/#sequence-number-inheritance):
 
 1. A writer creates a leaf manifest with `ADDED` entries. Tracking
    fields like `sequence_number` are null because the commit version is not yet assigned.
@@ -412,8 +415,11 @@ The fields that support inheritance:
 - **`file_sequence_number`**: Inherited when null and status is `ADDED`.
 - **`first_row_id`**: Inherited when null.
 - **`dv_snapshot_id`**: Not inherited. Null means no DV is present.
+- **`snapshot_timestamp`**: Inherited when null, whatever the status. A leaf entry inherits it from the `DATA_MANIFEST` entry in the root that references the leaf, and a root entry inherits `contentRoot.commitTimestamp`, converted to microseconds.
 
-Root manifest entries must always have explicit (non-null) tracking values since there is nothing above them to inherit from.
+Root manifest entries must always have explicit (non-null) tracking values since there is nothing above them to inherit from. The exception is `snapshot_timestamp`, which root entries inherit from the [Checkpoint Action](#checkpoint-action-contents)'s `contentRoot`.
+
+Matching the `snapshot_timestamp` tracking field proposed for Iceberg V4, writers must set `snapshot_timestamp` to null on `ADDED` entries and on entries `MODIFIED` by column files, and to a non-null value (inherited or previously persisted) on every other entry they write to a new manifest.
 
 Leaf manifests are immutable. Entries stay `ADDED` with null tracking fields forever. The `DATA_MANIFEST` entry in the root tracks the manifest's lifecycle (`ADDED` -> `EXISTING` across commits), but individual entries in the leaf do not change. This allows writers to create a leaf manifest once and reuse it across commit retries. Only the root manifest needs to be updated on retry.
 
@@ -541,6 +547,10 @@ Delta does not transform these fields. A writer that commits an `add` or `remove
 
 When converting an `add` or `remove` to a content entry, writers copy each non-null passthrough field into its entry field. When producing an `add` from a content entry, readers and writers copy each non-null entry field into the passthrough after resolving inheritance.
 
+## Modification Time
+
+A file's `add.modificationTime` maps to its entry's `snapshot_timestamp`, resolved through [Inheritance](#inheritance) and converted from microseconds to milliseconds, rounding down. Readers must produce this value as the `modificationTime` of a file read from the metadata tree. Because a log `add` carries the In-Commit Timestamp of its commit (see [Add File](#add-file)), a file reports the same modification time whether it is read from the log or from the tree.
+
 ## Snapshot ID Generation
 
 The `snapshot_id` field in tracking identifies when content was added or modified. Writers must generate a unique long value for each manifest commit.
@@ -650,6 +660,7 @@ When `adaptiveMetadata` is supported and active, readers must:
 - Read the root manifest at `contentRoot.path` and skip leaf-manifest entries marked in `manifest_info.dv` (see [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Reconstruct the current table state by applying the commits after `checkpointMetadata.version` on top of the tree, following [Action Reconciliation](#action-reconciliation).
 - Interpret `tightBounds`, `tightStats`, and timestamp bounds in file statistics according to [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation).
+- Produce the `modificationTime` of a file read from the tree from its entry's `snapshot_timestamp` (see [Modification Time](#modification-time)).
 - Read any `sidecar` entries referenced by the checkpoint to obtain the complete set of transaction identifiers and domain metadata (see [Checkpoint Action](#checkpoint-action)).
 
 ## Writer Requirements for Adaptive Metadata
@@ -665,6 +676,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Set `tightStats` on newly written or updated file actions, and write `minValues` and `maxValues` of `timestamp` and `timestamp without time zone` columns in `add.stats` and `remove.stats` as valid lower and upper bounds without truncating down to milliseconds (see [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation)).
+- Set the `modificationTime` of each new `add` action to the commit's In-Commit Timestamp, and populate `snapshot_timestamp` on manifest entries (see [Add File](#add-file) and [Modification Time](#modification-time)).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
 - Include the `dataChange` field in the `commitInfo` action of every commit (see [Commit Provenance Information](#commit-provenance-information)).
 
@@ -686,7 +698,8 @@ When `adaptiveMetadata` is supported and active, writers must:
      entry with the updated info
 4. For adds from preceding log commits (versions <=
    checkpointMetadata.version): set status=EXISTING with explicit
-   snapshot_id and sequence numbers. These files are already
+   snapshot_id, sequence numbers, and snapshot_timestamp (the add's
+   modificationTime in microseconds). These files are already
    part of the table state.
 5. For adds from the current commit (if any): set status=ADDED.
    Sequence numbers may be null (inherited from root).
