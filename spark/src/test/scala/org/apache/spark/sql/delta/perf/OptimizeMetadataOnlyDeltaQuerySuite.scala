@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.perf
 
+import java.time.LocalDate
+
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaLog, DeltaTestUtils}
@@ -31,10 +33,12 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterAll
 
 import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SaveMode}
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{DateType, StringType}
 
 class OptimizeMetadataOnlyDeltaQuerySuite
   extends QueryTest
@@ -718,6 +722,45 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     val firstRow = showMultipleAggResultData.head.head
     assert(firstRow.getString(0) === "1582-10-15")
     assert(firstRow.getString(1) === "NULL")
+  }
+
+  for (partitioned <- Seq(false, true)) {
+    val columnType = if (partitioned) "partition" else "data"
+    test(s"min-max - dates in the Julian-Gregorian gap, $columnType columns") {
+      val tableName = s"TestDateGap_$columnType"
+      withTable(tableName) {
+        val partitionBy = if (partitioned) "PARTITIONED BY (d1, d2)" else ""
+        spark.sql(s"CREATE TABLE $tableName (d1 DATE, d2 DATE, v INT) USING DELTA $partitionBy")
+        Seq(
+          "DATE'1582-10-10', DATE'1000-01-01'",
+          "DATE'2022-01-01', DATE'1582-10-14'",
+          "NULL, NULL").foreach { values =>
+          spark.sql(s"INSERT INTO $tableName VALUES ($values, 1)")
+        }
+        val query = s"SELECT MIN(d1), MAX(d1), MIN(d2), MAX(d2) FROM $tableName"
+        val expectedDates = Seq("1582-10-10", "2022-01-01", "1000-01-01", "1582-10-14")
+
+        def localRelationRows(f: => Unit): Seq[InternalRow] = {
+          val plans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = true)(f)
+          val data = plans.collect { case x: LocalRelation => x.data }
+          assert(data.size === 1)
+          data.head
+        }
+
+        // The rewritten LocalRelation holds the internal (proleptic Gregorian) day numbers.
+        val rows = localRelationRows(spark.sql(query).collect())
+        assert(rows.head.toSeq(Seq.fill(4)(DateType)) ===
+          expectedDates.map(d => LocalDate.parse(d).toEpochDay.toInt))
+
+        val showRows = localRelationRows(spark.sql(query).show())
+        assert(showRows.head.toSeq(Seq.fill(4)(StringType)).map(_.toString) === expectedDates)
+
+        withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
+          checkResultsAndOptimizedPlan(query, "LocalRelation [none#0, none#1, none#2, none#3]")
+          checkAnswer(spark.sql(query), Row(expectedDates.map(LocalDate.parse): _*))
+        }
+      }
+    }
   }
 
   test("count - dv-enabled") {

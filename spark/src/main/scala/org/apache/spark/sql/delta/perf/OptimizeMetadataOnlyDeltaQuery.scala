@@ -22,7 +22,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable, Snapshot}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
@@ -30,7 +30,6 @@ import org.apache.spark.sql.delta.stats.DeltaScanGenerator
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
-import java.sql.Date
 import java.util.Locale
 
 /** Optimize COUNT, MIN and MAX expressions on Delta tables.
@@ -70,14 +69,6 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
         attrRef.references.size == 1 && attrRef.references.head.dataType != StructType
     }
 
-    def convertValueIfRequired(attrRef: AttributeReference, value: Any): Any = {
-      if (attrRef.dataType == DateType && value != null) {
-        DateTimeUtils.fromJavaDate(value.asInstanceOf[Date])
-      } else {
-        value
-      }
-    }
-
     val rewrittenAggregationValues = plan.aggregateExpressions.collect {
       case Alias(AggregateExpression(
       Count(Seq(Literal(1, _))), Complete, false, None, _), _) if rowCount.isDefined =>
@@ -88,21 +79,21 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       case Alias(AggregateExpression(
       Min(minReference: AttributeReference), Complete, false, None, _), _)
         if checkStatsExists(minReference) =>
-        convertValueIfRequired(minReference, columnStats(minReference.name).min)
+        columnStats(minReference.name).min
       case Alias(tps@ToPrettyString(AggregateExpression(
       Min(minReference: AttributeReference), Complete, false, None, _), _), _)
         if checkStatsExists(minReference) =>
           val v = columnStats(minReference.name).min
-          tps.copy(child = Literal(v)).eval()
+          tps.copy(child = Literal(v, minReference.dataType)).eval()
       case Alias(AggregateExpression(
       Max(maxReference: AttributeReference), Complete, false, None, _), _)
         if checkStatsExists(maxReference) =>
-        convertValueIfRequired(maxReference, columnStats(maxReference.name).max)
+        columnStats(maxReference.name).max
       case Alias(tps@ToPrettyString(AggregateExpression(
       Max(maxReference: AttributeReference), Complete, false, None, _), _), _)
         if checkStatsExists(maxReference) =>
           val v = columnStats(maxReference.name).max
-          tps.copy(child = Literal(v)).eval()
+          tps.copy(child = Literal(v, maxReference.dataType)).eval()
     }
 
     if (plan.aggregateExpressions.size == rewrittenAggregationValues.size) {
@@ -134,7 +125,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
   }
 
   /**
-   * Min and max values from Delta Log stats or partitionValues.
+   * Min and max values from Delta Log stats or partitionValues, in Catalyst internal format.
   */
   case class DeltaColumnStat(min: Any, max: Any)
 
@@ -232,17 +223,20 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
         s"max(`max.$physicalName`) as `max_$physicalName`")
     }
 
-    val statsResults = files.select(columnsToQuery: _*).selectExpr(minMaxExpr: _*).head
+    // Collect as InternalRow to keep the values in Catalyst internal format. Converting them to
+    // external types (e.g. java.sql.Date) and back would rebase dates between the Julian and
+    // Gregorian calendars and shift dates such as 1582-10-10.
+    val statsResults = files.select(columnsToQuery: _*).selectExpr(minMaxExpr: _*)
+      .queryExecution.executedPlan.executeCollect().head
 
-    (Some(numRecords), dataColumnsWithStats
-      .filter(x => statsResults.getAs[Boolean](s"complete_${x._2}"))
-      .map { columnAndPhysicalName =>
-        val column = columnAndPhysicalName._1
-        val physicalName = columnAndPhysicalName._2
+    // statsResults contains (complete, min, max) for each column in dataColumnsWithStats.
+    (Some(numRecords), dataColumnsWithStats.zipWithIndex
+      .filter { case (_, i) => statsResults.getBoolean(i * 3) }
+      .map { case ((column, _), i) =>
         column.name ->
           DeltaColumnStat(
-            statsResults.getAs(s"min_$physicalName"),
-            statsResults.getAs(s"max_$physicalName"))
+            statsResults.get(i * 3 + 1, column.dataType),
+            statsResults.get(i * 3 + 2, column.dataType))
       }.toMap)
   }
 
@@ -270,18 +264,19 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
           max(s"`$physicalName`").as(s"max_$physicalName"))
       }
 
+      // Collect as InternalRow to keep the values in Catalyst internal format, see
+      // extractCountMinMaxFromStats.
       val partitionedColumnsQuery = snapshot.allFiles
         .select(partitionedColumnsValues: _*)
         .agg(partitionedColumnsAgg.head, partitionedColumnsAgg.tail: _*)
-        .head()
+        .queryExecution.executedPlan.executeCollect().head
 
-      partitionedColumns.map { partitionedColumn =>
-        val physicalName = partitionedColumn._2
-
-        partitionedColumn._1.name ->
+      // partitionedColumnsQuery contains (min, max) for each column in partitionedColumns.
+      partitionedColumns.zipWithIndex.map { case ((column, _), i) =>
+        column.name ->
           DeltaColumnStat(
-            partitionedColumnsQuery.getAs(s"min_$physicalName"),
-            partitionedColumnsQuery.getAs(s"max_$physicalName"))
+            partitionedColumnsQuery.get(i * 2, column.dataType),
+            partitionedColumnsQuery.get(i * 2 + 1, column.dataType))
       }.toMap
     }
   }
