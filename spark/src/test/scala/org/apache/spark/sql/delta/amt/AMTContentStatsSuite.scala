@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CatalogManagedTableFeature, ColumnMappingTableFeature, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaConfigs, DomainMetadataTableFeature, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -612,5 +613,165 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
         assert(tightBoundsOf(readStats(tampered, metadata, amtProtocol)).contains(expected),
           s"tight_stats=$tightStats must reconstruct tightBounds=$expected")
     }
+  }
+
+  private val rowsPerClusteredFile = 2
+
+  /** Session confs that cap an INSERT at `rowsPerClusteredFile` rows per file. */
+  private def clusteredFileConfs: Seq[(String, String)] = Seq(
+    "spark.sql.files.maxRecordsPerFile" -> rowsPerClusteredFile.toString,
+    DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false")
+
+  /** A checkpoint trigger that inserts `numFiles` files, one row per `range` id. */
+  private def insertFilesTrigger(
+      numFiles: Int, columnExprs: Seq[String]): Option[AMTCheckpointTrigger] =
+    Some(table => Right(
+      s"INSERT INTO $table SELECT ${columnExprs.mkString(", ")} " +
+        s"FROM range(0, ${numFiles * rowsPerClusteredFile}, 1, 1)"))
+
+  /**
+   * The `content_stats` logical column names of each manifest (root and live leaves) of the
+   * checkpoint that holds data entries.
+   */
+  private def contentStatsColumnsOnDisk(context: AMTCheckpointScenarioContext): Seq[Seq[String]] = {
+    val root = context.checkpoint.contentRoot.getAbsolutePath(context.provider.tableRoot)
+    val manifests = (root +: context.provider.liveLeafManifestAbsolutePaths).map(_.toString)
+    manifests.flatMap { manifest =>
+      withManifestDataEntries(Seq(manifest)) { entries =>
+        if (entries.isEmpty) None else Some(contentStatsLogicalNames(entries))
+      }
+    }
+  }
+
+  /**
+   * Asserts that, for every live file, the stats of `columns` rebuilt from the AMT match the stats
+   * in the commit log. With `boundsSurvive = false`, the min/max must be absent after the
+   * checkpoint and only the null count must match. Each column must have a logged min/max in at
+   * least one file, so the bound comparison is not vacuous.
+   */
+  private def assertColumnStatsSurviveCheckpoint(
+      context: AMTCheckpointScenarioContext,
+      columns: Seq[String],
+      boundsSurvive: Boolean): Unit = {
+    val snapshot = context.postCheckpointSnapshot
+    def statsByPath(files: Seq[AddFile]): Map[String, JsonNode] =
+      files.map(add => add.path -> JsonUtils.mapper.readTree(add.stats)).toMap
+    // The commit JSON is the oracle: the snapshot rebuilds its AddFiles from the AMT.
+    val logged = statsByPath(liveAddFilesFromLog(snapshot.deltaLog))
+    val reconstructed = statsByPath(liveAddFiles(snapshot))
+    assert(reconstructed.keySet == logged.keySet,
+      s"${context.scenario.name}: live file paths changed across the checkpoint")
+    assert(logged.nonEmpty, s"${context.scenario.name}: expected live files")
+
+    def stat(stats: JsonNode, statName: String, physicalName: String): Option[JsonNode] =
+      Option(stats.get(statName)).flatMap(values => Option(values.get(physicalName)))
+    for {
+      column <- columns
+      physicalName = DeltaColumnMapping.getPhysicalName(snapshot.metadata.dataSchema(column))
+      statName <- Seq("minValues", "maxValues")
+    } {
+      val hasLoggedBound = logged.values.exists(stat(_, statName, physicalName).isDefined)
+      assert(hasLoggedBound,
+        s"${context.scenario.name}: no file in the log records $statName for $column")
+    }
+    for {
+      column <- columns
+      physicalName = DeltaColumnMapping.getPhysicalName(snapshot.metadata.dataSchema(column))
+      (path, loggedStats) <- logged
+    } {
+      val reconstructedStats = reconstructed(path)
+      // Build the clue outside `assert`: on Scala 2.12 the macro fails to expand when its message
+      // interpolates JsonNode values.
+      val clue = s"${context.scenario.name}: column $column of $path\n" +
+        s"  logged=$loggedStats\n  reconstructed=$reconstructedStats"
+      val nullCountMatches = stat(reconstructedStats, "nullCount", physicalName) ==
+        stat(loggedStats, "nullCount", physicalName)
+      assert(nullCountMatches, clue)
+      Seq("minValues", "maxValues").foreach { statName =>
+        val loggedBound = stat(loggedStats, statName, physicalName)
+        val boundMatches =
+          stat(reconstructedStats, statName, physicalName) == loggedBound.filter(_ => boundsSurvive)
+        assert(boundMatches, clue)
+      }
+    }
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "liquid clustering columns keep their stats across an AMT checkpoint",
+      "amt_content_stats_liquid",
+      sqlConfs = leafPackingConfs ++ clusteredFileConfs,
+      tableSchema = "id INT, c_long LONG, c_str STRING, c_date DATE, value STRING")(
+      setup = table => sql(s"ALTER TABLE $table CLUSTER BY (c_long, c_str, c_date)"),
+      inlineCheckpointTriggerActionsOrSQL = insertFilesTrigger(
+        numFiles = leafPackedFiles,
+        columnExprs = Seq(
+          "CAST(id AS INT)",
+          "CAST(id AS LONG)",
+          // Every other file holds only NULLs, so it has a null count and no bounds. The files
+          // between them hold no NULLs.
+          "IF(id % 4 < 2, NULL, CONCAT('row', LPAD(CAST(id AS STRING), 3, '0')))",
+          "DATE '2026-07-25' + CAST(id AS INT)",
+          "CAST(id AS STRING)"))) { context =>
+    if (context.scenario == AMTCheckpointScenario.DeferredFull) {
+      assert(context.provider.liveLeafManifestAbsolutePaths.nonEmpty,
+        "the full rewrite must put entries in leaves, so the leaf read path is covered")
+    }
+    val columnsOnDisk = contentStatsColumnsOnDisk(context)
+    assert(columnsOnDisk.nonEmpty, "expected a manifest with data entries")
+    columnsOnDisk.foreach { names =>
+      assert(names == Seq("id", "c_long", "c_str", "c_date", "value"),
+        s"${context.scenario.name}: unexpected content_stats columns $names")
+    }
+    assertColumnStatsSurviveCheckpoint(
+      context, Seq("c_long", "c_str", "c_date"), boundsSurvive = true)
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "a TIMESTAMP clustering column keeps only its null count across an AMT checkpoint",
+      "amt_content_stats_liquid_ts",
+      sqlConfs = clusteredFileConfs,
+      tableSchema = "id INT, c_ts TIMESTAMP")(
+      setup = table => sql(s"ALTER TABLE $table CLUSTER BY (c_ts)"),
+      inlineCheckpointTriggerActionsOrSQL = insertFilesTrigger(
+        numFiles = 3,
+        columnExprs = Seq(
+          "CAST(id AS INT)",
+          // Some files hold one NULL, so the null count is not always 0.
+          "IF(id % 4 = 0, NULL, " +
+            "TIMESTAMP '2026-07-25 01:02:03.456' + MAKE_INTERVAL(0, 0, 0, CAST(id AS INT)))"))) {
+      context =>
+    val columnsOnDisk = contentStatsColumnsOnDisk(context)
+    assert(columnsOnDisk.nonEmpty, "expected a manifest with data entries")
+    columnsOnDisk.foreach { names =>
+      assert(names == Seq("id", "c_ts"),
+        s"${context.scenario.name}: unexpected content_stats columns $names")
+    }
+    // AMT stores no timestamp bounds (see `isSupportedBoundType`), so the clustering column loses
+    // its min/max on read.
+    assertColumnStatsSurviveCheckpoint(context, Seq("c_ts"), boundsSurvive = false)
+  }
+
+  testAcrossAMTCheckpointScenarios(
+      "content_stats follows a dataSkippingStatsColumns allowlist that names the clustering column",
+      "amt_content_stats_liquid_allowlist",
+      sqlConfs = clusteredFileConfs,
+      tableSchema = "id INT, c_a LONG, c_b LONG")(
+      setup = table => {
+        sql(s"ALTER TABLE $table SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key}' = 'c_b')")
+        sql(s"ALTER TABLE $table CLUSTER BY (c_b)")
+      },
+      inlineCheckpointTriggerActionsOrSQL = insertFilesTrigger(
+        numFiles = 3,
+        columnExprs = Seq("CAST(id AS INT)", "CAST(id AS LONG)", "CAST(-id AS LONG)"))) {
+      context =>
+    val columnsOnDisk = contentStatsColumnsOnDisk(context)
+    assert(columnsOnDisk.nonEmpty, "expected a manifest with data entries")
+    columnsOnDisk.foreach { names =>
+      assert(names == Seq("c_b"),
+        s"${context.scenario.name}: only the allowlisted clustering column gets content_stats; " +
+          s"got $names")
+    }
+    assertColumnStatsSurviveCheckpoint(context, Seq("c_b"), boundsSurvive = true)
   }
 }
