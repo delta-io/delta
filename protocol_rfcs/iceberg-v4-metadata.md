@@ -433,7 +433,7 @@ Summary information for `content_type` = DATA_MANIFEST entries. Includes the man
 
 | Field ID | Field Name | Delta Type | Required | Description |
 |----------|------------|------------|----------|-------------|
-| 521 | `format_version` | Int | Required | Iceberg format version used to write the manifest; 0 for ≤v3, 4 for V4. |
+| 521 | `format_version` | Int | Required | Iceberg format version used to write the manifest. Should be set to 4, referring to Iceberg V4. |
 | 504 | `added_files_count` | Int | Required | Number of files added |
 | 505 | `existing_files_count` | Int | Required | Number of existing files |
 | 506 | `deleted_files_count` | Int | Required | Number of deleted files |
