@@ -19,7 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import spark_ci_matrix as m  # noqa: E402
 
-VERSIONS = ["4.0", "4.1", "4.2", "4.3"]
+# The currently supported Spark versions. FOUR_VERSIONS adds a hypothetical newer one.
+VERSIONS = ["4.1", "4.2", "4.3"]
+FOUR_VERSIONS = ["4.1", "4.2", "4.3", "4.4"]
 SRC = "spark/src/main/scala/org/apache/spark/sql/delta/DeltaLog.scala"
 
 
@@ -42,13 +44,13 @@ class FullMatrixTriggerTest(unittest.TestCase):
         "build/sbt",
         "build/sbt-config/repositories",
         "build/sbt-launch-lib.bash",
-        "spark/src/main/scala-shims/spark-4.0/Shim.scala",
-        "spark/src/main/scala-shims/spark-4.0-4.2/DeltaSqlParserShims.scala",
+        "spark/src/main/scala-shims/spark-4.1/Shim.scala",
+        "spark/src/main/scala-shims/spark-4.1-4.2/DeltaSqlParserShims.scala",
         "spark-unified/src/test/scala-shims/spark-4.2-4.3/a/b/Suite.java",
-        "sharing/src/test/scala-shims/spark-4.0/SharingStreamingTestShims.scala",
+        "sharing/src/test/scala-shims/spark-4.1-4.3/SharingStreamingTestShims.scala",
         "spark/src/test/scala-shims/spark-4.3/Shim.scala",
-        "spark/v2/src/main/java-shims/spark-4.0/Shim.java",
-        "spark/src/main/scala-spark-4.0/Old.scala",
+        "spark/v2/src/main/java-shims/spark-4.1/Shim.java",
+        "spark/src/main/scala-spark-4.1/Old.scala",
         "spark/src/main/java-spark-master/Old.java",
         "spark/src/main/scala-spark-master/Old.scala",
         "spark/src/main/spark-master/Old.scala",
@@ -63,10 +65,10 @@ class FullMatrixTriggerTest(unittest.TestCase):
         "python/requirements.txt",
         "python/delta/requirements-dev.txt",
         "python/environment.yml",
-        ".github/ci-requirements/spark-python/spark4.0.in",
+        ".github/ci-requirements/spark-python/spark4.1.in",
         "dev/requirements.lock",
         "docker-build-requirements.lock",
-        ".github/ci-requirements/spark-python/spark4.0.lock",
+        ".github/ci-requirements/spark-python/spark4.1.lock",
         "docs/pnpm-lock.yaml",
         "web/package-lock.json",
         "web/yarn-lock.yml",
@@ -150,16 +152,16 @@ class GlobTest(unittest.TestCase):
 
 class SplitVersionsTest(unittest.TestCase):
     def test_one_version(self):
-        self.assertEqual(m.split_versions(["4.0"]), (["4.0"], []))
+        self.assertEqual(m.split_versions(["4.1"]), (["4.1"], []))
 
     def test_two_versions(self):
-        self.assertEqual(m.split_versions(["4.3", "4.0"]), (["4.0", "4.3"], []))
+        self.assertEqual(m.split_versions(["4.3", "4.1"]), (["4.1", "4.3"], []))
 
     def test_three_versions(self):
-        self.assertEqual(m.split_versions(["4.0", "4.1", "4.2"]), (["4.0", "4.2"], ["4.1"]))
+        self.assertEqual(m.split_versions(VERSIONS), (["4.1", "4.3"], ["4.2"]))
 
     def test_four_versions(self):
-        self.assertEqual(m.split_versions(VERSIONS), (["4.0", "4.3"], ["4.1", "4.2"]))
+        self.assertEqual(m.split_versions(FOUR_VERSIONS), (["4.1", "4.4"], ["4.2", "4.3"]))
 
     def test_unsorted_and_numeric_order(self):
         self.assertEqual(
@@ -167,7 +169,7 @@ class SplitVersionsTest(unittest.TestCase):
 
     def test_master_is_newest(self):
         self.assertEqual(
-            m.split_versions(["master", "4.0", "4.3"]), (["4.0", "master"], ["4.3"]))
+            m.split_versions(["master", "4.1", "4.3"]), (["4.1", "master"], ["4.3"]))
 
     def test_empty(self):
         self.assertEqual(m.split_versions([]), ([], []))
@@ -182,22 +184,22 @@ class DecideTest(unittest.TestCase):
     def test_reduced_for_plain_source_change(self):
         d = m.decide("pull_request", VERSIONS, [], files(SRC), 1)
         self.assertEqual(d.mode, "reduced")
-        self.assertEqual(d.test_spark_versions, ["4.0", "4.3"])
-        self.assertEqual(d.compile_spark_versions, ["4.1", "4.2"])
+        self.assertEqual(d.test_spark_versions, ["4.1", "4.3"])
+        self.assertEqual(d.compile_spark_versions, ["4.2"])
 
     def test_reduced_one_version(self):
-        d = m.decide("pull_request", ["4.0"], [], files(SRC), 1)
+        d = m.decide("pull_request", ["4.1"], [], files(SRC), 1)
         self.assertEqual((d.mode, d.test_spark_versions, d.compile_spark_versions),
-                         ("reduced", ["4.0"], []))
+                         ("reduced", ["4.1"], []))
 
     def test_reduced_two_versions(self):
-        d = m.decide("pull_request", ["4.0", "4.3"], [], files(SRC), 1)
-        self.assertEqual((d.test_spark_versions, d.compile_spark_versions), (["4.0", "4.3"], []))
+        d = m.decide("pull_request", ["4.1", "4.3"], [], files(SRC), 1)
+        self.assertEqual((d.test_spark_versions, d.compile_spark_versions), (["4.1", "4.3"], []))
 
-    def test_reduced_three_versions(self):
-        d = m.decide("pull_request", ["4.0", "4.1", "4.2"], [], files(SRC), 1)
+    def test_reduced_four_versions(self):
+        d = m.decide("pull_request", FOUR_VERSIONS, [], files(SRC), 1)
         self.assertEqual((d.test_spark_versions, d.compile_spark_versions),
-                         (["4.0", "4.2"], ["4.1"]))
+                         (["4.1", "4.4"], ["4.2", "4.3"]))
 
     def test_push_is_full(self):
         self.assertFull(m.decide("push", VERSIONS, [], files(SRC), 1))
@@ -223,7 +225,7 @@ class DecideTest(unittest.TestCase):
         self.assertIn("label", d.reason)
 
     def test_trigger_path(self):
-        for path in ["build.sbt", "spark/src/main/scala-shims/spark-4.0/X.scala",
+        for path in ["build.sbt", "spark/src/main/scala-shims/spark-4.1/X.scala",
                      ".github/workflows/spark_test.yaml", "setup.py"]:
             with self.subTest(path=path):
                 d = m.decide("pull_request", VERSIONS, [], files(SRC, path), 2)
@@ -231,7 +233,7 @@ class DecideTest(unittest.TestCase):
                 self.assertEqual(d.full_matrix_files, [path])
 
     def test_rename_out_of_shim_dir_is_full(self):
-        renamed = ["spark/src/main/scala/X.scala", "spark/src/main/scala-shims/spark-4.0/X.scala"]
+        renamed = ["spark/src/main/scala/X.scala", "spark/src/main/scala-shims/spark-4.1/X.scala"]
         self.assertFull(m.decide("pull_request", VERSIONS, [], [renamed], 1))
 
     def test_detection_error_is_full(self):
@@ -251,7 +253,7 @@ class DecideTest(unittest.TestCase):
         self.assertIn("PR reports 3001", d.reason)
 
     def test_full_lists_are_sorted(self):
-        self.assertFull(m.decide("push", ["4.3", "4.1", "4.0", "4.2"]))
+        self.assertFull(m.decide("push", ["4.3", "4.1", "4.2"]))
 
     def test_no_source_build_versions(self):
         for d in [m.decide("pull_request", VERSIONS, [], files(SRC), 1),
@@ -269,30 +271,30 @@ class SourceBuildTest(unittest.TestCase):
     def test_reduced_one_source_build_version(self):
         d = self.reduced(VERSIONS, ["master"])
         self.assertEqual(d.mode, "reduced")
-        self.assertEqual(d.test_spark_versions, ["4.0", "4.3"])
-        self.assertEqual(d.compile_spark_versions, ["4.1", "4.2"])
+        self.assertEqual(d.test_spark_versions, ["4.1", "4.3"])
+        self.assertEqual(d.compile_spark_versions, ["4.2"])
         self.assertEqual(d.source_test_spark_versions, ["master"])
 
     def test_reduced_two_source_build_versions(self):
         d = self.reduced(VERSIONS, ["master", "4.4"])
-        self.assertEqual(d.test_spark_versions, ["4.0", "4.3"])
-        self.assertEqual(d.compile_spark_versions, ["4.1", "4.2"])
+        self.assertEqual(d.test_spark_versions, ["4.1", "4.3"])
+        self.assertEqual(d.compile_spark_versions, ["4.2"])
         self.assertEqual(d.source_test_spark_versions, ["4.4", "master"])
 
     def test_source_build_newer_than_newest_release_does_not_shift_split(self):
         # The newest *published* version is still tested by the regular test job.
-        d = self.reduced(["4.0", "4.1", "4.2"], ["4.3"])
-        self.assertEqual(d.test_spark_versions, ["4.0", "4.2"])
-        self.assertEqual(d.compile_spark_versions, ["4.1"])
-        self.assertEqual(d.source_test_spark_versions, ["4.3"])
+        d = self.reduced(VERSIONS, ["4.4"])
+        self.assertEqual(d.test_spark_versions, ["4.1", "4.3"])
+        self.assertEqual(d.compile_spark_versions, ["4.2"])
+        self.assertEqual(d.source_test_spark_versions, ["4.4"])
 
     def test_source_build_equal_to_newest_release_is_source_only(self):
         # A version in both lists needs source-built Spark, so it only runs as source-build,
         # and the next-newest published version becomes the newest tested release.
-        d = self.reduced(VERSIONS, ["4.3"])
-        self.assertEqual(d.test_spark_versions, ["4.0", "4.2"])
-        self.assertEqual(d.compile_spark_versions, ["4.1"])
-        self.assertEqual(d.source_test_spark_versions, ["4.3"])
+        d = self.reduced(FOUR_VERSIONS, ["4.4"])
+        self.assertEqual(d.test_spark_versions, ["4.1", "4.3"])
+        self.assertEqual(d.compile_spark_versions, ["4.2"])
+        self.assertEqual(d.source_test_spark_versions, ["4.4"])
 
     def test_full_mode_with_source_build(self):
         for d in [m.decide("push", VERSIONS, source_build_versions=["master"]),
@@ -339,8 +341,8 @@ class MainTest(unittest.TestCase):
             "--labels", "[]", "--expected-changed-files", "2",
             file_lines=[SRC, "docs/x.md\tdocs/y.md"])
         self.assertEqual(out["mode"], "reduced")
-        self.assertEqual(json.loads(out["test_spark_versions"]), ["4.0", "4.3"])
-        self.assertEqual(json.loads(out["compile_spark_versions"]), ["4.1", "4.2"])
+        self.assertEqual(json.loads(out["test_spark_versions"]), ["4.1", "4.3"])
+        self.assertEqual(json.loads(out["compile_spark_versions"]), ["4.2"])
 
     def test_error_flag_is_full(self):
         out = self.run_main(
