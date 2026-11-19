@@ -1675,16 +1675,41 @@
           "Please run the REORG TABLE table APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION=<version>) command again."
         ]
       },
+      "UNSUPPORTED_COLUMN_DEFAULT" : {
+        "message" : [
+          "Unsupported default <defaultValue> for column <columnName>. Use a literal of type <columnType> with no suffix."
+        ]
+      },
+      "UNSUPPORTED_COLUMN_DEFAULT_TYPE" : {
+        "message" : [
+          "Unsupported default <defaultValue> for column <columnName>. Type <columnType> cannot have a default value."
+        ]
+      },
       "UNSUPPORTED_DATA_TYPE" : {
         "message" : [
           "IcebergCompatV<version> does not support the data type <dataType> in your schema. Your schema:",
           "<schema>"
         ]
       },
+      "UNSUPPORTED_DATE_COLUMN_DEFAULT" : {
+        "message" : [
+          "Unsupported default <defaultValue> for DATE column <columnName>. Use 'yyyy-MM-dd'."
+        ]
+      },
       "UNSUPPORTED_PARTITION_DATA_TYPE" : {
         "message" : [
           "IcebergCompatV<version> does not support the data type <dataType> for partition columns in your schema. Your partition schema:",
           "<schema>"
+        ]
+      },
+      "UNSUPPORTED_TIMESTAMP_LTZ_COLUMN_DEFAULT" : {
+        "message" : [
+          "Unsupported default <defaultValue> for TIMESTAMP_LTZ column <columnName>. Use 'yyyy-MM-ddTHH:mm:ss+hh:mm'."
+        ]
+      },
+      "UNSUPPORTED_TIMESTAMP_NTZ_COLUMN_DEFAULT" : {
+        "message" : [
+          "Unsupported default <defaultValue> for TIMESTAMP_NTZ column <columnName>. Use 'yyyy-MM-ddTHH:mm:ss'."
         ]
       },
       "UNSUPPORTED_TYPE_WIDENING" : {
