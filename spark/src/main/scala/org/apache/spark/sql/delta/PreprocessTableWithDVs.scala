@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DeltaDataSkippingType, DeltaScan, PreparedDeltaFileIndex}
+import org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
@@ -87,21 +87,18 @@ object ScanWithDeletionVectors {
     //    read tracking with TahoeLogFileIndex (e.g., OptimisticTransaction.withNewTransaction)
     // 4. Performance: Avoids forcing expensive pinned snapshots when not needed
     val hasDVs = index match {
-      // Files pruned by LIMIT are only a subset of the matching files, and the scan lists all of
-      // them if its filters change after the scan was prepared. And reading a table column
-      // named like a column that the Parquet reader treats specially, e.g.
-      // `__delta_internal_row_index`, behaves differently depending on whether the scan handles
-      // DVs. In both cases, unless the prepared files already have DVs, check the whole table.
-      case p: PreparedDeltaFileIndex
-          if isPrunedByLimit(p.preparedScan) || columnsReadSpecially.exists(p.hasColumnNamed) =>
+      // A scan can read more files than it prepared: files pruned by LIMIT are only a subset of
+      // the matching files, and the scan selects its files again if its filters change after it
+      // was prepared. Stats only bound the valid rows of a file, so a skipped file can still
+      // have deleted rows that match the filters. So, like for any other scan, check whether the
+      // table has DVs, but first check the prepared files, then the number of DVs if it is known
+      // without reconstructing the table state, before listing the files of the table.
+      case p: PreparedDeltaFileIndex =>
+        val snapshot = p.preparedScan.scannedSnapshot
         p.preparedScan.files.exists(_.deletionVector != null) ||
-          p.preparedScan.scannedSnapshot.filesForScan(filters = Nil).files
-            .exists(_.deletionVector != null)
-      // Reuse the files of an already prepared scan instead of listing the table again. If the
-      // scan's filters change after it was prepared, it selects its files again, possibly more
-      // of them. Filters are only moved after the scan is prepared, never dropped, so the plan
-      // still filters out all rows of the files the prepared scan skipped, with or without DVs.
-      case p: PreparedDeltaFileIndex => p.preparedScan.files.exists(_.deletionVector != null)
+          snapshot.numDeletionVectorsOptIfKnown.flatten.map(_ > 0).getOrElse {
+            snapshot.filesForScan(filters = Nil).files.exists(_.deletionVector != null)
+          }
       // Check the files in memory instead of running a job to filter them.
       case b: TahoeBatchFileIndex => b.addFiles.exists(_.deletionVector != null)
       case _ =>
@@ -132,17 +129,6 @@ object ScanWithDeletionVectors {
     // Now add a project on top of the row index filter node to
     // remove the skip row column
     Some(Project(planOutput, rowIndexFilter))
-  }
-
-  /** Columns that the Parquet reader treats specially when reading a table with DVs. */
-  private val columnsReadSpecially = Seq(
-    IS_ROW_DELETED_COLUMN_NAME,
-    ROW_INDEX_COLUMN_NAME,
-    ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME)
-
-  private def isPrunedByLimit(scan: DeltaScan): Boolean = {
-    scan.dataSkippingType == DeltaDataSkippingType.limit ||
-      scan.dataSkippingType == DeltaDataSkippingType.filteredLimit
   }
 
   /**

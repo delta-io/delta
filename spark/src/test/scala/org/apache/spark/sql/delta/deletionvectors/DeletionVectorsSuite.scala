@@ -20,7 +20,7 @@ import java.io.{File, FileNotFoundException}
 import java.net.URISyntaxException
 import java.util.UUID
 
-import org.apache.spark.sql.delta.{DataFrameUtils, DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaParquetFileFormat, DeltaTestUtilsForTempViews, ScanWithDeletionVectors}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaOperations, DeltaParquetFileFormat, DeltaTestUtilsForTempViews, ScanWithDeletionVectors}
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, filterUsageRecords, withAllPlansCaptured}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor._
@@ -667,10 +667,10 @@ class DeletionVectorsSuite extends QueryTest
 
         withSQLConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key ->
             useMetadataRowIndex.toString) {
-          // The scan of partition 0 has no files with DVs, so it doesn't need to handle DVs.
-          // But reading a column named like one that the Parquet reader treats specially behaves
-          // differently depending on whether the scan handles DVs, so such a table handles DVs
-          // as before. Handling DVs fails for a column named `__delta_internal_is_row_deleted`.
+          // The scan of partition 0 has no files with DVs, but the table has DVs, so the scan
+          // handles DVs as before, also with a column named like one that the Parquet reader
+          // treats specially. Handling DVs fails for a column named
+          // `__delta_internal_is_row_deleted`, as before.
           val (relation, index) =
             preparedRelation(spark.read.format("delta").load(tablePath).where("part = 0"))
           assert(index.preparedScan.files.forall(_.deletionVector == null))
@@ -679,7 +679,63 @@ class DeletionVectorsSuite extends QueryTest
                 if column == DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME &&
                   e.getMessage.contains(s"Expected only one column with name=$column") => true
           }
-          assert(handlesDVs == (column != "other"))
+          assert(handlesDVs)
+        }
+      }
+    }
+  }
+
+  for {
+    dvCountKnown <- BOOLEAN_DOMAIN
+    useMetadataRowIndex <- BOOLEAN_DOMAIN
+  } test("scan with DVs - files skipped by stats of their valid rows don't return deleted rows: " +
+      s"dvCountKnown=$dvCountKnown, useMetadataRowIndex=$useMetadataRowIndex") {
+    // Without DV metrics in the checksum, the number of DVs isn't known without reconstructing
+    // the table state.
+    withSQLConf(
+        DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED.key -> dvCountKnown.toString,
+        DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key -> useMetadataRowIndex.toString) {
+      withDeletionVectorsEnabled() {
+        withTempDir { dir =>
+          val tablePath = dir.getAbsolutePath
+          Seq(5, 10, 20).toDF("value").coalesce(1).write.format("delta").save(tablePath)
+          Seq(30, 40).toDF("value").coalesce(1)
+            .write.format("delta").mode("append").save(tablePath)
+          DeltaTable.forPath(tablePath).delete("value = 5")
+
+          // Stats only need to bound the valid rows of a file, and other engines may recompute
+          // them on files with DVs. Commit stats of the valid rows of the file with the DV.
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          val txn = deltaLog.startTransaction()
+          val filesWithDVs = txn.snapshot.allFiles.collect().filter(_.deletionVector != null)
+          assert(filesWithDVs.length == 1)
+          txn.commitActions(DeltaOperations.ManualUpdate, filesWithDVs.head.copy(stats =
+            """{"numRecords":3,"minValues":{"value":10},"maxValues":{"value":20},""" +
+              """"nullCount":{"value":0},"tightBounds":true}"""))
+          val snapshot = deltaLog.update()
+          assert(snapshot.numDeletionVectorsOptIfKnown.flatten.isDefined == dvCountKnown)
+
+          // The stats skip the file with the DV, whose deleted row matches the filter.
+          val df = spark.read.format("delta").load(tablePath).where("value = 5 OR value >= 30")
+          val (relation, index) = preparedRelation(df)
+          assert(index.preparedScan.files.map(_.path).toSet ==
+            snapshot.allFiles.collect().filter(_.deletionVector == null).map(_.path).toSet)
+
+          // Scan the prepared relation without its filter, like a scan whose filter is moved
+          // above it, e.g. because it calls a Python UDF. The scan selects its files again, now
+          // including the file with the DV, and must skip the deleted row, which the moved
+          // filter keeps.
+          checkAnswer(DataFrameUtils.ofRows(spark, relation), Seq(10, 20, 30, 40).map(Row(_)))
+          checkAnswer(df, Seq(30, 40).map(Row(_)))
+
+          // The DV check lists the files of the table only if the number of DVs isn't known.
+          val usageRecords = Log4jUsageLogger.track {
+            assert(ScanWithDeletionVectors.unapply(relation).isDefined)
+          }
+          val skippingOps =
+            Seq("delta.skipping.none", "delta.skipping.partition", "delta.skipping.data")
+              .flatMap(filterUsageRecords(usageRecords, _))
+          assert(skippingOps.isEmpty == dvCountKnown)
         }
       }
     }
