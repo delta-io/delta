@@ -58,6 +58,8 @@ private[read] class DeltaV2StreamingBackend(
   override def unsafeVolatileSnapshot: Snapshot =
     Option(latestSnapshot).getOrElse(update())
 
+  override def unsafeVolatileTableId: String = unsafeVolatileSnapshot.metadata.id
+
   override def getSnapshotAt(version: Long): Snapshot =
     tableManager.loadSnapshotAt(version, queryContext)
 
