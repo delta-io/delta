@@ -44,6 +44,7 @@ Current way: Save row commit versions only and extract timestamps from there.
 
 - Is millisecond precision sufficient?
 - What value should be backfilled for rows whose Row Commit Version cannot be resolved to a timestamp (e.g., because the log retention period has expired)?
+- How should the feature be disabled, and what are the consequences?
 
 --------
 
@@ -134,9 +135,7 @@ When Row Commit Timestamps are enabled, writers must satisfy the following addit
 
 ## Removing the feature
 
-> Append the following restriction to Writer Requirements for Row Tracking.
-
-Once the feature is enabled, writers must reject attempts to disable the feature, disable its required properties, suspend Row Tracking or remove its required protocol features.
+TBD
 
 ## Examples
 
