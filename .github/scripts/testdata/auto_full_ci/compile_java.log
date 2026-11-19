@@ -1,0 +1,10 @@
+﻿2026-10-26T18:49:13.9173512Z Current runner version: '2.338.0'
+2026-10-26T18:49:13.9196264Z ##[group]Runner Image Provisioner
+2026-10-26T18:49:13.9197108Z Hosted Compute Agent
+2026-10-26T18:56:10.8263237Z [0m[[0m[31merror[0m] [0m[0m/home/runner/work/delta/delta/spark/v2/src/test/java/org/apache/spark/sql/delta/v2/read/DeltaV2MicroBatchStreamTest.java:705:1: cannot find symbol[0m
+2026-10-26T18:56:10.8343370Z [0m[[0m[31merror[0m] [0m[0m  symbol:   method getPath()[0m
+2026-10-26T18:56:10.8392469Z [0m[[0m[31merror[0m] [0m[0m  location: class org.apache.spark.sql.delta.actions.AddFile[0m
+2026-10-26T18:56:10.8407262Z [0m[[0m[31merror[0m] [0m[0mkernelFile.getAddFile().getPath[0m
+2026-10-26T20:30:30.3482803Z [0m[[0m[31merror[0m] [0m[0m(sparkV2 / Test / [31mcompileIncremental[0m) javac returned non-zero exit code[0m
+2026-10-26T20:30:30.3561183Z [0m[[0m[31merror[0m] [0m[0mTotal time: 5969 s (01:39:29), completed Oct 26, 2026, 8:30:30 PM[0m
+2026-10-26T20:30:31.5536324Z ##[error]Process completed with exit code 1.
