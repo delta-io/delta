@@ -871,7 +871,7 @@ case class CreateDeltaTableCommand(
         newMetadata.configuration,
         txn.snapshot)
       newMetadata = newMetadata.copy(configuration = updatedConfig)
-      if (allowCatalogManaged && txn.snapshot.isCatalogOwned) {
+      if (allowCatalogManaged && txn.snapshot.isCatalogManaged) {
         // Preserve the existing Delta metadata id across REPLACE. This is distinct from the
         // Unity Catalog table id stored in `io.unitycatalog.tableId`.
         newMetadata = newMetadata.copy(id = txn.snapshot.metadata.id)

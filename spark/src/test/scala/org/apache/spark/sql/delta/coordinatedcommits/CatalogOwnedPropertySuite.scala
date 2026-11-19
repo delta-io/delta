@@ -40,7 +40,7 @@ class CatalogOwnedPropertySuite extends QueryTest
 
   /**
    * Validate if the table is catalog managed or not by checking the following:
-   * 1) [[Snapshot.isCatalogOwned]] === expected
+   * 1) [[Snapshot.isCatalogManaged]] === expected
    * 2) [[Metadata.configuration]] contains [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]]
    * 3) [[Protocol.readerAndWriterFeatureNames]] contains [[CatalogManagedTableFeature.name]]
    *    and its dependent features.
@@ -50,7 +50,7 @@ class CatalogOwnedPropertySuite extends QueryTest
    */
   private def validateCatalogOwnedAndUCTableId(tableName: String, expected: Boolean): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(tableName))
-    assert(snapshot.isCatalogOwned === expected)
+    assert(snapshot.isCatalogManaged === expected)
     assert(snapshot.metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
       === expected)
     // CatalogManaged enabled table should have the protocol version of (3, 7),
