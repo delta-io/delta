@@ -83,6 +83,8 @@ class HudiConverter
    * the existing job completes.
    * Note that if there is another snapshot already queued, the previous snapshot will get
    * removed from the wait queue. Only one snapshot is queued at any point of time.
+   * Exception: if the queued snapshot has a later version, it stays queued and the provided
+   * snapshot is dropped instead.
    *
    */
   override def enqueueSnapshotForConversion(
@@ -92,8 +94,12 @@ class HudiConverter
       return
     }
     val log = snapshotToConvert.deltaLog
-    // Replace any previously queued snapshot
-    val previouslyQueued = standbyConversion.getAndSet((snapshotToConvert, txn))
+    // Keep the queued snapshot if it has a later version, otherwise replace it. The post-commit
+    // hooks of two commits run out of order, so the snapshot of the older commit can arrive second.
+    val previouslyQueued = standbyConversion.getAndUpdate { queued =>
+      if (queued != null && queued._1.version > snapshotToConvert.version) queued
+      else (snapshotToConvert, txn)
+    }
     asyncThreadLock.synchronized {
       if (!asyncConverterThreadActive) {
         val threadName = HudiConverterHook.ASYNC_HUDI_CONVERTER_THREAD_NAME +
@@ -155,12 +161,13 @@ class HudiConverter
 
     // If there already was a snapshot waiting to be converted, log that snapshot info.
     if (previouslyQueued != null) {
+      val versions = Seq(snapshotToConvert.version, previouslyQueued._1.version)
       recordDeltaEvent(
         snapshotToConvert.deltaLog,
         "delta.hudi.conversion.async.backlog",
         data = Map(
-          "newVersion" -> snapshotToConvert.version,
-          "replacedVersion" -> previouslyQueued._1.version)
+          "newVersion" -> versions.max,
+          "replacedVersion" -> versions.min)
       )
     }
   }
