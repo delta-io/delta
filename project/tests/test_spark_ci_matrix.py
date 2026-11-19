@@ -344,6 +344,36 @@ class MainTest(unittest.TestCase):
         self.assertEqual(json.loads(out["test_spark_versions"]), ["4.1", "4.3"])
         self.assertEqual(json.loads(out["compile_spark_versions"]), ["4.2"])
 
+    # Changed-file lines in the workflow's jq format: "<filename>\t<previous_filename>".
+    SHIM = "spark/src/main/scala-shims/spark-4.1/X.scala"
+    PLAIN = "spark/src/main/scala/X.scala"
+
+    def run_rename(self, line):
+        return self.run_main(
+            "--event-name", "pull_request", "--spark-versions", json.dumps(VERSIONS),
+            "--labels", "[]", "--expected-changed-files", "1", file_lines=[line])
+
+    def test_rename_out_of_shim_dir_is_full_end_to_end(self):
+        # Only the previous path is a shim path, so this passes only if it is kept.
+        out = self.run_rename(self.PLAIN + "\t" + self.SHIM)
+        self.assertEqual(out["mode"], "full")
+        self.assertIn(self.SHIM, out["reason"])
+
+    def test_rename_into_shim_dir_is_full_end_to_end(self):
+        out = self.run_rename(self.SHIM + "\t" + self.PLAIN)
+        self.assertEqual(out["mode"], "full")
+        self.assertIn(self.SHIM, out["reason"])
+
+    def test_rename_between_plain_paths_is_reduced_end_to_end(self):
+        # A rename is one changed file, so it matches the PR's changed_files count of 1.
+        out = self.run_rename(self.PLAIN + "\tspark/src/main/scala/Y.scala")
+        self.assertEqual(out["mode"], "reduced")
+
+    def test_parse_changed_files_keeps_previous_path(self):
+        self.assertEqual(
+            m.parse_changed_files([self.PLAIN + "\t" + self.SHIM + "\n", "\n", "a.scala\n"]),
+            [[self.PLAIN, self.SHIM], ["a.scala"]])
+
     def test_error_flag_is_full(self):
         out = self.run_main(
             "--event-name", "pull_request", "--spark-versions", json.dumps(VERSIONS),
