@@ -202,11 +202,11 @@ public class Metadata implements Serializable {
   }
 
   /** Returns a new Metadata object with the given description. */
-  public Metadata withDescription(String description) {
+  public Metadata withDescription(Optional<String> description) {
     return new Metadata(
         this.id,
         this.name,
-        Optional.of(description),
+        description,
         this.format,
         this.schemaString,
         this.schema, // pass Lazy directly to avoid forcing evaluation

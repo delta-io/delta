@@ -212,7 +212,7 @@ public class TransactionMetadataFactory {
       SnapshotImpl readSnapshot,
       Optional<Map<String, String>> propertiesAdded,
       Optional<Set<String>> propertyKeysRemoved,
-      Optional<String> newDescription,
+      Optional<Optional<String>> newDescription,
       Optional<StructType> newSchema,
       Optional<List<Column>> clusteringColumns) {
     if (propertiesAdded.isPresent() && propertyKeysRemoved.isPresent()) {
@@ -245,7 +245,7 @@ public class TransactionMetadataFactory {
     }
 
     if (newDescription.isPresent()
-        && !newDescription.equals(readSnapshot.getMetadata().getDescription())) {
+        && !newDescription.get().equals(readSnapshot.getMetadata().getDescription())) {
       newMetadata =
           Optional.of(
               newMetadata.orElse(readSnapshot.getMetadata()).withDescription(newDescription.get()));
