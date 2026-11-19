@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.amt.AMTCommitStats
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -169,7 +169,7 @@ trait TransactionHelper extends DeltaLogging {
       Option[TableCommitCoordinatorClient] = {
     if (snapshot.isCatalogOwned) {
       // Catalog managed table's commit coordinator is always determined by the catalog.
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+      CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark, catalogTable, snapshot
       )
     } else {
@@ -215,7 +215,7 @@ trait TransactionHelper extends DeltaLogging {
         // "CATALOG_EMPTY" because `catalogTable` is not available
         // for the 0th FS commit.
         catalogTable.flatMap { ct =>
-          CatalogOwnedTableUtils.getCatalogName(
+          CatalogManagedTableUtils.getCatalogName(
             spark,
             identifier = ct.identifier)
         }.getOrElse("CATALOG_MISSING")

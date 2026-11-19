@@ -22,7 +22,7 @@ import java.io.File
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DescribeDeltaHistoryCommand
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -197,7 +197,7 @@ trait DescribeDeltaHistorySuiteBase
   protected def getProperties(
       extraProperty: Option[Map[String, String]] = None): Map[String, String] = {
     val catalogOwnedProperty = if (catalogOwnedDefaultCreationEnabledInTests) {
-      CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
+      CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
         case (feature, config, value)
         => config.key -> value
       }.toMap ++
