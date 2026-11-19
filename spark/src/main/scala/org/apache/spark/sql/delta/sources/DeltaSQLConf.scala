@@ -662,6 +662,31 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val AMT_UPGRADE_ENABLED =
+    buildConf("amt.upgrade.enabled")
+      .internal()
+      .doc("When true, setting `delta.enableAdaptiveMetadata` to true on an existing table " +
+        "upgrades it to AMT.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val AMT_UPGRADE_BUILD_FIRST_TREE =
+    buildConf("amt.upgrade.buildFirstTree")
+      .internal()
+      .doc("When true, the post-commit checkpoint hook of the enablement commit of an upgrade " +
+        "runs an OPTIMIZE CHECKPOINT that builds the first AMT tree. When false, the first tree " +
+        "comes from a later scheduled checkpoint.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val AMT_UPGRADE_CHECK_INLINE_DVS =
+    buildConf("amt.upgrade.checkInlineDVs")
+      .internal()
+      .doc("When true, the upgrade to AMT scans all files of the table and rejects the table if " +
+        "a file has an inline deletion vector.")
+      .booleanConf
+      .createWithDefault(true)
+
   val AMT_ENTRIES_PER_LEAF =
     buildConf("amt.entriesPerLeaf")
       .internal()

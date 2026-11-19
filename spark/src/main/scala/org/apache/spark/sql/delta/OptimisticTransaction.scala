@@ -1169,26 +1169,50 @@ trait OptimisticTransactionImpl extends TransactionHelper
    * enabled(rowTracking, deletionVectors) or a specific configuration (column mapping `id` mode).
    */
   private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
+    val amtProperty = AMTUtils.amtPropertyValue(metadata.configuration)
+    val existingTableHasAdaptiveMetadata =
+      AMTUtils.amtSupported(snapshot.protocol, isPreviewCompatible = true)
+    val isUpgrade = !isCreatingNewTable && !existingTableHasAdaptiveMetadata
     // The AMT feature the table has or is being given, which names it in the errors below. A table
     // has at most one; `performTableFeatureIncompatibilityCheck` checks that on the final protocol.
     val amtFeatureOpt = AdaptiveMetadataTableFeatureBase.features.find { feature =>
       protocol.isFeatureSupported(feature) ||
         TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(metadata.configuration, feature)
-    }
+    }.orElse(Option.when(isUpgrade && amtProperty.contains(true))(AdaptiveMetadataTableFeature))
     val adaptiveMetadataEnabled = amtFeatureOpt.isDefined
-    if (!adaptiveMetadataEnabled) {
+    // With the AMT property false, the commit writes no AMT state, so it needs no AMT dependency.
+    if (!adaptiveMetadataEnabled || amtProperty.contains(false)) {
       return metadata
     }
     // Iceberg-native V4 tables get the preview feature; see `IcebergNativeV4TableFeature`.
     val amtFeature = amtFeatureOpt.getOrElse(AdaptiveMetadataPreviewTableFeature)
     val amtFeatureName = amtFeature.name
 
-    val existingTableHasAdaptiveMetadata =
-      AMTUtils.amtEnabled(snapshot, isPreviewCompatible = true)
-    // REPLACE counts as creating a new table, but it keeps the existing table and its history, so
-    // adding AMT through it is an upgrade too.
+    // An existing table without AMT. Only the enablement commit of an upgrade may add AMT to it: it
+    // sets the AMT property to true. REPLACE is never one: it keeps the table and its history. For
+    // the enablement commit, this block checks only the dependencies.
     if (readVersion >= 0 && !existingTableHasAdaptiveMetadata) {
-      throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeatureName)
+      val setsAMTProperty =
+        amtFeature == AdaptiveMetadataTableFeature && amtProperty.contains(true)
+      if (isCreatingNewTable || !setsAMTProperty) {
+        throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeatureName)
+      }
+      // Row tracking on an existing table needs a backfill, so the upgrade cannot enable it.
+      Seq(
+        DeltaConfigs.ROW_TRACKING_ENABLED ->
+          RowTracking.isEnabled(snapshot.protocol, snapshot.metadata),
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION ->
+          DeletionVectorUtils.deletionVectorsWritable(snapshot.protocol, snapshot.metadata))
+        .collectFirst { case (config, false) => config }
+        .foreach { config =>
+          throw DeltaErrors.adaptiveMetadataRequiresDependentFeatureEnabled(amtFeatureName,
+            config.key, snapshot.metadata.configuration.getOrElse(config.key, "false"))
+        }
+      if (metadata.columnMappingMode != IdMapping) {
+        throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
+          amtFeatureName, metadata.columnMappingMode.name)
+      }
+      return metadata
     }
 
     // rowTracking / deletionVectors: these dependencies must be enabled via their metadata flag.

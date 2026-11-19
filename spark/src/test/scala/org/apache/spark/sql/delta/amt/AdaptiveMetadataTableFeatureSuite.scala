@@ -85,7 +85,9 @@ class AdaptiveMetadataTableFeatureSuite
     assert(AdaptiveMetadataPreviewTableFeature.isInstanceOf[RemovableFeature])
   }
 
-  test("feature is not automatically enabled by metadata") {
+  test("only adaptiveMetadata-dev is enabled by the AMT property on existing tables") {
+    assert(AdaptiveMetadataTableFeature.isInstanceOf[FeatureAutomaticallyEnabledByMetadata])
+    assert(AdaptiveMetadataTableFeature.automaticallyUpdateProtocolOfExistingTables)
     assert(!AdaptiveMetadataPreviewTableFeature.isInstanceOf[FeatureAutomaticallyEnabledByMetadata])
   }
 
