@@ -562,7 +562,7 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
       val entries =
         spark.createDataFrame(Seq(("data/a.parquet", unknownLeaf))).toDF("location", "leafPath")
       val columnarError = intercept[Exception] {
-        provider.withLeafEntryContext(entries, leaves = Seq.empty).collect()
+        provider.manifestReader.withLeafEntryContext(entries, leaves = Seq.empty).collect()
       }
       assert(causeMessages(columnarError).contains(
         "Malformed AMT data entry 'data/a.parquet': no leaf manifest matches " + unknownLeaf + "."),

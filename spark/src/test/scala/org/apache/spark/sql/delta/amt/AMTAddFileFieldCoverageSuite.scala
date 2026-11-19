@@ -37,12 +37,12 @@ import org.apache.spark.sql.types.StructType
 class AMTAddFileFieldCoverageSuite extends AMTSyntheticTreeTestBase {
 
   private val updateInstructions =
-    "Revisit addFileColumn in ColumnarAMTCheckpointProvider and DataEntry.toAddFile, decide " +
+    "Revisit addFileColumn in AMTManifestReader and DataEntry.toAddFile, decide " +
       "whether each added or removed field needs a transformation in the conversion, then " +
       "update the expected map in AMTAddFileFieldCoverageSuite."
 
   private val removeFileUpdateInstructions =
-    "Revisit removeFileColumn in AMTCheckpointProvider and AddFile.removeWithTimestamp, " +
+    "Revisit removeFileColumn in AMTManifestReader and AddFile.removeWithTimestamp, " +
       "decide whether each added or removed field needs a transformation in the change files, " +
       "then update the expected map in AMTAddFileFieldCoverageSuite."
 
@@ -133,7 +133,7 @@ class AMTAddFileFieldCoverageSuite extends AMTSyntheticTreeTestBase {
         // `addFileColumn` has no fallback case, so an unmapped field throws a MatchError.
         val unmapped = Action.addFileSchema.fields.toSeq.filter { field =>
           try {
-            provider.addFileColumn(spark, field, lit(0L))
+            provider.manifestReader.addFileColumn(spark, field, lit(0L))
             false
           } catch {
             case _: MatchError => true
@@ -153,7 +153,8 @@ class AMTAddFileFieldCoverageSuite extends AMTSyntheticTreeTestBase {
       val removeFileSchema = Action.logSchema("remove").dataType.asInstanceOf[StructType]
       val unmapped = removeFileSchema.fields.toSeq.filter { field =>
         try {
-          provider.removeFileColumn(field, timestamp = lit(0L), dataChange = lit(true))
+          provider.manifestReader.removeFileColumn(
+            field, timestamp = lit(0L), dataChange = lit(true))
           false
         } catch {
           case _: MatchError => true
