@@ -119,8 +119,9 @@ public interface CommitRangeBuilder {
   /**
    * Enables or disables validation that the requested commit range is complete and contiguous.
    *
-   * <p>Validation is enabled by default. When disabled, the range may contain missing versions and
-   * only {@link CommitRange#getCommitFiles()} is supported.
+   * <p>Validation is enabled by default. When disabled, the range may contain missing versions, may
+   * be empty or have a start version after its end version, and only {@link
+   * CommitRange#getCommitFiles()} is supported.
    *
    * @param enabled whether to validate the commit range
    * @return this builder instance
@@ -132,7 +133,9 @@ public interface CommitRangeBuilder {
    *
    * <p>This option defaults to {@code true} and only affects ranges built with {@link
    * #withCommitRangeValidation(boolean)} disabled. When {@code false}, raw commit-file iteration
-   * skips missing versions.
+   * skips missing versions. When {@code true}, a missing version is reported while iterating, but
+   * only if a later commit proves it is missing: a missing suffix with no later commit is not an
+   * error.
    *
    * @param enabled whether missing versions should fail raw commit-file iteration
    * @return this builder instance
@@ -150,7 +153,7 @@ public interface CommitRangeBuilder {
    * @return a new {@link CommitRange} instance configured according to this builder's
    *     specifications
    * @throws IllegalArgumentException if the builder configuration is invalid (e.g., start version
-   *     {@code >} end version)
+   *     {@code >} end version, unless commit range validation is disabled)
    */
   CommitRange build(Engine engine);
 

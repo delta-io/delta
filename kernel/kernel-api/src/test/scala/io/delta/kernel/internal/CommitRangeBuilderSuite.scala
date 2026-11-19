@@ -18,6 +18,7 @@ package io.delta.kernel.internal
 import java.util.{Collections, NoSuchElementException, Optional}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.{CommitFileStatus, CommitRange, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
@@ -918,14 +919,11 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         "startVersion=0",
         "Earliest available version is 2"))),
     RelaxedCommitFilesTestCase(
-      "reports an explicit missing suffix lazily",
+      "does not report a missing suffix without a later commit",
       Seq(0L, 1L),
       VersionBoundaryDef(3),
       failOnDataLoss = true,
-      Seq(0L, 1L),
-      Some(classOf[InvalidTableException] -> Seq(
-        "versions are not contiguous",
-        "Table version 2 is missing or unavailable for this log operation."))),
+      Seq(0L, 1L)),
     RelaxedCommitFilesTestCase(
       "resolves an implicit end to the last listed commit",
       Seq(0L, 2L),
@@ -955,11 +953,10 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     }
   }
 
-  test("relaxed construction still rejects an empty listing") {
+  test("validated construction still rejects an empty listing") {
     val engine = createMockFSListFromEngine(Seq.empty)
     val error = intercept[KernelException] {
       TableManager.loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
-        .withCommitRangeValidation(false)
         .build(engine)
     }
     assert(error.getMessage.contains("no log files found"))
@@ -1450,5 +1447,485 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     intercept[StartVersionNotFoundException] {
       builder.build(createMockFSListFromEngine(deltaFileStatuses(1L to 2L)))
     }
+  }
+
+  ///////////////////////////////////////////////////////
+  // Raw commit-file semantics (DeltaLog parity) tests //
+  ///////////////////////////////////////////////////////
+
+  private val startErrorParts = (start: Long, earliest: Long) =>
+    (
+      classOf[StartVersionNotFoundException],
+      Seq(
+        s"startVersion=$start",
+        s"Earliest available version is $earliest"))
+
+  private val gapErrorParts = (missing: Long) =>
+    (
+      classOf[InvalidTableException],
+      Seq(
+        "versions are not contiguous",
+        s"Table version $missing is missing or unavailable for this log operation."))
+
+  private def buildRawRange(
+      files: Seq[FileStatus],
+      start: Long,
+      end: Option[Long],
+      commitRangeValidation: Boolean,
+      failOnDataLoss: Boolean = true,
+      logData: Seq[ParsedLogData] = Seq.empty): CommitRange = {
+    var builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(start))
+      .withCommitRangeValidation(commitRangeValidation)
+      .withFailOnDataLoss(failOnDataLoss)
+    end.foreach(v => builder = builder.withEndBoundary(CommitBoundary.atVersion(v)))
+    if (logData.nonEmpty) {
+      builder = builder.withLogData(logData.asJava)
+    }
+    builder.build(createMockFSListFromEngine(files))
+  }
+
+  /** Drains getCommitFiles, returning yielded versions and the error that ended iteration. */
+  private def drainCommitFiles(
+      commitRange: CommitRange): (Seq[CommitFileStatus], Option[KernelException]) = {
+    val iterator = commitRange.getCommitFiles
+    try {
+      val yielded = ArrayBuffer[CommitFileStatus]()
+      var error: Option[KernelException] = None
+      try {
+        while (iterator.hasNext) {
+          yielded += iterator.next()
+        }
+      } catch {
+        case e: KernelException => error = Some(e)
+      }
+      // The iterator is fused: it never recovers after finishing or failing.
+      assert(!iterator.hasNext)
+      intercept[NoSuchElementException](iterator.next())
+      (yielded.toSeq, error)
+    } finally {
+      iterator.close()
+    }
+  }
+
+  private case class RawRangeCase(
+      description: String,
+      availableVersions: Seq[Long],
+      start: Long,
+      end: Option[Long],
+      // Expected outcome with failOnDataLoss = true: yielded versions then an optional error
+      strictVersions: Seq[Long],
+      strictError: Option[(Class[_ <: KernelException], Seq[String])],
+      // Expected versions with failOnDataLoss = false (never an error)
+      lenientVersions: Seq[Long],
+      expectedEnd: Long)
+
+  private val rawRangeCases = Seq(
+    // Requested range [5, 7]
+    RawRangeCase(
+      "[5,7] with 5,6,7",
+      Seq(5L, 6L, 7L),
+      5,
+      Some(7),
+      Seq(5L, 6L, 7L),
+      None,
+      Seq(5L, 6L, 7L),
+      7),
+    RawRangeCase(
+      "[5,7] with 5,6,7 and later commits are never yielded",
+      Seq(3L, 4L, 5L, 6L, 7L, 8L, 9L, 12L),
+      5,
+      Some(7),
+      Seq(5L, 6L, 7L),
+      None,
+      Seq(5L, 6L, 7L),
+      7),
+    RawRangeCase(
+      "[5,7] with 6,7 (missing start)",
+      Seq(6L, 7L),
+      5,
+      Some(7),
+      Seq.empty,
+      Some(startErrorParts(5, 6)),
+      Seq(6L, 7L),
+      7),
+    RawRangeCase(
+      "[5,7] with 5,7 (interior gap)",
+      Seq(5L, 7L),
+      5,
+      Some(7),
+      Seq(5L),
+      Some(gapErrorParts(6)),
+      Seq(5L, 7L),
+      7),
+    RawRangeCase(
+      "[5,7] with 5,6,8 (gap proven by a later commit)",
+      Seq(5L, 6L, 8L),
+      5,
+      Some(7),
+      Seq(5L, 6L),
+      Some(gapErrorParts(7)),
+      Seq(5L, 6L),
+      7),
+    RawRangeCase(
+      "[5,7] with 5,6,10,11 (only the first later commit is inspected)",
+      Seq(5L, 6L, 10L, 11L),
+      5,
+      Some(7),
+      Seq(5L, 6L),
+      Some(gapErrorParts(7)),
+      Seq(5L, 6L),
+      7),
+    RawRangeCase(
+      "[5,7] with 5,6 and no 7+ (a missing suffix is not proven)",
+      Seq(5L, 6L),
+      5,
+      Some(7),
+      Seq(5L, 6L),
+      None,
+      Seq(5L, 6L),
+      7),
+    RawRangeCase(
+      "[5,7] with only 8 at/after 5 (missing start)",
+      Seq(2L, 8L),
+      5,
+      Some(7),
+      Seq.empty,
+      Some(startErrorParts(5, 8)),
+      Seq.empty,
+      7),
+    RawRangeCase(
+      "[5,7] with no 5+",
+      Seq(0L, 1L, 2L, 3L, 4L),
+      5,
+      Some(7),
+      Seq.empty,
+      None,
+      Seq.empty,
+      7),
+    // Unbounded from 5
+    RawRangeCase(
+      "unbounded from 5 with no 5+",
+      Seq(0L, 1L, 2L),
+      5,
+      None,
+      Seq.empty,
+      None,
+      Seq.empty,
+      5),
+    RawRangeCase(
+      "unbounded from 5 with 5,6,7",
+      Seq(5L, 6L, 7L),
+      5,
+      None,
+      Seq(5L, 6L, 7L),
+      None,
+      Seq(5L, 6L, 7L),
+      7),
+    // Reversed range [7, 5]
+    RawRangeCase(
+      "reversed [7,5] with 7 present",
+      Seq(6L, 7L, 8L),
+      7,
+      Some(5),
+      Seq.empty,
+      None,
+      Seq.empty,
+      5),
+    RawRangeCase(
+      "reversed [7,5] with no 7+",
+      Seq(3L, 4L, 5L, 6L),
+      7,
+      Some(5),
+      Seq.empty,
+      None,
+      Seq.empty,
+      5),
+    RawRangeCase(
+      "reversed [7,5] with 7 absent and 8 present (missing start)",
+      Seq(5L, 8L),
+      7,
+      Some(5),
+      Seq.empty,
+      Some(startErrorParts(7, 8)),
+      Seq.empty,
+      5))
+
+  for (testCase <- rawRangeCases; failOnDataLoss <- Seq(true, false)) {
+    test(s"raw getCommitFiles ${testCase.description} - failOnDataLoss=$failOnDataLoss") {
+      val files = deltaFileStatuses(testCase.availableVersions)
+      // Building never fails; any data loss is only reported while iterating.
+      val commitRange = buildRawRange(
+        files,
+        testCase.start,
+        testCase.end,
+        commitRangeValidation = false,
+        failOnDataLoss = failOnDataLoss)
+      assert(commitRange.getStartVersion == testCase.start)
+      assert(commitRange.getEndVersion == testCase.expectedEnd)
+      assert(commitRange.isEmpty == testCase.lenientVersions.isEmpty)
+
+      val (yielded, error) = drainCommitFiles(commitRange)
+      val expectedVersions =
+        if (failOnDataLoss) testCase.strictVersions else testCase.lenientVersions
+      assert(yielded.map(_.getVersion) == expectedVersions)
+      // Only commits inside the requested range are ever yielded.
+      yielded.foreach { commitFile =>
+        assert(commitFile.getVersion >= testCase.start)
+        assert(testCase.end.forall(commitFile.getVersion <= _))
+      }
+      val expectedError = if (failOnDataLoss) testCase.strictError else None
+      assert(error.isDefined == expectedError.isDefined)
+      expectedError.foreach { case (errorClass, messageParts) =>
+        assert(errorClass.isInstance(error.get))
+        messageParts.foreach(part => assert(error.get.getMessage.contains(part)))
+      }
+    }
+  }
+
+  test("raw getCommitFiles reports the error from hasNext, after yielding earlier commits") {
+    val commitRange = buildRawRange(
+      deltaFileStatuses(Seq(5L, 6L, 8L)),
+      5,
+      Some(7),
+      commitRangeValidation = false)
+    val iterator = commitRange.getCommitFiles
+    assert(iterator.hasNext)
+    assert(iterator.next().getVersion == 5)
+    assert(iterator.next().getVersion == 6)
+    intercept[InvalidTableException](iterator.hasNext)
+    assert(!iterator.hasNext)
+  }
+
+  test("raw getCommitFiles close stops iteration") {
+    val commitRange = buildRawRange(
+      deltaFileStatuses(Seq(5L, 6L, 7L)),
+      5,
+      Some(7),
+      commitRangeValidation = false)
+    val iterator = commitRange.getCommitFiles
+    assert(iterator.next().getVersion == 5)
+    iterator.close()
+    assert(!iterator.hasNext)
+  }
+
+  test("raw range listing stops after the first commit past the requested end") {
+    val files = deltaFileStatuses(0L to 1000L)
+    var filesListed = 0
+    val fileSystemClient = new BaseMockFileSystemClient {
+      override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+        val listed = listFromProvider(files)(filePath).iterator.map { fs =>
+          filesListed += 1
+          fs
+        }
+        toCloseableIterator(listed.asJava)
+      }
+
+      override def resolvePath(path: String): String = path
+    }
+    val commitRange = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(2))
+      .withEndBoundary(CommitBoundary.atVersion(5))
+      .withCommitRangeValidation(false)
+      .build(mockEngine(fileSystemClient = fileSystemClient))
+
+    assert(commitRange.getEndVersion == 5)
+    assert(drainCommitFiles(commitRange)._1.map(_.getVersion) == (2L to 5L))
+    // Versions 2 to 5 plus the first commit past the end (version 6)
+    assert(filesListed == 5)
+  }
+
+  test("isEmpty is false for a validated range") {
+    val commitRange = buildRawRange(
+      deltaFileStatuses(Seq(5L, 6L, 7L)),
+      5,
+      Some(7),
+      commitRangeValidation = true)
+    assert(!commitRange.isEmpty)
+  }
+
+  test("validated ranges still reject reversed, empty and incomplete ranges") {
+    // Reversed
+    val reversed = intercept[IllegalArgumentException] {
+      buildRawRange(deltaFileStatuses(Seq(7L, 8L)), 7, Some(5), commitRangeValidation = true)
+    }
+    assert(reversed.getMessage.contains("startVersion must be <= endVersion"))
+    // Empty listing
+    val empty = intercept[KernelException] {
+      buildRawRange(deltaFileStatuses(0L to 4L), 5, Some(7), commitRangeValidation = true)
+    }
+    assert(empty.getMessage.contains("no log files found"))
+    // Missing start
+    intercept[StartVersionNotFoundException] {
+      buildRawRange(deltaFileStatuses(Seq(6L, 7L)), 5, Some(7), commitRangeValidation = true)
+    }
+    // Missing end, even though nothing later exists
+    val missingEnd = intercept[KernelException] {
+      buildRawRange(deltaFileStatuses(Seq(5L, 6L)), 5, Some(7), commitRangeValidation = true)
+    }
+    assert(missingEnd.getMessage.contains("endVersion=7"))
+    // Interior gap
+    val gap = intercept[InvalidTableException] {
+      buildRawRange(deltaFileStatuses(Seq(5L, 7L)), 5, Some(7), commitRangeValidation = true)
+    }
+    assert(gap.getMessage.contains("versions are not contiguous"))
+  }
+
+  test("validated ranges keep the commit file and action-read contracts") {
+    val files = deltaFileStatuses(Seq(5L, 6L, 7L, 8L))
+    val commitRange = buildRawRange(files, 5, Some(7), commitRangeValidation = true)
+    assert(commitRange.getEndVersion == 7)
+    assert(drainCommitFiles(commitRange)._1.map(_.getVersion) == Seq(5L, 6L, 7L))
+    assert(getDeltaFileVersions(commitRange) == Seq(5L, 6L, 7L))
+  }
+
+  test("relaxed ranges, including empty ones, reject action iteration") {
+    val commitRange = buildRawRange(
+      deltaFileStatuses(Seq(0L, 1L)),
+      5,
+      Some(7),
+      commitRangeValidation = false)
+    assert(commitRange.isEmpty)
+    intercept[KernelException](commitRange.getActions(null, null, null))
+    intercept[KernelException](commitRange.getCommitActions(null, null, null))
+  }
+
+  // Catalog-managed tables
+
+  private def stagedLogData(versions: Seq[Long]): Seq[ParsedLogData] =
+    versions.map(v => ParsedCatalogCommitData.forFileStatus(stagedCommitFile(v)))
+
+  private case class CatalogRawRangeCase(
+      description: String,
+      publishedVersions: Seq[Long],
+      stagedVersions: Seq[Long],
+      start: Long,
+      end: Long,
+      strictVersions: Seq[Long],
+      strictError: Option[(Class[_ <: KernelException], Seq[String])],
+      lenientVersions: Seq[Long])
+
+  private val catalogRawRangeCases = Seq(
+    CatalogRawRangeCase(
+      "published 5,6 and staged 7,8 merge; the later staged commit is not yielded",
+      Seq(5L, 6L),
+      Seq(7L, 8L),
+      5,
+      7,
+      Seq(5L, 6L, 7L),
+      None,
+      Seq(5L, 6L, 7L)),
+    CatalogRawRangeCase(
+      "staged commits after a published prefix with a hole before them",
+      Seq(5L),
+      Seq(7L, 8L),
+      5,
+      8,
+      Seq(5L),
+      Some(gapErrorParts(6)),
+      Seq(5L, 7L, 8L)),
+    CatalogRawRangeCase(
+      "staged commit past the end proves a missing end version",
+      Seq(5L, 6L),
+      Seq(8L, 9L),
+      5,
+      7,
+      Seq(5L, 6L),
+      Some(gapErrorParts(7)),
+      Seq(5L, 6L)),
+    CatalogRawRangeCase(
+      "staged commit right after the end does not prove anything",
+      Seq(5L, 6L, 7L),
+      Seq(8L),
+      5,
+      7,
+      Seq(5L, 6L, 7L),
+      None,
+      Seq(5L, 6L, 7L)),
+    CatalogRawRangeCase(
+      "only staged commits past the end prove a missing start",
+      Seq.empty,
+      Seq(8L, 9L),
+      5,
+      7,
+      Seq.empty,
+      Some(startErrorParts(5, 8)),
+      Seq.empty),
+    CatalogRawRangeCase(
+      "reversed range with a staged commit after the start",
+      Seq.empty,
+      Seq(8L, 9L),
+      7,
+      5,
+      Seq.empty,
+      Some(startErrorParts(7, 8)),
+      Seq.empty),
+    CatalogRawRangeCase(
+      "reversed range whose start is the first staged commit",
+      Seq.empty,
+      Seq(7L, 8L),
+      7,
+      5,
+      Seq.empty,
+      None,
+      Seq.empty))
+
+  for (testCase <- catalogRawRangeCases; failOnDataLoss <- Seq(true, false)) {
+    test(s"raw getCommitFiles with catalog commits: ${testCase.description} - " +
+      s"failOnDataLoss=$failOnDataLoss") {
+      val commitRange = buildRawRange(
+        deltaFileStatuses(testCase.publishedVersions),
+        testCase.start,
+        Some(testCase.end),
+        commitRangeValidation = false,
+        failOnDataLoss = failOnDataLoss,
+        logData = stagedLogData(testCase.stagedVersions))
+      assert(commitRange.getEndVersion == testCase.end)
+      assert(commitRange.isEmpty == testCase.lenientVersions.isEmpty)
+
+      val (yielded, error) = drainCommitFiles(commitRange)
+      val expectedVersions =
+        if (failOnDataLoss) testCase.strictVersions else testCase.lenientVersions
+      assert(yielded.map(_.getVersion) == expectedVersions)
+      val expectedError = if (failOnDataLoss) testCase.strictError else None
+      assert(error.isDefined == expectedError.isDefined)
+      expectedError.foreach { case (errorClass, messageParts) =>
+        assert(errorClass.isInstance(error.get))
+        messageParts.foreach(part => assert(error.get.getMessage.contains(part)))
+      }
+    }
+  }
+
+  test("raw getCommitFiles prefers a staged commit over a published one for the same version") {
+    val commitRange = buildRawRange(
+      deltaFileStatuses(Seq(5L, 6L, 7L)),
+      5,
+      Some(7),
+      commitRangeValidation = false,
+      logData = stagedLogData(Seq(6L, 7L, 8L)))
+    val (yielded, error) = drainCommitFiles(commitRange)
+    assert(error.isEmpty)
+    assert(yielded.map(_.getVersion) == Seq(5L, 6L, 7L))
+    assert(!FileNames.isStagedDeltaFile(yielded(0).getFileStatus.getPath))
+    assert(FileNames.isStagedDeltaFile(yielded(1).getFileStatus.getPath))
+    assert(FileNames.isStagedDeltaFile(yielded(2).getFileStatus.getPath))
+  }
+
+  test("raw getCommitFiles ignores published catalog commits removed by metadata cleanup") {
+    // The catalog still reports published v5, but 5.json was removed. The listing is
+    // authoritative for leading published commits, so v5 is a missing start.
+    val logData = Seq[ParsedLogData](
+      ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 5, deltaFileStatus(5)),
+      ParsedCatalogCommitData.forFileStatus(stagedCommitFile(6)),
+      ParsedCatalogCommitData.forFileStatus(stagedCommitFile(7)))
+    val commitRange = buildRawRange(
+      Seq.empty[FileStatus],
+      5,
+      Some(7),
+      commitRangeValidation = false,
+      logData = logData)
+    val (yielded, error) = drainCommitFiles(commitRange)
+    assert(yielded.isEmpty)
+    assert(error.exists(_.isInstanceOf[StartVersionNotFoundException]))
   }
 }

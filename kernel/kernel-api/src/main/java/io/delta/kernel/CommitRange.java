@@ -62,9 +62,27 @@ public interface CommitRange {
   /**
    * Returns the ending version number (inclusive) of this commit range.
    *
+   * <p>For a range built with {@link CommitRangeBuilder#withCommitRangeValidation(boolean)}
+   * disabled that contains no commit files, this is the requested end version. If no end was
+   * requested, it is the start version, which only anchors the empty range.
+   *
    * @return the ending version number of the commit range
    */
   long getEndVersion();
+
+  /**
+   * Returns whether this commit range contains no commit files.
+   *
+   * <p>Only a range built with {@link CommitRangeBuilder#withCommitRangeValidation(boolean)}
+   * disabled can be empty, for example when the start version is after the end version or no commit
+   * file exists in the requested versions.
+   *
+   * @return true if there are no commit files in this range
+   */
+  default boolean isEmpty() {
+    throw new UnsupportedOperationException(
+        "CommitRange.isEmpty is not supported by this implementation");
+  }
 
   /**
    * Returns the original query boundary used to define the start boundary of this commit range.
