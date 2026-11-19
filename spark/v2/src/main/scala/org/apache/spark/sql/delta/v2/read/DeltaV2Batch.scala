@@ -28,7 +28,6 @@ import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
 import io.delta.kernel.expressions.{Predicate => KernelPredicate}
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
@@ -89,7 +88,7 @@ private[read] final class DeltaV2Batch(
   private val kernelPushedFilterSet = kernelPushedFilters.toSet
   private val filterSet = allFilters.toSet
   private[this] val sqlConf: SQLConf = SQLConf.get
-  private lazy val redactedTablePathForLogging = redactPath(new Path(tablePath), sqlConf)
+  private lazy val redactedTablePathForLogging = redactPath(initialSnapshot.dataPath, sqlConf)
 
   private def kernelSnapshot: KernelSnapshot =
     DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
@@ -113,7 +112,7 @@ private[read] final class DeltaV2Batch(
         log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)}: " +
         log"${MDC(DeltaLogKeys.NUM_PARTITIONS, partitions.length.toLong)} partitions, " +
         log"${MDC(DeltaLogKeys.NUM_FILES, deltaScan.files.size.toLong)} files, " +
-        log"${MDC(DeltaLogKeys.NUM_BYTES, selectedFileBytes)} bytes in " +
+        log"${MDC(DeltaLogKeys.NUM_BYTES, DeltaV2Scan.selectedFileBytes(deltaScan))} bytes in " +
         log"${MDC(DeltaLogKeys.TIME_MS, elapsedTimeMs(startedAtNs))} ms")
       partitions
     } catch {
@@ -167,7 +166,4 @@ private[read] final class DeltaV2Batch(
       kernelPushedFilterSet,
       filterSet,
       deltaScan.files.size).hashCode()
-
-  private def selectedFileBytes: Long =
-    deltaScan.scanned.bytesCompressed.getOrElse(deltaScan.files.iterator.map(_.size).sum)
 }
