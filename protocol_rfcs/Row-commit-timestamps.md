@@ -1,12 +1,12 @@
 # Row Commit Timestamps
 
 - [Motivation](#motivation)
-- [Feature summary](#feature-summary)
 - [Compatibility](#compatibility)
 - [Interactions with other features](#interactions-with-other-features)
 - [Concurrency](#concurrency)
 - [Alternatives considered](#alternatives-considered)
 - [Open questions](#open-questions)
+- [Examples](#examples)
 - [Proposed protocol text](#row-commit-timestamps-1)
 - [Changes to existing sections](#changes-to-existing-sections)
 - [Appendix changes](#appendix-changes)
@@ -45,6 +45,37 @@ Current way: Save row commit versions only and extract timestamps from there.
 - Is millisecond precision sufficient?
 - What value should be backfilled for rows whose Row Commit Version cannot be resolved to a timestamp (e.g., because the log retention period has expired)?
 - How should the feature be disabled, and what are the consequences?
+
+## Examples
+
+### Example: preserving timestamps across updates and compaction
+
+Assume a table with Row Tracking, In-Commit Timestamps and Row Commit Timestamps enabled. Versions before version 10 are omitted.
+
+| Version | Operation | `inCommitTimestamp` | UTC instant |
+| --- | --- | ---: | --- |
+| 10 | Insert rows 1 and 2 | 1794301200000 | 2026-11-10T09:00:00Z |
+| 11 | Update row 1 and copy row 2 unchanged | 1794387600000 | 2026-11-11T09:00:00Z |
+| 12 | Compact both rows using OPTIMIZE | 1794474000000 | 2026-11-12T09:00:00Z |
+
+**Version 10:** Both rows are inserted into a new file. Its `defaultRowCommitVersion` is 10 and its `defaultRowCommitTimestamp` is `1794301200000`. Neither row needs a materialized timestamp because both inherit the file default.
+
+**Version 11:** UPDATE writes the changed row 1 and the unchanged row 2 into a new file. Row 1 inherits the new file default. Row 2's previous timestamp is materialized to preserve it.
+
+**Version 12:** OPTIMIZE rewrites both rows as part of compaction. Both timestamps are materialized and preserved.
+
+| Version | Row | Materialized Row Commit Timestamp | Resolved Row Commit Timestamp |
+| --- | --- | --- | --- |
+| 10 | 1, inserted | absent | 2026-11-10T09:00:00Z |
+| 10 | 2, inserted | absent | 2026-11-10T09:00:00Z |
+| 11 | 1, updated | `null` | 2026-11-11T09:00:00Z |
+| 11 | 2, copied unchanged | 2026-11-10T09:00:00Z | 2026-11-10T09:00:00Z |
+| 12 | 1, copied unchanged | 2026-11-11T09:00:00Z | 2026-11-11T09:00:00Z |
+| 12 | 2, copied unchanged | 2026-11-10T09:00:00Z | 2026-11-10T09:00:00Z |
+
+In version 12, the new file's default timestamp is `1794474000000`, representing 2026-11-12T09:00:00Z, but neither row inherits it. Their stable Row Commit Versions remain 11 and 10, respectively.
+
+After checkpointing, removing the original JSON commit files must not change the resolved timestamps of these retained rows.
 
 --------
 
@@ -136,37 +167,6 @@ When Row Commit Timestamps are enabled, writers must satisfy the following addit
 ## Removing the feature
 
 TBD
-
-## Examples
-
-### Example: preserving timestamps across updates and compaction
-
-Assume a table with Row Tracking, In-Commit Timestamps and Row Commit Timestamps enabled. Versions before version 10 are omitted.
-
-| Version | Operation | `inCommitTimestamp` | UTC instant |
-| --- | --- | ---: | --- |
-| 10 | Insert rows 1 and 2 | 1794301200000 | 2026-11-10T09:00:00Z |
-| 11 | Update row 1 and copy row 2 unchanged | 1794387600000 | 2026-11-11T09:00:00Z |
-| 12 | Compact both rows using OPTIMIZE | 1794474000000 | 2026-11-12T09:00:00Z |
-
-**Version 10:** Both rows are inserted into a new file. Its `defaultRowCommitVersion` is 10 and its `defaultRowCommitTimestamp` is `1794301200000`. Neither row needs a materialized timestamp because both inherit the file default.
-
-**Version 11:** UPDATE writes the changed row 1 and the unchanged row 2 into a new file. Row 1 inherits the new file default. Row 2's previous timestamp is materialized to preserve it.
-
-**Version 12:** OPTIMIZE rewrites both rows as part of compaction. Both timestamps are materialized and preserved.
-
-| Version | Row | Materialized Row Commit Timestamp | Resolved Row Commit Timestamp |
-| --- | --- | --- | --- |
-| 10 | 1, inserted | absent | 2026-11-10T09:00:00Z |
-| 10 | 2, inserted | absent | 2026-11-10T09:00:00Z |
-| 11 | 1, updated | `null` | 2026-11-11T09:00:00Z |
-| 11 | 2, copied unchanged | 2026-11-10T09:00:00Z | 2026-11-10T09:00:00Z |
-| 12 | 1, copied unchanged | 2026-11-11T09:00:00Z | 2026-11-11T09:00:00Z |
-| 12 | 2, copied unchanged | 2026-11-10T09:00:00Z | 2026-11-10T09:00:00Z |
-
-In version 12, the new file's default timestamp is `1794474000000`, representing 2026-11-12T09:00:00Z, but neither row inherits it. Their stable Row Commit Versions remain 11 and 10, respectively.
-
-After checkpointing, removing the original JSON commit files must not change the resolved timestamps of these retained rows.
 
 ## Changes to existing sections
 
