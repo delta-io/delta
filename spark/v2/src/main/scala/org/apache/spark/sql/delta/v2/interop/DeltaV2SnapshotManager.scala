@@ -156,7 +156,7 @@ trait DeltaV2SnapshotManager {
   /**
    * Resolves the commit active at a timestamp using a loaded Kernel snapshot and any catalog
    * commits. Catalog commits participate in history resolution alongside commits available from
-   * the log. Implementation helper for [[getActiveCommitAtTime]].
+   * the log. Implementation helper for `getActiveCommitAtTime`.
    *
    * @param kernelEngine engine used to read the transaction log
    * @param snapshot loaded snapshot whose log and version bound the lookup
@@ -192,7 +192,7 @@ trait DeltaV2SnapshotManager {
    * Validates a version against a loaded Kernel snapshot and the earliest available history. The
    * minimum catalog-commit version bounds the filesystem search for the earliest version; an empty
    * list performs the search without a catalog bound. Implementation helper for
-   * [[checkVersionExists]].
+   * `checkVersionExists`.
    *
    * When `checkUpperBoundFirst` is true, an invalid upper bound is rejected before the filesystem
    * lookup and reports zero as the earliest version. When false, the filesystem lookup happens
