@@ -31,7 +31,6 @@ import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
-import io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClient
 import io.delta.storage.commit.{Commit => JCommit, CommitFailedException => JCommitFailedException, GetCommitsResponse => JGetCommitsResponse}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
