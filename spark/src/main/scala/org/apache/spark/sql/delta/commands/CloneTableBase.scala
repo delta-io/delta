@@ -467,7 +467,7 @@ abstract class CloneTableBase(
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
     // For CREATE CLONE, check the default spark configuration for Catalog-Managed.
     val catalogOwnedEnabledByDefaultConf =
-      if (CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark)
+      if (CatalogManagedTableUtils.defaultCatalogManagedEnabled(spark)
           && !tableExists(txn.snapshot)) {
         // Append [[CatalogManagedTableFeature]] to the `configWithOverrides` below if table
         // does not exist, to ensure the final target protocol contains CatalogManaged

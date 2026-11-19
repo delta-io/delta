@@ -94,7 +94,7 @@ trait CatalogOwnedTestBaseSuite
   with CommitCoordinatorUtilBase
   with SharedSparkSession {
 
-  val defaultCatalogOwnedFeatureEnabledKey: String =
+  val defaultCatalogManagedFeatureEnabledKey: String =
     TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature)
 
   // If this config is not overridden, newly created table is not CatalogManaged by default.
@@ -119,7 +119,7 @@ trait CatalogOwnedTestBaseSuite
 
   override protected def sparkConf: SparkConf = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+      super.sparkConf.set(defaultCatalogManagedFeatureEnabledKey, "supported")
     } else {
       super.sparkConf
     }
@@ -153,23 +153,23 @@ trait CatalogOwnedTestBaseSuite
   }
 
   override def withDefaultCCTableFeature(f: => Unit): Unit = {
-    val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
-    spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    val oldConfig = spark.conf.getOption(defaultCatalogManagedFeatureEnabledKey)
+    spark.conf.set(defaultCatalogManagedFeatureEnabledKey, "supported")
     try { f } finally {
       if (oldConfig.isDefined) {
-        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
+        spark.conf.set(defaultCatalogManagedFeatureEnabledKey, oldConfig.get)
       } else {
-        spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
+        spark.conf.unset(defaultCatalogManagedFeatureEnabledKey)
       }
     }
   }
 
   override def withoutDefaultCCTableFeature(f: => Unit): Unit = {
-    val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
-    spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
+    val oldConfig = spark.conf.getOption(defaultCatalogManagedFeatureEnabledKey)
+    spark.conf.unset(defaultCatalogManagedFeatureEnabledKey)
     try { f } finally {
       if (oldConfig.isDefined) {
-        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
+        spark.conf.set(defaultCatalogManagedFeatureEnabledKey, oldConfig.get)
       }
     }
   }

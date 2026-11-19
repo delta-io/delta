@@ -222,7 +222,7 @@ trait ClusteredTableTestUtilsBase
   protected def deleteTableFromCommitCoordinatorIfNeeded(table: String): Unit = {
     // Clean up the table data in commit coordinator because DROP/REPLACE TABLE does not bother
     // commit coordinator.
-    if (CatalogManagedTableUtils.defaultCatalogOwnedEnabled(spark) &&
+    if (CatalogManagedTableUtils.defaultCatalogManagedEnabled(spark) &&
         catalogOwnedDefaultCreationEnabledInTests) {
       deleteCatalogOwnedTableFromCommitCoordinator(table)
     }
