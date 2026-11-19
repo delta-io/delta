@@ -654,8 +654,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
             false);
     store.opens = 0;
     store.closes = 0;
-    List<IndexedFile> files;
-    try (ClosableIterator<IndexedFile> iter =
+    List<Tuple2<IndexedFile, CDCDataFile>> files;
+    try (ClosableIterator<Tuple2<IndexedFile, CDCDataFile>> iter =
         stream.getFileChangesWithRateLimitForCDC(
             1L, DeltaSourceOffset.BASE_INDEX(), false, Optional.empty(), Optional.of(endOffset))) {
       files = collectAll(iter);
@@ -665,10 +665,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertTrue(store.opens > 0, "CDC commit actions must be read through LogStore");
     assertEquals(store.opens, store.closes, "Commit readers must close before files are consumed");
     List<CDCDataFile> dataFiles =
-        files.stream()
-            .map(IndexedFile::getCDCDataFile)
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
+        files.stream().map(Tuple2::_2).filter(Objects::nonNull).collect(Collectors.toList());
     assertEquals(explicitCDC ? 1 : 2, dataFiles.size());
     PartitionValueCaster caster =
         new PartitionValueCaster(
