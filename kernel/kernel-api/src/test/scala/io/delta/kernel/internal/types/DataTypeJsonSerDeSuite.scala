@@ -74,6 +74,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     ("\"decimal\"", DecimalType.USER_DEFAULT),
     ("\"decimal(10, 5)\"", new DecimalType(10, 5)),
     ("\"variant\"", VariantType.VARIANT),
+    ("\"void\"", VoidType.VOID),
     ("\"geometry\"", GeometryType.ofDefault()),
     ("\"geometry(EPSG:0)\"", GeometryType.ofCRS("EPSG:0")),
     ("\"geography\"", GeographyType.ofDefault()),
@@ -84,6 +85,14 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       test("serialize/deserialize: " + dataType) {
         testRoundTrip(json, dataType)
       }
+  }
+
+  test("serialize/deserialize: void type nested in a struct") {
+    val schema = new StructType()
+      .add("a", IntegerType.INTEGER)
+      .add("s", new StructType().add("x", IntegerType.INTEGER).add("n", VoidType.VOID))
+    val json = DataTypeJsonSerDe.serializeDataType(schema)
+    assert(DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json)) === schema)
   }
 
   test("parseDataType: invalid primitive string data type") {

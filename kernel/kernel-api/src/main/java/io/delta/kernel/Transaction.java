@@ -24,6 +24,7 @@ import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
 import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.findColIndex;
+import static io.delta.kernel.internal.util.SchemaUtils.validateVoidTypeIsWritable;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.annotation.Experimental;
@@ -50,6 +51,7 @@ import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.VariantType;
+import io.delta.kernel.types.VoidType;
 import io.delta.kernel.utils.*;
 import java.net.URI;
 import java.util.Collections;
@@ -195,6 +197,13 @@ public interface Transaction {
         protocol.supportsFeature(TableFeatures.MATERIALIZE_PARTITION_COLUMNS_W_FEATURE);
     blockIfColumnMappingEnabled(transactionState);
     blockIfVariantDataTypeIsDefined(tableSchema);
+    validateVoidTypeIsWritable(tableSchema);
+    // Kernel doesn't yet omit void columns from the physical data
+    if (new SchemaIterable(tableSchema)
+        .stream().anyMatch(field -> field.getField().getDataType() instanceof VoidType)) {
+      throw new UnsupportedOperationException(
+          "Transforming logical data with void columns is currently unsupported");
+    }
     // We recognize the AllowColumnDefaults feature for Iceberg v3
     // but do not support writing with it yet
     ColumnDefaults.blockWriteIfEnabled(transactionState);
@@ -296,6 +305,7 @@ public interface Transaction {
     // only need the target directory and partition metadata from this method. The column
     // mapping block remains in transformLogicalData() for Kernel's own Parquet path.
     StructType tableSchema = getLogicalSchema(transactionState);
+    validateVoidTypeIsWritable(tableSchema);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
 
     ColumnMapping.ColumnMappingMode mode = getColumnMappingMode(transactionState);

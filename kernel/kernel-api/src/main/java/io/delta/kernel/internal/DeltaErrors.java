@@ -474,9 +474,13 @@ public final class DeltaErrors {
     return new ProtocolChangedException(attemptVersion);
   }
 
-  public static KernelException voidTypeEncountered() {
+  public static KernelException voidTypeNotWritable(String reason) {
     return new KernelException(
-        "Failed to parse the schema. Encountered unsupported Delta data type: VOID");
+        format(
+            "Cannot write data files for a table whose schema has %s. Void columns are never "
+                + "stored in data files, so change the schema first, for example by changing the "
+                + "void column to another type.",
+            reason));
   }
 
   public static KernelException cannotModifyTableProperty(String key) {

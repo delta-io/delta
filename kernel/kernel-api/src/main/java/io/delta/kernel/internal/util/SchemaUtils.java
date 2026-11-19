@@ -482,6 +482,8 @@ public class SchemaUtils {
       if (!existingField.equals(newField)) {
         if (!existingField.getDataType().isNested()
             && !newField.getDataType().isNested()
+            // Changing a void column to another type is not a type widening
+            && !(existingField.getDataType() instanceof VoidType)
             && !existingField.getDataType().equivalent(newField.getDataType())) {
           // Type changes only apply to non-nested types.  This loop evaluates both
           // nested and non-nested, so we narrow down updates here. Actual type differences
@@ -720,6 +722,10 @@ public class SchemaUtils {
       }
       DataType existingType = existingField.getDataType();
       DataType newType = newField.getDataType();
+      if (existingType instanceof VoidType) {
+        // A void column can be changed to any other type without type widening
+        return;
+      }
       if (!existingType.equivalent(newType)) {
 
         if (typeWideningEnabled) {
@@ -846,6 +852,40 @@ public class SchemaUtils {
   }
 
   /**
+   * Void columns are never stored in data files, so data files can't be written for a table whose
+   * schema has a void type inside an array or map, a struct with only void fields, or only void
+   * columns. Metadata-only operations on such a table remain valid.
+   *
+   * @throws KernelException if data files can't be written for the given table schema
+   */
+  public static void validateVoidTypeIsWritable(StructType schema) {
+    validateVoidTypeIsWritable(schema, "table schema", /* insideArrayOrMap= */ false);
+  }
+
+  private static void validateVoidTypeIsWritable(
+      DataType dataType, String path, boolean insideArrayOrMap) {
+    if (dataType instanceof VoidType && insideArrayOrMap) {
+      throw voidTypeNotWritable(format("a void type inside an array or map at '%s'", path));
+    } else if (dataType instanceof StructType) {
+      List<StructField> fields = ((StructType) dataType).fields();
+      if (!fields.isEmpty() && fields.stream().allMatch(f -> f.getDataType() instanceof VoidType)) {
+        throw voidTypeNotWritable(format("only void fields in '%s'", path));
+      }
+      fields.forEach(
+          f ->
+              validateVoidTypeIsWritable(
+                  f.getDataType(), path + "." + f.getName(), insideArrayOrMap));
+    } else if (dataType instanceof ArrayType) {
+      ArrayType arrayType = (ArrayType) dataType;
+      validateVoidTypeIsWritable(arrayType.getElementType(), path + ".element", true);
+    } else if (dataType instanceof MapType) {
+      MapType mapType = (MapType) dataType;
+      validateVoidTypeIsWritable(mapType.getKeyType(), path + ".key", true);
+      validateVoidTypeIsWritable(mapType.getValueType(), path + ".value", true);
+    }
+  }
+
+  /**
    * Validate the supported data types. Once we start supporting additional types, take input the
    * protocol features and validate the schema.
    *
@@ -866,6 +906,7 @@ public class SchemaUtils {
         || dataType instanceof TimestampType
         || dataType instanceof TimestampNTZType
         || dataType instanceof VariantType
+        || dataType instanceof VoidType
         || dataType instanceof GeometryType
         || dataType instanceof GeographyType) {
       // supported types

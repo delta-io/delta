@@ -38,7 +38,7 @@ import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
-import io.delta.kernel.types.{DoubleType, FieldMetadata, FloatType, IntegerType, LongType, StringType, StructField, StructType, TimestampType, VariantType}
+import io.delta.kernel.types.{ArrayType, DoubleType, FieldMetadata, FloatType, IntegerType, LongType, MapType, StringType, StructField, StructType, TimestampType, VariantType, VoidType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -384,6 +384,66 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
     }
     assert(ex.getMessage.contains(
       "Transforming logical data with variant data is currently unsupported"))
+  }
+
+  test("transformLogicalData: Writing to tables with void columns is blocked") {
+    Seq(
+      new StructType().add("id", IntegerType.INTEGER).add("v", VoidType.VOID),
+      new StructType().add(
+        "nested",
+        new StructType().add("id", IntegerType.INTEGER).add("v", VoidType.VOID))).foreach {
+      schema =>
+        val ex = intercept[UnsupportedOperationException] {
+          transformLogicalData(
+            mockEngine(),
+            testTxnState(schema),
+            testData(includePartitionCols = false),
+            Map.empty[String, Literal].asJava /* partition values */ )
+        }
+        assert(ex.getMessage.contains(
+          "Transforming logical data with void columns is currently unsupported"))
+    }
+  }
+
+  private val voidSchemasWithoutDataFiles = Seq(
+    (
+      "void in an array",
+      new StructType().add("id", IntegerType.INTEGER).add("a", new ArrayType(VoidType.VOID, true)),
+      "a void type inside an array or map at 'table schema.a.element'"),
+    (
+      "void in a map",
+      new StructType().add("id", IntegerType.INTEGER)
+        .add("m", new MapType(StringType.STRING, VoidType.VOID, true)),
+      "a void type inside an array or map at 'table schema.m.value'"),
+    (
+      "struct with only void fields",
+      new StructType().add("id", IntegerType.INTEGER)
+        .add("s", new StructType().add("v", VoidType.VOID)),
+      "only void fields in 'table schema.s'"),
+    (
+      "only void columns",
+      new StructType().add("v", VoidType.VOID),
+      "only void fields in 'table schema'"))
+
+  voidSchemasWithoutDataFiles.foreach { case (name, schema, expectedMessage) =>
+    test(s"transformLogicalData and getWriteContext reject a schema with $name") {
+      Seq[() => Unit](
+        () =>
+          transformLogicalData(
+            mockEngine(),
+            testTxnState(schema),
+            testData(includePartitionCols = false),
+            Map.empty[String, Literal].asJava /* partition values */ ),
+        () =>
+          getWriteContext(
+            mockEngine(),
+            testTxnState(schema),
+            Map.empty[String, Literal].asJava /* partition values */ )).foreach { write =>
+        val ex = intercept[KernelException](write())
+        assert(ex.getMessage.contains("Cannot write data files"))
+        assert(ex.getMessage.contains(expectedMessage))
+      }
+    }
   }
 }
 

@@ -20,12 +20,11 @@ import java.util.{Collections, Optional}
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
-import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.buildColumnVector
 import io.delta.kernel.test.TestUtils
-import io.delta.kernel.types.{IntegerType, StringType, StructType}
+import io.delta.kernel.types.{IntegerType, StringType, StructType, VoidType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -77,23 +76,32 @@ class MetadataSuite extends AnyFunSuite with TestUtils {
     Metadata.fromRow(new GenericRow(Metadata.FULL_SCHEMA, values))
   }
 
-  test("schema parsing is lazy - void type does not block non-schema access") {
-    val voidSchemaJson = """{"type":"struct","fields":[""" +
+  test("schema parsing is lazy - unknown type does not block non-schema access") {
+    val badSchemaJson = """{"type":"struct","fields":[""" +
       """{"name":"x","type":"integer","nullable":true,"metadata":{}},""" +
-      """{"name":"y","type":"void","nullable":true,"metadata":{}}]}"""
+      """{"name":"y","type":"hyperdecimal","nullable":true,"metadata":{}}]}"""
 
-    val metadata = testMetadata(schemaString = voidSchemaJson)
+    val metadata = testMetadata(schemaString = badSchemaJson)
 
     // Non-schema methods should work without triggering schema parsing
     assert(metadata.getId === "id")
     assert(metadata.getConfiguration.isEmpty)
-    assert(metadata.getSchemaString === voidSchemaJson)
+    assert(metadata.getSchemaString === badSchemaJson)
 
-    // Accessing the schema should throw KernelException due to VOID type
-    val e = intercept[KernelException] {
+    // Accessing the schema should throw due to the unknown type
+    val e = intercept[RuntimeException] {
       metadata.getSchema
     }
-    assert(e.getMessage.contains("VOID"))
+    assert(e.getMessage.contains("hyperdecimal"))
+  }
+
+  test("schema with a void column can be parsed") {
+    val voidSchemaJson = """{"type":"struct","fields":[""" +
+      """{"name":"x","type":"integer","nullable":true,"metadata":{}},""" +
+      """{"name":"y","type":"void","nullable":true,"metadata":{}}]}"""
+
+    val schema = testMetadata(schemaString = voidSchemaJson).getSchema
+    assert(schema.get("y").getDataType === VoidType.VOID)
   }
 
   test("Metadata serialization round trip") {
