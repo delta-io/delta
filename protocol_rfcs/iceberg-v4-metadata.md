@@ -382,14 +382,14 @@ The root manifest contains entries of the following types:
 
 **Status values:** `status` is required and always materialized (never null). Each entry has exactly one status.
 
-Only `EXISTING` and `ADDED` entries are live (visible to scans). `DELETED` and `REPLACED` entries are not live and exist only for change data feed (CDF) reconstruction. A file path has at most one live entry in the tree at any time.
+Only `EXISTING`, `ADDED`, and `MODIFIED` entries are live (visible to scans). `DELETED` and `REPLACED` entries are not live and exist only for change data feed (CDF) reconstruction. A file path has at most one live entry in the tree at any time.
 
 - `EXISTING` (0): Unchanged from previous commit. Live.
 - `ADDED` (1): New in this commit. Live.
 - `DELETED` (2): Removed in this commit. Not live.
 - `REPLACED` (3): Superseded (e.g., DV added/changed). Not live. A
   new DATA entry with updated metadata exists elsewhere in the tree as the live entry for this file path.
-- `MODIFIED` (4): When a data file's deletion vector is updated.
+- `MODIFIED` (4): When a data file's deletion vector is updated. Live.
 
 Non-live entries are transient: they are dropped in the next manifest commit that rewrites the affected manifest (root or leaf).
 
@@ -445,11 +445,11 @@ Summary information for `content_type` = DATA_MANIFEST entries. Includes the man
 | 524 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
 | 526 | `modified_rows_count` | Long | Required | Number of rows in modified files |
 | 516 | `min_sequence_number` | Long | Required | Minimum data sequence number of all live entries in the manifest |
-| 522 | `dv` | Binary | Optional | MDV bitmap marking deleted positions in leaf manifest. The number of marked positions is stored in the bitmap header (see the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec). |
+| 522 | `dv` | Binary | Optional | MDV bitmap of positions in the referenced leaf manifest that are not live. The number of marked positions is stored in the bitmap header (see the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec). |
 
 ### Manifest Deletion Vectors (MDVs)
 
-MDVs track which entries in a leaf manifest have been deleted or replaced. The `dv` field in `manifest_info` contains all invalidated positions (cumulative, used for reading). The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF). All three bitmaps are encoded using the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec:
+MDVs track which entries in a leaf manifest are not live. The `dv` field in `manifest_info` contains all invalidated positions (cumulative, used for reading). The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF). All three bitmaps are encoded using the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec:
 
 - **`manifest_info.dv`**: Cumulative set of all invalidated positions. Grows
   monotonically. Used by readers to skip entries.
@@ -605,7 +605,7 @@ A standalone checkpoint uses the classic single-file checkpoint naming (`n.check
 
 ## Manifest Deletion Vectors (MDVs)
 
-MDVs reduce the write amplification: instead of rewriting a leaf manifest to remove a file, the root manifest records an MDV that marks row positions in the leaf manifest as deleted.
+MDVs reduce the write amplification: instead of rewriting a leaf manifest to remove a file, the root manifest records an MDV that marks positions in the leaf manifest that are not live.
 
 MDVs are stored in `manifest_info.dv` on `DATA_MANIFEST` entries in the root manifest. See [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs) for field definitions and CDF bitmap semantics.
 
