@@ -466,7 +466,7 @@ class ContextTest(unittest.TestCase):
         b.events.append(labeled_event("maintainer", "User"))
         a = b.analyze()
         self.assertFalse(a.label)
-        self.assertIn("not added by this workflow", a.reason)
+        self.assertIn("added by a person", a.reason)
         # Added by this workflow, commented, and the full run started: nothing to do.
         b = RunBuilder(self.DIVERGENT)
         b.pr["labels"].append({"name": "full-ci"})
@@ -489,6 +489,23 @@ class ContextTest(unittest.TestCase):
         api = b.api()
         api.routes[f"repos/{REPO}/actions/runs/77"] = dict(b.run, run_attempt=2)
         self.assertFalse(b.analyze(api=api).label)
+
+    def test_unknown_label_provenance_is_noop(self):
+        for marker in (False, True):
+            for events in ("error", [], [labeled_event(afc.GITHUB_ACTIONS_BOT, label="x")]):
+                b = RunBuilder(self.DIVERGENT)
+                b.pr["labels"].append({"name": "full-ci"})
+                if marker:
+                    b.comments.append(bot_comment(HEAD))
+                api = b.api()
+                if events == "error":
+                    del api.routes[f"repos/{REPO}/issues/42/events"]
+                else:
+                    api.routes[f"repos/{REPO}/issues/42/events"] = events
+                with redirect_stderr(io.StringIO()):
+                    a = b.analyze(api=api)
+                self.assertFalse(a.label, (marker, events))
+                self.assertIn("can't be determined", a.reason)
 
     def test_label_removed_after_marker_is_respected(self):
         b = RunBuilder(self.DIVERGENT)
@@ -638,6 +655,7 @@ class FakeRepo:
         self.events = list(events)
         self.run_attempt = run_attempt
         self.head = HEAD
+        self.events_error = False
         self.fail = set()
         self.reruns = 0
 
@@ -661,6 +679,8 @@ class _FakeRepoClient:
         if base == f"repos/{REPO}/issues/42/comments":
             return json.loads(json.dumps(r.comments))
         if base == f"repos/{REPO}/issues/42/events":
+            if r.events_error:
+                raise afc.GitHubError("injected events API failure")
             return json.loads(json.dumps(r.events))
         if base == f"repos/{REPO}/actions/runs/77":
             return {"id": 77, "run_attempt": r.run_attempt}
@@ -774,8 +794,53 @@ class ApplyTest(unittest.TestCase):
 
     def test_label_added_by_person_is_left_alone(self):
         repo = FakeRepo(labels=["full-ci"], events=[labeled_event("maintainer", "User")])
-        self.assertIn("not added by this workflow", self.apply(repo)[0])
+        self.assertIn("added by a person", self.apply(repo)[0])
         self.assertEqual((repo.comments, repo.reruns), ([], 0))
+
+    def unknown_provenance_repos(self):
+        """PRs with full-ci present whose labeled event can't be established."""
+        cases = {}
+        for marker in (False, True):
+            comments = [bot_comment(HEAD)] if marker else []
+            # The label really was added with GITHUB_TOKEN, but that can't be seen.
+            failing = FakeRepo(labels=["full-ci"], comments=comments,
+                               events=[labeled_event(afc.GITHUB_ACTIONS_BOT)])
+            failing.events_error = True
+            cases[f"events API error, marker={marker}"] = failing
+            cases[f"no events, marker={marker}"] = FakeRepo(labels=["full-ci"],
+                                                            comments=comments)
+            cases[f"no full-ci labeled event, marker={marker}"] = FakeRepo(
+                labels=["full-ci"], comments=comments,
+                events=[labeled_event(afc.GITHUB_ACTIONS_BOT, label="Spark"),
+                        {"event": "unlabeled", "label": {"name": "full-ci"}}])
+            cases[f"labeled event without actor, marker={marker}"] = FakeRepo(
+                labels=["full-ci"], comments=comments,
+                events=[{"event": "labeled", "label": {"name": "full-ci"}, "actor": None}])
+        return cases
+
+    def test_unknown_label_provenance_is_a_noop(self):
+        for name, repo in self.unknown_provenance_repos().items():
+            before = (list(repo.labels), len(repo.comments))
+            for app in (False, True):
+                actions = self.apply(repo, app)
+                self.assertEqual(len(actions), 1, name)
+                self.assertIn("can't be determined", actions[0], name)
+            self.assertEqual((list(repo.labels), len(repo.comments), repo.reruns),
+                             before + (0,), name)
+
+    def test_readable_github_token_label_is_still_recovered(self):
+        # The legitimate recovery path: label added with GITHUB_TOKEN and the event is
+        # readable. Without the marker: comment and re-run. With it: re-run only.
+        repo = FakeRepo(labels=["full-ci"], events=[labeled_event(afc.GITHUB_ACTIONS_BOT)])
+        self.assertEqual(self.apply(repo),
+                         ["full-ci already present", "posted comment", "re-ran run 77"])
+        self.assert_done(repo, reruns=1)
+        repo = FakeRepo(labels=["full-ci"], comments=[bot_comment(HEAD)],
+                        events=[labeled_event(afc.GITHUB_ACTIONS_BOT)])
+        self.assertEqual(self.apply(repo), ["full-ci already present",
+                                            "comment already posted for this head SHA",
+                                            "re-ran run 77"])
+        self.assertEqual((len(repo.comments), repo.reruns), (1, 1))
 
     def test_user_or_old_markers_do_not_count(self):
         user = {"body": afc.MARKER_FORMAT.format(sha=HEAD), "user": {"type": "User"}}

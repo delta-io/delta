@@ -842,6 +842,10 @@ def cmd_analyze(args, api=None) -> int:
 # --------------------------------------------------------------------------------------
 
 GITHUB_ACTIONS_BOT = "github-actions[bot]"
+PROVENANCE_GITHUB_TOKEN = "github-token"
+PROVENANCE_APP = "app"
+PROVENANCE_PERSON = "person"
+PROVENANCE_UNKNOWN = "unknown"
 
 
 @dataclass
@@ -851,22 +855,35 @@ class LabelState:
     # A bot comment with this head SHA's marker exists. It is posted only after the label
     # was added, so it records "full-ci was added for this commit".
     marker_present: bool
-    # The current label's `labeled` event was made by a bot (GITHUB_TOKEN or an App).
-    label_added_by_bot: bool = False
-    # That event started a workflow run: it was made by anyone except GITHUB_TOKEN.
-    label_started_run: bool = False
+    # Who added the present label, from its latest `labeled` event: PROVENANCE_GITHUB_TOKEN,
+    # PROVENANCE_APP (another bot), PROVENANCE_PERSON, or PROVENANCE_UNKNOWN when the event
+    # can't be established (events API error, or no `labeled` event for the label).
+    # None when the label is absent.
+    label_provenance: Optional[str] = None
     # The Delta Spark run has an attempt newer than the evaluated one (already re-run).
     newer_attempt: bool = False
+
+    @property
+    def label_started_run(self) -> bool:
+        """The label's `labeled` event started a workflow run (not made with GITHUB_TOKEN)."""
+        return self.label_provenance in (PROVENANCE_APP, PROVENANCE_PERSON)
 
     def nothing_to_do(self) -> Optional[str]:
         """Return why no further action is needed for this head SHA, or None."""
         if self.marker_present and not self.label_present:
             return (f"{FULL_CI_LABEL} was removed after it was added for this head SHA; "
                     "not adding it again")
-        if self.label_present and not self.marker_present and not self.label_added_by_bot:
-            return f"already has the {FULL_CI_LABEL} label (not added by this workflow)"
-        if self.label_present and self.marker_present and (
-                self.label_started_run or self.newer_attempt):
+        if not self.label_present:
+            return None
+        if self.label_provenance not in (PROVENANCE_GITHUB_TOKEN, PROVENANCE_APP,
+                                         PROVENANCE_PERSON):
+            # Without knowing who added the label, a re-run or comment could duplicate a
+            # full run or notify for a label this workflow didn't add. Leave it alone.
+            return (f"already has the {FULL_CI_LABEL} label, but who added it can't be "
+                    "determined; leaving it alone")
+        if not self.marker_present and self.label_provenance == PROVENANCE_PERSON:
+            return f"already has the {FULL_CI_LABEL} label (added by a person)"
+        if self.marker_present and (self.label_started_run or self.newer_attempt):
             return f"already has {FULL_CI_LABEL}, the comment and a full run for this head SHA"
         return None
 
@@ -883,18 +900,22 @@ def read_label_state(api, repo: str, pr: dict, head_sha: str, run_id: int,
         for c in comments)
     state = LabelState(label_present, marker_present)
     if label_present:
+        state.label_provenance = PROVENANCE_UNKNOWN
         try:
             events = list_paginated(api, f"repos/{repo}/issues/{number}/events")
         except GitHubError as e:
             print(f"warning: could not read PR events: {e}", file=sys.stderr)
             events = []
-        labeled = [e for e in events if e.get("event") == "labeled" and
-                   (e.get("label") or {}).get("name") == FULL_CI_LABEL]
-        if labeled:
-            actor = labeled[-1].get("actor") or {}
-            state.label_added_by_bot = actor.get("type") == "Bot"
-            # Events made with GITHUB_TOKEN don't start workflows; all others do.
-            state.label_started_run = actor.get("login") != GITHUB_ACTIONS_BOT
+        labeled = [e for e in events if isinstance(e, dict) and e.get("event") == "labeled"
+                   and (e.get("label") or {}).get("name") == FULL_CI_LABEL]
+        actor = (labeled[-1].get("actor") or {}) if labeled else {}
+        login, actor_type = actor.get("login"), actor.get("type")
+        if login == GITHUB_ACTIONS_BOT and actor_type == "Bot":
+            state.label_provenance = PROVENANCE_GITHUB_TOKEN
+        elif login and actor_type == "Bot":
+            state.label_provenance = PROVENANCE_APP
+        elif login and actor_type == "User":
+            state.label_provenance = PROVENANCE_PERSON
     try:
         run = api.get_json(f"repos/{repo}/actions/runs/{run_id}")
         state.newer_attempt = int(run.get("run_attempt") or 0) > run_attempt
@@ -910,8 +931,9 @@ def apply_label(api, rerun_api, repo: str, pr_number: int, head_sha: str, body: 
     Every step is idempotent, so a retry after a partial failure finishes the remaining
     steps: the label is added only if missing, the comment only if this SHA's marker
     comment is missing, and the run is re-run only if no full run was started yet (the
-    label wasn't added by an App or a person, and the run has no newer attempt). The
-    label is never removed, and never added again for a SHA whose marker comment exists.
+    label was added with GITHUB_TOKEN, and the run has no newer attempt). A present label
+    whose source can't be determined, or that a person added, is left alone. The label
+    is never removed, and never added again for a SHA whose marker comment exists.
     `api` adds the label and comment (an App token if `app_token`, else GITHUB_TOKEN);
     `rerun_api` (GITHUB_TOKEN) re-runs the run.
     """

@@ -24,7 +24,8 @@ name: "Auto full-ci"
 # the API; spark_test.yaml reads the PR's live labels, so the re-run uses the full matrix.
 # The label job can be retried after a partial failure: it finishes the missing steps
 # (label, comment, re-run), using the per-commit marker comment, the label's `labeled`
-# event and the run's attempt number to tell what was already done.
+# event and the run's attempt number to tell what was already done. A present label that
+# a person added, or whose `labeled` event can't be read, is left alone.
 #
 # Maintainer setup for the App token (optional; the fallback works without it):
 #   1. Create a GitHub App (owned by the org) with repository permissions
