@@ -77,7 +77,10 @@ class SingleCommit private (
         commitInfo: CommitInfo, checkpointOpt: Option[Checkpoint]): Iterator[Action] = {
       amtProviderFromCheckpointOpt(checkpointOpt)
         .reconstructFileActions(
-          deltaLog, commitInfo.getDataChangeOrThrow, commitInfo.getCommitTimestamp)
+          SparkSession.active,
+          deltaLog,
+          commitInfo.getDataChangeOrThrow,
+          commitInfo.getCommitTimestamp)
         .iterator
     }
     toLogicalActions(
@@ -142,7 +145,10 @@ class SingleCommit private (
       private def computeTreeFileActions(
           commitInfo: CommitInfo, checkpointOpt: Option[Checkpoint]): Iterator[Action] =
         amtProviderFromCheckpointOpt(checkpointOpt).reconstructFileActionsIterator(
-          deltaLog, commitInfo.getDataChangeOrThrow, commitInfo.getCommitTimestamp)
+          SparkSession.active,
+          deltaLog,
+          commitInfo.getDataChangeOrThrow,
+          commitInfo.getCommitTimestamp)
       private var underlying =
         try {
           toLogicalActions(

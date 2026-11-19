@@ -58,15 +58,6 @@ final class DeltaV2MicroBatchStreamUtils {
       ImmutableSet.<DeltaAction>builder().addAll(ACTION_SET).add(DeltaAction.CDC).build();
 
   /**
-   * Max attempts to resolve the start version when failOnDataLoss=false. Attempt 1 is the initial
-   * try with the user's startVersion (surfaces the StartVersionNotFoundException that triggers the
-   * failOnDataLoss check). Attempt 2 retries with the earliest available version to recover when
-   * failOnDataLoss=false. Attempt 3 guards against a concurrent log-retention prune in the tiny
-   * window between attempt 2's exception and its retry.
-   */
-  static final int FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS = 3;
-
-  /**
    * If the given exception wraps a {@link ClosedByInterruptException} as its direct cause, returns
    * it. This occurs when Spark interrupts the micro-batch thread during stream shutdown and the
    * thread is blocked inside Kernel's {@code DefaultJsonHandler} reading delta log files via NIO

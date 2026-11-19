@@ -42,16 +42,14 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   /** True in the Connect implementation, false in classic. Branches expectations. */
   def isConnect: Boolean
 
-  /** Spark minor version bucket ("4.0", "4.1", "4.2+") that the asserted behavior keys off. */
+  /** Spark minor version bucket ("4.1", "4.2+") that the asserted behavior keys off. */
   protected def sparkVersionBucket: String = {
     // Parse major and minor numerically so the bucket stays correct once Spark reaches 4.10,
     // where a lexicographic string compare would wrongly rank "4.10" below "4.2".
     val versionParts = spark.version.split('.')
     val major = versionParts(0).toInt
     val minor = versionParts(1).toInt
-    if (major > 4 || (major == 4 && minor >= 2)) "4.2+"
-    else if (major == 4 && minor >= 1) "4.1"
-    else "4.0"
+    if (major > 4 || (major == 4 && minor >= 2)) "4.2+" else "4.1"
   }
 
   protected def checkAnswer(df: => DataFrame, expectedAnswer: Seq[Row]): Unit

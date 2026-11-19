@@ -29,7 +29,6 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
-import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetToSparkSchemaConverter, SparkShreddingUtils}
@@ -222,13 +221,9 @@ class DeltaVariantShreddingSuite
   }
 
   test("Infer schema for Delta table") {
-    // Skip this test if VARIANT_INFER_SHREDDING_SCHEMA is not supported (Spark 4.0)
-    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
-      "VARIANT_INFER_SHREDDING_SCHEMA is not supported in this Spark version")
-
     // make sure top level conf has no effect and table property is respected.
     Seq(false, true).foreach { inferShreddingSchema =>
-      withSQLConf(VariantShreddingTestShims.variantInferShreddingSchemaKey ->
+      withSQLConf(SQLConf.VARIANT_INFER_SHREDDING_SCHEMA.key ->
         inferShreddingSchema.toString) {
         Seq(false, true).foreach { enable =>
           val tbl = s"tbl_$enable"

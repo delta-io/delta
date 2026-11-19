@@ -18,14 +18,13 @@ package org.apache.spark.sql.delta.v2
 import java.util.{ArrayList => JArrayList, List => JList}
 import javax.annotation.Nullable
 
-import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor => SparkDvDescriptor}
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor => SparkDvDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.v2.read.CDCDataFile
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import io.delta.kernel.internal.actions.{AddFile, RemoveFile}
 
 /**
  * Helper for DV-diff operations needed by DSv2 CDC streaming. Lives in the
@@ -64,11 +63,8 @@ object CDCDeletionVectorHelper {
       commitTimestamp: Long,
       dataPath: String,
       hadoopConf: Configuration): JList[CDCDataFile] = {
-    val addDvBase64: String =
-      if (add.getDeletionVector.isPresent) add.getDeletionVector.get.serializeToBase64 else null
-    val removeDvBase64: String =
-      if (remove.getDeletionVector.isPresent) remove.getDeletionVector.get.serializeToBase64
-      else null
+    val addDvBase64 = Option(add.deletionVector).map(_.serializeToBase64).orNull
+    val removeDvBase64 = Option(remove.deletionVector).map(_.serializeToBase64).orNull
 
     val diffs = computeDVDiff(addDvBase64, removeDvBase64, hadoopConf, dataPath)
     val out = new JArrayList[CDCDataFile](diffs.length)

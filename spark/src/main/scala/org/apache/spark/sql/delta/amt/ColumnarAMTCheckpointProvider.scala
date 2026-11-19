@@ -52,10 +52,12 @@ final class ColumnarAMTCheckpointProvider(
       baseRowId = col("tracking.first_row_id"))
   }
 
-  override protected def leafLiveAddSingleActions(deltaLog: DeltaLog): Dataset[SingleAction] =
+  override protected def leafLiveAddSingleActions(
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction] =
     toAddSingleActions(
       withStatuses(
-        leafEntriesWithRowIdPrefix(deltaLog, liveLeavesWithManifestFilters),
+        leafEntriesWithRowIdPrefix(spark, deltaLog, liveLeavesWithManifestFilters),
         Tracking.Status.liveEntryStatuses),
       baseRowId = inheritedBaseRowId)
 

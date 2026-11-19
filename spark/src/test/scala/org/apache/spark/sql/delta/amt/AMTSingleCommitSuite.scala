@@ -669,13 +669,14 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
         val (version, _) = commitAcrossRootAndLeaves(amtDeltaLog)
         val provider = providerAt(amtDeltaLog, version)
         val collected =
-          provider.reconstructFileActions(amtDeltaLog, dataChange = true, commitTimestamp = 0L)
+          provider.reconstructFileActions(
+            spark, amtDeltaLog, dataChange = true, commitTimestamp = 0L)
         // The iterator pulls the sorted actions one partition at a time, so spread them out.
         withSQLConf(
             SQLConf.SHUFFLE_PARTITIONS.key -> "7",
             SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
           assert(provider.reconstructFileActionsIterator(
-            amtDeltaLog, dataChange = true, commitTimestamp = 0L).toList === collected)
+            spark, amtDeltaLog, dataChange = true, commitTimestamp = 0L).toList === collected)
         }
       }
     }
@@ -765,7 +766,7 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
         assert(ordered.size === changes.size)
         // The actions follow the manifest path, then the position, of the entries recording them.
         val provider = providerAt(amtDeltaLog, version)
-        val byManifestPosition = provider.reconstructChangeFiles(amtDeltaLog)
+        val byManifestPosition = provider.reconstructChangeFiles(spark, amtDeltaLog)
           .select("leafPath", "pos", "add.path", provider.REMOVED_COLUMN)
           .collect()
           .sortBy(row => (row.getString(0), row.getLong(1)))

@@ -22,7 +22,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable
 import scala.util.control.NonFatal
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.DeltaOperations._
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -95,7 +95,7 @@ trait CatalogOwnedTestBaseSuite
   with SharedSparkSession {
 
   val defaultCatalogOwnedFeatureEnabledKey: String =
-    TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
+    TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature)
 
   // If this config is not overridden, newly created table is not CatalogManaged by default.
   def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = None
@@ -111,7 +111,7 @@ trait CatalogOwnedTestBaseSuite
    */
   protected def getCatalogOwnedCommitCoordinatorClient(
       catalogName: String): CommitCoordinatorClient = {
-    CatalogOwnedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
+    CatalogManagedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
       throw new IllegalStateException(
         s"Commit coordinator builder is not available for the specified catalog: $catalogName")
     }.buildForCatalog(spark, catalogName)
@@ -126,17 +126,17 @@ trait CatalogOwnedTestBaseSuite
   }
 
   override def clearBuilders(): Unit = {
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
   }
 
   override def propertiesString: String =
-    s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')"
+    s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')"
 
   override protected def beforeEach(): Unit = {
     super.beforeEach()
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
     catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
-      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+      CatalogManagedCommitCoordinatorProvider.registerBuilder(
         catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize)
       )
@@ -188,8 +188,8 @@ trait CatalogOwnedTestBaseSuite
   override def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
     Seq(1, 2, 10).foreach { backfillBatchSize =>
       test(s"$testName [Backfill batch size: $backfillBatchSize]") {
-        CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-        CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+        CatalogManagedCommitCoordinatorProvider.clearBuilders()
+        CatalogManagedCommitCoordinatorProvider.registerBuilder(
           "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
         f(backfillBatchSize)
       }
@@ -219,8 +219,8 @@ trait CatalogOwnedTestBaseSuite
    */
   def testWithCatalogOwned(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
     test(s"$testName [Backfill batch size: $backfillBatchSize]") {
-      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+      CatalogManagedCommitCoordinatorProvider.clearBuilders()
+      CatalogManagedCommitCoordinatorProvider.registerBuilder(
         CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
       withDefaultCCTableFeature {
@@ -230,10 +230,10 @@ trait CatalogOwnedTestBaseSuite
   }
 
   override def registerBuilder(builder: CommitCoordinatorBuilder): Unit = {
-    assert(builder.isInstanceOf[CatalogOwnedCommitCoordinatorBuilder],
-      s"builder $builder(${builder.getName}) must be CatalogOwnedCommitCoordinatorBuilder")
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      "spark_catalog", builder.asInstanceOf[CatalogOwnedCommitCoordinatorBuilder])
+    assert(builder.isInstanceOf[CatalogManagedCommitCoordinatorBuilder],
+      s"builder $builder(${builder.getName}) must be CatalogManagedCommitCoordinatorBuilder")
+    CatalogManagedCommitCoordinatorProvider.registerBuilder(
+      "spark_catalog", builder.asInstanceOf[CatalogManagedCommitCoordinatorBuilder])
   }
 
   override def isCatalogOwnedTest: Boolean = true
@@ -254,9 +254,9 @@ trait CatalogOwnedTestBaseSuite
 
   def deleteCatalogOwnedTableFromCommitCoordinator(path: Path): Unit = {
     val catalogName = "spark_catalog"
-    val cc = CatalogOwnedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
+    val cc = CatalogManagedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
       throw new IllegalStateException(
-        s"Unable to get CatalogOwnedCommitCoordinatorBuilder for table at path: ${path.toString}")
+        s"Unable to get CatalogManagedCommitCoordinatorBuilder for table at path: ${path.toString}")
     }.buildForCatalog(spark, catalogName)
 
     assert(
@@ -579,7 +579,7 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
     batchSize: Long,
     defaultCommitCoordinatorClientOpt: Option[CommitCoordinatorClient] = None,
     defaultCommitCoordinatorName: String = "tracking-in-memory")
-  extends CatalogOwnedCommitCoordinatorBuilder {
+  extends CatalogManagedCommitCoordinatorBuilder {
   lazy val trackingInMemoryCommitCoordinatorClient =
     defaultCommitCoordinatorClientOpt.getOrElse {
       new TrackingCommitCoordinatorClient(

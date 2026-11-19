@@ -1184,7 +1184,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val amtFeatureName = amtFeature.name
 
     val existingTableHasAdaptiveMetadata =
-      AMTUtils.amtEnabled(snapshot)
+      AMTUtils.amtEnabled(snapshot, isPreviewCompatible = true)
     // REPLACE counts as creating a new table, but it keeps the existing table and its history, so
     // adding AMT through it is an upgrade too.
     if (readVersion >= 0 && !existingTableHasAdaptiveMetadata) {
@@ -1285,7 +1285,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val addFileMustHaveWideBounds = op.checkAddFileWithDeletionVectorStatsAreNotTightBounds
 
     // A manifest tree cannot store inline DVs, so the next tree build would fail on such a file.
-    val inlineDeletionVectorDisallowed = AMTUtils.amtEnabled(metadata, protocol)
+    val inlineDeletionVectorDisallowed =
+      AMTUtils.amtEnabled(metadata, protocol, isPreviewCompatible = true)
 
     action => action match {
       case a: AddFile if a.deletionVector != null =>
@@ -2921,7 +2922,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // reconstructed RemoveFiles nor the order of the actions matters.
     val treeKeys =
         provider.reconstructFileActions(
-          deltaLog, dataChange, commitTimestamp = 0L, ordered = false)
+          spark, deltaLog, dataChange, commitTimestamp = 0L, ordered = false)
         .map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     if (treeKeys != committedKeys) {
       val onlyInTree = treeKeys -- committedKeys
@@ -3453,7 +3454,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
-        !AMTUtils.amtEnabled(postCommitSnapshot)) {
+        !AMTUtils.amtEnabled(postCommitSnapshot, isPreviewCompatible = true)) {
       MaintenanceOperation(
         shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
     } else if (amtWriteResultOpt.isEmpty) {
