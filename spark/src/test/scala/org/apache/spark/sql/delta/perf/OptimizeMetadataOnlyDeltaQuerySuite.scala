@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.perf
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
@@ -993,19 +994,89 @@ class OptimizeMetadataOnlyDeltaQuerySuite
   test("distinct partition values - dv-enabled") {
     withTempDir { dir =>
       val tempPath = dir.getCanonicalPath
-      spark.range(1, 7, 1, 1).withColumn("p", (col("id") % 3).cast("int"))
+      spark.range(0, 6, 1, 1).withColumn("p", (col("id") % 3).cast("int"))
         .write.format("delta").partitionBy("p").save(tempPath)
       enableDeletionVectorsInTable(new Path(tempPath), true)
+      val log = DeltaLog.forTable(spark, tempPath)
+      val physicalName = DeltaColumnMapping.getPhysicalName(
+        log.update().metadata.partitionSchema("p"))
+      def filesOfPartition(value: String): Array[AddFile] =
+        log.update().allFiles.collect().filter(_.partitionValues(physicalName) == value)
 
-      // Partially delete partition p = 1 (ids 1 and 4) and fully delete partition p = 2 (2 and 5)
+      // Partially delete partition p = 1 (ids 1 and 4)
       DeltaTable.forPath(spark, tempPath).delete("id = 1")
-      DeltaTable.forPath(spark, tempPath).delete("id = 2")
-      DeltaTable.forPath(spark, tempPath).delete("id = 5")
-      assert(!getFilesWithDeletionVectors(DeltaLog.forTable(spark, new Path(tempPath))).isEmpty)
+      // Hide every row of partition p = 2 (ids 2 and 5) with a DV, keeping the file active. A
+      // DELETE would remove the file instead.
+      removeRowsFromFile(log, filesOfPartition("2").head, Seq(0L, 1L))
+      val hiddenFiles = filesOfPartition("2")
+      assert(hiddenFiles.length === 1)
+      assert(hiddenFiles.head.numLogicalRecords === Some(0L))
 
       checkDistinctPartitionsOptimized(s"SELECT DISTINCT p FROM delta.`$tempPath`")
       withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
         checkAnswer(spark.sql(s"SELECT DISTINCT p FROM delta.`$tempPath`"), Seq(Row(0), Row(1)))
+      }
+    }
+  }
+
+  test("distinct partition values - zero rows AddFile") {
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      spark.range(0, 4).withColumn("p", (col("id") % 2).cast("int"))
+        .write.format("delta").partitionBy("p").save(tempPath)
+      val log = DeltaLog.forTable(spark, tempPath)
+      val physicalName = DeltaColumnMapping.getPhysicalName(
+        log.update().metadata.partitionSchema("p"))
+
+      // AddFile with no rows for a new partition value. The data file does not exist, so the
+      // query must be answered from the Delta log only.
+      log.startTransaction().commitManually(DeltaTestUtils.createTestAddFile(
+        encodedPath = "empty.parquet",
+        partitionValues = Map(physicalName -> "7"),
+        stats = "{\"numRecords\": 0}"))
+
+      withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
+        val queryDf = spark.sql(s"SELECT DISTINCT p FROM delta.`$tempPath`")
+        assert(queryDf.queryExecution.optimizedPlan
+          .collectFirst { case l: LogicalRelation => l }.isEmpty)
+        checkAnswer(queryDf, Seq(Row(0), Row(1)))
+      }
+    }
+  }
+
+  test("distinct partition values - retainGroupColumns disabled") {
+    val tableName = "TestDistinctPartitionsNoRetainGroupColumns"
+    withTable(tableName) {
+      spark.sql(s"CREATE TABLE $tableName (id INT, b BIGINT, s STRING, d DATE)" +
+        " USING DELTA PARTITIONED BY (b, s, d)")
+      spark.sql(s"INSERT INTO $tableName VALUES (1, 1, 'a', DATE'2024-01-01')," +
+        " (2, 2, 'b', DATE'2024-01-02'), (3, NULL, NULL, NULL)")
+
+      withSQLConf("spark.sql.retainGroupColumns" -> "false") {
+        Seq("b", "s", "d", "b, s, d").foreach { columns =>
+          checkDistinctPartitionsOptimized(s"SELECT DISTINCT $columns FROM $tableName")
+        }
+      }
+    }
+  }
+
+  test("distinct partition values - dates and timestamps around the calendar switch") {
+    Seq(
+      "DATE" -> Seq("DATE'1582-10-10'", "DATE'1582-10-15'", "DATE'1000-01-01'"),
+      "TIMESTAMP" -> Seq("TIMESTAMP'1582-10-10 12:00:00'", "TIMESTAMP'1000-01-01 00:00:00'"),
+      "TIMESTAMP_NTZ" -> Seq("TIMESTAMP_NTZ'1582-10-10 12:00:00'")
+    ).foreach { case (dataType, values) =>
+      val tableName = "TestDistinctPartitionsCalendar"
+      withTable(tableName) {
+        spark.sql(s"CREATE TABLE $tableName (id INT, p $dataType) USING DELTA PARTITIONED BY (p)")
+        values.foreach(v => spark.sql(s"INSERT INTO $tableName VALUES (1, $v)"))
+
+        // CAST to STRING inside the query exposes the internal value: collecting a DATE or
+        // TIMESTAMP as java.sql types would hide a shift, as both sides are rebased the same way.
+        checkDistinctPartitionsOptimized(s"SELECT CAST(p AS STRING) FROM $tableName GROUP BY p")
+        withSQLConf("spark.sql.datetime.java8API.enabled" -> "true") {
+          checkDistinctPartitionsOptimized(s"SELECT DISTINCT p FROM $tableName")
+        }
       }
     }
   }

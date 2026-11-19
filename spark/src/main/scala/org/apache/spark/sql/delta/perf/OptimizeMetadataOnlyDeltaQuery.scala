@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.perf
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.Column
-import org.apache.spark.sql.catalyst.CatalystTypeConverters.createToCatalystConverter
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
@@ -26,7 +25,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable, Snapshot}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaColumnMapping, DeltaTable, Snapshot}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
@@ -160,24 +159,36 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       Column(Cast(partitionValue, field.dataType, timeZone, ansiEnabled = false))
         .as(s"partition_$i")
     }
-    val partitions = getDeltaScanGenerator(tahoeLogFileIndex).filesWithStatsForScan(Nil)
-      .groupBy(partitionValueColumns: _*)
-      .agg(
-        count(when(col("stats.numRecords").isNull, 1)).as("missingNumRecords"),
-        max(numLogicalRecords).as("maxNumLogicalRecords"))
-      .collect()
+    val files = getDeltaScanGenerator(tahoeLogFileIndex).filesWithStatsForScan(Nil)
+      .select(partitionValueColumns ++ Seq(
+        col("stats.numRecords").isNull.as("missingNumRecords"),
+        numLogicalRecords.as("numLogicalRecords")): _*)
+    // Build the Aggregate directly instead of using groupBy().agg(), whose output drops the
+    // grouping columns when spark.sql.retainGroupColumns is false.
+    val keys = partitionColumns.indices.map(i => col(s"partition_$i").expr)
+    val aggregate = Aggregate(
+      groupingExpressions = keys,
+      aggregateExpressions = keys.map(_.asInstanceOf[NamedExpression]) ++ Seq(
+        count(when(col("missingNumRecords"), 1)).as("missingNumRecords"),
+        max(col("numLogicalRecords")).as("maxNumLogicalRecords"))
+        .map(_.expr.asInstanceOf[NamedExpression]),
+      child = files.queryExecution.logical)
+    // Collect InternalRows to keep values in Catalyst form. Converting through external Rows would
+    // rebase DATE and TIMESTAMP values via java.sql types, shifting e.g. 1582-10-10 to 1582-10-15.
+    val partitions = DataFrameUtils.ofRows(files.sparkSession, aggregate)
+      .queryExecution.executedPlan.executeCollect()
 
-    if (partitions.exists(_.getAs[Long]("missingNumRecords") > 0)) {
+    val numKeys = keys.size
+    if (partitions.exists(_.getLong(numKeys) > 0)) {
       logInfo(log"Query can't be optimized using metadata because stats are missing")
       return plan
     }
 
-    val converters = groupingAttributes.map(a => createToCatalystConverter(a.dataType))
     val rows = partitions
-      .filter(_.getAs[Long]("maxNumLogicalRecords") > 0)
+      .filter(p => !p.isNullAt(numKeys + 1) && p.getLong(numKeys + 1) > 0)
       .map { partition =>
-        InternalRow.fromSeq(converters.zipWithIndex.map { case (convert, i) =>
-          convert(partition.get(i))
+        InternalRow.fromSeq(groupingAttributes.zipWithIndex.map { case (attr, i) =>
+          partition.get(i, attr.dataType)
         })
       }.toSeq
 
