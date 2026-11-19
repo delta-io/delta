@@ -21,13 +21,11 @@ import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import java.io.IOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.util.*;
-import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
-import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
@@ -35,9 +33,8 @@ import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import scala.Function2;
+import scala.Tuple2;
 import scala.collection.Iterator;
-import scala.collection.immutable.Seq;
-import scala.jdk.javaapi.CollectionConverters;
 import scala.runtime.AbstractFunction2;
 
 /** Static helpers and constants of {@link DeltaV2MicroBatchStream}. */
@@ -238,11 +235,11 @@ final class DeltaV2MicroBatchStreamUtils {
                                 IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()))));
   }
 
-  /** Converts a list of IndexedFiles to a Scala Seq of AdmittableFile for batch admission. */
-  static Seq<AdmittableFile> toScalaAdmittableSeq(List<IndexedFile> files) {
-    return CollectionConverters.asScala(
-            files.stream().map(f -> (AdmittableFile) f).collect(Collectors.toList()))
-        .toSeq();
+  /** Pairs a CDC payload with its index. */
+  static Tuple2<IndexedFile, CDCDataFile> indexCDCFile(
+      long version, long index, CDCDataFile cdcFile) {
+    IndexedFile file = IndexedFile.cdc(version, index, cdcFile);
+    return new Tuple2<>(file, cdcFile);
   }
 
   /** Checks if the endOffset is at BASE_INDEX for the given version (early exit condition). */

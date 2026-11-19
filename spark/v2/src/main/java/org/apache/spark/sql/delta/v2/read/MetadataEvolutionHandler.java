@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
@@ -176,6 +177,11 @@ public class MetadataEvolutionHandler {
    */
   public ClosableIterator<IndexedFile> stopIndexedFileIteratorAtSchemaChangeBarrier(
       ClosableIterator<IndexedFile> fileActions) {
+    return stopIndexedFileIteratorAtSchemaChangeBarrier(fileActions, Function.identity());
+  }
+
+  <T> ClosableIterator<T> stopIndexedFileIteratorAtSchemaChangeBarrier(
+      ClosableIterator<T> fileActions, Function<T, IndexedFile> indexedFile) {
     // Lazily include files up to and including the barrier, then break.
     boolean[] sawBarrier = {false};
     return new IteratorCloseOps<>(fileActions)
@@ -186,7 +192,8 @@ public class MetadataEvolutionHandler {
                       if (sawBarrier[0]) {
                         return false;
                       }
-                      if (file.getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
+                      if (indexedFile.apply(file).getIndex()
+                          == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
                         sawBarrier[0] = true;
                       }
                       return true;

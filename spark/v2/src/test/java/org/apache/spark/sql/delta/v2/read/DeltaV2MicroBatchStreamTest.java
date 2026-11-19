@@ -54,6 +54,7 @@ import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.connector.read.streaming.ReadLimit;
 import org.apache.spark.sql.delta.*;
 import org.apache.spark.sql.delta.actions.Action;
+import org.apache.spark.sql.delta.actions.FileAction;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.amt.AMTTriggerMode;
@@ -805,46 +806,16 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
               "Index mismatch at index %d: dsv1=%d, dsv2=%d",
               i, deltaFile.index(), kernelFile.getIndex()));
 
-      // Compare file paths across all action types: AddFile, RemoveFile, and explicit CDC.
-      // DSv1 holds add/remove/cdc as separate fields; DSv2 wraps them in CDCDataFile.
-      String dsv1AddPath = deltaFile.add() != null ? deltaFile.add().path() : null;
-      String dsv2AddPath = null;
-      if (kernelFile.getAddFile() != null) {
-        dsv2AddPath = kernelFile.getAddFile().path();
-      } else if (kernelFile.getCDCDataFile() != null
-          && kernelFile.getCDCDataFile().getAddFile() != null) {
-        dsv2AddPath = kernelFile.getCDCDataFile().getAddFile().path();
-      }
+      FileAction deltaAction = deltaFile.getFileAction();
+      FileAction kernelAction = kernelFile.getFileAction();
       assertEquals(
-          dsv1AddPath,
-          dsv2AddPath,
-          String.format(
-              "AddFile path mismatch at index %d: dsv1=%s, dsv2=%s", i, dsv1AddPath, dsv2AddPath));
-
-      String dsv1RemovePath = deltaFile.remove() != null ? deltaFile.remove().path() : null;
-      String dsv2RemovePath = null;
-      if (kernelFile.getCDCDataFile() != null
-          && kernelFile.getCDCDataFile().getRemoveFile() != null) {
-        dsv2RemovePath = kernelFile.getCDCDataFile().getRemoveFile().path();
-      }
+          deltaAction != null ? deltaAction.getClass() : null,
+          kernelAction != null ? kernelAction.getClass() : null,
+          "File action type mismatch at index " + i);
       assertEquals(
-          dsv1RemovePath,
-          dsv2RemovePath,
-          String.format(
-              "RemoveFile path mismatch at index %d: dsv1=%s, dsv2=%s",
-              i, dsv1RemovePath, dsv2RemovePath));
-
-      // Explicit CDC: DSv1 has cdc.path(), DSv2 doesn't store the path yet (added in cdf5).
-      // For now, verify both sides agree on whether an explicit CDC file is present.
-      boolean dsv1HasCDC = deltaFile.cdc() != null;
-      boolean dsv2HasCDC =
-          kernelFile.getCDCDataFile() != null && kernelFile.getCDCDataFile().isAddCDCFile();
-      assertEquals(
-          dsv1HasCDC,
-          dsv2HasCDC,
-          String.format(
-              "Explicit CDC presence mismatch at index %d: dsv1=%s, dsv2=%s",
-              i, dsv1HasCDC, dsv2HasCDC));
+          deltaAction != null ? deltaAction.path() : null,
+          kernelAction != null ? kernelAction.path() : null,
+          "File path mismatch at index " + i);
     }
   }
 
