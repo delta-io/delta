@@ -696,7 +696,7 @@ abstract class CommitCoordinatorSuiteBase
         sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
       }
       assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-      assert(!DeltaLog.forTable(spark, tempDir).snapshot.isCatalogOwned)
+      assert(!DeltaLog.forTable(spark, tempDir).snapshot.isCatalogManaged)
       assert(DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(
         IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
@@ -711,7 +711,7 @@ abstract class CommitCoordinatorSuiteBase
       sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
       val snapshot = DeltaLog.forTable(spark, tempDir).unsafeVolatileSnapshot
       assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-      assert(!snapshot.isCatalogOwned)
+      assert(!snapshot.isCatalogManaged)
       assert(!snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
   }
@@ -736,7 +736,7 @@ abstract class CommitCoordinatorSuiteBase
         sql(s"REPLACE TABLE t1 (id STRING) USING delta")
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, CatalystTableIdentifier("t1"))
         if (isCatalogOwnedTest) {
-          assert(snapshot.isCatalogOwned)
+          assert(snapshot.isCatalogManaged)
           // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogManaged
           // since we don't support upgrade yet.
           assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))

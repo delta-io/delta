@@ -4395,7 +4395,7 @@ trait DeltaErrorsBase
       operation: String,
       snapshot: SnapshotDescriptor,
       catalogTableOpt: Option[CatalogTable]): Unit = {
-    if (snapshot.isCatalogOwned) {
+    if (snapshot.isCatalogManaged) {
       val allowedOperations = catalogTableOpt
         .flatMap(_.storage.properties.get(
           CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY))

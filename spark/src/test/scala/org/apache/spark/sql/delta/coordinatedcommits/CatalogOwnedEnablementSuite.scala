@@ -60,7 +60,7 @@ class CatalogOwnedEnablementSuite
       tableName: String,
       expectEnabled: Boolean): Unit = {
     val (_, snapshot) = getDeltaLogWithSnapshot(TableIdentifier(tableName))
-    assert(snapshot.isCatalogOwned == expectEnabled)
+    assert(snapshot.isCatalogManaged == expectEnabled)
     Seq(
       CatalogManagedTableFeature,
       VacuumProtocolCheckTableFeature,
