@@ -89,7 +89,7 @@ private[read] final class DeltaV2Batch(
   private val kernelPushedFilterSet = kernelPushedFilters.toSet
   private val filterSet = allFilters.toSet
   private[this] val sqlConf: SQLConf = SQLConf.get
-  private lazy val tablePathForLogging = redactPath(new Path(tablePath), sqlConf)
+  private lazy val redactedTablePathForLogging = redactPath(new Path(tablePath), sqlConf)
 
   private def kernelSnapshot: KernelSnapshot =
     DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
@@ -110,7 +110,7 @@ private[read] final class DeltaV2Batch(
         }
       }
       logDebug(log"Planned Delta V2 input partitions for " +
-        log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)}: " +
+        log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)}: " +
         log"${MDC(DeltaLogKeys.NUM_PARTITIONS, partitions.length.toLong)} partitions, " +
         log"${MDC(DeltaLogKeys.NUM_FILES, deltaScan.files.size.toLong)} files, " +
         log"${MDC(DeltaLogKeys.NUM_BYTES, selectedFileBytes)} bytes in " +
@@ -119,9 +119,10 @@ private[read] final class DeltaV2Batch(
     } catch {
       case NonFatal(error) =>
         val elapsedMs = elapsedTimeMs(startedAtNs)
-        logError(log"Failed to plan Delta V2 input partitions for " +
-          log"${MDC(DeltaLogKeys.PATH, tablePathForLogging)} in " +
-          log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms", error)
+        logWarning(log"Delta V2 input-partition planning failed for " +
+          log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)} after " +
+          log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms: " +
+          log"${MDC(DeltaLogKeys.EXCEPTION, error.getClass.getName)}")
         throw error
     }
   }

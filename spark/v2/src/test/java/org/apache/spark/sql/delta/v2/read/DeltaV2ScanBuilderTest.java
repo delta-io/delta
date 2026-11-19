@@ -16,9 +16,16 @@
 package org.apache.spark.sql.delta.v2.read;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
@@ -27,7 +34,16 @@ import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.OptionalInt;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.MetadataAttribute$;
@@ -52,6 +68,8 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import scala.Option;
 
 /**
@@ -62,6 +80,156 @@ import scala.Option;
  * DeltaV2Snapshot.filesForScan}.
  */
 public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
+
+  @ParameterizedTest
+  @ValueSource(strings = {"id", "dep_id"})
+  public void testDebugFilterRenderingFailurePreservesClassification(
+      String column, @TempDir File tempDir) throws Exception {
+    DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
+    // Only diagnostic rendering fails; the predicate's references and semantics stay real.
+    Expression expression = spy(toCatalystFilter(builder, new GreaterThan(column, 0)));
+    doThrow(new IllegalStateException("diagnostic-rendering-secret")).when(expression).sql();
+    scala.collection.immutable.Seq<Expression> filters =
+        scala.jdk.javaapi.CollectionConverters.asScala(Collections.singletonList(expression))
+            .toList();
+    boolean partitionFilter = column.equals("dep_id");
+
+    List<LogEvent> events =
+        captureBuilderLogs(
+            Level.DEBUG,
+            () -> {
+              assertEquals(partitionFilter ? 0 : 1, builder.pushFilters(filters).size());
+              Expression[] classified =
+                  getCatalystFilters(
+                      builder,
+                      partitionFilter ? "partitionCatalystFilters" : "dataCatalystFilters");
+              assertEquals(1, classified.length);
+              assertSame(expression, classified[0]);
+            });
+
+    assertTrue(
+        events.stream()
+            .anyMatch(e -> e.getMessage().getFormattedMessage().contains("<unavailable:")));
+    assertTrue(
+        events.stream()
+            .anyMatch(
+                e ->
+                    e.getMessage()
+                        .getFormattedMessage()
+                        .contains(IllegalStateException.class.getName())));
+    assertTrue(events.stream().allMatch(e -> e.getThrown() == null));
+    assertTrue(
+        events.stream()
+            .noneMatch(
+                e -> e.getMessage().getFormattedMessage().contains("diagnostic-rendering-secret")));
+  }
+
+  @Test
+  public void testInfoFilterLoggingDoesNotRenderExpressions(@TempDir File tempDir)
+      throws Exception {
+    DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
+    Expression expression = spy(toCatalystFilter(builder, new GreaterThan("id", 0)));
+    doThrow(new IllegalStateException("rendering should stay lazy")).when(expression).sql();
+    scala.collection.immutable.Seq<Expression> filters =
+        scala.jdk.javaapi.CollectionConverters.asScala(Collections.singletonList(expression))
+            .toList();
+
+    List<LogEvent> events =
+        captureBuilderLogs(Level.INFO, () -> assertEquals(1, builder.pushFilters(filters).size()));
+
+    verify(expression, never()).sql();
+    assertTrue(events.isEmpty());
+  }
+
+  @Test
+  public void testBuildFailureLogsOneBoundedWarningAndPreservesCause(@TempDir File tempDir)
+      throws Exception {
+    IllegalArgumentException expected = new IllegalArgumentException("raw-exception-secret");
+    CaseInsensitiveStringMap failingOptions =
+        new CaseInsensitiveStringMap(Collections.emptyMap()) {
+          @Override
+          public Set<Map.Entry<String, String>> entrySet() {
+            throw expected;
+          }
+        };
+    withSQLConf(
+        "spark.sql.redaction.string.regex",
+        "diagnostic-table-secret",
+        () -> {
+          DeltaV2ScanBuilder builder =
+              newFilterScanBuilder(new File(tempDir, "diagnostic-table-secret"), failingOptions);
+          List<LogEvent> events =
+              captureBuilderLogs(
+                  Level.DEBUG,
+                  () ->
+                      assertSame(
+                          expected, assertThrows(IllegalArgumentException.class, builder::build)));
+          assertEquals(1, events.size());
+          LogEvent warning = events.get(0);
+          assertEquals(Level.WARN, warning.getLevel());
+          assertNull(warning.getThrown());
+          String message = warning.getMessage().getFormattedMessage();
+          assertTrue(message.startsWith("Delta V2 scan planning failed for "));
+          assertTrue(message.contains("scan.build.failure"));
+          assertTrue(message.contains(IllegalArgumentException.class.getName()));
+          assertFalse(message.contains("diagnostic-table-secret"));
+          assertFalse(message.contains("raw-exception-secret"));
+        });
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"INFO", "DEBUG"})
+  public void testScanDiagnosticsPreserveDeferredFileSelection(String level, @TempDir File tempDir)
+      throws Exception {
+    DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
+    List<LogEvent> events =
+        captureBuilderLogs(
+            Level.valueOf(level),
+            () -> {
+              DeltaV2Scan scan = asDeltaV2Scan(builder.build());
+              Field planned = DeltaV2Scan.class.getDeclaredField("planned");
+              planned.setAccessible(true);
+              assertFalse(planned.getBoolean(scan));
+              assertEquals(0, scan.toBatch().planInputPartitions().length);
+              assertTrue(planned.getBoolean(scan));
+            });
+    assertEquals(
+        level.equals("DEBUG") ? 1 : 0,
+        events.stream()
+            .filter(
+                e ->
+                    e.getMessage().getFormattedMessage().startsWith("Selected Delta V2 scan files"))
+            .count());
+    assertEquals(
+        level.equals("DEBUG") ? 1 : 0,
+        events.stream()
+            .filter(e -> e.getMessage().getFormattedMessage().startsWith("Built Delta V2 scan"))
+            .count());
+  }
+
+  private List<LogEvent> captureBuilderLogs(Level level, ThrowingRunnable action) throws Exception {
+    Logger logger = (Logger) LogManager.getLogger(DeltaV2ScanBuilder.class);
+    List<LogEvent> events = new CopyOnWriteArrayList<>();
+    AbstractAppender appender =
+        new AbstractAppender("scan-builder-diagnostics", null, null, true, Property.EMPTY_ARRAY) {
+          @Override
+          public void append(LogEvent event) {
+            events.add(event.toImmutable());
+          }
+        };
+    Level previousLevel = logger.getLevel();
+    appender.start();
+    logger.addAppender(appender);
+    logger.setLevel(level);
+    try {
+      action.run();
+      return events;
+    } finally {
+      logger.setLevel(previousLevel);
+      logger.removeAppender(appender);
+      appender.stop();
+    }
+  }
 
   @Test
   public void testBuild_returnsScanWithExpectedSchema(@TempDir File tempDir) {
@@ -573,6 +741,10 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
   }
 
   private DeltaV2ScanBuilder newFilterScanBuilder(File tempDir) {
+    return newFilterScanBuilder(tempDir, CaseInsensitiveStringMap.empty());
+  }
+
+  private DeltaV2ScanBuilder newFilterScanBuilder(File tempDir, CaseInsensitiveStringMap options) {
     String path = tempDir.getAbsolutePath();
     String tableName = "filter_builder_" + System.nanoTime();
     // dep_name is a STRING partition column so string predicates can be applied to a partition
@@ -602,7 +774,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
               DataTypes.createStructField("dep_id", DataTypes.IntegerType, true),
               DataTypes.createStructField("dep_name", DataTypes.StringType, true)
             });
-    return newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
+    return newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema, options);
   }
 
   private StructType getRequiredDataSchema(DeltaV2ScanBuilder builder) throws Exception {
@@ -617,6 +789,22 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
       StructType dataSchema,
       StructType partitionSchema,
       StructType tableSchema) {
+    return newScanBuilder(
+        tableName,
+        path,
+        dataSchema,
+        partitionSchema,
+        tableSchema,
+        CaseInsensitiveStringMap.empty());
+  }
+
+  private DeltaV2ScanBuilder newScanBuilder(
+      String tableName,
+      String path,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType tableSchema,
+      CaseInsensitiveStringMap options) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
@@ -635,7 +823,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
             partitionSchema,
             tableSchema,
             Option.empty(),
-            CaseInsensitiveStringMap.empty());
+            options);
   }
 
   // Limit Pushdown Tests
