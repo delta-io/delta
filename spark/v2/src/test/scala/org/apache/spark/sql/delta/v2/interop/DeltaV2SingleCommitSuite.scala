@@ -15,23 +15,19 @@
  */
 package org.apache.spark.sql.delta.v2.interop
 
-import java.io.IOException
+import java.io.{InterruptedIOException, IOException, UncheckedIOException}
+import java.nio.channels.ClosedByInterruptException
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.Files
 
-import scala.collection.JavaConverters._
-
-import org.apache.spark.sql.delta.DeltaSingleCommit
 import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.v2.utils.KernelCommitActionsTestUtil._
-import org.mockito.Mockito.{doReturn, doThrow, inOrder, mock, spy, verify, when}
-import io.delta.kernel.{CommitActions => KernelCommitActions}
-import io.delta.kernel.data.{ColumnarBatch => KernelColumnarBatch}
-import io.delta.kernel.defaults.internal.json.{JsonUtils => KernelJsonUtils}
-import io.delta.kernel.internal.actions.{SingleAction => KernelSingleAction}
-import io.delta.kernel.internal.data.{GenericColumnVector => KernelColumnVectorImpl}
-import io.delta.kernel.utils.{CloseableIterator => KernelCloseableIterator}
+import org.apache.spark.sql.delta.storage.{ClosableIterator, HDFSLogStore}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.FileStatus
+import io.delta.kernel.{CommitFileStatus => KernelCommitFileStatus}
+import io.delta.kernel.utils.{FileStatus => KernelFileStatus}
 
-import org.apache.spark.SparkFunSuite
-import org.apache.spark.util.Utils
+import org.apache.spark.{SparkConf, SparkFunSuite}
 
 class DeltaV2SingleCommitSuite extends SparkFunSuite {
 
@@ -43,243 +39,164 @@ class DeltaV2SingleCommitSuite extends SparkFunSuite {
       |"schemaString":"{\"type\":\"struct\",\"fields\":[]}",
       |"partitionColumns":[],"configuration":{}}}""".stripMargin)
   private val expectedActions = actionJsons.map(Action.fromJson).toList
-  private def kernelCommitActions: TestCommitActions = {
-    val kernelBatchColumns = actionJsons.zip(Seq("add", "remove", "metaData")).map {
-      case (json, actionName) =>
-        val kernelRow = KernelJsonUtils.rowFromJson(json, KernelSingleAction.FULL_SCHEMA)
-          .getStruct(KernelSingleAction.FULL_SCHEMA.indexOf(actionName))
-        Seq(actionName -> new KernelColumnVectorImpl(Seq(kernelRow).asJava, kernelRow.getSchema))
-    }
-    createCommitActions(kernelBatchColumns.head, kernelBatchColumns.tail)
-  }
 
-  test("getActionsIterator supports rewind after partial consumption and exhaustion") {
-    val kernelCommit = kernelCommitActions
-    val commit = new DeltaV2SingleCommit(kernelCommit)
-    assert(!kernelCommit.closed)
-    assert(kernelCommit.actionBatchesRead === 0)
-    assert(commit.version === 1L)
-    assert(commit.timestamp === 0L)
-    val actions = commit.getActionsIterator()
-    try {
-      assert(actions.next() === expectedActions.head)
-      assert(kernelCommit.actionBatchesRead === 1)
-      actions.rewind()
-      assert(actions.toList === expectedActions)
-      assert(!actions.hasNext)
-      intercept[NoSuchElementException] {
-        actions.next()
+  private class TrackingLogStore(conf: Configuration)
+      extends HDFSLogStore(new SparkConf(false), conf) {
+    var opens = 0
+    var closes = 0
+    var onOperation: String => Unit = (_: String) => ()
+
+    override def readAsIterator(
+        fileStatus: FileStatus,
+        hadoopConf: Configuration): ClosableIterator[String] = {
+      assert(hadoopConf eq conf)
+      onOperation("open")
+      opens += 1
+      val underlying = super.readAsIterator(fileStatus, hadoopConf)
+      new ClosableIterator[String] {
+        private var closed = false
+        override def hasNext: Boolean = {
+          onOperation("hasNext")
+          underlying.hasNext
+        }
+        override def next(): String = {
+          onOperation("next")
+          underlying.next()
+        }
+        override def close(): Unit = {
+          if (!closed) {
+            closed = true
+            closes += 1
+            underlying.close()
+            onOperation("close")
+          }
+        }
       }
-      actions.rewind()
-      assert(actions.toList === expectedActions)
-    } finally {
-      actions.close()
-      commit.close()
     }
-    assert(kernelCommit.closed)
   }
 
-  test("each getActionsIterator call opens an independent stream") {
-    val kernelCommit = kernelCommitActions
-    val commit = new DeltaV2SingleCommit(kernelCommit)
-    assert(!kernelCommit.closed)
-    val first = commit.getActionsIterator()
-    val second = commit.getActionsIterator(maxInMemoryFileSizeBytes = 0)
-    try {
-      assert(first.next() === expectedActions.head)
-      first.close()
-      assert(!kernelCommit.closed)
-      assert(second.toList === expectedActions)
-      first.rewind()
-      assert(first.toList === expectedActions)
-    } finally {
-      first.close()
-      second.close()
-      commit.close()
+  private def withCommit(jsons: Seq[String] = actionJsons)(
+      f: (DeltaV2SingleCommit, TrackingLogStore, Long) => Unit): Unit = {
+    withTempDir { dir =>
+      val file = dir.toPath.resolve("commit with spaces.json")
+      Files.write(file, (jsons.map(_.replace("\n", "")).mkString("\n") + "\n").getBytes(UTF_8))
+      val fileSize = Files.size(file)
+      val conf = new Configuration()
+      val store = new TrackingLogStore(conf)
+      val status = new KernelCommitFileStatus(
+        7L, KernelFileStatus.of(file.toString, fileSize, 3000L))
+      val commit = DeltaV2SingleCommit(status, store, conf)
+      f(commit, store, fileSize)
     }
-    assert(kernelCommit.closed)
   }
 
   Seq(-1L, 0L, 1L, Long.MaxValue).foreach { threshold =>
-    test(s"getActionsIterator streams regardless of the memory threshold ($threshold)") {
-      val kernelCommit = kernelCommitActions
-      val commit: DeltaSingleCommit = DeltaV2SingleCommit(kernelCommit)
-      val actions = commit.getActionsIterator(maxInMemoryFileSizeBytes = threshold)
-      try {
-        assert(kernelCommit.actionBatchesRead === 0)
-        assert(actions.next() === expectedActions.head)
-        assert(kernelCommit.actionBatchesRead === 1)
-        actions.rewind()
-        assert(actions.toList === expectedActions)
-      } finally {
-        actions.close()
-        commit.asInstanceOf[DeltaV2SingleCommit].close()
-      }
-      assert(kernelCommit.closed)
-    }
-  }
-
-  // Mocks let these tests inject resource failures and verify close order.
-  test("action iterators close before closing each Kernel commit") {
-    val kernelFirstCommit = mock(classOf[KernelCommitActions])
-    val kernelSecondCommit = mock(classOf[KernelCommitActions])
-    val kernelFirstActions = mock(classOf[KernelCloseableIterator[KernelColumnarBatch]])
-    val kernelSecondActions = mock(classOf[KernelCloseableIterator[KernelColumnarBatch]])
-    when(kernelFirstCommit.getActions()).thenReturn(kernelFirstActions)
-    when(kernelSecondCommit.getActions()).thenReturn(kernelSecondActions)
-
-    Seq(kernelFirstCommit, kernelSecondCommit).foreach { kernelCommit =>
-      val commit = new DeltaV2SingleCommit(kernelCommit)
-      try {
-        commit.getActionsIterator().processAndClose { actions =>
-          assert(actions.isEmpty)
-        }
-      } finally {
-        commit.close()
-      }
-    }
-
-    val order = inOrder(
-      kernelFirstActions, kernelFirstCommit, kernelSecondActions, kernelSecondCommit)
-    order.verify(kernelFirstActions).close()
-    order.verify(kernelFirstCommit).close()
-    order.verify(kernelSecondCommit).getActions()
-    order.verify(kernelSecondActions).close()
-    order.verify(kernelSecondCommit).close()
-  }
-
-  test("opening actions propagates IO failures and leaves the commit for caller cleanup") {
-    val failure = new IOException("action iterator open failed")
-    val kernelCommit = mock(classOf[KernelCommitActions])
-    when(kernelCommit.getVersion()).thenReturn(7L)
-    when(kernelCommit.getActions()).thenAnswer { _ => throw failure }
-
-    val commit = new DeltaV2SingleCommit(kernelCommit)
-    assert(commit.version === 7L)
-    val error = try {
-      intercept[IOException] {
-        commit.getActionsIterator()
-      }
-    } finally {
-      commit.close()
-    }
-
-    assert(error eq failure)
-    verify(kernelCommit).close()
-  }
-
-  test("action iteration preserves the read failure when resource cleanup fails") {
-    val readFailure = new IOException("action iterator read failed")
-    val actionCloseFailure = new IOException("action iterator close failed")
-    val commitCloseFailure = new IOException("commit close failed")
-    val kernelCommit = mock(classOf[KernelCommitActions])
-    val kernelActions = mock(classOf[KernelCloseableIterator[KernelColumnarBatch]])
-    when(kernelCommit.getVersion()).thenReturn(7L)
-    when(kernelCommit.getActions()).thenReturn(kernelActions)
-    when(kernelActions.hasNext).thenAnswer { _ => throw readFailure }
-    doThrow(actionCloseFailure).when(kernelActions).close()
-    doThrow(commitCloseFailure).when(kernelCommit).close()
-
-    val commit = new DeltaV2SingleCommit(kernelCommit)
-    val error = intercept[IOException] {
-      Utils.tryWithSafeFinally {
-        val actions = commit.getActionsIterator()
-        Utils.tryWithSafeFinally {
-          actions.toVector
-        } {
+    test(s"actions rewind after partial consumption and exhaustion (threshold=$threshold)") {
+      withCommit() { (commit, store, size) =>
+        val actions = commit.getActionsIterator(threshold)
+        val cached = size < threshold
+        try {
+          assert(store.opens === 1)
+          assert(store.closes === (if (cached) 1 else 0))
+          assert(actions.next() === expectedActions.head)
+          actions.rewind()
+          assert(actions.toList === expectedActions)
+          assert(!actions.hasNext)
+          intercept[NoSuchElementException] { actions.next() }
+          actions.rewind()
+          assert(actions.toList === expectedActions)
+          assert(store.opens === (if (cached) 1 else 3))
+        } finally {
           actions.close()
         }
-      } {
-        commit.close()
+        assert(store.closes === store.opens)
       }
     }
-
-    assert(error eq readFailure)
-    assert(error.getSuppressed.length === 2)
-    assert(error.getSuppressed.head eq actionCloseFailure)
-    assert(error.getSuppressed()(1).getCause eq commitCloseFailure)
-    val order = inOrder(kernelActions, kernelCommit)
-    order.verify(kernelActions).close()
-    order.verify(kernelCommit).close()
   }
 
-  test("cleanup propagates failures after successfully reading actions") {
-    Seq((true, false), (false, true), (true, true)).foreach {
-      case (failClosingActions, failClosingCommit) =>
-        val actionCloseFailure = new IOException("action iterator close failed")
-        val commitCloseFailure = new IOException("commit close failed")
-        val kernelCommit = mock(classOf[KernelCommitActions])
-        val kernelActions = mock(classOf[KernelCloseableIterator[KernelColumnarBatch]])
-        when(kernelCommit.getVersion()).thenReturn(7L)
-        when(kernelCommit.getActions()).thenReturn(kernelActions)
-        if (failClosingActions) {
-          doThrow(actionCloseFailure).when(kernelActions).close()
+  test("files equal to the memory threshold stream and smaller files are cached") {
+    Seq(false, true).foreach { cached =>
+      withCommit() { (commit, store, size) =>
+        val actions = commit.getActionsIterator(size + (if (cached) 1L else 0L))
+        try {
+          assert(actions.toList === expectedActions)
+          actions.rewind()
+          assert(actions.toList === expectedActions)
+          assert(store.opens === (if (cached) 1 else 2))
+        } finally {
+          actions.close()
         }
-        if (failClosingCommit) {
-          doThrow(commitCloseFailure).when(kernelCommit).close()
-        }
+        assert(store.closes === store.opens)
+      }
+    }
+  }
 
-        val commit = new DeltaV2SingleCommit(kernelCommit)
-        val error = intercept[Exception] {
-          Utils.tryWithSafeFinally {
-            val actions = commit.getActionsIterator()
-            Utils.tryWithSafeFinally {
-              assert(actions.isEmpty)
-            } {
-              actions.close()
-            }
-          } {
-            commit.close()
+  Seq(false, true).foreach { closedByInterrupt =>
+    Seq("open", "read", "rewind", "close").foreach { operation =>
+      test(s"interrupted $operation retains its cause (closedByInterrupt=$closedByInterrupt)") {
+        withCommit() { (commit, store, _) =>
+          val interruption = if (closedByInterrupt) {
+            new ClosedByInterruptException()
+          } else {
+            new InterruptedIOException("log read interrupted")
           }
-        }
+          val actions = if (operation == "rewind" || operation == "close") {
+            Some(commit.getActionsIterator())
+          } else {
+            None
+          }
+          val failedOperation = operation match {
+            case "read" => "hasNext"
+            case "rewind" => "open"
+            case other => other
+          }
+          store.onOperation = current => if (current == failedOperation) throw interruption
 
-        if (failClosingActions) {
-          assert(error eq actionCloseFailure)
-        } else {
-          assert(error.getCause eq commitCloseFailure)
+          try {
+            val error = intercept[UncheckedIOException] {
+              operation match {
+                case "open" => commit.getActionsIterator()
+                case "read" => commit.getActionsIterator(Long.MaxValue)
+                case "rewind" => actions.get.rewind()
+                case "close" => actions.get.close()
+                case other => fail(s"Unexpected operation: $other")
+              }
+            }
+            assert(error.getCause eq interruption)
+          } finally {
+            actions.foreach(_.close())
+          }
+          assert(store.closes === store.opens)
         }
-        if (failClosingActions && failClosingCommit) {
-          assert(error.getSuppressed.length === 1)
-          assert(error.getSuppressed.head.getCause eq commitCloseFailure)
-        } else {
-          assert(error.getSuppressed.isEmpty)
-        }
-        val order = inOrder(kernelActions, kernelCommit)
-        order.verify(kernelActions).close()
-        order.verify(kernelCommit).close()
+      }
     }
   }
 
-  test("opening actions preserves unrelated failures") {
-    Seq(
-      new IllegalStateException("Cannot read action batches"),
-      new IllegalArgumentException("Invalid action batch")
-    ).foreach { failure =>
-      val kernelCommit = new TestCommitActions(Seq.empty) {
-        override def getActions(): KernelCloseableIterator[KernelColumnarBatch] = throw failure
-      }
-      val commit = DeltaV2SingleCommit(kernelCommit)
-      val error = try {
-        intercept[RuntimeException] {
-          commit.getActionsIterator()
-        }
-      } finally {
-        commit.asInstanceOf[DeltaV2SingleCommit].close()
+  test("ordinary read failures keep their original exception and close the reader") {
+    withCommit() { (commit, store, _) =>
+      val failure = new IOException("log read failed")
+      store.onOperation = operation => if (operation == "hasNext") throw failure
+      val error = intercept[IOException] {
+        commit.getActionsIterator().processAndClose(_.hasNext)
       }
       assert(error eq failure)
-      assert(kernelCommit.closed)
+      assert(store.opens === 1)
+      assert(store.closes === 1)
     }
   }
 
-  test("construction closes the Kernel commit when reading its timestamp fails") {
-    val failure = new IllegalStateException("Cannot read commit timestamp")
-    val kernelCommit = new TestCommitActions(Seq.empty) {
-      override def getTimestamp: Long = throw failure
+  Seq(None, Some(1234L)).foreach { ict =>
+    test(s"timestamp lazily uses persisted ICT or file modification time (ICT=$ict)") {
+      val jsons = ict.toSeq.map(ts => s"""{"commitInfo":{"inCommitTimestamp":$ts}}""") ++
+        actionJsons
+      withCommit(jsons) { (commit, store, _) =>
+        assert(store.opens === 0)
+        assert(commit.timestamp === ict.getOrElse(3000L))
+        assert(store.opens === 1)
+        assert(store.closes === 1)
+        assert(commit.timestamp === ict.getOrElse(3000L))
+        assert(store.opens === 1)
+      }
     }
-    val error = intercept[IllegalStateException] {
-      DeltaV2SingleCommit(kernelCommit)
-    }
-    assert(error eq failure)
-    assert(kernelCommit.closed)
   }
 }

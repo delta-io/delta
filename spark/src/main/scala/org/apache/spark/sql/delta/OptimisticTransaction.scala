@@ -1169,26 +1169,50 @@ trait OptimisticTransactionImpl extends TransactionHelper
    * enabled(rowTracking, deletionVectors) or a specific configuration (column mapping `id` mode).
    */
   private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
+    val amtProperty = AMTUtils.amtPropertyValue(metadata.configuration)
+    val existingTableHasAdaptiveMetadata =
+      AMTUtils.amtSupported(snapshot.protocol, isPreviewCompatible = true)
+    val isUpgrade = !isCreatingNewTable && !existingTableHasAdaptiveMetadata
     // The AMT feature the table has or is being given, which names it in the errors below. A table
     // has at most one; `performTableFeatureIncompatibilityCheck` checks that on the final protocol.
     val amtFeatureOpt = AdaptiveMetadataTableFeatureBase.features.find { feature =>
       protocol.isFeatureSupported(feature) ||
         TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(metadata.configuration, feature)
-    }
+    }.orElse(Option.when(isUpgrade && amtProperty.contains(true))(AdaptiveMetadataTableFeature))
     val adaptiveMetadataEnabled = amtFeatureOpt.isDefined
-    if (!adaptiveMetadataEnabled) {
+    // With the AMT property false, the commit writes no AMT state, so it needs no AMT dependency.
+    if (!adaptiveMetadataEnabled || amtProperty.contains(false)) {
       return metadata
     }
     // Iceberg-native V4 tables get the preview feature; see `IcebergNativeV4TableFeature`.
     val amtFeature = amtFeatureOpt.getOrElse(AdaptiveMetadataPreviewTableFeature)
     val amtFeatureName = amtFeature.name
 
-    val existingTableHasAdaptiveMetadata =
-      AMTUtils.amtEnabled(snapshot)
-    // REPLACE counts as creating a new table, but it keeps the existing table and its history, so
-    // adding AMT through it is an upgrade too.
+    // An existing table without AMT. Only the enablement commit of an upgrade may add AMT to it: it
+    // sets the AMT property to true. REPLACE is never one: it keeps the table and its history. For
+    // the enablement commit, this block checks only the dependencies.
     if (readVersion >= 0 && !existingTableHasAdaptiveMetadata) {
-      throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeatureName)
+      val setsAMTProperty =
+        amtFeature == AdaptiveMetadataTableFeature && amtProperty.contains(true)
+      if (isCreatingNewTable || !setsAMTProperty) {
+        throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeatureName)
+      }
+      // Row tracking on an existing table needs a backfill, so the upgrade cannot enable it.
+      Seq(
+        DeltaConfigs.ROW_TRACKING_ENABLED ->
+          RowTracking.isEnabled(snapshot.protocol, snapshot.metadata),
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION ->
+          DeletionVectorUtils.deletionVectorsWritable(snapshot.protocol, snapshot.metadata))
+        .collectFirst { case (config, false) => config }
+        .foreach { config =>
+          throw DeltaErrors.adaptiveMetadataRequiresDependentFeatureEnabled(amtFeatureName,
+            config.key, snapshot.metadata.configuration.getOrElse(config.key, "false"))
+        }
+      if (metadata.columnMappingMode != IdMapping) {
+        throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
+          amtFeatureName, metadata.columnMappingMode.name)
+      }
+      return metadata
     }
 
     // rowTracking / deletionVectors: these dependencies must be enabled via their metadata flag.
@@ -1219,6 +1243,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
     } else if (metadata.columnMappingMode != IdMapping) {
       throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
         amtFeatureName, metadata.columnMappingMode.name)
+    }
+
+    // The AMT property is false when unset, and only `adaptiveMetadata-dev` reads it. CREATE sets
+    // it to true. REPLACE keeps the value of the table it replaces, so it does not turn AMT writes
+    // on or off.
+    val amtPropertyKey = DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key
+    if (isCreatingNewTable && amtFeature == AdaptiveMetadataTableFeature &&
+        !metadata.configuration.contains(amtPropertyKey)) {
+      val valueOpt =
+        if (readVersion >= 0) snapshot.metadata.configuration.get(amtPropertyKey) else Some("true")
+      valueOpt.foreach(value => updatedConfig += (amtPropertyKey -> value))
     }
 
     metadata.copy(configuration = updatedConfig)
@@ -1274,7 +1309,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val addFileMustHaveWideBounds = op.checkAddFileWithDeletionVectorStatsAreNotTightBounds
 
     // A manifest tree cannot store inline DVs, so the next tree build would fail on such a file.
-    val inlineDeletionVectorDisallowed = AMTUtils.amtEnabled(metadata, protocol)
+    val inlineDeletionVectorDisallowed =
+      AMTUtils.amtEnabled(metadata, protocol, isPreviewCompatible = true)
 
     action => action match {
       case a: AddFile if a.deletionVector != null =>
@@ -2857,7 +2893,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Invariant check that the tree of an inline manifest commit reconstructs the commit's own
+   * Test-only invariant check that an inline manifest commit's tree reconstructs the commit's own
    * AddFiles and RemoveFiles, compared by (path, dv, add or remove). `AddCDCFile`s are not recorded
    * in the tree, so they are left out of the comparison.
    */
@@ -2865,6 +2901,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       actionsToCommit: Seq[Action],
       attemptVersion: Long,
       amtWriteResultOpt: Option[AMTWriteResult]): Unit = {
+    if (!DeltaUtils.isTesting) return
     // Only an incremental AMT that describes this commit records the commit's changes:
     //  - A deferred tree describes the previous table version.
     //  - A full rewrite marks every live entry EXISTING and has no tombstones or changed positions.
@@ -2900,14 +2937,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val committedKeys =
       committedFileActions.map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     val provider = AMTCheckpointProvider(
+      spark = spark,
       manifestCommitVersion = attemptVersion,
       checkpointAction = result.checkpoint,
       leaves = result.leaves,
       tableRoot = tableRoot)
-    // Only file identities are compared, so the deletion timestamp stamped on the reconstructed
-    // RemoveFiles does not matter.
+    // Only file identities are compared, so neither the deletion timestamp stamped on the
+    // reconstructed RemoveFiles nor the order of the actions matters.
     val treeKeys =
-        provider.reconstructFileActions(deltaLog, dataChange, commitTimestamp = 0L)
+        provider.reconstructFileActions(
+          spark, deltaLog, dataChange, commitTimestamp = 0L, ordered = false)
         .map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     if (treeKeys != committedKeys) {
       val onlyInTree = treeKeys -- committedKeys
@@ -3283,7 +3322,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If this commit writes an AMT, it becomes the latest AMT for the table.
     // Otherwise, use the latest AMT identified before commit, including conflict checking.
     val amtCheckpointProviderForPostCommitSnapshot = amtWriteResultOpt
-      .map(AMTCheckpointProvider.fromWriteResult(deltaLog, _, attemptVersion))
+      .map(AMTCheckpointProvider.fromWriteResult(spark, deltaLog, _, attemptVersion))
       .orElse(amtWriterManager.preCommitLatestAMTCheckpointProviderOpt)
     PrepareCommitResult(
       commitVersion = attemptVersion,
@@ -3439,7 +3478,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       isIdempotentRetry = isIdempotentRetry)
     val postCommitReconstructionTime = System.nanoTime()
     maintenanceOperation = if (
-        !AMTUtils.amtEnabled(postCommitSnapshot)) {
+        !AMTUtils.amtEnabled(postCommitSnapshot, isPreviewCompatible = true)) {
       MaintenanceOperation(
         shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
     } else if (amtWriteResultOpt.isEmpty) {

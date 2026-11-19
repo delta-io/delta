@@ -36,22 +36,11 @@ public final class RowCommitVersionValueSetterBuilder implements MetadataValueSe
 
   @Override
   public BoundMetadataValueSetter buildWithFile(PartitionedFile file) {
-    // default_row_commit_version is required whenever row tracking is enabled on the file; fail
-    // fast with an actionable error rather than NPE if it's missing.
-    Object rawDefault =
-        file.otherConstantMetadataColumnValues()
-            .get(DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME())
-            .getOrElse(() -> null);
-    if (rawDefault == null) {
-      throw new IllegalStateException(
-          "Missing '"
-              + DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME()
-              + "' on PartitionedFile '"
-              + file.filePath()
-              + "' for row tracking - every Delta "
-              + "file with row tracking enabled must carry a default_row_commit_version constant.");
-    }
-    long defaultCommitVersion = ((Number) rawDefault).longValue();
+    long defaultCommitVersion =
+        RowTrackingMetadataValueUtils.requireRowTrackingLong(
+            file,
+            DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(),
+            "default_row_commit_version constant");
     return new Bound(defaultCommitVersion, materializedRowCommitVersionIdx);
   }
 

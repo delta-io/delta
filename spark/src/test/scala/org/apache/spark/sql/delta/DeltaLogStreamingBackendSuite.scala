@@ -65,8 +65,23 @@ class DeltaLogStreamingBackendSuite
       assertCatalogTableReads(1)(backend.getSingleCommitIterator(0, failOnDataLoss = true).toList)
       // These reads have never used the catalog table.
       assertCatalogTableReads(0)(backend.unsafeVolatileSnapshot)
+      assertCatalogTableReads(0)(backend.unsafeVolatileTableId)
       assertCatalogTableReads(0)(backend.checkVersionExists(
         version = 1, mustBeRecreatable = false, allowOutOfRange = false))
+    }
+  }
+
+  test("unsafeVolatileTableId returns the table id of the Delta log") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format(writeFormat).save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val backend = new DeltaLogStreamingBackend(deltaLog, () => None)
+
+      // The source writes this id into the metadata tracking log, so it must be the same string
+      // that DeltaLog.unsafeVolatileTableId returns.
+      assert(backend.unsafeVolatileTableId eq deltaLog.unsafeVolatileTableId)
+      assert(backend.unsafeVolatileTableId == deltaLog.update().metadata.id)
     }
   }
 

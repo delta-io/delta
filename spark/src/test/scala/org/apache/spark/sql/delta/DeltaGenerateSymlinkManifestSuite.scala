@@ -82,7 +82,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase
   test("symlink manifest generation is blocked for a catalog-managed table") {
     withCatalogManagedTable(createTable = false) { tableName =>
       spark.sql(s"CREATE TABLE $tableName (id INT) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported', " +
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported', " +
         "'delta.enableDeletionVectors' = 'false')")
       assertManifest(tableName, expectSameFiles = false, expectedNumFiles = 0)
 

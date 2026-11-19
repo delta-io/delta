@@ -29,7 +29,6 @@ import org.apache.hadoop.mapreduce.Job
 import org.apache.parquet.hadoop.ParquetOutputFormat
 import org.apache.parquet.hadoop.util.ContextUtil
 
-import org.apache.spark.SparkException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.{OutputWriterFactory, PartitionedFile}
@@ -107,10 +106,9 @@ private[delta] class AMTParquetFileFormat extends ParquetFileFormat {
     val markerColumnOpt = findColumn(IS_ROW_DELETED_COLUMN_NAME)
     if (markerColumnOpt.isEmpty) return parquetDataReader
 
-    val rowIndexColumn = findColumn(ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME).getOrElse {
-      throw SparkException.internalError(
-        "AMT Manifest-DV reads require the Parquet row-index metadata column")
-    }
+    // A query that does not read an entry's position prunes the row index. Manifests are never
+    // split and are read without filters, so counting the rows then gives the row index.
+    val rowIndexColumnOpt = findColumn(ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME)
     val serializableHadoopConf = new SerializableConfiguration(hadoopConf)
     val useOffHeapBuffers = sparkSession.sessionState.conf.offHeapColumnVectorEnabled
 
@@ -125,9 +123,9 @@ private[delta] class AMTParquetFileFormat extends ParquetFileFormat {
           parquetIterator,
           Some(rowIndexFilter),
           markerColumnOpt,
-          Some(rowIndexColumn),
+          rowIndexColumnOpt,
           useOffHeapBuffers,
-          useMetadataRowIndex = true).asInstanceOf[Iterator[InternalRow]]
+          useMetadataRowIndex = rowIndexColumnOpt.isDefined).asInstanceOf[Iterator[InternalRow]]
       } catch {
         case NonFatal(e) =>
           parquetIterator match {

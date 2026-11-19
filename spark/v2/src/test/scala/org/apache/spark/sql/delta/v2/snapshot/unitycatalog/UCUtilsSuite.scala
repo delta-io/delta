@@ -97,7 +97,7 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
   test("returns empty for non-UC table") {
     val table = makeNonUCTable()
     val result = UCUtils.extractTableInfo(table, spark)
-    assert(result.isEmpty, "Non-UC table should return empty Optional")
+    assert(result.isEmpty, "Non-UC table should return empty Option")
   }
 
   test("returns empty when UC table ID present but feature flag missing") {
@@ -156,8 +156,8 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
     withUCCatalogConfig(CATALOG_ALPHA, UC_URI_ALPHA, UC_TOKEN_ALPHA) {
       val result = UCUtils.extractTableInfo(table, spark)
 
-      assert(result.isPresent, "Should return table info")
-      val info = result.get()
+      assert(result.isDefined, "Should return table info")
+      val info = result.get
       // Each assertion uses the specific expected value - would fail if hardcoded
       assert(info.getTableId == TABLE_ID_ALPHA, s"Table ID mismatch: got ${info.getTableId}")
       assert(
@@ -210,9 +210,9 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       configs.foreach { case (key, value) => spark.conf.set(key, value) }
 
       val result = UCUtils.extractTableInfo(table, spark)
-      assert(result.isPresent, "Should return table info")
+      assert(result.isDefined, "Should return table info")
 
-      val info = result.get()
+      val info = result.get
       // Verify it selected catalogBeta's config, not catalogGamma's
       assert(
         info.getUcUri == ucUriBeta,

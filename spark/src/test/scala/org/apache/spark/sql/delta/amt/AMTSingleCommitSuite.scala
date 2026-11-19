@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.internal.SQLConf
 
 /**
  * Tests for DeltaSingleCommit handling with log and manifest commits.
@@ -579,6 +580,9 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
 
         val retainedInlineActions = stripInlineAddAndRemoveActions(amtDeltaLog, version)
         val actions = amtDeltaLog.getChanges(version).next()._2
+        val iteratorActions = commitAt(amtDeltaLog, version)
+          .getActionsIterator()
+          .processAndClose(_.toSeq)
 
         assert(actions.collect { case action: AddFile => action.path } === Seq(add.path))
         assert(actions.collect { case action: RemoveFile => action.path } === Seq(remove.path))
@@ -596,7 +600,8 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
           case _ => true
         } === retainedInlineActions)
         // Re-reading the commit reconstructs exactly the same actions.
-        assert(amtDeltaLog.getChanges(version).next()._2.toSet === actions.toSet)
+        assert(amtDeltaLog.getChanges(version).next()._2 === actions)
+        assert(iteratorActions === actions)
         // The commit changed data, so skipping file actions that change no data keeps them all,
         // including the AddCDCFile, whose dataChange is always false.
         assert(amtDeltaLog.getChanges(
@@ -604,7 +609,182 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
           version,
           catalogTableOpt = None,
           failOnDataLoss = false,
-          skipNoDataChangeFileActions = true).next()._2.toSet === actions.toSet)
+          skipNoDataChangeFileActions = true).next()._2 === actions)
+      }
+    }
+  }
+
+  test("getActionsIterator reconstructs a manifest commit deterministically after rewind") {
+    withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+      withAmtTable { amtDeltaLog =>
+        setupAmt(amtDeltaLog, entriesPerLeaf = 10, initialIdRangeInLeaf = 1 to 30)
+        val leaves = leafToAddFileMap(amtDeltaLog).values.toSeq
+        assert(leaves.size >= 2, "scenario needs at least two leaves.")
+        val version = amtDeltaLog.update().version + 1
+        val add = fakeAdd(100)
+        val removes = Seq(leaves(0).head.remove, leaves(1).head.remove)
+        val changes: Seq[Action] = removes :+ add
+        withInline { commitAmt(amtDeltaLog, changes) }
+        stripInlineAddAndRemoveActions(amtDeltaLog, version)
+
+        // Zero disables the raw commit's in-memory replay path, so rewind must reopen both the
+        // commit JSON and its deterministic AMT action stream.
+        val actions = commitAt(amtDeltaLog, version)
+          .getActionsIterator(maxInMemoryFileSizeBytes = 0)
+        try {
+          val firstPass = actions.processAndClose(_.toSeq)
+          actions.rewind()
+          val secondPass = actions.processAndClose(_.toSeq)
+
+          assert(secondPass === firstPass)
+          assert(firstPass.collect { case action: AddFile => action.path } === Seq(add.path))
+          assert(firstPass.collect { case action: RemoveFile => action.path }.toSet ===
+            removes.map(_.path).toSet)
+          assert(firstPass.exists(_.isInstanceOf[Checkpoint]))
+        } finally {
+          actions.close()
+        }
+      }
+    }
+  }
+
+  test("getActions and getActionsIterator list a manifest commit's file actions in one order") {
+    withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+      withAmtTable { amtDeltaLog =>
+        val (version, changes) = commitAcrossRootAndLeaves(amtDeltaLog)
+
+        // getActions collects the commit in one job; getActionsIterator streams it.
+        val commit = commitAt(amtDeltaLog, version)
+        val collected = commit.getActions()
+        val streamed = commit.getActionsIterator().processAndClose(_.toList)
+        assert(streamed === collected)
+        assert(collected.count(_.isInstanceOf[FileAction]) === changes.size)
+      }
+    }
+  }
+
+  test("reconstructFileActionsIterator streams the actions of reconstructFileActions in order") {
+    withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+      withAmtTable { amtDeltaLog =>
+        val (version, _) = commitAcrossRootAndLeaves(amtDeltaLog)
+        val provider = providerAt(amtDeltaLog, version)
+        val collected =
+          provider.reconstructFileActions(
+            spark, amtDeltaLog, dataChange = true, commitTimestamp = 0L)
+        // The iterator pulls the sorted actions one partition at a time, so spread them out.
+        withSQLConf(
+            SQLConf.SHUFFLE_PARTITIONS.key -> "7",
+            SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
+          assert(provider.reconstructFileActionsIterator(
+            spark, amtDeltaLog, dataChange = true, commitTimestamp = 0L).toList === collected)
+        }
+      }
+    }
+  }
+
+  test("getActionsIterator reads a log commit as written") {
+    withTable("amt_log_commit_iterator") {
+      val deltaLog = createLogCommitTable("amt_log_commit_iterator", numVersions = 3)
+      assert(checkpointAt(deltaLog, 2L).isEmpty, "v2 must be a log commit for this test")
+      assert(commitAt(deltaLog, 2L).getActionsIterator().processAndClose(_.toList) ===
+        actionsAt(deltaLog, 2L))
+    }
+  }
+
+  test("getActionsIterator reads the log file as written with single-commit read off") {
+    withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+      withAmtTable { amtDeltaLog =>
+        setupAmt(amtDeltaLog, entriesPerLeaf = 10, initialIdRangeInLeaf = 1 to 30)
+        val version = amtDeltaLog.update().version + 1
+        withInline { commitAmt(amtDeltaLog, Seq(removeOf(amtDeltaLog, 1), fakeAdd(100))) }
+        // Without its inline file actions, only the tree records the commit's file actions.
+        val retainedInlineActions = stripInlineAddAndRemoveActions(amtDeltaLog, version)
+        val commit = commitAt(amtDeltaLog, version)
+
+        withSQLConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED.key -> "false") {
+          val actions = commit.getActionsIterator()
+          try {
+            assert(actions.toList === retainedInlineActions)
+            actions.rewind()
+            assert(actions.toList === retainedInlineActions)
+          } finally {
+            actions.close()
+          }
+          assert(DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsSeq(spark, Seq(commit)) ===
+            Seq(retainedInlineActions))
+        }
+        withSQLConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED.key -> "true") {
+          val actions = commit.getActionsIterator().processAndClose(_.toList)
+          assert(actions.exists(_.isInstanceOf[AddFile]))
+          assert(actions.exists(_.isInstanceOf[RemoveFile]))
+          assert(DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsSeq(spark, Seq(commit)) ===
+            Seq(commit.getActions()))
+        }
+      }
+    }
+  }
+
+  /**
+   * Commits leaf deletes, a leaf DV update (an add and a remove of one path), a root delete and
+   * inserts out of path order, so the commit's changes span the root and several leaves. Returns
+   * the commit's version and its file actions.
+   */
+  private def commitAcrossRootAndLeaves(amtDeltaLog: DeltaLog): (Long, Seq[Action]) = {
+    setupAmt(
+      amtDeltaLog,
+      entriesPerLeaf = entriesPerLeaf,
+      initialIdRangeInLeaf = 1 to leafPackedFiles)
+    val rootFileId = leafPackedFiles + 1
+    withInline { commitAmt(amtDeltaLog, Seq(fakeAdd(rootFileId))) }
+    val leaves = leafToAddFileMap(amtDeltaLog).values.toSeq
+    assert(leaves.size >= 2, "scenario needs at least two leaves.")
+    val version = amtDeltaLog.update().version + 1
+    val changes =
+      Seq[Action](
+        leaves(0).head.remove, leaves(1).head.remove, removeOf(amtDeltaLog, rootFileId)) ++
+        removeAndReAddWithDV(amtDeltaLog, Right(leaves(0)(1))) ++
+        Seq(fakeAdd(101), fakeAdd(100))
+    withInline { commitAmt(amtDeltaLog, changes) }
+    (version, changes)
+  }
+
+  /** The provider of the tree the inline manifest commit at `version` wrote. */
+  private def providerAt(deltaLog: DeltaLog, version: Long): AMTCheckpointProvider = {
+    val checkpoint = checkpointAt(deltaLog, version)
+      .getOrElse(fail(s"expected a manifest commit at v$version"))
+    AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint, version)
+  }
+
+  test("getChanges orders a manifest commit's reconstructed file actions by manifest position") {
+    withSQLConf(leafPackingConfs: _*) {
+      withAmtTable { amtDeltaLog =>
+        val (version, changes) = commitAcrossRootAndLeaves(amtDeltaLog)
+        def fileActions(): Seq[FileAction] = amtDeltaLog.getChanges(version).next()._2
+          .collect { case action: FileAction => action }
+
+        val ordered = fileActions()
+        assert(ordered.size === changes.size)
+        // The actions follow the manifest path, then the position, of the entries recording them.
+        val provider = providerAt(amtDeltaLog, version)
+        val byManifestPosition = provider.reconstructChangeFiles(spark, amtDeltaLog)
+          .select("leafPath", "pos", "add.path", provider.REMOVED_COLUMN)
+          .collect()
+          .sortBy(row => (row.getString(0), row.getLong(1)))
+          .map(row => (row.getString(2), row.getBoolean(3)))
+          .toSeq
+        assert(ordered.map {
+          case add: AddFile => (add.path, false)
+          case remove: RemoveFile => (remove.path, true)
+          case action => fail(s"unexpected file action $action")
+        } === byManifestPosition)
+        // Re-reading lists them in the same order, however many partitions the sort uses.
+        Seq("1", "7").foreach { numShufflePartitions =>
+          withSQLConf(
+              SQLConf.SHUFFLE_PARTITIONS.key -> numShufflePartitions,
+              SQLConf.ADAPTIVE_EXECUTION_ENABLED.key -> "false") {
+            assert(fileActions() === ordered)
+          }
+        }
       }
     }
   }

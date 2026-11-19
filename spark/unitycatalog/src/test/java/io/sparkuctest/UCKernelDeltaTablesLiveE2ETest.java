@@ -201,7 +201,7 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
             table.identifier.getCatalogName(),
             table.identifier.getSchemaName(),
             table.identifier.getTableName());
-    TableInfo tableInfo = tablesApi.getTable(fullName, false, false);
+    TableInfo tableInfo = tablesApi.getTable(fullName, false, false, false);
     Map<String, String> serverProps = tableInfo.getProperties();
     assertThat(serverProps).containsEntry("delta.feature.clustering", "supported");
     assertThat(serverProps).containsKey("clusteringColumns");

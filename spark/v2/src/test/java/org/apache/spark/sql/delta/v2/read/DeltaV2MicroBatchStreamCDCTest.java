@@ -15,40 +15,47 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
-import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.kernel.CommitActions;
-import io.delta.kernel.CommitRange;
-import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.commitrange.CommitRangeImpl;
-import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.SparkConf;
 import org.apache.spark.sql.AnalysisException;
+import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.actions.Action;
+import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
+import org.apache.spark.sql.delta.storage.HDFSLogStore;
+import org.apache.spark.sql.delta.storage.LogStore;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerImpl;
+import org.apache.spark.sql.delta.v2.utils.PartitionUtils;
+import org.apache.spark.sql.delta.v2.utils.PartitionValueCaster;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
-import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
@@ -165,6 +172,97 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     // startingVersion=latest resolves to latest+1, which is not materialized. The KernelException
     // is swallowed and the validator returns without throwing.
     assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion + 1));
+  }
+
+  @Test
+  public void testValidateCDFEnabled_passesWhenOnlyLegacyPropertyIsSet(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_legacy_property_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataCapture' = 'true')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    // V1 reads the legacy delta.enableChangeDataCapture key when delta.enableChangeDataFeed is
+    // not set.
+    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    assertFalse(latestSnapshot.metadata().configuration().contains("delta.enableChangeDataFeed"));
+    long latestVersion = latestSnapshot.version();
+    assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion));
+  }
+
+  @Test
+  public void testValidateCDFEnabled_throwsOnMalformedProperty(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_malformed_property_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    long alterVersion = snapshotManager.loadLatestSnapshot().version();
+    // Delta Spark rejects a malformed value at write time, so write the commit directly.
+    writeCommitWithCDFProperty(tablePath, alterVersion, "yes");
+    long malformedVersion = alterVersion + 1;
+    // Loading the snapshot does not parse the property, so the CDF check is what fails below.
+    assertDoesNotThrow(() -> snapshotManager.loadSnapshotAt(malformedVersion));
+
+    // Like V1, a value that is not a boolean fails instead of reading as "CDF disabled", both in
+    // the start version check and in the check of each commit's metadata action.
+    IllegalArgumentException startVersionException =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> stream.validateCDFEnabledOnTable(malformedVersion));
+    assertTrue(
+        startVersionException.getMessage().contains("yes"), startVersionException.getMessage());
+    DeltaSingleCommit commit = getCommit(tablePath, malformedVersion);
+    IllegalArgumentException commitException =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> {
+              try (ClosableIterator<IndexedFile> iter =
+                  stream.processCommitToIndexedFilesForCDC(
+                      commit,
+                      /* startVersion= */ malformedVersion,
+                      /* limits= */ Optional.empty(),
+                      /* endOffsetOpt= */ Optional.empty(),
+                      /* lastProcessedVersion= */ malformedVersion,
+                      /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+                collectAll(iter);
+              }
+            });
+    assertTrue(commitException.getMessage().contains("yes"), commitException.getMessage());
+  }
+
+  /**
+   * Copies the commit at {@code version} to {@code version + 1}, with {@code
+   * delta.enableChangeDataFeed} set to {@code value}. The copied commit must contain the metadata
+   * action that set the property.
+   */
+  private static void writeCommitWithCDFProperty(String tablePath, long version, String value)
+      throws Exception {
+    java.nio.file.Path logDir = java.nio.file.Paths.get(tablePath, "_delta_log");
+    String commit =
+        java.nio.file.Files.readString(logDir.resolve(String.format("%020d.json", version)));
+    String property = "\"delta.enableChangeDataFeed\":\"true\"";
+    assertTrue(commit.contains(property), commit);
+    String newCommit =
+        commit
+            .replace(property, "\"delta.enableChangeDataFeed\":\"" + value + "\"")
+            // Keep in-commit timestamps increasing, in case they are enabled.
+            .replaceAll(
+                "\"inCommitTimestamp\":\\d+",
+                "\"inCommitTimestamp\":" + (System.currentTimeMillis() + 1000));
+    java.nio.file.Files.writeString(
+        logDir.resolve(String.format("%020d.json", version + 1)), newCommit);
   }
 
   private static final DeltaV2MicroBatchStreamTest.ScenarioSetup CDC_TWO_INSERT_SETUP =
@@ -503,14 +601,90 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertEquals(0, v4DataFiles, "Version 4 should not be admitted after batch-reject");
   }
 
-  private static final Set<DeltaAction> CDC_ACTION_SET =
-      Set.of(
-          DeltaAction.ADD,
-          DeltaAction.REMOVE,
-          DeltaAction.METADATA,
-          DeltaAction.PROTOCOL,
-          DeltaAction.CDC,
-          DeltaAction.COMMITINFO);
+  @ParameterizedTest
+  @MethodSource("cdcPartitionValues")
+  public void testCDCPartitionValuesAfterCommitReaderCloses(
+      boolean explicitCDC,
+      String partitionJson,
+      Map<String, String> expected,
+      @TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String partitionDefinition = expected.isEmpty() ? "" : ", p STRING";
+    String partitionClause = expected.isEmpty() ? "" : "PARTITIONED BY (p)";
+    sql(
+        "CREATE TABLE delta.`%s` (id INT%s) USING DELTA %s "
+            + "TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')",
+        tablePath, partitionDefinition, partitionClause);
+    String actions =
+        explicitCDC
+            ? createTestCDCFile("_change_data/cdc.parquet", 10L, expected).json()
+            : "{\"add\":{\"path\":\"added.parquet\",\"partitionValues\":"
+                + partitionJson
+                + ",\"size\":10,\"modificationTime\":1,\"dataChange\":true}}\n"
+                + "{\"remove\":{\"path\":\"removed.parquet\",\"partitionValues\":"
+                + partitionJson
+                + ",\"size\":10,\"extendedFileMetadata\":true,\"dataChange\":true}}";
+    Files.writeString(tempDir.toPath().resolve("_delta_log/00000000000000000001.json"), actions);
+
+    Configuration hadoopConf = new Configuration();
+    TrackingCDCLogStore store = new TrackingCDCLogStore(hadoopConf);
+    // Substitute only the I/O boundary; use the real table manager and CDC stream.
+    DeltaV2TableManager tableManager =
+        new DeltaV2TableManagerImpl(
+            new Path(tablePath),
+            ScalaUtils.toScalaMap(Collections.<String, String>emptyMap()),
+            Option.empty()) {
+          @Override
+          public LogStore createLogStore(SparkSession session) {
+            return store;
+          }
+        };
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, tableManager.kernelContext());
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(
+            snapshotManager, hadoopConf, emptyDeltaOptions(), tableManager);
+    stream.validateCDFEnabledOnTable(1L);
+    DeltaSourceOffset endOffset =
+        DeltaSourceOffset$.MODULE$.apply(
+            snapshotManager.loadLatestSnapshot().metadata().id(),
+            1L,
+            DeltaSourceOffset.END_INDEX(),
+            false);
+    store.opens = 0;
+    store.closes = 0;
+    List<IndexedFile> files;
+    try (ClosableIterator<IndexedFile> iter =
+        stream.getFileChangesWithRateLimitForCDC(
+            1L, DeltaSourceOffset.BASE_INDEX(), false, Optional.empty(), Optional.of(endOffset))) {
+      files = collectAll(iter);
+    }
+
+    // The JVM Kernel action reader bypasses LogStore. Reading the commit through V1 must use it.
+    assertTrue(store.opens > 0, "CDC commit actions must be read through LogStore");
+    assertEquals(store.opens, store.closes, "Commit readers must close before files are consumed");
+    List<CDCDataFile> dataFiles =
+        files.stream()
+            .map(IndexedFile::getCDCDataFile)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
+    assertEquals(explicitCDC ? 1 : 2, dataFiles.size());
+    PartitionValueCaster caster =
+        new PartitionValueCaster(
+            snapshotManager.loadLatestSnapshot().metadata().partitionSchema(), ZoneId.of("UTC"));
+    for (CDCDataFile file : dataFiles) {
+      InternalRow partitionRow =
+          PartitionUtils.buildCDCPartitionedFile(file, 1L, caster, tablePath).partitionValues();
+      assertEquals(expected.size(), partitionRow.numFields());
+      if (!expected.isEmpty()) {
+        assertEquals(
+            expected.get("p"),
+            partitionRow.isNullAt(0) ? null : partitionRow.getUTF8String(0).toString());
+      }
+      assertEquals(explicitCDC, file.isAddCDCFile());
+    }
+  }
 
   @Test
   public void testProcessCommit_inferredInsert(@TempDir File tempDir) throws Exception {
@@ -521,7 +695,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     long commitVersion = 2;
     DeltaV2MicroBatchStream stream = createStream(tablePath);
-    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    DeltaSingleCommit commit = getCommit(tablePath, commitVersion);
 
     List<IndexedFile> files;
     try (ClosableIterator<IndexedFile> iter =
@@ -567,7 +741,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     long commitVersion = 3;
     DeltaV2MicroBatchStream stream = createStream(tablePath);
-    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    DeltaSingleCommit commit = getCommit(tablePath, commitVersion);
 
     List<IndexedFile> files;
     try (ClosableIterator<IndexedFile> iter =
@@ -615,22 +789,20 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     DeltaV2MicroBatchStream stream = createStream(tablePath);
 
     // Verify the commit has file actions (the synthetic commit has Add + Remove).
-    CommitActions rawCommit = getCommitActions(tablePath, commitVersion);
+    DeltaSingleCommit rawCommit = getCommit(tablePath, commitVersion);
     int addFileCount = 0;
-    try (CloseableIterator<ColumnarBatch> iter = rawCommit.getActions()) {
+    try (ClosableIterator<Action> iter = rawCommit.getActionsIterator(0L)) {
       while (iter.hasNext()) {
-        ColumnarBatch batch = iter.next();
-        for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-          if (StreamingHelper.getAddFileWithDataChange(batch, rowId).isPresent()) {
-            addFileCount++;
-          }
+        Action action = iter.next();
+        if (action instanceof AddFile && ((AddFile) action).dataChange()) {
+          addFileCount++;
         }
       }
     }
     assertTrue(addFileCount > 0, "Synthetic commit should have AddFile actions");
 
     // Process through CDC — no-op MERGE should discard all inferred files.
-    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    DeltaSingleCommit commit = getCommit(tablePath, commitVersion);
     List<IndexedFile> files;
     try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
@@ -721,7 +893,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     long commitVersion = 2;
     DeltaV2MicroBatchStream stream = createStream(tablePath);
-    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    DeltaSingleCommit commit = getCommit(tablePath, commitVersion);
 
     DeltaSourceOffset endOffset =
         DeltaSourceOffset$.MODULE$.apply(
@@ -843,7 +1015,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
 
     long commitVersion = 3L;
-    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    DeltaSingleCommit commit = getCommit(tablePath, commitVersion);
     List<IndexedFile> files;
     // lastProcessedVersion = commitVersion - 1: fresh process, the start-boundary filter
     // doesn't run, so the barrier (which has index < BASE_INDEX) is preserved.
@@ -955,7 +1127,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
 
     long commitVersion = 3L;
-    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    DeltaSingleCommit commit = getCommit(tablePath, commitVersion);
     List<IndexedFile> files;
     try (ClosableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
@@ -998,7 +1170,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
 
     long commitVersion = 3L;
-    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    DeltaSingleCommit commit = getCommit(tablePath, commitVersion);
     Optional<DeltaSource.AdmissionLimits> limits =
         createAdmissionLimits(/* maxFiles= */ Optional.of(1), /* maxBytes= */ Optional.empty());
 
@@ -1070,7 +1242,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     StructType tableSchema = seededSnapshot.metadata().schema();
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        DeltaV2TableManagerCache$.MODULE$.forTable(spark, tablePath, javaOptions, Option.empty()),
         latestSnapshot,
         hadoopConf,
         spark,
@@ -1146,6 +1318,59 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     return files;
   }
 
+  private static Stream<Arguments> cdcPartitionValues() {
+    return Stream.of(false, true)
+        .flatMap(
+            explicit ->
+                Stream.of(
+                    Arguments.of(explicit, "{\"p\":\"US\"}", Collections.singletonMap("p", "US")),
+                    Arguments.of(explicit, "{\"p\":\"\"}", Collections.singletonMap("p", "")),
+                    Arguments.of(explicit, "{\"p\":null}", Collections.singletonMap("p", null)),
+                    Arguments.of(explicit, "{}", Collections.emptyMap())));
+  }
+
+  private static class TrackingCDCLogStore extends HDFSLogStore {
+    private int opens;
+    private int closes;
+
+    TrackingCDCLogStore(Configuration conf) {
+      super(new SparkConf(false), conf);
+    }
+
+    @Override
+    public ClosableIterator<String> readAsIterator(FileStatus status, Configuration conf) {
+      ClosableIterator<String> delegate = super.readAsIterator(status, conf);
+      boolean track = status.getPath().getName().equals("00000000000000000001.json");
+      if (track) opens++;
+      class Reader extends scala.collection.AbstractIterator<String>
+          implements ClosableIterator<String> {
+        private boolean closed;
+
+        @Override
+        public boolean hasNext() {
+          assertFalse(closed, "Read after commit reader closed");
+          return delegate.hasNext();
+        }
+
+        @Override
+        public String next() {
+          assertFalse(closed, "Read after commit reader closed");
+          return delegate.next();
+        }
+
+        @Override
+        public void close() throws IOException {
+          if (!closed) {
+            closed = true;
+            if (track) closes++;
+            delegate.close();
+          }
+        }
+      }
+      return new Reader();
+    }
+  }
+
   private static void sql(String query, Object... args) {
     DeltaV2TestBase.spark.sql(String.format(query, args));
   }
@@ -1189,6 +1414,22 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
   private DeltaV2MicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
+    return createTestStreamWithDefaults(
+        snapshotManager,
+        hadoopConf,
+        options,
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark,
+            snapshotManager.loadLatestSnapshot().dataPath().toString(),
+            Collections.emptyMap(),
+            Option.empty()));
+  }
+
+  private DeltaV2MicroBatchStream createTestStreamWithDefaults(
+      PathBasedSnapshotManager snapshotManager,
+      Configuration hadoopConf,
+      DeltaOptions options,
+      DeltaV2TableManager tableManager) {
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     // Split the table schema into data and partition columns, as DeltaV2Table does at analysis.
     StructType partitionSchema = snapshot.metadata().partitionSchema();
@@ -1200,7 +1441,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                 .filter(field -> !partitionColNames.contains(field.name()))
                 .toArray(StructField[]::new));
     return new DeltaV2MicroBatchStream(
-        snapshotManager,
+        tableManager,
         snapshot,
         hadoopConf,
         spark,
@@ -1224,19 +1465,16 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     return createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
   }
 
-  private CommitActions getCommitActions(String tablePath, long version) {
-    Configuration hadoopConf = new Configuration();
-    Engine engine = DefaultEngine.create(hadoopConf);
-    PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
-
-    CommitRange commitRange =
-        snapshotManager.getTableChanges(
-            engine, GetTableChangesParam$.MODULE$.apply(version, Option.apply(version)));
-
-    try (CloseableIterator<CommitActions> iter =
-        StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine, (CommitRangeImpl) commitRange, tablePath, CDC_ACTION_SET)) {
+  private DeltaSingleCommit getCommit(String tablePath, long version) {
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, tablePath, Collections.emptyMap(), Option.empty());
+    try (ClosableIterator<DeltaSingleCommit> iter =
+        tableManager.getSingleCommitIterator(
+            version,
+            Option.apply((Object) version),
+            DeltaV2QueryContext$.MODULE$.empty(),
+            /* failOnDataLoss= */ true)) {
       assertTrue(iter.hasNext(), "Expected at least one commit at version " + version);
       return iter.next();
     } catch (Exception e) {
@@ -1369,7 +1607,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     deltaLog.update(false, Option.empty(), Option.empty());
 
     DeltaV2MicroBatchStream stream = createStream(tablePath);
-    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    DeltaSingleCommit commit = getCommit(tablePath, commitVersion);
 
     List<IndexedFile> files;
     try (ClosableIterator<IndexedFile> iter =
@@ -1466,20 +1704,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     // Simulate a "Some+None" DV-diff result: the CDCDataFile is from fromDVDiff but the backing
     // AddFile has NO deletion vector (restore case). hasDeletionVector() returns false.
-    AddFile addFileNoDv =
-        new AddFile(
-            AddFile.createAddFileRow(
-                new io.delta.kernel.types.StructType(),
-                "restore-file.parquet",
-                stringStringMapValue(java.util.Collections.emptyMap()),
-                1024L,
-                100L,
-                /* dataChange= */ true,
-                /* deletionVector= */ java.util.Optional.empty(),
-                java.util.Optional.empty(),
-                java.util.Optional.empty(),
-                java.util.Optional.empty(),
-                java.util.Optional.empty()));
+    AddFile addFileNoDv = createTestAddFile("restore-file.parquet", 1024, 100L);
 
     CDCDataFile dvDiffFile =
         CDCDataFile.fromDVDiff(
