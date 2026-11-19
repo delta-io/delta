@@ -97,6 +97,7 @@ class CommitRangeFactory {
         endVersion,
         deltas,
         listed.nextVersionAfterEnd,
+        listingEndVersionOpt,
         ctx.commitRangeValidation,
         ctx.failOnDataLoss);
   }
@@ -255,10 +256,15 @@ class CommitRangeFactory {
             publishedDeltas, ratifiedDeltas);
 
     // R3: A relaxed range also needs the version of the first logical commit after the requested
-    // end. Resolve it after the catalog/published priority, as the earlier of the first published
-    // and the first ratified commit past the end. It is only a version and is never yielded.
+    // end, unless the range already reaches its end. Resolve it after the catalog/published
+    // priority, as the earlier of the first published and the first ratified commit past the end.
+    // It is only a version and is never yielded.
     Optional<Long> nextVersionAfterEnd = Optional.empty();
-    if (!ctx.commitRangeValidation && listingEndVersionOpt.isPresent()) {
+    boolean reachesEnd =
+        listingEndVersionOpt.isPresent()
+            && !deltas.isEmpty()
+            && ListUtils.getLast(deltas).getVersion() == listingEndVersionOpt.get();
+    if (!ctx.commitRangeValidation && listingEndVersionOpt.isPresent() && !reachesEnd) {
       long listingEndVersion = listingEndVersionOpt.get();
       Optional<Long> ratifiedNext =
           ratifiedFromStart.stream()
@@ -321,6 +327,12 @@ class CommitRangeFactory {
           break;
         }
         publishedDeltas.add(delta);
+        if (!ctx.commitRangeValidation
+            && endVersionOpt.isPresent()
+            && delta.getVersion() == endVersionOpt.get()) {
+          // The range is complete up to its end, so nothing after it is needed as proof.
+          break;
+        }
       }
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to close the commit file listing", e);

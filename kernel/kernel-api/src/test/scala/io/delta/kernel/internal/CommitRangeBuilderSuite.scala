@@ -1473,12 +1473,14 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       end: Option[Long],
       commitRangeValidation: Boolean,
       failOnDataLoss: Boolean = true,
-      logData: Seq[ParsedLogData] = Seq.empty): CommitRange = {
+      logData: Seq[ParsedLogData] = Seq.empty,
+      maxEndVersion: Option[Long] = None): CommitRange = {
     var builder = TableManager
       .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(start))
       .withCommitRangeValidation(commitRangeValidation)
       .withFailOnDataLoss(failOnDataLoss)
     end.foreach(v => builder = builder.withEndBoundary(CommitBoundary.atVersion(v)))
+    maxEndVersion.foreach(v => builder = builder.withMaxEndVersion(v))
     if (logData.nonEmpty) {
       builder = builder.withLogData(logData.asJava)
     }
@@ -1709,8 +1711,11 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     assert(!iterator.hasNext)
   }
 
-  test("raw range listing stops after the first commit past the requested end") {
-    val files = deltaFileStatuses(0L to 1000L)
+  private def countFilesListedForRelaxedRange(
+      availableVersions: Seq[Long],
+      start: Long,
+      end: Long): (CommitRange, Int) = {
+    val files = deltaFileStatuses(availableVersions)
     var filesListed = 0
     val fileSystemClient = new BaseMockFileSystemClient {
       override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
@@ -1724,15 +1729,121 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       override def resolvePath(path: String): String = path
     }
     val commitRange = TableManager
-      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(2))
-      .withEndBoundary(CommitBoundary.atVersion(5))
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(start))
+      .withEndBoundary(CommitBoundary.atVersion(end))
       .withCommitRangeValidation(false)
       .build(mockEngine(fileSystemClient = fileSystemClient))
+    (commitRange, filesListed)
+  }
 
+  test("raw range listing stops at the end commit when the range reaches its end") {
+    val (commitRange, filesListed) = countFilesListedForRelaxedRange(0L to 1000L, 2, 5)
     assert(commitRange.getEndVersion == 5)
     assert(drainCommitFiles(commitRange)._1.map(_.getVersion) == (2L to 5L))
-    // Versions 2 to 5 plus the first commit past the end (version 6)
-    assert(filesListed == 5)
+    // Versions 2 to 5 only; nothing after the end is needed as proof
+    assert(filesListed == 4)
+  }
+
+  test("raw range listing reads only the first commit past the end when the end is missing") {
+    val (commitRange, filesListed) = countFilesListedForRelaxedRange(
+      Seq(2L, 3L, 4L, 7L) ++ (8L to 1000L),
+      2,
+      5)
+    val (yielded, error) = drainCommitFiles(commitRange)
+    assert(yielded.map(_.getVersion) == Seq(2L, 3L, 4L))
+    assert(error.exists(_.getMessage.contains("Table version 5 is missing")))
+    // Versions 2, 3, 4 and the first commit past the end (version 7)
+    assert(filesListed == 4)
+  }
+
+  // withMaxEndVersion: the requested bound, not the resolved end, decides what is proven missing
+
+  private case class MaxEndRawRangeCase(
+      description: String,
+      availableVersions: Seq[Long],
+      stagedVersions: Seq[Long],
+      maxEndVersion: Long,
+      strictVersions: Seq[Long],
+      strictError: Option[(Class[_ <: KernelException], Seq[String])],
+      lenientVersions: Seq[Long])
+
+  private val maxEndRawRangeCases = Seq(
+    MaxEndRawRangeCase(
+      "5,6,12 with max 10 (gap proven by a commit past the bound)",
+      Seq(5L, 6L, 12L),
+      Seq.empty,
+      10,
+      Seq(5L, 6L),
+      Some(gapErrorParts(7)),
+      Seq(5L, 6L)),
+    MaxEndRawRangeCase(
+      "5,6,8 with max 10 (gap proven by a commit inside the bound)",
+      Seq(5L, 6L, 8L),
+      Seq.empty,
+      10,
+      Seq(5L, 6L),
+      Some(gapErrorParts(7)),
+      Seq(5L, 6L, 8L)),
+    MaxEndRawRangeCase(
+      "5,6 with max 10 (no later commit proves anything)",
+      Seq(5L, 6L),
+      Seq.empty,
+      10,
+      Seq(5L, 6L),
+      None,
+      Seq(5L, 6L)),
+    MaxEndRawRangeCase(
+      "5,6,12 with max 6 (the range reaches the bound)",
+      Seq(5L, 6L, 12L),
+      Seq.empty,
+      6,
+      Seq(5L, 6L),
+      None,
+      Seq(5L, 6L)),
+    MaxEndRawRangeCase(
+      "5,6 with a staged commit 12 and max 10",
+      Seq(5L, 6L),
+      Seq(12L),
+      10,
+      Seq(5L, 6L),
+      Some(gapErrorParts(7)),
+      Seq(5L, 6L)))
+
+  for (testCase <- maxEndRawRangeCases; failOnDataLoss <- Seq(true, false)) {
+    test(s"raw getCommitFiles withMaxEndVersion: ${testCase.description} - " +
+      s"failOnDataLoss=$failOnDataLoss") {
+      val commitRange = buildRawRange(
+        deltaFileStatuses(testCase.availableVersions),
+        5,
+        None,
+        commitRangeValidation = false,
+        failOnDataLoss = failOnDataLoss,
+        logData = stagedLogData(testCase.stagedVersions),
+        maxEndVersion = Some(testCase.maxEndVersion))
+      val (yielded, error) = drainCommitFiles(commitRange)
+      val expectedVersions =
+        if (failOnDataLoss) testCase.strictVersions else testCase.lenientVersions
+      assert(yielded.map(_.getVersion) == expectedVersions)
+      assert(commitRange.getEndVersion == testCase.lenientVersions.max)
+      val expectedError = if (failOnDataLoss) testCase.strictError else None
+      assert(error.isDefined == expectedError.isDefined)
+      expectedError.foreach { case (errorClass, messageParts) =>
+        assert(errorClass.isInstance(error.get))
+        messageParts.foreach(part => assert(error.get.getMessage.contains(part)))
+      }
+    }
+  }
+
+  test("validated withMaxEndVersion still ends at the last commit before a gap") {
+    val commitRange = buildRawRange(
+      deltaFileStatuses(Seq(5L, 6L, 12L)),
+      5,
+      None,
+      commitRangeValidation = true,
+      maxEndVersion = Some(10))
+    assert(commitRange.getEndVersion == 6)
+    assert(getDeltaFileVersions(commitRange) == Seq(5L, 6L))
+    assert(drainCommitFiles(commitRange)._1.map(_.getVersion) == Seq(5L, 6L))
   }
 
   test("isEmpty is false for a validated range") {
