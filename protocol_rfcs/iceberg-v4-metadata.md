@@ -144,7 +144,7 @@ This design enables:
 | - | - | - |
 | <ins>`u`</ins> | <ins>`r`</ins> | <ins>Decode the random prefix and base85 UUID to the file name, giving the table-relative path `<prefix>/deletion_vector_<uuid>.bin`.</ins> |
 | <ins>`r`</ins> | <ins>`r`</ins> | <ins>The raw relative path, as-is.</ins> |
-| <ins>`p`</ins> | <ins>`r` if it resolves under the table root, else `p`</ins> | <ins>If it resolves under the table root, relativize and URI-decode it, otherwise keep the absolute path.</ins> |
+| <ins>`p`</ins> | <ins>`r` if it resolves under the table root, else `p`</ins> | <ins>If it resolves under the table root, URI-decode and then relativize it, otherwise keep the absolute path.</ins> |
 | <ins>`i`</ins> | <ins>`i`</ins> | <ins>`pathOrInlineDv`, unchanged. They can still appear in commits from before enablement.</ins> |
 
 <ins>The `offset` is always part of the identity when present, because a single file may pack multiple DVs at different offsets.</ins>
