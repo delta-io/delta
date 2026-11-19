@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import javax.annotation.Nullable;
 import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.actions.FileAction;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 
 /**
@@ -74,6 +75,15 @@ public class IndexedFile implements AdmittableFile {
   @Nullable
   public CDCDataFile getCDCDataFile() {
     return cdcDataFile;
+  }
+
+  @Nullable
+  FileAction getFileAction() {
+    if (addFile != null) return addFile;
+    if (cdcDataFile == null) return null;
+    if (cdcDataFile.getAddFile() != null) return cdcDataFile.getAddFile();
+    if (cdcDataFile.getRemoveFile() != null) return cdcDataFile.getRemoveFile();
+    return cdcDataFile.getAddCDCFile();
   }
 
   /** Returns true if this IndexedFile wraps an explicit AddCDCFile action. */
