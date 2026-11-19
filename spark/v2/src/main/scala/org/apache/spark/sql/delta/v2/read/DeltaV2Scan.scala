@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapsh
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext
 import org.apache.spark.sql.delta.v2.read.deletionvector.DeletionVectorSchemaContext
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.utils.{PartitionUtils, PartitionValueCaster, ScalaUtils}
 import org.apache.spark.sql.delta.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression
 import org.apache.spark.sql.delta.v2.utils.SchemaUtils
@@ -70,8 +71,10 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * This class must remain package-private so callers outside `v2.read` depend only on Spark's
  * public connector interfaces instead of coupling to Delta's internal V2 implementation.
  */
+// TODO: Remove snapshotManager and use tableManager as the single source of truth.
 private[read] class DeltaV2Scan(
     private val snapshotManager: DeltaV2SnapshotManager,
+    private val tableManager: Option[DeltaV2TableManager],
     private val initialSnapshot: Snapshot,
     tableSchema: StructType,
     private val dataSchema: StructType,
@@ -95,6 +98,7 @@ private[read] class DeltaV2Scan(
 
   Objects.requireNonNull(snapshotManager, "snapshotManager is null")
   Objects.requireNonNull(originalQueryContext, "originalQueryContext is null")
+  Objects.requireNonNull(tableManager, "tableManager is null")
   Objects.requireNonNull(initialSnapshot, "initialSnapshot is null")
   Objects.requireNonNull(dataSchema, "dataSchema is null")
   Objects.requireNonNull(partitionSchema, "partitionSchema is null")
@@ -229,6 +233,9 @@ private[read] class DeltaV2Scan(
   }
 
   override def toMicroBatchStream(checkpointLocation: String): MicroBatchStream = {
+    val streamTableManager = tableManager.getOrElse {
+      throw new UnsupportedOperationException("Streaming reads require a table manager")
+    }
     // Loads a fresh snapshot as the baseline for schema change detection and table identity
     // checks. DeltaV2Scan's initialSnapshot is from analysis time and may be stale by stream
     // start/restart.
@@ -250,7 +257,7 @@ private[read] class DeltaV2Scan(
         originalQueryContext
       )
     new DeltaV2MicroBatchStream(
-      snapshotManager,
+      streamTableManager,
       latestSnapshot,
       hadoopConf,
       spark,

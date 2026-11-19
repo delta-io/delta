@@ -30,13 +30,12 @@ import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.streaming.StreamingQuery
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{LongType, StructType}
 
 abstract class OptimizedWritesSuiteBase extends QueryTest
-  with SharedSparkSession {
+  with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def writeTest(testName: String)(f: String => Unit): Unit = {
     test(testName) {

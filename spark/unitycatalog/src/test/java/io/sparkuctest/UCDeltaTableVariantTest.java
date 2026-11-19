@@ -17,50 +17,12 @@
 package io.sparkuctest;
 
 import java.util.List;
-import org.junit.jupiter.api.Assumptions;
 
-/**
- * Tests that variant table feature interactions with different Spark clients.
- *
- * <p>The DeltaCatalog sets {@code variant.disableVariantTableFeatureForSpark40} to true when
- * running under Unity Catalog. On Spark 4.0 (which lacks parquet variant logical type annotation
- * support), this causes the variant table features to be treated as unsupported, blocking all
- * interactions with variant tables including table creation.
- */
+/** Tests variant table interactions through Unity Catalog. */
 public class UCDeltaTableVariantTest extends UCDeltaTableIntegrationBaseTest {
 
-  private static boolean isSpark40() {
-    return org.apache.spark.package$.MODULE$.SPARK_VERSION().startsWith("4.0");
-  }
-
   @TestAllTableTypes
-  public void testVariantTableCreationBlockedOnSpark40(TableType tableType) throws Exception {
-    Assumptions.assumeTrue(isSpark40(), "This test only applies to Spark 4.0");
-    // Table creation itself should fail on Spark 4.0 because the variant table feature
-    // is treated as unsupported.
-    String fullTableName = fullTableName("variant_create_blocked_test");
-    assertThrowsWithCauseContaining(
-        "variantType",
-        () -> {
-          if (tableType == TableType.EXTERNAL) {
-            withTempDir(
-                dir -> {
-                  sql(
-                      "CREATE TABLE %s (id INT, v VARIANT) USING DELTA LOCATION '%s'",
-                      fullTableName, dir.toString() + "/variant_create_blocked_test");
-                });
-          } else {
-            sql(
-                "CREATE TABLE %s (id INT, v VARIANT) USING DELTA "
-                    + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
-                fullTableName);
-          }
-        });
-  }
-
-  @TestAllTableTypes
-  public void testVariantTableAllowedOnNewerSparkVersions(TableType tableType) throws Exception {
-    Assumptions.assumeFalse(isSpark40(), "This test only applies to Spark 4.1+");
+  public void testVariantTableAllowed(TableType tableType) throws Exception {
     withNewTable(
         "variant_allowed_test",
         "id INT, v VARIANT",

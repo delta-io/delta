@@ -16,7 +16,7 @@
 package org.apache.spark.sql.delta.v2.read
 
 import org.apache.spark.sql.delta.Snapshot
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import io.delta.kernel.engine.{Engine => KernelEngine}
 
 import org.apache.spark.sql.catalyst.InternalRow
@@ -40,23 +40,23 @@ object DeltaV2ScanUtils {
       initialSnapshot: Snapshot,
       kernelEngine: KernelEngine,
       catalogTable: Option[CatalogTable],
-      snapshotManager: DeltaV2SnapshotManager,
+      tableManager: DeltaV2TableManager,
       dataSchema: StructType,
       partitionSchema: StructType,
       tableSchema: StructType,
       catalogStats: Option[Statistics],
       options: CaseInsensitiveStringMap): ScanBuilder = {
-    DeltaV2ScanBuilder.create(
+    new DeltaV2ScanBuilder(
       tableName = tableName,
       initialSnapshot = initialSnapshot,
       kernelEngine = kernelEngine,
       catalogTable = catalogTable,
-      snapshotManager = snapshotManager,
+      snapshotManager = tableManager.snapshotManager(catalogTable),
+      tableManager = Some(tableManager),
       dataSchema = dataSchema,
       partitionSchema = partitionSchema,
       tableSchema = tableSchema,
       catalogStats = catalogStats,
-      options = options
-    )
+      options = options)
   }
 }

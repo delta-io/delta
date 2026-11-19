@@ -39,7 +39,7 @@ class DomainMetadataSuite
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   private def sortByDomain(domainMetadata: Seq[DomainMetadata]): Seq[DomainMetadata] =
     domainMetadata.sortBy(_.domain)

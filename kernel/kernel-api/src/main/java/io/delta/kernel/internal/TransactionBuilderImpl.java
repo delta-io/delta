@@ -270,6 +270,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               latestSnapshot.get(),
               tableProperties,
               unsetTablePropertiesKeys,
+              Optional.empty() /* newDescription */,
               schema,
               inputLogicalClusteringColumns);
     } else if (latestSnapshot.isPresent()) { // is REPLACE
@@ -280,6 +281,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               // when isCreateOrReplace we know schema is present
               schema.get(),
               tableProperties.orElse(emptyMap()),
+              Optional.empty() /* description */,
               partitionColumns,
               inputLogicalClusteringColumns);
     } else {
@@ -289,6 +291,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               // when isCreateOrReplace we know schema is present
               schema.get(),
               tableProperties.orElse(emptyMap()),
+              Optional.empty() /* description */,
               partitionColumns,
               inputLogicalClusteringColumns,
               Optional.empty() /* committerOpt */);

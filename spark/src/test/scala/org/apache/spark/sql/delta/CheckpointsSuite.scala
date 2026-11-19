@@ -34,7 +34,6 @@ import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.shims.VariantStatsShims
-import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
 import org.apache.spark.sql.delta.util.{Codec, DeltaCommitFileProvider, DeltaStatsJsonUtils, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
@@ -811,7 +810,7 @@ class CheckpointsSuite
       }
 
       // Make sure the contents are the same
-      import testImplicits._
+      import deltaImplicits._
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
         (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
@@ -1451,8 +1450,6 @@ class CheckpointsSuite
 
   test("DML with DVs corrupts variant stats when collectVariantDataSkippingStats is disabled") {
     // This test reads from golden files containing the variant logical type annotation
-    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
-      "parse_json requires Spark 4.1+")
 
     // This test verifies that when:
     // 1. A table has variant stats
@@ -1546,8 +1543,6 @@ class CheckpointsSuite
 
   test("DML with DVs preserves variant stats when collectVariantDataSkippingStats is enabled") {
     // This test reads from golden files containing the variant logical type annotation
-    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
-      "parse_json requires Spark 4.1+")
 
     // This test verifies that when:
     // 1. A table has variant stats
@@ -1662,8 +1657,6 @@ class CheckpointsSuite
   test("DML with DVs preserves nested variant stats " +
       "when collectVariantDataSkippingStats is enabled") {
     // This test reads from golden files containing the variant logical type annotation
-    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
-      "parse_json requires Spark 4.1+")
 
     // This test verifies that variant stats for a variant column nested inside a struct
     // (schema: i int, s struct<v variant>) are preserved after DML operations with DVs.
@@ -1786,8 +1779,6 @@ class CheckpointsSuite
   test("DML with DVs preserves variant and struct stats " +
       "when collectVariantDataSkippingStats is enabled") {
     // This test reads from golden files containing the variant logical type annotation
-    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
-      "parse_json requires Spark 4.1+")
 
     // This test verifies that for a table with both variant and struct columns
     // (schema: v variant, s struct<i int, j string>), stats are preserved for ALL columns

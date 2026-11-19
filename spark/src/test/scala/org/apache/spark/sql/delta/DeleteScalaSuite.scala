@@ -41,7 +41,7 @@ trait DeleteScalaMixin
 }
 
 trait DeleteScalaTests extends DeleteScalaMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   test("delete usage test - without condition") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))

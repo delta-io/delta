@@ -519,9 +519,10 @@ lazy val sparkV2 = {
       CrossSparkVersions.sparkDependentSettings(sparkVersion),
       exportJars := true,  // Export as JAR to avoid classpath conflicts
 
-      Test / javaOptions ++= Seq("-ea"),
+      Test / javaOptions ++= Seq("-ea", "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED"),
       libraryDependencies ++= junit5TestDependencies ++ Seq(
         "org.mockito" % "mockito-inline" % "4.11.0" % "test",
+        "org.mockito" %% "mockito-scala" % "1.17.14" % "test",
         "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
         "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
@@ -547,6 +548,7 @@ lazy val spark = (project in file("spark-unified"))
   .dependsOn(sparkV1)
   .dependsOn(sparkV2)
   .dependsOn(storage)
+  .dependsOn(storage % "test->test") // Shared S3 HTTP fixture for native LogStore tests
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-spark",
@@ -684,6 +686,7 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -1012,7 +1015,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.4.1",
+      "io.delta" %% "delta-sharing-client" % "1.5.0",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -1261,8 +1264,9 @@ lazy val storage = (project in file("storage"))
     exportJars := true,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
-      // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
-      // versions with known vulnerabilities.
+      // Legacy LogStores retain their Hadoop compatibility. The automatically selected
+      // native S3LogStore requires S3A 3.4.2+ and the capabilities in
+      // storage/S3_NATIVE_PUT_IF_ABSENT.md.
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
 
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API

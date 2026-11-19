@@ -48,6 +48,21 @@ object AMTUsageLogs {
   /** Usage log emitted when an AMT write fails unexpectedly. */
   val WRITE_FAILED = s"$PREFIX.writeFailed"
 
+  /** Usage log emitted when the first tree of an upgrade is committed. */
+  val UPGRADE_FIRST_TREE_BUILT = s"$PREFIX.upgrade.firstTreeBuilt"
+
+  /** Usage log emitted when the first tree build of an upgrade fails. */
+  val UPGRADE_FIRST_TREE_FAILED = s"$PREFIX.upgrade.firstTreeFailed"
+
+  /** Usage log emitted when the upgrade rejects a table because it has inline DVs. */
+  val UPGRADE_INLINE_DVS_FOUND = s"$PREFIX.upgrade.inlineDVsFound"
+
+  /**
+   * Usage log emitted when an incremental AMT write carries forward leaves that hold both live
+   * files and tombstones. Other engines write such leaves; this writer never does.
+   */
+  val INCREMENTAL_WRITE_MIXED_LEAVES_CARRIED = s"$PREFIX.incrementalWrite.mixedLeavesCarried"
+
   // ////////////////////// Invariant check usage log suffixes //////////////////////
 
   /** Usage log emitted when a logging-only invariant check unexpectedly throws in production. */
@@ -96,11 +111,11 @@ object AMTUsageLogs {
   val DELTA_AT_CHECKPOINT_VERSION_MISMATCH =
     "amt.logSegmentInvariant.deltaAtCheckpointVersionMismatch"
 
-  // A manifest_info contains both live files and tombstones.
-  val ALERT_MIXED_LEAF_CONTENT = "amt.mixedLeafContent"
-
   // A leaf without live files gains new manifest deletion vector positions.
   val ALERT_MDV_WITHOUT_LIVE_FILES = "amt.commit.mdvWithoutLiveFiles"
+
+  // A leaf's manifest deletion vector masks more entries than the leaf has live files.
+  val ALERT_MDV_EXCEEDS_LIVE_FILES = "amt.commit.mdvExceedsLiveFiles"
 
   // A back reference names a leaf manifest that is not a live leaf of the base tree.
   val ALERT_BACK_REFERENCE_NOT_IN_BASE_TREE = "amt.commit.backReferenceNotInBaseTree"

@@ -921,7 +921,7 @@ class OptimizeMetadataOnlyDeltaQuerySuite
   }
 
   private def generateRowsDataFrame(source: Dataset[java.lang.Long]): DataFrame = {
-    import testImplicits._
+    import deltaImplicits._
 
     source.select('id,
       'id.cast("tinyint") as 'TinyIntColumn,

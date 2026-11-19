@@ -45,7 +45,7 @@ class DeltaInsertReplaceOnOrUsingDFOptionCombinationSuite extends QueryTest
     .set(DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key, "true")
     .set(DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key, "true")
 
-  import testImplicits._
+  import deltaImplicits._
 
   private val dynamicPartitionOverwriteErrorClass =
     "DELTA_DYNAMIC_PARTITION_OVERWRITE_INCOMPATIBLE_REPLACE_ON_OR_USING"

@@ -720,20 +720,18 @@ class DeltaFormatSharingSourceSuite
     }
   }
 
-  // forceToDeltaSourceOffset gates legacy-JSON parsing on the auto-resolve conf. CDF streaming
-  // (readChangeFeed=true) must be gated by the new
-  // DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT and ignore the non-CDF flag, and
-  // vice versa for non-CDF streaming. This grid verifies all four conf combinations against both
-  // source kinds and confirms the two flags route independently.
+  // forceToDeltaSourceOffset gates legacy-JSON parsing on auto-resolve. CDF streaming
+  // (readChangeFeed=true) always auto-resolves, regardless of the non-CDF flag; non-CDF streaming
+  // is gated by DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.
   Seq(
-    // (readChangeFeed, cdfFlag, streamingFlag, expectAutoResolveOn)
-    (true, true, false, true),   // CDF: CDF flag on -> auto-resolve on, ignores streamingFlag=false
-    (true, false, true, false),  // CDF: non-CDF flag must not enable CDF auto-resolve
-    (false, true, false, false), // non-CDF: CDF flag must not enable non-CDF auto-resolve
-    (false, false, true, true)   // non-CDF: streaming flag on -> auto-resolve on (existing path)
-  ).foreach { case (readChangeFeed, cdfFlag, streamingFlag, expectAutoResolveOn) =>
-    test(s"forceToDeltaSourceOffset: flag routing readChangeFeed=$readChangeFeed " +
-      s"cdfFlag=$cdfFlag streamingFlag=$streamingFlag -> autoResolve=$expectAutoResolveOn") {
+    // (readChangeFeed, streamingFlag, expectAutoResolveOn)
+    (true, false, true),   // CDF: always on, even with the non-CDF flag off
+    (true, true, true),    // CDF: always on with the non-CDF flag on
+    (false, false, false), // non-CDF: streaming flag off -> auto-resolve off
+    (false, true, true)    // non-CDF: streaming flag on -> auto-resolve on
+  ).foreach { case (readChangeFeed, streamingFlag, expectAutoResolveOn) =>
+    test(s"forceToDeltaSourceOffset: readChangeFeed=$readChangeFeed " +
+      s"streamingFlag=$streamingFlag -> autoResolve=$expectAutoResolveOn") {
       withTempDir { tempDir =>
         val deltaTableName = "delta_table_cdf_flag_routing"
         withTable(deltaTableName) {
@@ -743,13 +741,10 @@ class DeltaFormatSharingSourceSuite
           prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
           val profileFile = prepareProfileFile(tempDir)
           val tableId = "test-table-id"
-          val cdfKey = DeltaSQLConf
-            .DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
           val streamingKey = DeltaSQLConf
             .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
           withSQLConf(
             (getDeltaSharingClassesSQLConf ++ Seq(
-              cdfKey -> cdfFlag.toString,
               streamingKey -> streamingFlag.toString
             )).toSeq: _*
           ) {
@@ -772,6 +767,13 @@ class DeltaFormatSharingSourceSuite
               assert(deltaOffset.reservoirId === tableId)
               assert(deltaOffset.reservoirVersion === 1L)
             } else {
+              // With auto-resolve off the legacy fallback must not run: the call rethrows the
+              // underlying delta source's failure instead of converting the legacy JSON. The
+              // exception's type is not the table-id check itself - with this grid's minimal
+              // mocks the lazy delta source fails earlier, on its filesystem access - so the
+              // assertion pins the routing contract (throw, never return a converted offset),
+              // not the mock-dependent error type. The sibling auto-resolve-on cases prove the
+              // same legacy JSON parses fine once the fallback runs.
               intercept[Exception](source.forceToDeltaSourceOffset(serializedOffset))
             }
             cleanUpDeltaSharingBlocks()

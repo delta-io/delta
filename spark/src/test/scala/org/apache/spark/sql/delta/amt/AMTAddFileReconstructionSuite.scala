@@ -17,12 +17,15 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog}
-import org.apache.spark.sql.delta.actions.{AddFile, BackReference, Checkpoint, DeletionVectorDescriptor, Metadata, SingleAction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DeletionVectorDescriptor, Metadata, SingleAction}
 import org.apache.spark.sql.delta.implicits.singleActionEncoder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
+import org.apache.spark.sql.catalyst.expressions.StructsToJson
+import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.types.StructType
 
@@ -32,6 +35,7 @@ import org.apache.spark.sql.types.StructType
  * entries, every optional field set or empty, trees without live files, and the malformed entries
  * it must reject. Every tree is reconstructed by both [[PerRowAMTCheckpointProvider]] and
  * [[ColumnarAMTCheckpointProvider]], which must agree exactly, so each expectation holds for both.
+ * The columnar results must also agree with and without a prefetched root.
  *
  * The hand-built trees pin each field to a literal. The writer-produced trees cover what the AMT
  * writer persists for every partition and stats type, deletion vectors, and leaves.
@@ -44,14 +48,18 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
 
   /** The live AddFiles state reconstruction builds from `provider`'s tree. */
   private def stateReconstructionAddFiles(
-      provider: AMTCheckpointProvider, deltaLog: DeltaLog): Seq[AddFile] =
-    provider.loadActionsForStateReconstruction(spark, deltaLog)
+      provider: AMTCheckpointProvider, deltaLog: DeltaLog): Seq[AddFile] = {
+    val actions = provider.loadActionsForStateReconstruction(spark, deltaLog)
       .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+    assert(actions.schema("add").dataType == Action.addFileSchema)
+    assert(actions.queryExecution.optimizedPlan.schema("add").dataType == Action.addFileSchema)
+    actions
       .where(col("add").isNotNull)
       .as[SingleAction]
       .collect()
       .map(_.add)
       .toSeq
+  }
 
   /** The per-row and the columnar provider over `checkpoint`'s tree, in that order. */
   private def providers(
@@ -60,8 +68,9 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
       manifestCommitVersion: Long): (AMTCheckpointProvider, AMTCheckpointProvider) = {
     def provider(columnar: Boolean): AMTCheckpointProvider =
       withSQLConf(
-          DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> columnar.toString) {
-        AMTCheckpointProvider.fromCheckpoint(deltaLog, checkpoint, manifestCommitVersion)
+          DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> columnar.toString,
+          DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> "12000") {
+        AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint, manifestCommitVersion)
       }
     val perRow = provider(columnar = false)
     val columnar = provider(columnar = true)
@@ -91,6 +100,15 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
       "the columnar AddFiles must match the per-row ones\n" +
         "  columnar=" + columnar.sortBy(_.path).mkString("\n    ") + "\n" +
         "  perRow=" + perRow.sortBy(_.path).mkString("\n    "))
+    withSQLConf(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true") {
+      val uncached = AMTCheckpointProvider(
+        spark, manifestCommitVersion, checkpoint, columnarProvider.leaves, deltaLog.dataPath)
+      val uncachedAdds = stateReconstructionAddFiles(uncached, deltaLog)
+      assert(sorted(columnar) == sorted(uncachedAdds),
+        "the prefetched root must preserve every columnar AddFile field\n" +
+          "  prefetched=" + columnar.sortBy(_.path).mkString("\n    ") + "\n" +
+          "  uncached=" + uncachedAdds.sortBy(_.path).mkString("\n    "))
+    }
     val byPath = perRow.map(add => add.path -> add).toMap
     assert(byPath.size == perRow.size, "reconstruction must not duplicate files")
     byPath
@@ -130,6 +148,21 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
     val perRowError = intercept[Exception](stateReconstructionAddFiles(perRow, tree.deltaLog))
     assert(causeMessages(perRowError).contains(perRowMessage.getOrElse(expectedMessage)),
       causeMessages(perRowError))
+  }
+
+  private def assertEntryProjectionsRejected(
+      tree: SyntheticTree,
+      rootEntries: Seq[AMTSingleAction],
+      expectedMessage: String): Unit = {
+    val checkpoint = tree.checkpoint(rootEntries)
+    val (_, columnar) = providers(tree.deltaLog, checkpoint, checkpoint.version)
+    val actions = columnar.loadActionsForStateReconstruction(spark, tree.deltaLog)
+      .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+    Seq("path", "size").foreach { field =>
+      val projection = actions.select(col(s"add.$field"))
+      val error = intercept[Exception](projection.collect())
+      assert(causeMessages(error).contains(expectedMessage), causeMessages(error))
+    }
   }
 
   /**
@@ -359,6 +392,67 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
     }
   }
 
+  test("path projections and filters do not reconstruct unrelated AddFile fields") {
+    withSQLConf(
+        "spark.sql.optimizer.avoidDoubleFilterEval" -> "false",
+        "spark.databricks.optimizer.avoidInliningUDF.enabled" -> "false") {
+      withSyntheticTree("amt_add_file_path_projection") { tree =>
+        val leaf = tree.writeLeaf(Seq(dataEntry("data/leaf.parquet", recordCount = 10L)))
+        val checkpoint = tree.checkpoint(Seq(
+          dataEntry("data/root.parquet", recordCount = 5L).wrap,
+          leafPointer(leaf).wrap))
+        val (_, columnar) = providers(tree.deltaLog, checkpoint, checkpoint.version)
+        val actions = columnar.loadActionsForStateReconstruction(spark, tree.deltaLog)
+          .getOrElse(fail("AMT provider must contribute reconstructed actions."))
+        val filtered = actions.where(col("add.path").isNotNull && col("add.path") =!= "")
+        val fullAddPlan = filtered.select(col("add")).queryExecution.optimizedPlan
+        val conditions = fullAddPlan.collect { case filter: Filter => filter.condition }
+        assert(conditions.nonEmpty, fullAddPlan)
+        conditions.foreach { condition =>
+          assert(!condition.exists(_.isInstanceOf[StructsToJson]), fullAddPlan)
+          assert(!condition.references.exists { attribute =>
+            Set("content_stats", "deletion_vector").contains(attribute.name)
+          }, fullAddPlan)
+        }
+        val paths = filtered.select(col("add.path"))
+        val pathPlan = paths.queryExecution.optimizedPlan
+        assert(!pathPlan.exists(_.expressions.exists(_.exists(_.isInstanceOf[StructsToJson]))),
+          pathPlan)
+        assert(paths.collect().map(_.getString(0)).toSet ==
+          Set("data/root.parquet", "data/leaf.parquet"))
+      }
+    }
+  }
+
+  test("field projections still validate leaf sequence numbers") {
+    withSyntheticTree("amt_add_file_path_without_sequence_number") { tree =>
+      val leaf = tree.writeLeaf(Seq(dataEntry(
+        "data/a.parquet", recordCount = 10L,
+        tracking = existingTracking(sequenceNumber = None))))
+      assertEntryProjectionsRejected(
+        tree,
+        Seq(leafPointer(leaf).wrap),
+        "Malformed AMT data entry 'data/a.parquet': tracking.sequence_number is null but the " +
+          "entry's status is EXISTING.")
+    }
+  }
+
+  test("field projections still reject manifest_info on a DATA entry") {
+    withSyntheticTree("amt_add_file_path_with_manifest_info") { tree =>
+      val leaf = tree.corruptLeaf(
+          tree.writeLeaf(Seq(dataEntry("data/a.parquet", recordCount = 10L))),
+          "manifest_info") { dataType =>
+        struct(dataType.asInstanceOf[StructType].fields.toIndexedSeq.map { field =>
+          (if (field.nullable) lit(null) else lit(0)).cast(field.dataType).as(field.name)
+        }: _*)
+      }
+      assertEntryProjectionsRejected(
+        tree,
+        Seq(leafPointer(leaf).wrap),
+        "Malformed AMT data entry 'data/a.parquet': manifest_info must be null for a DATA entry.")
+    }
+  }
+
   test("masked and dead leaf entries are skipped, and only masked ones advance the row ids") {
     withSyntheticTree("amt_add_file_skipped_leaf_entries") { tree =>
       val leaf = tree.writeLeaf(Seq(
@@ -405,7 +499,7 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
         leafPointer(leaf).wrap))
       val (perRow, columnar) = providers(tree.deltaLog, checkpoint, checkpoint.version)
       Seq(perRow, columnar).foreach { provider =>
-        val rootFiles = provider.readLiveRootDataEntries(tree.deltaLog)
+        val rootFiles = provider.readLiveRootDataEntries(spark, tree.deltaLog)
         assertAddFiles(rootFiles.map(add => add.path -> add).toMap,
           plainAddFile("data/a.parquet", numRecords = 4L))
       }
@@ -455,6 +549,40 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
     }
   }
 
+  test("a leaf entry read from a manifest that is not one of the leaves is rejected") {
+    // Both implementations look up a leaf entry's parent by the manifest it was read from. The
+    // leaf scan reads exactly the leaves the lookup is built from, so a miss is a bug: both fail.
+    withSyntheticTree("amt_add_file_unknown_leaf") { tree =>
+      val leaf = tree.writeLeaf(Seq(dataEntry("data/a.parquet", recordCount = 10L)))
+      val checkpoint = tree.checkpoint(Seq(leafPointer(leaf).wrap))
+      val provider = AMTCheckpointProvider.fromCheckpoint(
+        spark, tree.deltaLog, checkpoint, manifestCommitVersion = checkpoint.version)
+      val unknownLeaf =
+        SparkPath.fromPath(new Path(tree.deltaLog.dataPath, "unknown.parquet")).urlEncoded
+      val entries =
+        spark.createDataFrame(Seq(("data/a.parquet", unknownLeaf))).toDF("location", "leafPath")
+      val columnarError = intercept[Exception] {
+        provider.manifestReader.withLeafEntryContext(entries, leaves = Seq.empty).collect()
+      }
+      assert(causeMessages(columnarError).contains(
+        "Malformed AMT data entry 'data/a.parquet': no leaf manifest matches " + unknownLeaf + "."),
+        causeMessages(columnarError))
+
+      val perRowResolver = AMTCheckpointProvider.DataEntryResolverProvider(
+        tableRoot = tree.deltaLog.dataPath,
+        urlEncodedRootManifestPath = "unused",
+        parentTrackingByLeafLocation = Map.empty).createResolver()
+      val perRowError = intercept[NoSuchElementException] {
+        perRowResolver.resolve(AMTCheckpointProvider.AMTDataEntryExtended(
+          dataEntry("data/a.parquet", recordCount = 10L).wrap,
+          leafPath = unknownLeaf,
+          pos = 0L,
+          precedingNullFirstRowIdRecords = 0L))
+      }
+      assert(perRowError.getMessage.contains("unknown.parquet"), perRowError.getMessage)
+    }
+  }
+
   test("a leaf DATA entry with manifest_info is rejected") {
     withSyntheticTree("amt_add_file_data_manifest_info") { tree =>
       val leaf = tree.corruptLeaf(
@@ -469,6 +597,80 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
         Seq(leafPointer(leaf).wrap),
         "Malformed AMT data entry 'data/a.parquet': manifest_info must be null for a DATA entry.",
         perRowMessage = Some("manifest_info must be set iff content_type is a manifest pointer"))
+    }
+  }
+
+  for (field <- Seq("manifest_info", "file_format")) {
+    test(s"a prefetched root DATA entry with invalid $field uses the columnar checks") {
+      withSQLConf(
+          DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true",
+          DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> "12000") {
+        withSyntheticTree("amt_prefetched_root_invalid_" + field) { tree =>
+          val rootFile = tree.corruptLeaf(
+              tree.writeLeaf(Seq(dataEntry("data/root.parquet", recordCount = 10L))),
+              field) { dataType =>
+            if (field == "file_format") {
+              lit("orc")
+            } else {
+              struct(dataType.asInstanceOf[StructType].fields.toIndexedSeq.map { infoField =>
+                (if (infoField.nullable) lit(null) else lit(0))
+                  .cast(infoField.dataType).as(infoField.name)
+              }: _*)
+            }
+          }
+          val checkpoint = updateCheckpointActions(tree.base) {
+            case root: ContentRoot =>
+              root.copy(path = rootFile.location, sizeInBytes = rootFile.sizeInBytes)
+          }
+          // Discovery must retain DATA rows without decoding them into AMTSingleAction objects.
+          val prefetched = AMTCheckpointProvider.fromCheckpoint(
+            spark, tree.deltaLog, checkpoint, checkpoint.version)
+          val uncached = AMTCheckpointProvider(
+            spark, checkpoint.version, checkpoint, prefetched.leaves, tree.deltaLog.dataPath)
+          val expectedMessage = if (field == "file_format") {
+            "amtPassthrough only supports parquet. got orc."
+          } else {
+            "manifest_info must be null for a DATA entry."
+          }
+          for (provider <- Seq(prefetched, uncached)) {
+            val error = intercept[Exception] {
+              stateReconstructionAddFiles(provider, tree.deltaLog)
+            }
+            assert(causeMessages(error).contains(expectedMessage), causeMessages(error))
+            val writeError = intercept[Exception] {
+              provider.readLiveRootDataEntries(spark, tree.deltaLog)
+            }
+            assert(causeMessages(writeError).contains(expectedMessage), causeMessages(writeError))
+          }
+        }
+      }
+    }
+  }
+
+  for {
+    contentType <- Seq(Some(2), None)
+    cacheThreshold <- Seq(0, 1, 12000)
+  } {
+    test(s"prefetched root discovery rejects invalid content types: $contentType, " +
+        s"cacheThreshold=$cacheThreshold") {
+      withSQLConf(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> cacheThreshold.toString) {
+        withSyntheticTree("amt_prefetched_root_invalid_content") { tree =>
+          val rootFile = tree.corruptLeaf(
+            tree.writeLeaf(Seq(dataEntry("data/root.parquet", recordCount = 10L))),
+            "content_type")(_ => contentType.map(lit).getOrElse(lit(null)))
+          val checkpoint = updateCheckpointActions(tree.base) {
+            case root: ContentRoot =>
+              root.copy(path = rootFile.location, sizeInBytes = rootFile.sizeInBytes)
+          }
+          val error = intercept[Exception] {
+            AMTCheckpointProvider.fromCheckpoint(
+              spark, tree.deltaLog, checkpoint, checkpoint.version)
+          }
+          val expectedMessage = contentType.map(value => s"Unsupported content_type: $value.")
+            .getOrElse("non-nullable")
+          assert(causeMessages(error).contains(expectedMessage), causeMessages(error))
+        }
+      }
     }
   }
 
@@ -565,4 +767,3 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
     }
   }
 }
-

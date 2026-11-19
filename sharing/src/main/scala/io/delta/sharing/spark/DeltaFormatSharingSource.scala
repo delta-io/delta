@@ -430,17 +430,13 @@ case class DeltaFormatSharingSource(
   }
 
   /**
-   * Whether the auto-resolve conf is enabled for this stream. CDF streaming
-   * (readChangeFeed=true) is gated by DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT;
-   * non-CDF streaming is gated by DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.
+   * Whether auto-resolve is enabled for this stream. CDF streaming (readChangeFeed=true) always
+   * auto-resolves; non-CDF streaming is gated by
+   * DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.
    */
   private def isAutoResolveEnabled: Boolean = {
-    val confKey = if (options.readChangeFeed) {
-      DeltaSQLConf.DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
-    } else {
-      DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
-    }
-    sqlConf.getConf(confKey)
+    options.readChangeFeed ||
+      sqlConf.getConf(DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT)
   }
 
   /** Returns the file ID hash option based on auto-resolve config and whether MD5 is needed. */

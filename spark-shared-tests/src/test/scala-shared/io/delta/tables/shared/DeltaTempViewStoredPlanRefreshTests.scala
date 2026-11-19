@@ -56,14 +56,9 @@ trait DeltaTempViewStoredPlanRefreshTests
         checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         writerSql(s"INSERT INTO $t VALUES (2, 200)")
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "STRICT") | ("4.1", "AUTO") |
-              ("4.0", "AUTO") =>
-            // STRICT 4.1+ and AUTO (all versions) refresh: the new row shows through the filter.
+          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "STRICT") | ("4.1", "AUTO") =>
+            // STRICT and AUTO refresh: the new row shows through the filter.
             checkAnswer(spark.table("v"), Seq(Row(1, 100), Row(2, 200)))
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the snapshot captured when the view plan was built, so the session
-            // write is invisible.
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -75,13 +70,9 @@ trait DeltaTempViewStoredPlanRefreshTests
         checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         externalDataWrite(path, Seq((2, 200)))
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "STRICT") | ("4.1", "AUTO") |
-              ("4.0", "AUTO") =>
-            // STRICT 4.1+ and AUTO (all versions) refresh: the new row shows through the filter.
+          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "STRICT") | ("4.1", "AUTO") =>
+            // STRICT and AUTO refresh: the new row shows through the filter.
             checkAnswer(spark.table("v"), Seq(Row(1, 100), Row(2, 200)))
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot, so the external write is invisible.
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -93,7 +84,7 @@ trait DeltaTempViewStoredPlanRefreshTests
         checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         writerSql(s"ALTER TABLE $t ADD COLUMN new_column INT")
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
+          case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
             // TODO: schema evolution is not fully supported in V2 STRICT yet, so the wider INSERT
             // fails with an arity mismatch.
             checkError(
@@ -101,7 +92,7 @@ trait DeltaTempViewStoredPlanRefreshTests
                 writerSql(s"INSERT INTO $t VALUES (2, 200, -1)")
               },
               condition = "INSERT_COLUMN_ARITY_MISMATCH")
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: the view keeps its original two columns, so the wider INSERT succeeds and the
             // new row shows through projected to id and salary.
             writerSql(s"INSERT INTO $t VALUES (2, 200, -1)")
@@ -117,7 +108,7 @@ trait DeltaTempViewStoredPlanRefreshTests
         checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         externalAddColumnAndWrite(path, Seq((2, 200, -1)))
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // STRICT 4.2+ and AUTO (all versions) refresh preserving the original two columns; the
             // new row shows through projected to id and salary.
             checkAnswer(spark.table("v"), Seq(Row(1, 100), Row(2, 200)))
@@ -126,9 +117,6 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION")
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot, so the external change is invisible.
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -138,7 +126,7 @@ trait DeltaTempViewStoredPlanRefreshTests
     withInitialTable(columnMapping = true) { t =>
       withStoredPlanView(t) {
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
+          case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
             // STRICT: the view reads the filtered [1, 100]. TODO: the V2 STRICT ALTER COLUMN path
             // reports the column as missing rather than performing the DROP.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -147,7 +135,7 @@ trait DeltaTempViewStoredPlanRefreshTests
                 writerSql(s"ALTER TABLE $t DROP COLUMN salary")
               },
               condition = "FIELD_NOT_FOUND")
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: the view starts as the filtered [1, 100] and dropping the referenced column
             // raises the Delta schema-change error on the next read.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -172,7 +160,7 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION")
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: the view starts as the filtered [1, 100] and the external column removal raises
             // the Delta schema-change error on the next read.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -180,11 +168,6 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot, so the external removal is invisible.
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
-            externalDropColumn(path, "salary")
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -197,24 +180,10 @@ trait DeltaTempViewStoredPlanRefreshTests
         writerSql(s"DROP TABLE $t")
         writerSql(s"CREATE TABLE $t (id INT, salary INT) USING delta")
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "STRICT") | ("4.1", "AUTO") |
-              ("4.0", "AUTO") =>
-            // STRICT 4.1+ and AUTO (all versions) re-resolve the table by name, reflecting the new
+          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "STRICT") | ("4.1", "AUTO") =>
+            // STRICT and AUTO re-resolve the table by name, reflecting the new
             // empty table.
             checkAnswer(spark.table("v"), Seq.empty)
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view to the dropped table's commit, whose files the session DROP
-            // physically removed, so the read fails. Classic raises a raw Kernel exception (not a
-            // SparkThrowable) and Connect wraps it; both messages contain "does not exist".
-            val message =
-              try {
-                spark.table("v").collect()
-                ""
-              } catch {
-                case t: Throwable => Option(t.getMessage).getOrElse("")
-              }
-            assert(message.contains("does not exist"),
-              s"Expected a missing pinned-file error but got: '$message'")
         }
       }
     }
@@ -226,15 +195,10 @@ trait DeltaTempViewStoredPlanRefreshTests
         checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         externalDropAndRecreate(path)
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "STRICT") | ("4.1", "AUTO") |
-              ("4.0", "AUTO") =>
-            // STRICT 4.1+ and AUTO (all versions) re-resolve the table by name, reflecting the new
+          case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "STRICT") | ("4.1", "AUTO") =>
+            // STRICT and AUTO re-resolve the table by name, reflecting the new
             // empty table.
             checkAnswer(spark.table("v"), Seq.empty)
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot (the external recreate keeps the old files), so
-            // the view still returns its original rows.
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -253,7 +217,7 @@ trait DeltaTempViewStoredPlanRefreshTests
               s"CREATE TABLE $t (id INT, salary INT) USING delta " +
               "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
             checkAnswer(spark.table("v"), Seq.empty)
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: recreating a column-mapping table assigns fresh column ids, breaking the stored
             // plan, so the view read raises the Delta schema-change error.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -264,24 +228,6 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view to the dropped table's commit, whose files the session DROP
-            // physically removed, so the read fails (raw Kernel exception whose message contains
-            // "does not exist").
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
-            writerSql(s"DROP TABLE $t")
-            writerSql(
-              s"CREATE TABLE $t (id INT, salary INT) USING delta " +
-              "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
-            val message =
-              try {
-                spark.table("v").collect()
-                ""
-              } catch {
-                case t: Throwable => Option(t.getMessage).getOrElse("")
-              }
-            assert(message.contains("does not exist"),
-              s"Expected a missing pinned-file error but got: '$message'")
         }
       }
     }
@@ -297,17 +243,11 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropAndRecreate(path)
             checkAnswer(spark.table("v"), Seq.empty)
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: the view re-resolves the table by name, reflecting the new empty table.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropAndRecreate(path)
             checkAnswer(spark.table("v"), Seq.empty)
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot (the external recreate keeps the old files), so
-            // the view still returns its original rows.
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
-            externalDropAndRecreate(path)
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -317,7 +257,7 @@ trait DeltaTempViewStoredPlanRefreshTests
     withInitialTable(columnMapping = true) { t =>
       withStoredPlanView(t) {
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
+          case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
             // STRICT: the view reads the filtered [1, 100]. TODO: the V2 STRICT ALTER COLUMN path
             // reports the column as missing rather than performing the DROP.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -326,7 +266,7 @@ trait DeltaTempViewStoredPlanRefreshTests
                 writerSql(s"ALTER TABLE $t DROP COLUMN salary")
               },
               condition = "FIELD_NOT_FOUND")
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: the view starts as the filtered [1, 100]; re-adding the column with a fresh
             // column id breaks the stored plan, raising the Delta schema-change error.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -351,7 +291,7 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
             externalDropAndReAddColumn(path, "salary", IntegerType)
             checkAnswer(spark.table("v"), Seq.empty)
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: the view starts as the filtered [1, 100]; re-adding the column with a fresh
             // column id breaks the stored plan, raising the Delta schema-change error.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -359,11 +299,6 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot, so the external drop and re-add is invisible.
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
-            externalDropAndReAddColumn(path, "salary", IntegerType)
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -373,7 +308,7 @@ trait DeltaTempViewStoredPlanRefreshTests
     withInitialTable(columnMapping = true) { t =>
       withStoredPlanView(t) {
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
+          case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
             // STRICT: the view reads the filtered [1, 100]. TODO: the V2 STRICT ALTER COLUMN path
             // reports the column as missing rather than performing the DROP.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -382,7 +317,7 @@ trait DeltaTempViewStoredPlanRefreshTests
                 writerSql(s"ALTER TABLE $t DROP COLUMN salary")
               },
               condition = "FIELD_NOT_FOUND")
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: the view starts as the filtered [1, 100]; re-adding the column with a different
             // type breaks the stored plan, raising the Delta schema-change error.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -408,7 +343,7 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION")
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: the view starts as the filtered [1, 100]; re-adding the column with a different
             // type breaks the stored plan, raising the Delta schema-change error.
             checkAnswer(spark.table("v"), Seq(Row(1, 100)))
@@ -416,11 +351,6 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot, so the external type change is invisible.
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
-            externalDropAndReAddColumn(path, "salary", StringType)
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }
@@ -431,7 +361,7 @@ trait DeltaTempViewStoredPlanRefreshTests
       withStoredPlanView(t) {
         checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         (sparkVersionBucket, v2EnableMode) match {
-          case ("4.2+", "STRICT") | ("4.1", "STRICT") | ("4.0", "STRICT") =>
+          case ("4.2+", "STRICT") | ("4.1", "STRICT") =>
             // TODO: the V2 STRICT ALTER COLUMN path reports the column as missing rather than
             // applying the type change.
             checkError(
@@ -439,7 +369,7 @@ trait DeltaTempViewStoredPlanRefreshTests
                 writerSql(s"ALTER TABLE $t ALTER COLUMN salary TYPE BIGINT")
               },
               condition = "FIELD_NOT_FOUND")
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: type widening lets the ALTER succeed, but the widened column type breaks the
             // stored plan, so the view read raises the Delta schema-change error.
             writerSql(s"ALTER TABLE $t ALTER COLUMN salary TYPE BIGINT")
@@ -462,15 +392,12 @@ trait DeltaTempViewStoredPlanRefreshTests
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION")
-          case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+          case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
             // AUTO: the widened column type is incompatible with the stored plan, surfacing the
             // Delta schema-change error.
             checkError(
               exception = intercept[SparkThrowable] { spark.table("v").collect() },
               condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
-          case ("4.0", "STRICT") =>
-            // 4.0 STRICT pins the view's snapshot, so the external change is invisible.
-            checkAnswer(spark.table("v"), Seq(Row(1, 100)))
         }
       }
     }

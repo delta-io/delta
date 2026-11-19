@@ -180,7 +180,6 @@ class DeltaDropColumnSuite extends QueryTest
   }
 
   dropTest("drop column - only NullType column remains") { drop =>
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withTable("t1") {
       withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
         createTableWithSQLAPI("t1",
@@ -197,7 +196,6 @@ class DeltaDropColumnSuite extends QueryTest
   }
 
   dropTest("drop column - only NullType column in a struct remains") { drop =>
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withTable("t1") {
       withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
         createTableWithSQLAPI("t1",

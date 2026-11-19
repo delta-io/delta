@@ -214,7 +214,7 @@ class DeleteMetricsSuite extends QueryTest
 
 
   test("delete along partition boundary") {
-    import testImplicits._
+    import deltaImplicits._
 
     Seq(true, false).foreach { cdfEnabled =>
       Seq(true, false).foreach { deltaCollectStatsEnabled =>

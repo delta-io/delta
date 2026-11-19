@@ -36,7 +36,7 @@ class DeltaCheckpointWithStructColsSuite
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected val checkpointFnsWithStructAndJsonStats: Seq[DeltaLog => Long] = Seq(
     checkpointWithProperty(writeStatsAsJson = Some(true)),

@@ -493,7 +493,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
       assertThat(sql("SELECT * FROM %s", fullTableName)).containsExactly(row("1", "a"));
 
       TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
-      TableInfo info = tablesApi.getTable(fullTableName, false, false);
+      TableInfo info = tablesApi.getTable(fullTableName, false, false, false);
       assertThat(info.getProperties())
           .containsEntry("clusteringColumns", "[]")
           .containsEntry("delta.feature.clustering", "supported");
