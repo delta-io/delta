@@ -2788,8 +2788,12 @@ See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/maste
 _This section documents an existing metadata convention. It does not introduce new primitive types, table features, or reader and writer requirements._
 
 SQL `CHAR(n)` and `VARCHAR(n)` declarations are represented by the Delta primitive type `string`, not by `char(n)` or `varchar(n)` in the schema's `type` field.
-The original declaration can be retained as a string under the key `__CHAR_VARCHAR_TYPE_STRING` in a [struct field's metadata](#struct-field).
-For a field containing nested character types, this metadata can describe the complete type of the containing field, including structs, arrays, and maps.
+The original declaration can be retained as a string under the key `__CHAR_VARCHAR_TYPE_STRING` in a [top-level struct field's metadata](#struct-field).
+The annotation is interpreted on that top-level field and describes its complete type, including any nested structs, arrays, and maps.
+Replacing its `CHAR` and `VARCHAR` declarations with `string` gives the serialized field's type structure, including nested field names and order; nullability and other field metadata are specified separately by the serialized schema.
+Preserving character semantics after a schema change depends on keeping the annotation consistent with the updated type structure.
+A stale annotation can cause a character-aware reader to omit newly added fields or misinterpret reordered fields.
+Removing the annotation instead removes the length checks and padding supplied by it; this does not preserve the character semantics of the affected fields.
 
 In these declarations, `n` is a non-negative integer specifying the maximum number of Unicode code points in a non-null input string, including leading and trailing spaces.
 It is not a count of UTF-8 bytes, UTF-16 code units, or grapheme clusters, and counting does not perform Unicode normalization.
@@ -2805,6 +2809,8 @@ Already-padded values, including values produced by an upstream read or expressi
 Neither declaration changes the [Parquet mapping for `string`](#delta-data-type-to-parquet-type-mappings) or implies a fixed-width physical encoding.
 The existing [partition value serialization](#partition-value-serialization) also applies: an empty string in a partition value is interpreted as `null`.
 
+The annotation uses the producing connector's SQL type-declaration syntax, including its identifier quoting and case rules.
+This section does not define a portable grammar for the annotation.
 For example, the following schema retains two top-level declarations and a declaration for array elements:
 
 ```json
@@ -2845,7 +2851,8 @@ For example, the following schema retains two top-level declarations and a decla
 
 This annotation is not an explicitly declared [CHECK constraint](#check-constraints) or [column invariant](#column-invariants).
 Its presence does not provide a protocol-level guarantee that every writer enforces the length bound or every reader applies padding.
-Clients that do not interpret it can expose ordinary strings, and data written without length validation can exceed the declared bound.
+Clients that do not recognize its syntax can use the serialized field type without interpreting the annotation, exposing character fields as ordinary strings.
+Data written without length validation can exceed the declared bound.
 Missing metadata does not imply a length bound.
 Comparison, collation, cast semantics, and handling of malformed declarations remain connector-specific.
 The annotation belongs to the schema of each table version; changing a declaration does not imply that existing data files are rewritten.

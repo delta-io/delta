@@ -241,7 +241,7 @@ The rules describe values supplied to Delta, not transformations performed by an
 
 #### Storage and compatibility
 
-The transaction-log schema records the type as `string` and retains the declaration in the field's `__CHAR_VARCHAR_TYPE_STRING` metadata. For nested types, the annotation can describe the containing type, such as `array<varchar(5)>`. See [Character Type Declarations in the protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#character-type-declarations) for complete schema examples.
+The transaction-log schema records character fields as `string` and retains their declarations in the containing top-level field's `__CHAR_VARCHAR_TYPE_STRING` metadata. For nested types, one annotation describes the complete containing type, such as `struct<c:char(3),v:varchar(5)>`, rather than annotating each leaf separately. Spark writes and parses these strings using its SQL type-declaration syntax; this is not a portable grammar defined by the Delta protocol. See [Character Type Declarations in the protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#character-type-declarations) for complete schema examples.
 
 Parquet stores these values using the same UTF-8 string representation as `STRING`, not a fixed-width encoding. For example, a short `CHAR(3)` value can be stored as `'a'` and returned as `'a  '` when read through Delta with Spark. If an upstream expression or read already padded the value, those spaces can also be stored. Do not assume that all stored CHAR values have length `n`, or that stored values never contain padding.
 
@@ -259,7 +259,9 @@ Read-side padding is separate from SQL comparison, collation, and cast rules. Do
 
 #### Changing a character declaration
 
-You can increase a `VARCHAR` bound, change `CHAR(n)` to `VARCHAR(m)` where `m` is at least `n`, or change either type to `STRING`. Reducing a `VARCHAR` bound is not supported. These metadata-only changes do not require the [Type Widening](/delta-type-widening/) feature.
+For top-level columns, you can increase a `VARCHAR` bound, change `CHAR(n)` to `VARCHAR(m)` where `m` is at least `n`, or change either type to `STRING`. Reducing a `VARCHAR` bound is not supported. Changing a `CHAR` column's declared length is not supported. These metadata-only changes do not require the [Type Widening](/delta-type-widening/) feature.
+
+These guarantees do not extend to nested fields. Increasing a nested `VARCHAR` bound can fail, and changing a nested `CHAR` field to `STRING` can leave the containing field's annotation, length checks, and padding active. A schema change that adds or reorders nested fields can also leave the annotation out of sync with their names and order. Removing that annotation is not a behavior-preserving workaround: it also removes the character semantics of the fields it describes.
 
 <Tabs>
   <TabItem label="SQL">
@@ -273,7 +275,7 @@ You can increase a `VARCHAR` bound, change `CHAR(n)` to `VARCHAR(m)` where `m` i
   </TabItem>
 </Tabs>
 
-The declaration metadata is updated with the new bound or removed when converting to `STRING`. Existing data files are not rewritten, so spaces already stored in a value are not removed. Older table versions retain their original schema for time travel.
+For these top-level changes, the declaration metadata is updated with the new bound or removed when converting to `STRING`. Changing `CHAR` to `VARCHAR` or `STRING` also stops read-side CHAR padding. For example, an existing `CHAR(3)` value stored as `'a'` changes from returning `'a  '` to returning `'a'`. Existing data files are not rewritten, so spaces physically stored in a value remain. Older table versions retain their original schema for time travel.
 
 #### Character-type configuration
 
