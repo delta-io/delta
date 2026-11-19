@@ -127,6 +127,8 @@ class RunBuilder:
             "head_repository": {"full_name": "someone/delta"},
             "html_url": "https://github.com/delta-io/delta/actions/runs/77",
         }
+        self.comments = []
+        self.events = []
 
     def _job(self, job_id, name, conclusion):
         return {"id": job_id, "name": name, "conclusion": conclusion, "run_attempt": self.attempt,
@@ -143,11 +145,27 @@ class RunBuilder:
                  "expired": False}]},
             f"repos/{REPO}/actions/artifacts/5/zip": blob.getvalue(),
             f"repos/{REPO}/pulls/42": self.pr,
-            f"repos/{REPO}/issues/42/comments": [],
+            f"repos/{REPO}/issues/42/comments": self.comments,
+            f"repos/{REPO}/issues/42/events": self.events,
+            f"repos/{REPO}/actions/runs/77": self.run,
         }, self.logs)
 
-    def analyze(self, offline=False, api=None):
-        return afc.analyze_run(api or self.api(), REPO, self.run, offline=offline)
+    def analyze(self, offline=False, api=None, expected_shards=None):
+        expected = expected_shards or [str(i) for i in range(self.shards)]
+        return afc.analyze_run(api or self.api(), REPO, self.run, expected, offline=offline)
+
+
+APP_BOT = "delta-ci-labeler[bot]"
+
+
+def labeled_event(login, actor_type="Bot", label="full-ci"):
+    return {"event": "labeled", "label": {"name": label},
+            "actor": {"login": login, "type": actor_type}}
+
+
+def bot_comment(sha, login=APP_BOT):
+    return {"body": afc.MARKER_FORMAT.format(sha=sha) + "\nold",
+            "user": {"login": login, "type": "Bot"}}
 
 
 FAIL_AMT = fixture("scalatest_failed.log")
@@ -317,6 +335,97 @@ class DivergenceTest(unittest.TestCase):
         a = RunBuilder({"4.1": [FAIL_AMT]}).analyze()
         self.assertFalse(a.label)
 
+    def test_shard_missing_for_every_version_is_detected(self):
+        # Shard 2 of 3 never ran on any version. The expected set comes from the trusted
+        # workflow, not from the jobs that happen to be present.
+        a = RunBuilder({"4.1": [OK, OK], "4.3": [OK, FAIL_AMT]}, shards=3).analyze()
+        self.assertFalse(a.label)
+        self.assertEqual(a.results["4.1"].status, afc.INCONCLUSIVE)
+        self.assertIn("missing shards 2", a.results["4.1"].reason)
+        # With every expected shard present, the same outcome labels.
+        self.assertTrue(RunBuilder({"4.1": [OK, OK, OK], "4.3": [OK, FAIL_AMT, OK]},
+                                   shards=3).analyze().label)
+
+    def test_unexpected_shard_is_inconclusive(self):
+        a = RunBuilder({"4.1": [OK, OK, OK], "4.3": [OK, FAIL_AMT, OK]}).analyze()  # expects 2
+        self.assertFalse(a.label)
+        self.assertIn("unexpected shards 2", a.results["4.1"].reason)
+
+
+class PassFailRuleTest(unittest.TestCase):
+    """The pass/fail rule, documented.
+
+    A version passes only if every expected shard ran and succeeded. Any real failure
+    makes a version fail, whatever its other shards did. One passing and one failing
+    version diverge (label). When all fail, an inconclusive or incomplete suite list on
+    any side means no label.
+    """
+
+    def test_full_pass_vs_real_failure_with_inconclusive_shard_labels(self):
+        for other in (INFRA_UPLOAD, "cancelled", "timed_out"):
+            a = RunBuilder({"4.1": [FAIL_AMT, other], "4.3": [OK, OK]}).analyze()
+            self.assertTrue(a.label, other)
+            self.assertEqual(a.results["4.1"].status, afc.FAIL)
+            self.assertFalse(a.results["4.1"].complete)
+
+    def test_full_pass_vs_real_failure_with_missing_shard_labels(self):
+        a = RunBuilder({"4.1": [FAIL_AMT], "4.3": [OK, OK]}).analyze()
+        self.assertTrue(a.label, a.reason)
+
+    def test_pass_needs_every_expected_shard(self):
+        # 4.3 succeeded on the shards it ran, but one is missing: not a pass.
+        a = RunBuilder({"4.1": [FAIL_AMT, OK], "4.3": [OK]}).analyze()
+        self.assertFalse(a.label)
+        self.assertEqual(a.results["4.3"].status, afc.INCONCLUSIVE)
+
+    def test_both_fail_with_incomplete_side_no_label(self):
+        # Different suites, but 4.1's list may be incomplete: an inconclusive shard, a
+        # missing shard, or a failure without sbt's summary.
+        for first in ([FAIL_AMT, INFRA_UPLOAD], [FAIL_AMT], [TIMED_OUT_AFTER_FAILURE, OK]):
+            a = RunBuilder({"4.1": first, "4.3": [FAIL_MERGE, OK]}).analyze()
+            self.assertFalse(a.label, a.reason)
+        # The same with complete lists labels.
+        a = RunBuilder({"4.1": [FAIL_AMT, OK], "4.3": [FAIL_MERGE, OK]}).analyze()
+        self.assertTrue(a.label, a.reason)
+
+
+class ExpectedShardsTest(unittest.TestCase):
+    WORKFLOW = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "workflows",
+                            "spark_test.yaml")
+
+    def test_reads_this_repos_spark_test_yaml(self):
+        with open(self.WORKFLOW) as f:
+            self.assertEqual(afc.expected_shards_from_workflow(f.read()),
+                             [str(i) for i in range(8)])
+
+    def wf(self, shard_line, num="'3'"):
+        return ("jobs:\n  generate-matrix:\n    steps: []\n  test:\n    strategy:\n"
+                f"      matrix:\n        {shard_line}\n    steps:\n      - with:\n"
+                f"          num-shards: {num}\n  compile:\n    strategy:\n      matrix:\n"
+                "        shard: [0]\n")
+
+    def test_valid_and_invalid(self):
+        self.assertEqual(afc.expected_shards_from_workflow(self.wf("shard: [0, 1, 2]")),
+                         ["0", "1", "2"])
+        for bad in (self.wf("shard: [0, 1, 2]", num="'4'"), self.wf("shard: [0, 2, 3]"),
+                    self.wf("shard: ${{ fromJson(x) }}"), "jobs:\n  other:\n    x: 1\n"):
+            with self.assertRaises(ValueError, msg=bad):
+                afc.expected_shards_from_workflow(bad)
+
+    def test_cli_without_trusted_workflow_does_not_label(self):
+        b = RunBuilder({"4.1": [OK, FAIL_AMT], "4.3": [OK, OK]})
+        with tempfile.TemporaryDirectory() as tmp:
+            event = os.path.join(tmp, "event.json")
+            with open(event, "w") as f:
+                json.dump({"workflow_run": b.run}, f)
+            args = afc.argparse.Namespace(
+                repo=REPO, event_path=event, run_id=None, offline=False, body_file=None,
+                spark_test_workflow=os.path.join(tmp, "missing.yaml"))
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                afc.cmd_analyze(args, api=b.api())
+            self.assertIn("should_label=false", out.getvalue())
+
 
 class ContextTest(unittest.TestCase):
     """Run, artifact and PR validation in analyze_run."""
@@ -351,11 +460,42 @@ class ContextTest(unittest.TestCase):
         self.assertFalse(b.analyze().label)
 
     def test_already_labelled_is_noop(self):
+        # Added by a person (or before this run): nothing to do.
         b = RunBuilder(self.DIVERGENT)
         b.pr["labels"].append({"name": "full-ci"})
+        b.events.append(labeled_event("maintainer", "User"))
         a = b.analyze()
         self.assertFalse(a.label)
-        self.assertIn("already has", a.reason)
+        self.assertIn("not added by this workflow", a.reason)
+        # Added by this workflow, commented, and the full run started: nothing to do.
+        b = RunBuilder(self.DIVERGENT)
+        b.pr["labels"].append({"name": "full-ci"})
+        b.events.append(labeled_event(APP_BOT))
+        b.comments.append(bot_comment(HEAD))
+        a = b.analyze()
+        self.assertFalse(a.label)
+        self.assertIn("a full run", a.reason)
+
+    def test_partial_application_is_resumed(self):
+        # Labelled with GITHUB_TOKEN, but the comment failed: analyze asks to finish.
+        b = RunBuilder(self.DIVERGENT)
+        b.pr["labels"].append({"name": "full-ci"})
+        b.events.append(labeled_event(afc.GITHUB_ACTIONS_BOT))
+        self.assertTrue(b.analyze().label)
+        # Commented too, but the re-run failed (no newer attempt): still unfinished.
+        b.comments.append(bot_comment(HEAD))
+        self.assertTrue(b.analyze().label)
+        # Once the run has a newer attempt, it is done.
+        api = b.api()
+        api.routes[f"repos/{REPO}/actions/runs/77"] = dict(b.run, run_attempt=2)
+        self.assertFalse(b.analyze(api=api).label)
+
+    def test_label_removed_after_marker_is_respected(self):
+        b = RunBuilder(self.DIVERGENT)
+        b.comments.append(bot_comment(HEAD))
+        a = b.analyze()
+        self.assertFalse(a.label)
+        self.assertIn("removed", a.reason)
 
     def test_forged_pr_number(self):
         # The artifact names another PR, whose head isn't this run's commit.
@@ -380,6 +520,15 @@ class ContextTest(unittest.TestCase):
         b.run["pull_requests"] = [{"number": 7}]
         self.assertIn("isn't one of", b.analyze().reason)
         b.run["pull_requests"] = [{"number": 42}]
+        self.assertTrue(b.analyze().label)
+
+    def test_artifact_num_shards_must_match_trusted_count(self):
+        b = RunBuilder(self.DIVERGENT)
+        b.matrix["num_shards"] = 3
+        a = b.analyze()
+        self.assertFalse(a.label)
+        self.assertIn("num_shards", a.reason)
+        b.matrix["num_shards"] = 2
         self.assertTrue(b.analyze().label)
 
     def test_artifact_versions_must_match_jobs(self):
@@ -439,7 +588,8 @@ class PrMatrixTest(unittest.TestCase):
     def test_invalid(self):
         for bad in ({"pr": True}, {"pr": "1"}, {"pr": 0}, {"head_sha": "abc"},
                     {"mode": "x"}, {"test_spark_versions": ["4.1; rm -rf /"]},
-                    {"compile_spark_versions": "4.2"}):
+                    {"compile_spark_versions": "4.2"}, {"num_shards": "8"},
+                    {"num_shards": 0}, {"num_shards": True}):
             with self.assertRaises(ValueError, msg=bad):
                 afc.parse_pr_matrix(self.good(**bad))
         with self.assertRaises(ValueError):
@@ -475,61 +625,183 @@ class CommentTest(unittest.TestCase):
         self.assertNotIn("@bad", body)
 
 
+class FakeRepo:
+    """Stateful fake of one PR and its Delta Spark run, for apply_label.
+
+    `client(login)` returns an API acting as that bot. `fail` holds steps ("label",
+    "comment", "rerun") that fail on their next attempt.
+    """
+
+    def __init__(self, labels=(), comments=(), events=(), run_attempt=1):
+        self.labels = list(labels)
+        self.comments = list(comments)
+        self.events = list(events)
+        self.run_attempt = run_attempt
+        self.head = HEAD
+        self.fail = set()
+        self.reruns = 0
+
+    def client(self, login):
+        return _FakeRepoClient(self, login)
+
+
+class _FakeRepoClient:
+    def __init__(self, repo, login):
+        self.repo, self.login = repo, login
+
+    def get_json(self, path):
+        r = self.repo
+        page = re.search(r"page=(\d+)$", path)
+        if page and int(page.group(1)) > 1:
+            return []
+        base = re.sub(r"[?&]per_page=100&page=\d+$", "", path)
+        if base == f"repos/{REPO}/pulls/42":
+            return {"number": 42, "state": "open", "head": {"sha": r.head},
+                    "labels": [{"name": n} for n in r.labels]}
+        if base == f"repos/{REPO}/issues/42/comments":
+            return json.loads(json.dumps(r.comments))
+        if base == f"repos/{REPO}/issues/42/events":
+            return json.loads(json.dumps(r.events))
+        if base == f"repos/{REPO}/actions/runs/77":
+            return {"id": 77, "run_attempt": r.run_attempt}
+        raise afc.GitHubError(f"404 {path}")
+
+    def send_json(self, method, path, body=None):
+        r = self.repo
+        step = {f"repos/{REPO}/issues/42/labels": "label",
+                f"repos/{REPO}/issues/42/comments": "comment",
+                f"repos/{REPO}/actions/runs/77/rerun": "rerun"}[path]
+        if step in r.fail:
+            r.fail.discard(step)
+            raise afc.GitHubError(f"injected {step} failure")
+        if step == "label":
+            for name in body["labels"]:
+                if name not in r.labels:
+                    r.labels.append(name)
+                    r.events.append(labeled_event(self.login))
+        elif step == "comment":
+            r.comments.append({"body": body["body"],
+                               "user": {"login": self.login, "type": "Bot"}})
+        else:
+            r.run_attempt += 1
+            r.reruns += 1
+        return {}
+
+
 class ApplyTest(unittest.TestCase):
-    def setUp(self):
-        self.body = afc.MARKER_FORMAT.format(sha=HEAD) + "\nhello\n"
-        self.pr = {"number": 42, "state": "open", "labels": [],
-                   "head": {"sha": HEAD}, "base": {"repo": {"full_name": REPO}}}
+    body = afc.MARKER_FORMAT.format(sha=HEAD) + "\nhello\n"
 
-    def api(self, comments=()):
-        return FakeApi({f"repos/{REPO}/pulls/42": self.pr,
-                        f"repos/{REPO}/issues/42/comments": list(comments)})
+    def apply(self, repo, app=False):
+        """One attempt of the label job: App token or GITHUB_TOKEN fallback."""
+        api = repo.client(APP_BOT if app else afc.GITHUB_ACTIONS_BOT)
+        rerun = repo.client(afc.GITHUB_ACTIONS_BOT)
+        return afc.apply_label(api, rerun, REPO, 42, HEAD, self.body, 77, 1, app)
 
-    def test_labels_and_comments(self):
-        api = self.api()
-        actions = afc.apply_label(api, REPO, 42, HEAD, self.body)
-        self.assertEqual(api.sent, [
-            ("POST", f"repos/{REPO}/issues/42/labels", {"labels": ["full-ci"]}),
-            ("POST", f"repos/{REPO}/issues/42/comments", {"body": self.body}),
-        ])
-        self.assertEqual(actions, ["added full-ci", "posted comment"])
+    def assert_done(self, repo, reruns):
+        self.assertIn("full-ci", repo.labels)
+        marker = afc.MARKER_FORMAT.format(sha=HEAD)
+        self.assertEqual(sum(marker in c["body"] for c in repo.comments), 1)
+        self.assertEqual(repo.reruns, reruns)
+        # Further retries, with either token, change nothing.
+        for app in (False, True):
+            self.assertIn("skipped", self.apply(repo, app)[0])
+        self.assertEqual(repo.reruns, reruns)
+        self.assertEqual(len(repo.comments), 1)
 
-    def test_rerun_fallback(self):
-        api, rerun = self.api(), FakeApi()
-        afc.apply_label(api, REPO, 42, HEAD, self.body, rerun_api=rerun, run_id=77)
-        self.assertEqual(rerun.sent, [("POST", f"repos/{REPO}/actions/runs/77/rerun", None)])
+    def test_fallback_labels_comments_and_reruns(self):
+        repo = FakeRepo()
+        self.assertEqual(self.apply(repo), ["added full-ci", "posted comment", "re-ran run 77"])
+        self.assert_done(repo, reruns=1)
 
-    def test_dedup_by_bot_marker(self):
-        api = self.api([{"body": self.body, "user": {"type": "Bot"}}])
-        actions = afc.apply_label(api, REPO, 42, HEAD, self.body, rerun_api=FakeApi(), run_id=77)
-        self.assertEqual(api.sent, [])
-        self.assertIn("already labelled", actions[0])
+    def test_app_token_path_does_not_rerun(self):
+        repo = FakeRepo()
+        actions = self.apply(repo, app=True)
+        self.assertIn("no re-run needed", actions[-1])
+        self.assert_done(repo, reruns=0)
 
-    def test_user_marker_does_not_suppress(self):
-        api = self.api([{"body": self.body, "user": {"type": "User"}}])
-        afc.apply_label(api, REPO, 42, HEAD, self.body)
-        self.assertEqual(len(api.sent), 2)
+    def test_label_ok_comment_fails_then_retry(self):
+        repo = FakeRepo()
+        repo.fail.add("comment")
+        with self.assertRaises(afc.GitHubError):
+            self.apply(repo)
+        self.assertEqual((repo.labels, repo.comments, repo.reruns), (["full-ci"], [], 0))
+        actions = self.apply(repo)
+        self.assertEqual(actions, ["full-ci already present", "posted comment", "re-ran run 77"])
+        self.assert_done(repo, reruns=1)
 
-    def test_marker_for_older_head_does_not_suppress(self):
-        old = afc.MARKER_FORMAT.format(sha=OTHER)
-        api = self.api([{"body": old, "user": {"type": "Bot"}}])
-        afc.apply_label(api, REPO, 42, HEAD, self.body)
-        self.assertEqual(len(api.sent), 2)
+    def test_comment_ok_rerun_fails_then_retry(self):
+        repo = FakeRepo()
+        repo.fail.add("rerun")
+        with self.assertRaises(afc.GitHubError):
+            self.apply(repo)
+        self.assertEqual((len(repo.comments), repo.reruns), (1, 0))
+        actions = self.apply(repo)
+        self.assertEqual(actions, ["full-ci already present",
+                                   "comment already posted for this head SHA", "re-ran run 77"])
+        self.assert_done(repo, reruns=1)
 
-    def test_head_moved_or_labelled(self):
-        self.pr["head"]["sha"] = OTHER
-        api = self.api()
-        afc.apply_label(api, REPO, 42, HEAD, self.body)
-        self.assertEqual(api.sent, [])
-        self.pr["head"]["sha"] = HEAD
-        self.pr["labels"] = [{"name": "full-ci"}]
-        afc.apply_label(api, REPO, 42, HEAD, self.body)
-        self.assertEqual(api.sent, [])
+    def test_app_label_ok_comment_fails_then_retry(self):
+        # The App's labeled event already started the full run; the retry only comments.
+        repo = FakeRepo()
+        repo.fail.add("comment")
+        with self.assertRaises(afc.GitHubError):
+            self.apply(repo, app=True)
+        self.apply(repo, app=True)
+        self.assert_done(repo, reruns=0)
+
+    def test_fallback_label_then_app_retry_still_reruns(self):
+        # GITHUB_TOKEN added the label (no run started). The retry has an App token, but
+        # the label is already there, so only a re-run starts the full run.
+        repo = FakeRepo()
+        repo.fail.add("comment")
+        with self.assertRaises(afc.GitHubError):
+            self.apply(repo)
+        self.apply(repo, app=True)
+        self.assert_done(repo, reruns=1)
+
+    def test_no_rerun_when_run_already_has_newer_attempt(self):
+        repo = FakeRepo(run_attempt=2)
+        actions = self.apply(repo)
+        self.assertIn("newer attempt", actions[-1])
+        self.assertEqual(repo.reruns, 0)
+
+    def test_maintainer_removed_label_is_respected(self):
+        repo = FakeRepo(comments=[bot_comment(HEAD)],
+                        events=[labeled_event(APP_BOT), {"event": "unlabeled"}])
+        for app in (False, True):
+            self.assertIn("not adding it again", self.apply(repo, app)[0])
+        self.assertEqual((repo.labels, len(repo.comments), repo.reruns), ([], 1, 0))
+
+    def test_label_added_by_person_is_left_alone(self):
+        repo = FakeRepo(labels=["full-ci"], events=[labeled_event("maintainer", "User")])
+        self.assertIn("not added by this workflow", self.apply(repo)[0])
+        self.assertEqual((repo.comments, repo.reruns), ([], 0))
+
+    def test_user_or_old_markers_do_not_count(self):
+        user = {"body": afc.MARKER_FORMAT.format(sha=HEAD), "user": {"type": "User"}}
+        repo = FakeRepo(comments=[user, bot_comment(OTHER)])
+        self.apply(repo)
+        self.assertIn("full-ci", repo.labels)
+        self.assertEqual(len(repo.comments), 3)
+
+    def test_head_moved(self):
+        repo = FakeRepo()
+        repo.head = OTHER
+        self.assertIn("head moved", self.apply(repo)[0])
+        self.assertEqual((repo.labels, repo.comments, repo.reruns), ([], [], 0))
+
+    def test_body_without_marker_is_rejected(self):
+        repo = FakeRepo()
+        with self.assertRaises(ValueError):
+            afc.apply_label(repo.client(APP_BOT), repo.client(APP_BOT), REPO, 42, HEAD, "x",
+                            77, 1, True)
+        self.assertEqual(repo.labels, [])
 
 
 class CliTest(unittest.TestCase):
     def test_analyze_from_event_file(self):
-        b = RunBuilder({"4.1": [OK, FAIL_AMT], "4.3": [OK, OK]})
+        # 8 shards, checked against this repo's real spark_test.yaml.
+        b = RunBuilder({"4.1": [OK] * 7 + [FAIL_AMT], "4.3": [OK] * 8}, shards=8)
         with tempfile.TemporaryDirectory() as tmp:
             event = os.path.join(tmp, "event.json")
             with open(event, "w") as f:
@@ -537,7 +809,8 @@ class CliTest(unittest.TestCase):
             out = os.path.join(tmp, "out")
             body = os.path.join(tmp, "body.md")
             args = afc.argparse.Namespace(repo=REPO, event_path=event, run_id=None,
-                                          offline=False, body_file=body)
+                                          offline=False, body_file=body,
+                                          spark_test_workflow=ExpectedShardsTest.WORKFLOW)
             old = os.environ.get("GITHUB_OUTPUT")
             os.environ["GITHUB_OUTPUT"] = out
             try:
@@ -560,10 +833,12 @@ class CliTest(unittest.TestCase):
 
             # The body travels to the apply job as body_b64.
             api = FakeApi({f"repos/{REPO}/pulls/42": b.pr,
-                           f"repos/{REPO}/issues/42/comments": []})
+                           f"repos/{REPO}/issues/42/comments": [],
+                           f"repos/{REPO}/actions/runs/77": b.run})
             rerun = FakeApi()
             args = afc.argparse.Namespace(repo=REPO, pr=42, head_sha=HEAD, body_file=None,
-                                          body_b64=body_b64, run_id="77", rerun=True)
+                                          body_b64=body_b64, run_id="77", run_attempt=1,
+                                          app_token=False)
             with redirect_stdout(io.StringIO()):
                 afc.cmd_apply(args, api=api, rerun_api=rerun)
             self.assertEqual(api.sent[1], ("POST", f"repos/{REPO}/issues/42/comments",
@@ -571,11 +846,12 @@ class CliTest(unittest.TestCase):
             self.assertEqual(len(rerun.sent), 1)
 
     def test_offline_never_sets_should_label(self):
-        b = RunBuilder({"4.1": [OK, FAIL_AMT], "4.3": [OK, OK]}, compile_versions=())
+        b = RunBuilder({"4.1": [OK] * 7 + [FAIL_AMT], "4.3": [OK] * 8}, compile_versions=(),
+                       shards=8)
         api = b.api()
-        api.routes[f"repos/{REPO}/actions/runs/77"] = b.run
         args = afc.argparse.Namespace(repo=REPO, event_path=None, run_id="77", offline=True,
-                                      body_file=None)
+                                      body_file=None,
+                                      spark_test_workflow=ExpectedShardsTest.WORKFLOW)
         out = io.StringIO()
         with redirect_stdout(out), redirect_stderr(io.StringIO()):
             afc.cmd_analyze(args, api=api)

@@ -10,20 +10,22 @@ workflow (.github/workflows/auto_full_ci.yaml) runs this script when such a run
 completes. If the tested versions diverge, the PR gets the sticky `full-ci` label, which
 makes every later run of the PR use the full matrix, and one comment for the PR author.
 
-Divergence. Each tested Spark version is classified from its shard jobs as:
-  * pass: every shard job concluded `success`;
-  * fail(keys): at least one shard failed with a real failure. Keys are the failing test
-    suite names (sbt "Failed tests:" / "Error during tests:" blocks and ScalaTest
-    "<Suite> *** ABORTED ***" lines) plus "compile: <file>" for compile errors;
-  * inconclusive: no real failure, but some shard was cancelled, timed out or skipped,
-    is missing, or failed without a test or compile marker (lost runner, OOM, dependency
-    download, artifact upload, lint).
-The versions diverge if one passes and another fails, or if all fail with different key
-sets. Keys are suite names, never shard indices, because shard assignment can differ
-between Spark versions. No label is added when any tested version is inconclusive, or
-when the all-fail comparison involves a version whose failing suites are incomplete
-(some failing shard has a marker but no sbt summary, or the version also has an
-inconclusive shard).
+Divergence. Each tested Spark version is classified from its shard jobs, against the
+expected shard set read from the trusted (default-branch) spark_test.yaml:
+  * pass: every expected shard ran and concluded `success`;
+  * fail(keys): at least one shard failed with a real failure, whatever the other shards
+    did. Keys are the failing test suite names (sbt "Failed tests:" / "Error during
+    tests:" blocks and ScalaTest "<Suite> *** ABORTED ***" lines) plus "compile: <file>"
+    for compile errors. The key list is complete only if every other expected shard
+    passed and every failing shard printed sbt's summary;
+  * inconclusive: no real failure, but some expected shard is missing, or was cancelled,
+    timed out or skipped, or failed without a test or compile marker (lost runner, OOM,
+    dependency download, artifact upload, lint).
+The versions diverge, and the PR is labelled, if one version passes and another fails,
+or if all fail with different key sets. Keys are suite names, never shard indices,
+because shard assignment can differ between Spark versions. No label is added when any
+tested version is inconclusive, or when all fail and any of them has an incomplete key
+list.
 
 Trust. Everything that comes from the run (the pr-matrix artifact, log text, suite and
 branch names) is untrusted: a fork PR can change spark_test.yaml. The PR number from
@@ -37,11 +39,13 @@ Subcommands:
            event from $GITHUB_EVENT_PATH and writes outputs to $GITHUB_OUTPUT. With
            --run-id and --offline it analyses any historical run without the artifact
            or PR checks (for manual verification).
-  apply    Add the label and post the comment. A hidden marker in the comment makes this
-           a no-op for a head SHA that was already handled, so the comment is never
-           posted twice and a label a maintainer removed isn't re-added for the same
-           commit. With --rerun it also re-runs the original workflow run, for when the
-           label was added with GITHUB_TOKEN, whose events don't start workflows.
+  apply    Make sure the PR has the label, one comment for this head SHA, and a full run.
+           Each step is idempotent, so a retry after a partial failure finishes the rest.
+           A hidden marker in the comment records that the label was added for this
+           SHA: the comment is never posted twice, and a label a maintainer removed
+           isn't added again for the same commit. A label added with an App token
+           starts the full run; otherwise (GITHUB_TOKEN, whose events don't start
+           workflows) the evaluated run is re-run, unless it already has a newer attempt.
 
 GitHub API calls use the token in $GH_TOKEN (stdlib only; no third-party packages).
 To check a historical run by hand (read-only):
@@ -314,30 +318,61 @@ def matrix_from_jobs(jobs: Sequence[dict]) -> RunMatrix:
     return RunMatrix(mode, sort_versions(test_jobs), sort_versions(compile_versions), test_jobs)
 
 
+def expected_shards_from_workflow(text: str) -> List[str]:
+    """Read the shard list of the `test` job's matrix from spark_test.yaml.
+
+    The privileged workflow reads this from the default-branch checkout, never from the
+    PR. The job's `num-shards` input must agree with the list, which must be 0..N-1.
+    """
+    m = re.search(r"^  test:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", text, re.M | re.S)
+    if not m:
+        raise ValueError("spark_test.yaml has no `test` job")
+    job = m.group(1)
+    lists = re.findall(r"^\s+shard: \[([0-9,\s]*)\]\s*$", job, re.M)
+    counts = re.findall(r"^\s+num-shards: '?(\d+)'?\s*$", job, re.M)
+    if len(lists) != 1 or len(counts) != 1:
+        raise ValueError("can't find exactly one shard list and num-shards in the test job")
+    shards = [int(x) for x in lists[0].replace(",", " ").split()]
+    n = int(counts[0])
+    if n <= 0 or shards != list(range(n)):
+        raise ValueError(f"shard list {shards} doesn't match num-shards {n}")
+    return [str(i) for i in shards]
+
+
 def classify_versions(
     test_jobs: Dict[str, List[dict]],
     log_fetcher: Callable[[int], Optional[str]],
+    expected_shards: Sequence[str],
 ) -> Dict[str, VersionResult]:
-    all_shards = set()
-    for jobs in test_jobs.values():
-        for job in jobs:
-            all_shards.add(TEST_JOB_RE.match(job["name"]).group("shard"))
+    """Classify each tested version against the trusted expected shard set.
+
+    A version passes only if every expected shard ran and succeeded. Any real failure
+    makes it fail; its suite list is complete only if every other expected shard passed.
+    Otherwise (missing, unexpected or inconclusive shards, no real failure) it is
+    inconclusive.
+    """
+    expected = set(expected_shards)
     results = {}
     for version in sort_versions(test_jobs):
         shards = [classify_shard(j, log_fetcher)
                   for j in sorted(test_jobs[version], key=lambda j: j["name"])]
         present = {TEST_JOB_RE.match(s.name).group("shard") for s in shards}
-        missing = sorted(all_shards - present, key=int)
+        missing = sorted(expected - present, key=int)
+        unexpected = sorted(present - expected, key=int)
         fails = [s for s in shards if s.status == FAIL]
         inconclusive = [s for s in shards if s.status == INCONCLUSIVE]
+        reasons = [f"{s.name}: {s.reason}" for s in inconclusive]
+        if missing:
+            reasons.append("missing shards " + ", ".join(missing))
+        if unexpected:
+            reasons.append("unexpected shards " + ", ".join(unexpected))
         if fails:
             keys = set().union(*(s.keys for s in fails))
-            complete = not inconclusive and not missing and all(s.complete for s in fails)
-            results[version] = VersionResult(version, FAIL, keys, complete, shards)
-        elif inconclusive or missing:
-            reasons = [f"{s.name}: {s.reason}" for s in inconclusive]
-            if missing:
-                reasons.append("missing shards " + ", ".join(missing))
+            complete = (not inconclusive and not missing and not unexpected and
+                        all(s.complete for s in fails))
+            results[version] = VersionResult(version, FAIL, keys, complete, shards,
+                                             "; ".join(reasons))
+        elif reasons:
             results[version] = VersionResult(
                 version, INCONCLUSIVE, set(), False, shards, "; ".join(reasons))
         else:
@@ -579,6 +614,7 @@ class PrMatrix:
     mode: str
     test_spark_versions: List[str]
     compile_spark_versions: List[str]
+    num_shards: Optional[int] = None
 
 
 def parse_pr_matrix(raw: bytes) -> PrMatrix:
@@ -604,7 +640,11 @@ def parse_pr_matrix(raw: bytes) -> PrMatrix:
                 not all(isinstance(v, str) and VERSION_RE.match(v) for v in value)):
             raise ValueError(f"bad {key}")
         lists.append(sort_versions(value))
-    return PrMatrix(pr, head_sha, mode, lists[0], lists[1])
+    num_shards = data.get("num_shards")
+    if num_shards is not None and (not isinstance(num_shards, int) or
+                                   isinstance(num_shards, bool) or not 0 < num_shards <= 256):
+        raise ValueError("bad num_shards")
+    return PrMatrix(pr, head_sha, mode, lists[0], lists[1], num_shards)
 
 
 def fetch_pr_matrix(api, repo: str, run_id: int, run_attempt: int) -> PrMatrix:
@@ -672,12 +712,14 @@ def analyze_run(
     api,
     repo: str,
     run: dict,
+    expected_shards: Sequence[str],
     offline: bool = False,
     pr_matrix_loader: Optional[Callable[[], PrMatrix]] = None,
 ) -> Analysis:
     """Decide whether to add `full-ci` for a completed workflow run.
 
     `run` is the workflow_run object (from the event, or from the API in offline mode).
+    `expected_shards` comes from the trusted (default-branch) spark_test.yaml.
     Offline mode skips the artifact and PR checks and treats the run as reduced, so a
     historical run (including one from before the reduced matrix existed) can be checked.
     """
@@ -713,6 +755,9 @@ def analyze_run(
         if (pm.test_spark_versions != matrix.test_versions or
                 pm.compile_spark_versions != matrix.compile_versions):
             return _no("pr-matrix versions don't match the run's jobs", head_sha=head_sha)
+        if pm.num_shards is not None and pm.num_shards != len(expected_shards):
+            return _no(f"pr-matrix num_shards {pm.num_shards} doesn't match the trusted "
+                       f"spark_test.yaml ({len(expected_shards)})", head_sha=head_sha)
         listed = [p.get("number") for p in (run.get("pull_requests") or [])]
         if listed and pm.pr not in listed:
             return _no("pr-matrix PR number isn't one of the run's pull requests",
@@ -731,14 +776,14 @@ def analyze_run(
             return _no(f"PR #{pm.pr} is not against {repo}", head_sha=head_sha)
         if pr.get("state") != "open":
             return _no(f"PR #{pm.pr} is not open", head_sha=head_sha)
-        labels = [lbl.get("name") for lbl in pr.get("labels") or []]
-        if FULL_CI_LABEL in labels:
-            return _no(f"PR #{pm.pr} already has the {FULL_CI_LABEL} label", pr=pm.pr,
-                       head_sha=head_sha)
+        state = read_label_state(api, repo, pr, head_sha, run_id, run_attempt)
+        skip = state.nothing_to_do()
+        if skip:
+            return _no(f"PR #{pm.pr}: {skip}", pr=pm.pr, head_sha=head_sha)
         pr_number = pm.pr
         author = (pr.get("user") or {}).get("login")
 
-    results = classify_versions(matrix.test_jobs, make_log_fetcher(api, repo))
+    results = classify_versions(matrix.test_jobs, make_log_fetcher(api, repo), expected_shards)
     divergence = decide_divergence(results)
     analysis = Analysis(divergence.label, divergence.reason, pr_number, head_sha, author,
                         results)
@@ -767,7 +812,13 @@ def cmd_analyze(args, api=None) -> int:
     else:
         with open(args.event_path or os.environ["GITHUB_EVENT_PATH"]) as f:
             run = json.load(f)["workflow_run"]
-    analysis = analyze_run(api, args.repo, run, offline=args.offline)
+    try:
+        with open(args.spark_test_workflow) as f:
+            expected_shards = expected_shards_from_workflow(f.read())
+    except (OSError, ValueError) as e:
+        analysis = _no(f"no trusted shard list: {e}")
+    else:
+        analysis = analyze_run(api, args.repo, run, expected_shards, offline=args.offline)
     print(json.dumps(analysis.summary(), indent=2, sort_keys=True), file=sys.stderr)
     if analysis.body and args.body_file:
         with open(args.body_file, "w") as f:
@@ -787,34 +838,111 @@ def cmd_analyze(args, api=None) -> int:
 
 
 # --------------------------------------------------------------------------------------
-# apply
+# Label state and apply
 # --------------------------------------------------------------------------------------
 
-def apply_label(api, repo: str, pr_number: int, head_sha: str, body: str,
-                rerun_api=None, run_id: Optional[int] = None) -> List[str]:
-    """Label the PR and comment once per head SHA; optionally re-run the run. Returns actions."""
-    actions = []
+GITHUB_ACTIONS_BOT = "github-actions[bot]"
+
+
+@dataclass
+class LabelState:
+    """What has already been done for one PR head SHA (read-only view)."""
+    label_present: bool
+    # A bot comment with this head SHA's marker exists. It is posted only after the label
+    # was added, so it records "full-ci was added for this commit".
+    marker_present: bool
+    # The current label's `labeled` event was made by a bot (GITHUB_TOKEN or an App).
+    label_added_by_bot: bool = False
+    # That event started a workflow run: it was made by anyone except GITHUB_TOKEN.
+    label_started_run: bool = False
+    # The Delta Spark run has an attempt newer than the evaluated one (already re-run).
+    newer_attempt: bool = False
+
+    def nothing_to_do(self) -> Optional[str]:
+        """Return why no further action is needed for this head SHA, or None."""
+        if self.marker_present and not self.label_present:
+            return (f"{FULL_CI_LABEL} was removed after it was added for this head SHA; "
+                    "not adding it again")
+        if self.label_present and not self.marker_present and not self.label_added_by_bot:
+            return f"already has the {FULL_CI_LABEL} label (not added by this workflow)"
+        if self.label_present and self.marker_present and (
+                self.label_started_run or self.newer_attempt):
+            return f"already has {FULL_CI_LABEL}, the comment and a full run for this head SHA"
+        return None
+
+
+def read_label_state(api, repo: str, pr: dict, head_sha: str, run_id: int,
+                     run_attempt: int) -> LabelState:
+    number = int(pr["number"])
+    label_present = FULL_CI_LABEL in [lbl.get("name") for lbl in pr.get("labels") or []]
+    # Only bot comments count, so a user can't suppress the label by posting the marker.
+    marker = MARKER_FORMAT.format(sha=head_sha)
+    comments = list_paginated(api, f"repos/{repo}/issues/{number}/comments")
+    marker_present = any(
+        marker in (c.get("body") or "") and (c.get("user") or {}).get("type") == "Bot"
+        for c in comments)
+    state = LabelState(label_present, marker_present)
+    if label_present:
+        try:
+            events = list_paginated(api, f"repos/{repo}/issues/{number}/events")
+        except GitHubError as e:
+            print(f"warning: could not read PR events: {e}", file=sys.stderr)
+            events = []
+        labeled = [e for e in events if e.get("event") == "labeled" and
+                   (e.get("label") or {}).get("name") == FULL_CI_LABEL]
+        if labeled:
+            actor = labeled[-1].get("actor") or {}
+            state.label_added_by_bot = actor.get("type") == "Bot"
+            # Events made with GITHUB_TOKEN don't start workflows; all others do.
+            state.label_started_run = actor.get("login") != GITHUB_ACTIONS_BOT
+    try:
+        run = api.get_json(f"repos/{repo}/actions/runs/{run_id}")
+        state.newer_attempt = int(run.get("run_attempt") or 0) > run_attempt
+    except GitHubError as e:
+        print(f"warning: could not read run {run_id}: {e}", file=sys.stderr)
+    return state
+
+
+def apply_label(api, rerun_api, repo: str, pr_number: int, head_sha: str, body: str,
+                run_id: int, run_attempt: int, app_token: bool) -> List[str]:
+    """Bring the PR to "labelled, commented once, full run started" for this head SHA.
+
+    Every step is idempotent, so a retry after a partial failure finishes the remaining
+    steps: the label is added only if missing, the comment only if this SHA's marker
+    comment is missing, and the run is re-run only if no full run was started yet (the
+    label wasn't added by an App or a person, and the run has no newer attempt). The
+    label is never removed, and never added again for a SHA whose marker comment exists.
+    `api` adds the label and comment (an App token if `app_token`, else GITHUB_TOKEN);
+    `rerun_api` (GITHUB_TOKEN) re-runs the run.
+    """
     pr = api.get_json(f"repos/{repo}/pulls/{pr_number}")
     if pr.get("head", {}).get("sha") != head_sha or pr.get("state") != "open":
         return ["skipped: PR head moved or PR closed"]
-    if FULL_CI_LABEL in [lbl.get("name") for lbl in pr.get("labels") or []]:
-        return [f"skipped: PR already has {FULL_CI_LABEL}"]
-    # Only bot comments count, so a user can't suppress the label by posting the marker.
-    # A marker for this head SHA means the label was already added for this commit; if it
-    # is gone now, a maintainer removed it, so don't add it back until the next push.
-    marker = MARKER_FORMAT.format(sha=head_sha)
-    comments = list_paginated(api, f"repos/{repo}/issues/{pr_number}/comments")
-    if any(marker in (c.get("body") or "") and (c.get("user") or {}).get("type") == "Bot"
-           for c in comments):
-        return ["skipped: already labelled and commented for this head SHA"]
-    if marker not in body:
+    if MARKER_FORMAT.format(sha=head_sha) not in body:
         raise ValueError("comment body has no marker for this head SHA")
-    api.send_json("POST", f"repos/{repo}/issues/{pr_number}/labels",
-                  {"labels": [FULL_CI_LABEL]})
-    actions.append(f"added {FULL_CI_LABEL}")
-    api.send_json("POST", f"repos/{repo}/issues/{pr_number}/comments", {"body": body})
-    actions.append("posted comment")
-    if rerun_api is not None and run_id:
+    state = read_label_state(api, repo, pr, head_sha, run_id, run_attempt)
+    skip = state.nothing_to_do()
+    if skip:
+        return ["skipped: " + skip]
+    actions = []
+    started = state.label_present and state.label_started_run
+    if state.label_present:
+        actions.append(f"{FULL_CI_LABEL} already present")
+    else:
+        api.send_json("POST", f"repos/{repo}/issues/{pr_number}/labels",
+                      {"labels": [FULL_CI_LABEL]})
+        actions.append(f"added {FULL_CI_LABEL}" + (" with the App token" if app_token else ""))
+        started = app_token
+    if state.marker_present:
+        actions.append("comment already posted for this head SHA")
+    else:
+        api.send_json("POST", f"repos/{repo}/issues/{pr_number}/comments", {"body": body})
+        actions.append("posted comment")
+    if started:
+        actions.append("the labeled event starts the full run; no re-run needed")
+    elif state.newer_attempt:
+        actions.append(f"run {run_id} already has a newer attempt; no re-run needed")
+    else:
         rerun_api.send_json("POST", f"repos/{repo}/actions/runs/{run_id}/rerun")
         actions.append(f"re-ran run {run_id}")
     return actions
@@ -826,8 +954,7 @@ def cmd_apply(args, api=None, rerun_api=None) -> int:
     if not SHA_RE.match(args.head_sha):
         raise ValueError("bad --head-sha")
     api = api or GitHubClient(os.environ.get("GH_TOKEN"))
-    if args.rerun and rerun_api is None:
-        rerun_api = GitHubClient(os.environ.get("RERUN_GH_TOKEN"))
+    rerun_api = rerun_api or GitHubClient(os.environ.get("RERUN_GH_TOKEN"))
     if args.body_b64:
         body = base64.b64decode(args.body_b64, validate=True).decode("utf-8")
     elif args.body_file:
@@ -835,8 +962,8 @@ def cmd_apply(args, api=None, rerun_api=None) -> int:
             body = f.read()
     else:
         raise ValueError("pass --body-file or --body-b64")
-    actions = apply_label(api, args.repo, int(args.pr), args.head_sha, body,
-                          rerun_api if args.rerun else None, int(args.run_id or 0) or None)
+    actions = apply_label(api, rerun_api, args.repo, int(args.pr), args.head_sha, body,
+                          int(args.run_id), int(args.run_attempt), args.app_token)
     for a in actions:
         print(a)
     return 0
@@ -852,15 +979,20 @@ def main(argv=None) -> int:
     a.add_argument("--offline", action="store_true",
                    help="skip artifact/PR checks and treat the run as reduced; never labels")
     a.add_argument("--body-file", help="write the comment body here when labelling")
+    a.add_argument("--spark-test-workflow", default=".github/workflows/spark_test.yaml",
+                   help="trusted (default-branch) spark_test.yaml with the shard list")
     p = sub.add_parser("apply", help="add full-ci and post the comment")
     p.add_argument("--repo", required=True)
     p.add_argument("--pr", required=True, type=int)
     p.add_argument("--head-sha", required=True)
     p.add_argument("--body-file", help="comment body (Markdown)")
     p.add_argument("--body-b64", help="comment body, base64 (the analyze body_b64 output)")
-    p.add_argument("--run-id", help="run to re-run with --rerun")
-    p.add_argument("--rerun", action="store_true",
-                   help="re-run --run-id with $RERUN_GH_TOKEN after labelling")
+    p.add_argument("--run-id", required=True, help="the evaluated Delta Spark run")
+    p.add_argument("--run-attempt", required=True, type=int,
+                   help="the evaluated attempt of --run-id")
+    p.add_argument("--app-token", action="store_true",
+                   help="$GH_TOKEN is an App token, so adding the label starts a run; "
+                        "otherwise the run is re-run with $RERUN_GH_TOKEN")
     args = parser.parse_args(argv)
     if args.cmd == "analyze":
         return cmd_analyze(args)

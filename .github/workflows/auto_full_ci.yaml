@@ -15,12 +15,16 @@ name: "Auto full-ci"
 # default branch only for the script, and treats everything from the run (the pr-matrix
 # artifact, job logs, suite and branch names) as untrusted data: the script validates the
 # artifact against the PR and the run's own jobs, and escapes all text it puts in the
-# comment. The analyze job, which parses the logs, has read-only permissions.
+# comment. The expected shard list comes from the default branch's spark_test.yaml, not
+# from the run. The analyze job, which parses the logs, has read-only permissions.
 #
 # Labelling must start a new "Delta Spark" run, but events caused by GITHUB_TOKEN don't
 # start workflows. So the label is added with a GitHub App token when the App is set up.
 # Without it, the label is added with GITHUB_TOKEN and the original run is re-run through
 # the API; spark_test.yaml reads the PR's live labels, so the re-run uses the full matrix.
+# The label job can be retried after a partial failure: it finishes the missing steps
+# (label, comment, re-run), using the per-commit marker comment, the label's `labeled`
+# event and the run's attempt number to tell what was already done.
 #
 # Maintainer setup for the App token (optional; the fallback works without it):
 #   1. Create a GitHub App (owned by the org) with repository permissions
@@ -48,8 +52,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      actions: read  # run jobs, job logs and the pr-matrix artifact
+      actions: read  # run, jobs, job logs and the pr-matrix artifact
       contents: read  # checkout of the default branch
+      issues: read  # PR comments and label events (what was already done for this commit)
       pull-requests: read  # PR head, labels and author
     outputs:
       should_label: ${{ steps.analyze.outputs.should_label }}
@@ -57,11 +62,14 @@ jobs:
       head_sha: ${{ steps.analyze.outputs.head_sha }}
       body_b64: ${{ steps.analyze.outputs.body_b64 }}
     steps:
-      # The default ref of a workflow_run job is the default branch, never the PR.
+      # The default ref of a workflow_run job is the default branch, never the PR. Its
+      # spark_test.yaml is the trusted source of the expected shard list.
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
         with:
           persist-credentials: false
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/workflows
       - name: Test the decision script
         run: python3 -m unittest discover -s .github/scripts -p 'test_auto_full_ci.py'
       - name: Decide
@@ -70,7 +78,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         # Reads the workflow_run event from $GITHUB_EVENT_PATH.
-        run: python3 -I .github/scripts/auto_full_ci.py analyze --repo "$REPO"
+        run: |
+          python3 -I .github/scripts/auto_full_ci.py analyze --repo "$REPO" \
+            --spark-test-workflow .github/workflows/spark_test.yaml
 
   label:
     name: "Add full-ci and notify the PR author"
@@ -79,7 +89,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      actions: write  # re-run the "Delta Spark" run (GITHUB_TOKEN fallback only)
+      actions: write  # re-run the "Delta Spark" run when no labeled event started one
       contents: read
       issues: write  # label and comment
       pull-requests: write
@@ -99,17 +109,25 @@ jobs:
           private-key: ${{ secrets.CI_LABELER_APP_KEY }}
           permission-issues: write
           permission-pull-requests: write
+      # Both steps are idempotent: a retry after a partial failure only does what's left
+      # (label, comment, re-run), and never re-adds a label a maintainer removed.
       - name: Add full-ci and comment (App token; the label starts a new run)
         if: steps.app-token.outputs.token != ''
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Only used if the label was already there (e.g. added by an earlier attempt
+          # with GITHUB_TOKEN), so no labeled event starts the full run now.
+          RERUN_GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ needs.analyze.outputs.pr }}
           HEAD_SHA: ${{ needs.analyze.outputs.head_sha }}
           BODY_B64: ${{ needs.analyze.outputs.body_b64 }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           python3 -I .github/scripts/auto_full_ci.py apply --repo "$REPO" \
-            --pr "$PR_NUMBER" --head-sha "$HEAD_SHA" --body-b64 "$BODY_B64"
+            --pr "$PR_NUMBER" --head-sha "$HEAD_SHA" --body-b64 "$BODY_B64" \
+            --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" --app-token
       - name: Add full-ci, comment and re-run (GITHUB_TOKEN fallback)
         if: steps.app-token.outputs.token == ''
         env:
@@ -120,7 +138,8 @@ jobs:
           HEAD_SHA: ${{ needs.analyze.outputs.head_sha }}
           BODY_B64: ${{ needs.analyze.outputs.body_b64 }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: |
           python3 -I .github/scripts/auto_full_ci.py apply --repo "$REPO" \
             --pr "$PR_NUMBER" --head-sha "$HEAD_SHA" --body-b64 "$BODY_B64" \
-            --run-id "$RUN_ID" --rerun
+            --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"
