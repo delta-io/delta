@@ -254,6 +254,16 @@ private[delta] object DataSkippingReader {
       TimestampAdd("MILLISECOND", Literal(1L, LongType), col.expr))
     Column(Cast(adjustedExpr, tsType))
   }
+
+  /**
+   * Whether `filter` must not be used for data skipping: it involves a subquery, is
+   * non-deterministic, or references file metadata struct fields.
+   */
+  def isIneligibleForDataSkipping(filter: Expression): Boolean =
+    DeltaTableUtils.containsSubquery(filter) || !filter.deterministic || filter.exists {
+      case MetadataAttribute(_) => true
+      case _ => false
+    }
 }
 
 /**
@@ -279,7 +289,7 @@ trait DataSkippingReaderBase
   private[delta] def numOfFilesIfKnown: Option[Long]
   def redactedPath: String
 
-  private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
+  protected def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
   private lazy val limitPartitionLikeFiltersToClusteringColumns = spark.sessionState.conf.getConf(
     DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY)
@@ -288,21 +298,23 @@ trait DataSkippingReaderBase
         DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
       .toSet.flatMap((exprs: String) => exprs.split(","))
 
-  /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
-  private def withStatsInternal0: DataFrame = {
-    val parsedStats = from_json(col("stats"), statsSchema)
+  /** Parses the JSON stats in `statsCol` into the `statsSchema` struct. */
+  protected def parseStats(statsCol: Column): Column = {
+    val parsedStats = from_json(statsCol, statsSchema)
     // Only use DecodeNestedZ85EncodedVariant if the schema contains VariantType.
     // This avoids performance overhead for tables without variant columns.
     // `DecodeNestedZ85EncodedVariant` is a temporary workaround since the Spark 4.1 from_json
     // expression has no way to decode a VariantVal from an encoded Z85 string.
     // TODO: Add Z85 decoding to Variant in Spark 4.2 and use that from_json option here.
-    val decodedStats = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+    if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
       Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
     } else {
       parsedStats
     }
-    allFiles.withColumn("stats", decodedStats)
   }
+
+  /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
+  private def withStatsInternal0: DataFrame = allFiles.withColumn("stats", parseStats(col("stats")))
 
   private lazy val withStatsCache =
     cacheDS(withStatsInternal0, s"Delta Table State with Stats #$version - $redactedPath")
@@ -702,12 +714,7 @@ trait DataSkippingReaderBase
     // 1. involve subqueries.
     // 2. are non-deterministic.
     // 3. involve file metadata struct fields
-    var (ineligibleFilters, eligibleFilters) = filters.partition {
-      case f => containsSubquery(f) || !f.deterministic || f.exists {
-        case MetadataAttribute(_) => true
-        case _ => false
-      }
-    }
+    var (ineligibleFilters, eligibleFilters) = filters.partition(isIneligibleForDataSkipping)
 
 
     val (partitionFilters, dataFilters) = eligibleFilters

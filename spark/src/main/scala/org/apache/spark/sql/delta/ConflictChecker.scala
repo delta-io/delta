@@ -1075,13 +1075,18 @@ private[delta] class ConflictChecker(
         !currentTransactionInfo.readWholeTable &&
         currentTransactionInfo.readPredicates.nonEmpty
 
-    val candidates = new CandidateFiles(
-      files, spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_BATCH_SIZE))
+    val candidates = {
+      import org.apache.spark.sql.delta.implicits._
+      new ConflictCandidateFiles(
+        files,
+        spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_BATCH_SIZE),
+        toDF = _.toDF(spark))
+    }
 
     // There is no reason to filter files if the table is not partitioned.
     if (currentTransactionInfo.readWholeTable ||
         currentTransactionInfo.readSnapshot.metadata.partitionColumns.isEmpty) {
-      if (!useDataSkipping || files.isEmpty) return files.headOption
+      if (!useDataSkipping) return files.headOption
       return getFirstFileMatchingDataPredicates(
         candidates, currentTransactionInfo.readPredicates.map(_.dataPredicates),
         partitionFilter = None)
@@ -1125,7 +1130,7 @@ private[delta] class ConflictChecker(
   }
 
   private def getFirstFileMatchingPartitionPredicatesInternal(
-      candidates: CandidateFiles,
+      candidates: ConflictCandidateFiles,
       shouldWidenNonDeterministicPredicates: Boolean,
       shouldWidenAllUdf: Boolean,
       useDataSkipping: Boolean): Option[AddFile] = {
@@ -1211,34 +1216,23 @@ private[delta] class ConflictChecker(
   }
 
   /**
-   * The concurrently-added files to check, as the DataFrames the probes need. Built lazily on first
-   * use and shared by every probe.
-   */
-  private class CandidateFiles(val files: Seq[AddFile], batchSize: Int) {
-    import org.apache.spark.sql.delta.implicits._
-    lazy val all: DataFrame = files.toDF(spark)
-    // The files form a local relation, whose filters the optimizer evaluates over every row before
-    // applying a limit, so `head(1)` alone does not stop early. Bounded batches let a probe stop at
-    // the first batch that holds a conflicting file.
-    lazy val batches: LazyList[DataFrame] =
-      files.grouped(batchSize).map(_.toDF(spark)).to(LazyList)
-  }
-
-  /**
    * Returns the first candidate file that passes `partitionFilter` and whose column stats do not
    * prove it fails every read in `dataFiltersPerRead`, i.e. a file that must still be treated as a
    * conflict. The partition and skipping filters are fused into the same query, run over bounded
-   * batches of candidates until one holds a match. When nothing can be skipped, no stats are parsed
-   * and an unpartitioned check (`partitionFilter = None`) runs no query at all.
+   * batches of candidates until one holds a match. When there are no candidates or nothing can be
+   * skipped, no stats are parsed, and an unpartitioned check (`partitionFilter = None`) runs no
+   * query at all.
    *
    * Skipping is a pure optimization over conservative conflict detection: if building or
    * evaluating the skipping filter fails, this records an event and falls back to checking without
    * skipping, exactly as when the feature is disabled.
    */
   private def getFirstFileMatchingDataPredicates(
-      candidates: CandidateFiles,
+      candidates: ConflictCandidateFiles,
       dataFiltersPerRead: Seq[Seq[Expression]],
       partitionFilter: Option[DataFrame => DataFrame]): Option[AddFile] = {
+    // Nothing to check, so nothing is skipped: do not report skipping as applied.
+    if (candidates.files.isEmpty) return None
     import org.apache.spark.sql.delta.implicits._
     def firstFile(df: DataFrame): Option[AddFile] = df.as[AddFile].head(1).headOption
     def firstFileWithoutSkipping: Option[AddFile] = partitionFilter match {
@@ -1889,4 +1883,23 @@ private[delta] object ConflictChecker extends DeltaLogging {
       action
     }
   }
+}
+
+/**
+ * The concurrently-added files a conflict check tests against the current transaction's reads,
+ * as the DataFrames its probes need. Built lazily on first use and shared by every probe.
+ *
+ * @param toDF builds a DataFrame of [[AddFile]]s from a group of files.
+ */
+private[delta] class ConflictCandidateFiles(
+    val files: Seq[AddFile],
+    batchSize: Int,
+    toDF: Seq[AddFile] => DataFrame) {
+  lazy val all: DataFrame = toDF(files)
+  // The files form a local relation, whose filters the optimizer evaluates over every row before
+  // applying a limit, so `head(1)` alone does not stop early. Bounded batches let a probe stop at
+  // the first batch that holds a conflicting file. The groups are memoized before `toDF` runs, so
+  // a `toDF` failure is retried for the same group by the next probe instead of skipping it.
+  lazy val batches: LazyList[DataFrame] =
+    files.grouped(batchSize).to(LazyList).map(toDF)
 }
