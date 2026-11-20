@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.amt
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaConfigs, DeltaErrors, DeltaIllegalStateException, DeltaLog, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaConfigs, DeltaErrors, DeltaIllegalStateException, DeltaLog, DeltaOperations, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -76,6 +76,48 @@ object AMTUtils extends DeltaLogging {
    */
   def amtPropertyValue(configuration: Map[String, String]): Option[Boolean] =
     configuration.get(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key).map(_.toBoolean)
+
+  /** The AMT state of a table. `Downgrading` lasts from the pre-downgrade commit to the drop. */
+  private sealed trait AMTState
+  private case object NotAMT extends AMTState
+  private case object AMTEnabled extends AMTState
+  private case object Downgrading extends AMTState
+
+  private def amtState(metadata: Metadata, protocol: Protocol): AMTState =
+    if (!amtSupported(protocol, isPreviewCompatible = true)) NotAMT
+    else if (amtEnabled(metadata, protocol, isPreviewCompatible = true)) AMTEnabled
+    else Downgrading
+
+  /**
+   * Only CREATE, the upgrade (ALTER TABLE SET TBLPROPERTIES) and DROP FEATURE may change the AMT
+   * state. Another commit, for example REPLACE or CLONE, would skip the checks of the upgrade or
+   * the steps of the drop.
+   */
+  def checkPropertyChange(
+      readSnapshot: SnapshotDescriptor,
+      newMetadata: Metadata,
+      newProtocol: Protocol,
+      op: DeltaOperations.Operation): Unit = {
+    val isNewTable = readSnapshot.version < 0
+    val isSetProperties = op.isInstanceOf[DeltaOperations.SetTableProperties]
+    val isDropFeature = op.isInstanceOf[DeltaOperations.DropTableFeature]
+    val before = if (isNewTable) NotAMT else amtState(readSnapshot.metadata, readSnapshot.protocol)
+    val after = amtState(newMetadata, newProtocol)
+    val allowed = (before, after) match {
+      case _ if before == after => true
+      // CREATE of an AMT table, or the enablement commit of an upgrade.
+      case (NotAMT, AMTEnabled) => isNewTable || isSetProperties
+      // The pre-downgrade commit of DROP FEATURE. `AMTDowngrade.commitPreDowngrade` makes it with
+      // an internal `AlterTableSetPropertiesDeltaCommand`, so its operation is SetTableProperties.
+      case (AMTEnabled, Downgrading) => isSetProperties
+      // The drop commit of DROP FEATURE.
+      case (_, NotAMT) => isDropFeature
+      case _ => false
+    }
+    if (!allowed) {
+      throw DeltaErrors.cannotModifyTableProperty(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key)
+    }
+  }
 
   /**
    * Whether AMT writes are enabled for `snapshot`. See [[amtSupported]] for `isPreviewCompatible`.
