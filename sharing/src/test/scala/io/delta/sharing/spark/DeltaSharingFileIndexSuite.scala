@@ -36,10 +36,15 @@ import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{
   AttributeReference => SqlAttributeReference,
   EqualTo => SqlEqualTo,
-  Literal => SqlLiteral
+  Expression,
+  In => SqlIn,
+  InSet => SqlInSet,
+  Literal => SqlLiteral,
+  Or => SqlOr,
+  RLike => SqlRLike
 }
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
-import org.apache.spark.sql.types.{FloatType, IntegerType}
+import org.apache.spark.sql.types.{FloatType, IntegerType, StringType}
 
 private object TestUtils {
   val paths = Seq("http://path1", "http://path2")
@@ -477,6 +482,103 @@ class DeltaSharingFileIndexSuite
         )
         fileIndex.listFiles(Seq(partitionSqlEq), Seq.empty)
         assert(testClient.savedJsonPredicateHints.size === 0)
+      }
+    }
+  }
+
+  test("jsonPredicate partial filter drops only unsupported sub-expressions") {
+    withTempDir { tempDir =>
+      val profileFile = new File(tempDir, "foo.share")
+      FileUtils.writeStringToFile(
+        profileFile,
+        s"""{
+           |  "shareCredentialsVersion": 1,
+           |  "endpoint": "https://localhost:12345/not-used-endpoint",
+           |  "bearerToken": "mock"
+           |}""".stripMargin,
+        "utf-8"
+      )
+      val partialFilterConf = "spark.delta.sharing.jsonPredicateHints.partialFilter.enabled"
+      withSQLConf(
+        "spark.delta.sharing.client.class" -> classOf[TestDeltaSharingClientForFileIndex].getName,
+        "fs.delta-sharing-log.impl" -> classOf[DeltaSharingLogFileSystem].getName,
+        "spark.delta.sharing.profile.provider.class" ->
+        "io.delta.sharing.client.DeltaSharingFileProfileProvider",
+        SparkConfForReturnExpTime -> "true",
+        SparkConfForUrlExpirationMs -> "3600000", // 1h
+        "spark.delta.sharing.jsonPredicateHints.enabled" -> "true",
+        "spark.delta.sharing.jsonPredicateV2Hints.enabled" -> "true",
+        partialFilterConf -> "false"
+      ) {
+        val (_, fileIndex, client) =
+          prepareDeltaSharingFileIndex(profileFile.getCanonicalPath, metaDataStr)
+        val testClient = client.asInstanceOf[TestDeltaSharingClientForFileIndex]
+        val conf = SparkSession.active.sessionState.conf
+
+        val partitionSqlEq = SqlEqualTo(
+          SqlAttributeReference("id", IntegerType)(),
+          SqlLiteral(23, IntegerType))
+        val dataSqlEq = SqlEqualTo(
+          SqlAttributeReference("cost", FloatType)(),
+          SqlLiteral(23.5.toFloat, FloatType))
+        // OpConverter has no mapping for RLIKE or InSet (what the optimizer turns large IN lists
+        // into), nor for IN lists over kMaxSqlInOpSizeLimit (20).
+        val dataSqlRLike = SqlRLike(
+          SqlAttributeReference("name", StringType)(),
+          SqlLiteral("^a.*"))
+        val dataSqlLargeIn = SqlIn(
+          SqlAttributeReference("cost", FloatType)(),
+          (1 to 21).map(i => SqlLiteral(i.toFloat, FloatType)))
+        val dataSqlInSet = SqlInSet(
+          SqlAttributeReference("cost", FloatType)(),
+          (1 to 11).map(_.toFloat).toSet[Any])
+
+        val partitionJson =
+          """{"op":"equal","children":[
+             |  {"op":"column","name":"id","valueType":"int"},
+             |  {"op":"literal","value":"23","valueType":"int"}]}
+             |""".stripMargin.replaceAll("\n", "").replaceAll(" ", "")
+        val dataEqJson =
+          """{"op":"equal","children":[
+             |  {"op":"column","name":"cost","valueType":"float"},
+             |  {"op":"literal","value":"23.5","valueType":"float"}]}
+             |""".stripMargin.replaceAll("\n", "").replaceAll(" ", "")
+        val partitionAndDataEqJson = s"""{"op":"and","children":[$partitionJson,$dataEqJson]}"""
+
+        def hintFor(partitionFilters: Seq[Expression], dataFilters: Seq[Expression])
+            : Option[String] = {
+          testClient.clear()
+          val callsBefore = testClient.numGetFileCalls
+          fileIndex.listFiles(partitionFilters, dataFilters)
+          assert(testClient.numGetFileCalls === callsBefore + 1)
+          assert(testClient.savedJsonPredicateHints.size <= 1)
+          testClient.savedJsonPredicateHints.headOption
+        }
+
+        // Flag off: one unsupported conjunct drops the whole data side.
+        conf.setConfString(partialFilterConf, "false")
+        assert(hintFor(Seq(partitionSqlEq), Seq(dataSqlEq, dataSqlRLike)) ===
+          Some(partitionJson))
+        assert(hintFor(Seq(partitionSqlEq), Seq(dataSqlEq, dataSqlLargeIn)) ===
+          Some(partitionJson))
+
+        conf.setConfString(partialFilterConf, "true")
+        // AND: the unsupported conjunct is dropped and its supported siblings are kept.
+        assert(hintFor(Seq(partitionSqlEq), Seq(dataSqlEq, dataSqlRLike)) ===
+          Some(partitionAndDataEqJson))
+        assert(hintFor(Seq(partitionSqlEq), Seq(dataSqlEq, dataSqlLargeIn)) ===
+          Some(partitionAndDataEqJson))
+        assert(hintFor(Seq(partitionSqlEq), Seq(dataSqlEq, dataSqlInSet)) ===
+          Some(partitionAndDataEqJson))
+        assert(hintFor(Seq.empty, Seq(dataSqlRLike, dataSqlEq)) === Some(dataEqJson))
+        // OR: dropping only the unsupported branch would narrow the predicate and skip files
+        // that match it, so the whole OR is dropped.
+        assert(hintFor(Seq(partitionSqlEq), Seq(SqlOr(dataSqlEq, dataSqlRLike))) ===
+          Some(partitionJson))
+        // Nothing supported left: no hint at all.
+        assert(hintFor(Seq.empty, Seq(dataSqlRLike)) === None)
+        // Fully supported predicates are unchanged by the flag.
+        assert(hintFor(Seq(partitionSqlEq), Seq(dataSqlEq)) === Some(partitionAndDataEqJson))
       }
     }
   }

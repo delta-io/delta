@@ -24,8 +24,8 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider,
-  CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CommitCoordinatorProvider,
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider,
+  CatalogManagedTableUtils, CatalogOwnedTestBaseSuite, CommitCoordinatorProvider,
   CommitCoordinatorUtilBase, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -101,7 +101,7 @@ class InCommitTimestampSuite
     }
   }
 
-  // Catalog Owned will also automatically enable ICT.
+  // Catalog Managed will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset(
     "Create a non-inCommitTimestamp table and then enable timestamp") {
     withSQLConf(
@@ -331,7 +331,7 @@ class InCommitTimestampSuite
     }
   }
 
-  // Catalog Owned will also automatically enable ICT.
+  // Catalog Managed will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset(
     "Enablement tracking works when ICT is enabled post commit 0") {
     withSQLConf(
@@ -359,7 +359,7 @@ class InCommitTimestampSuite
     }
   }
 
-  // Catalog Owned will also automatically enable ICT.
+  // Catalog Managed will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset("Conflict resolution of enablement version") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
@@ -913,7 +913,7 @@ class InCommitTimestampSuite
     }
   }
 
-  // Catalog Owned will also automatically enable ICT.
+  // Catalog Managed will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset(
     "commitLarge should correctly set the enablement tracking properties") {
     withTempTable(createTable = false) { tableName =>
@@ -1201,7 +1201,7 @@ class InCommitTimestampSuite
     }
   }
 
-  // Catalog Owned will also automatically enable ICT.
+  // Catalog Managed will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset("DeltaHistoryManager.getActiveCommitAtTime: " +
     "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
@@ -1319,7 +1319,7 @@ class InCommitTimestampSuite
     }
   }
 
-  // Catalog Owned will also automatically enable ICT.
+  // Catalog Managed will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset("DeltaHistoryManager.getHistory --- " +
       "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
@@ -1941,9 +1941,9 @@ class InCommitTimestampWithCatalogOwnedBatch5Suite extends InCommitTimestampSuit
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(5)
 
   test("getActiveCommitAtTime works correctly within catalog owned range") {
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
+    CatalogManagedCommitCoordinatorProvider.registerBuilder(
+      catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
       commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
     )
     withTempTable(createTable = false) { tableName =>
@@ -1951,7 +1951,7 @@ class InCommitTimestampWithCatalogOwnedBatch5Suite extends InCommitTimestampSuit
       val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
       val commit0 = DeltaHistoryManager.Commit(0, snapshot.timestamp)
       val tableCommitCoordinatorClient =
-        CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
           spark,
           catalogTableOpt = deltaLog.initialCatalogTable,
           snapshot

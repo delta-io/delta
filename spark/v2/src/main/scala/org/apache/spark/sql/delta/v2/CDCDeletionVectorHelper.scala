@@ -18,21 +18,19 @@ package org.apache.spark.sql.delta.v2
 import java.util.{ArrayList => JArrayList, List => JList}
 import javax.annotation.Nullable
 
-import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor => SparkDvDescriptor}
-import org.apache.spark.sql.delta.commands.DeletionVectorUtils
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor => SparkDvDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
+import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.v2.read.CDCDataFile
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import io.delta.kernel.internal.actions.{AddFile, RemoveFile}
 
 /**
  * Helper for DV-diff operations needed by DSv2 CDC streaming. Lives in the
  * `org.apache.spark.sql.delta.v2` package (Scala) because it needs access to `private[delta]`
- * APIs (DeletionVectorStore, RoaringBitmapArray, DeletionVectorUtils) that are not exposed to
- * Java.
+ * APIs (DeletionVectorStore, RoaringBitmapArray, the DV-diff helpers shared with
+ * [[CDCReader]]) that are not exposed to Java.
  */
 object CDCDeletionVectorHelper {
 
@@ -65,11 +63,8 @@ object CDCDeletionVectorHelper {
       commitTimestamp: Long,
       dataPath: String,
       hadoopConf: Configuration): JList[CDCDataFile] = {
-    val addDvBase64: String =
-      if (add.getDeletionVector.isPresent) add.getDeletionVector.get.serializeToBase64 else null
-    val removeDvBase64: String =
-      if (remove.getDeletionVector.isPresent) remove.getDeletionVector.get.serializeToBase64
-      else null
+    val addDvBase64 = Option(add.deletionVector).map(_.serializeToBase64).orNull
+    val removeDvBase64 = Option(remove.deletionVector).map(_.serializeToBase64).orNull
 
     val diffs = computeDVDiff(addDvBase64, removeDvBase64, hadoopConf, dataPath)
     val out = new JArrayList[CDCDataFile](diffs.length)
@@ -109,20 +104,16 @@ object CDCDeletionVectorHelper {
         results += ((CDCReader.CDC_TYPE_INSERT, dvBase64))
 
       case (Some(rDv), Some(aDv)) =>
-        // Both have DVs -> compute bitmap diff
-        val removeBitmap = dvStore.read(rDv, dataPath)
-        val addBitmap = dvStore.read(aDv, dataPath)
+        // Both have DVs -> compute bitmap diff (shared with the V1 CDC reader).
+        // Rows in addDv but not removeDv are newly deleted; rows in removeDv but not addDv are
+        // re-added (table restore case).
+        val (deletedRows, readdedRows) =
+          CDCReader.diffDeletionVectors(rDv, aDv, dvStore, dataPath)
 
-        // Rows in addDv but not removeDv are newly deleted
-        val deletedRows = addBitmap.copy()
-        deletedRows.diff(removeBitmap)
         if (!deletedRows.isEmpty) {
           results += ((CDCReader.CDC_TYPE_DELETE_STRING, serializeInline(deletedRows, dataPath)))
         }
 
-        // Rows in removeDv but not addDv are re-added (table restore case)
-        val readdedRows = removeBitmap.copy()
-        readdedRows.diff(addBitmap)
         if (!readdedRows.isEmpty) {
           results += ((CDCReader.CDC_TYPE_INSERT, serializeInline(readdedRows, dataPath)))
         }
@@ -142,8 +133,6 @@ object CDCDeletionVectorHelper {
   }
 
   private def serializeInline(bitmap: RoaringBitmapArray, dataPath: Path): String = {
-    val bytes = DeletionVectorUtils.serialize(
-      bitmap, RoaringBitmapArrayFormat.Portable, Some(dataPath))
-    SparkDvDescriptor.inlineInLog(bytes, bitmap.cardinality).serializeToBase64
+    CDCReader.inlineDeletionVector(bitmap, dataPath).serializeToBase64
   }
 }

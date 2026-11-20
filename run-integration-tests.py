@@ -52,7 +52,7 @@ def set_spark_env(spark_version):
     Resets PATH to its original value first to avoid accumulation.
 
     This must override any existing SPARK_HOME because the multi-variant loop tests
-    different Spark versions in sequence (e.g., 4.0.1 then 4.1.0).
+    different Spark versions in sequence (e.g., 4.1.0 then 4.2.0).
     """
     os.environ["PATH"] = _original_path
 
@@ -129,20 +129,20 @@ def get_spark_variants(spark_specs):
     Builds the list of artifact variants to test from the Spark version specs.
 
     Each variant is a dict with:
-      - suffix: Maven artifact suffix, e.g. "" (unsuffixed), "_4.0", "_4.1", "_4.2"
-      - spark_version: full Spark version, e.g. "4.0.1", "4.1.0", "4.2.0"
+      - suffix: Maven artifact suffix, e.g. "" (unsuffixed), "_4.1", "_4.2", "_4.3"
+      - spark_version: full Spark version, e.g. "4.1.0", "4.2.0", "4.3.0"
       - support_iceberg: "true" or "false"
       - support_hudi: "true" or "false"
 
     The first variant is always unsuffixed (backward compat) using the DEFAULT spec's metadata.
     Remaining variants are suffixed, one per non-master Spark version.
 
-    Example return value (given Spark 4.0, 4.1, and 4.2 specs, with 4.2 as default):
+    Example return value (given Spark 4.1, 4.2, and 4.3 specs, with 4.2 as default):
       [
         {"suffix": "",     "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
-        {"suffix": "_4.0", "spark_version": "4.0.1", "support_iceberg": "true",  "support_hudi": "true"},
         {"suffix": "_4.1", "spark_version": "4.1.0", "support_iceberg": "true",  "support_hudi": "false"},
         {"suffix": "_4.2", "spark_version": "4.2.0", "support_iceberg": "false", "support_hudi": "false"},
+        {"suffix": "_4.3", "spark_version": "4.3.0", "support_iceberg": "false", "support_hudi": "false"},
       ]
     """
     variants = []
@@ -201,8 +201,8 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
                     if f.endswith(".scala") and not f.startswith("_")]
 
     # Set env vars that examples/scala/build.sbt reads to resolve dependencies:
-    # SPARK_PACKAGE_SUFFIX -> artifact suffix (e.g., "_4.0")
-    # SPARK_VERSION -> Spark version for spark-sql/spark-hive deps (e.g., "4.0.1")
+    # SPARK_PACKAGE_SUFFIX -> artifact suffix (e.g., "_4.1")
+    # SPARK_VERSION -> Spark version for spark-sql/spark-hive deps (e.g., "4.1.0")
     # SUPPORT_ICEBERG -> whether to include Iceberg deps and compile IcebergCompat examples
     env = {"DELTA_VERSION": str(version), "SCALA_VERSION": scala_version}
     if suffix:
@@ -268,7 +268,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
     repo = extra_maven_repo if extra_maven_repo else ""
 
     # Build Maven coordinate with the variant's suffix
-    # e.g., "io.delta:delta-spark_2.13:4.0.0" or "io.delta:delta-spark_4.0_2.13:4.0.0"
+    # e.g., "io.delta:delta-spark_2.13:4.1.0" or "io.delta:delta-spark_4.1_2.13:4.1.0"
     artifact_name = get_artifact_name(version)
     package = "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version)
     print("Package: %s" % package)
@@ -382,58 +382,6 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
             print("Failed DynamoDB logstore integration tests tests in %s%s" % (test_file, label))
             raise
 
-def run_dynamodb_commit_coordinator_integration_tests(root_dir, version, test_name, extra_maven_repo,
-                                                extra_packages, conf, variant):
-    """
-    Runs DynamoDB Commit Coordinator integration tests for a single artifact variant.
-
-    variant: dict with suffix, spark_version, support_iceberg, support_hudi.
-             See get_spark_variants() for the format and example.
-    """
-    suffix = variant["suffix"]
-    label = " (suffix=%s)" % (suffix or "none") if suffix else ""
-
-    print(
-        "\n\n##### Running DynamoDB Commit Coordinator integration tests%s on version %s #####"
-        % (label, str(version))
-    )
-
-    test_dir = path.join(root_dir, \
-        path.join("spark", "src", "main", "java", "io", "delta", "dynamodbcommitcoordinator", "integration_tests"))
-    test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
-                  if path.isfile(path.join(test_dir, f)) and
-                  f.endswith(".py") and not f.startswith("_")]
-
-    python_root_dir = path.join(root_dir, "python")
-    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-
-    conf_args = []
-    if conf:
-        for i in conf:
-            conf_args.extend(["--conf", i])
-
-    repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
-
-    # Build package string with the variant's suffix
-    artifact_name = get_artifact_name(version)
-    packages = "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version)
-    if extra_packages:
-        packages += "," + extra_packages
-
-    for test_file in test_files:
-        if test_name is not None and test_name not in test_file:
-            print("\nSkipping DynamoDB Commit Coordinator integration tests in %s\n============" % test_file)
-            continue
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", packages] + repo_args + conf_args + [test_file]
-            print("\nRunning DynamoDB Commit Coordinator integration tests in %s%s\n=============" % (test_file, label))
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed DynamoDB Commit Coordinator integration tests in %s%s" % (test_file, label))
-            raise
 
 def run_s3_log_store_util_integration_tests():
     print("\n\n##### Running S3LogStoreUtil tests #####")
@@ -470,7 +418,7 @@ def run_iceberg_integration_tests(root_dir, version, iceberg_version, extra_mave
     variant: dict with suffix, spark_version, support_iceberg, support_hudi.
              See get_spark_variants() for the format and example.
              spark_version is used to derive the iceberg-spark-runtime artifact name
-             (e.g., "4.0.1" -> iceberg-spark-runtime-4.0_2.13).
+             (e.g., "4.1.0" -> iceberg-spark-runtime-4.1_2.13).
     """
     suffix = variant["suffix"]
     spark_version = variant["spark_version"]
@@ -491,7 +439,7 @@ def run_iceberg_integration_tests(root_dir, version, iceberg_version, extra_mave
     artifact_name = get_artifact_name(version)
 
     # Derive major.minor Spark version for iceberg-spark-runtime artifact name
-    # e.g., "4.0.1" -> "4.0", or "4.0" stays "4.0"
+    # e.g., "4.1.0" -> "4.1", or "4.1" stays "4.1"
     parts = spark_version.split(".")
     iceberg_spark_ver = "%s.%s" % (parts[0], parts[1]) if len(parts) >= 2 else spark_version
 
@@ -523,7 +471,7 @@ def run_uniform_hudi_integration_tests(root_dir, version, hudi_version, extra_ma
     variant: dict with suffix, spark_version, support_iceberg, support_hudi.
              See get_spark_variants() for the format and example.
              spark_version is used to derive the hudi-spark-bundle artifact name
-             (e.g., "4.0.1" -> hudi-spark4.0-bundle_2.13).
+             (e.g., "4.1.0" -> hudi-spark4.1-bundle_2.13).
     """
     suffix = variant["suffix"]
     spark_version = variant["spark_version"]
@@ -546,7 +494,7 @@ def run_uniform_hudi_integration_tests(root_dir, version, hudi_version, extra_ma
     artifact_name = get_artifact_name(version)
 
     # Derive major.minor Spark version for hudi-spark-bundle artifact name
-    # e.g., "4.0.1" -> "4.0", or "4.0" stays "4.0"
+    # e.g., "4.1.0" -> "4.1", or "4.1" stays "4.1"
     parts = spark_version.split(".")
     hudi_spark_ver = "%s.%s" % (parts[0], parts[1]) if len(parts) >= 2 else spark_version
 
@@ -813,13 +761,7 @@ if __name__ == "__main__":
         required=False,
         default=None,
         nargs="+",
-        help="All `--conf` values passed to `spark-submit` for DynamoDB logstore/commit-coordinator integration tests")
-    parser.add_argument(
-        "--run-dynamodb-commit-coordinator-integration-tests",
-        required=False,
-        default=False,
-        action="store_true",
-        help="Run the DynamoDB Commit Coordinator tests (and only them)")
+        help="All `--conf` values passed to `spark-submit` for DynamoDB logstore integration tests")
     parser.add_argument(
         "--run-iceberg-integration-tests",
         required=False,
@@ -835,7 +777,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--iceberg-spark-version",
         required=False,
-        default="4.0",
+        default="4.1",
         help="Spark version for the Iceberg library (used in non-local mode)")
     parser.add_argument(
         "--iceberg-lib-version",
@@ -845,7 +787,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hudi-spark-version",
         required=False,
-        default="4.0",
+        default="4.1",
         help="Spark version for the Hudi library (used in non-local mode)")
     parser.add_argument(
         "--hudi-version",
@@ -871,6 +813,18 @@ if __name__ == "__main__":
 
     if args.use_local and (args.version != default_version):
         raise Exception("Cannot specify --use-local with a --version different than in version.sbt")
+
+    # Hudi support is declared per Spark version (supportHudi in CrossSparkVersions.scala). When no
+    # version supports Hudi, skip the Hudi integration tests in both local and non-local mode,
+    # before publishing or building anything.
+    hudi_spark_versions = []
+    if args.run_uniform_hudi_integration_tests:
+        hudi_spark_versions = [spec["fullVersion"] for spec in load_spark_version_specs(root_dir)
+                               if spec.get("supportHudi", "false") == "true"]
+        if not hudi_spark_versions:
+            print("No Spark version supports Hudi (supportHudi in CrossSparkVersions.scala) - "
+                  "skipping Hudi integration tests")
+            quit()
 
     # When --use-local, publish all artifact variants once upfront and build the variant list
     # from CrossSparkVersions.scala. In non-local mode, use a single default (unsuffixed) variant.
@@ -909,27 +863,16 @@ if __name__ == "__main__":
         quit()
 
     if args.run_uniform_hudi_integration_tests:
-        # Build hudi assembly once before running tests (needs specific Spark version)
+        # Build hudi assembly once before running tests, using the first Spark version that
+        # supports Hudi (hudi_spark_versions is non-empty here, see the check above).
         if args.use_local:
-            hudi_spark_ver = None
-            if spark_specs:
-                for spec in spark_specs:
-                    if spec.get("supportHudi", "false") == "true":
-                        hudi_spark_ver = spec["fullVersion"]
-                        break
-            if hudi_spark_ver:
-                run_cmd(["build/sbt", "-DsparkVersion=%s" % hudi_spark_ver, "hudi/assembly"],
-                        stream_output=True)
-            else:
-                run_cmd(["build/sbt", "hudi/assembly"], stream_output=True)
+            run_cmd(["build/sbt", "-DsparkVersion=%s" % hudi_spark_versions[0], "hudi/assembly"],
+                    stream_output=True)
 
         # In local mode, only test variants that support Hudi.
         # In non-local mode, run once with --hudi-spark-version from CLI args.
         if spark_specs:
             hudi_variants = [v for v in variants if v["support_hudi"] == "true"]
-            if not hudi_variants:
-                print("No Spark variants support Hudi - skipping Hudi integration tests")
-                quit()
         else:
             hudi_variants = [{
                 "suffix": "", "spark_version": args.hudi_spark_version,
@@ -947,14 +890,6 @@ if __name__ == "__main__":
             run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test,
                                                     args.maven_repo, args.packages,
                                                     args.dbb_conf, variant)
-        quit()
-
-    if args.run_dynamodb_commit_coordinator_integration_tests:
-        for variant in variants:
-            set_spark_env(variant["spark_version"])
-            run_dynamodb_commit_coordinator_integration_tests(root_dir, args.version, args.test,
-                                                        args.maven_repo, args.packages,
-                                                        args.dbb_conf, variant)
         quit()
 
     if args.s3_log_store_util_only:

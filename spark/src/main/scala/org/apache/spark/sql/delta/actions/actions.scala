@@ -324,7 +324,7 @@ case class Protocol private (
   override def getWriterFeatures: java.util.Set[String] = writerFeatures.map(_.asJava).orNull
 }
 
-object Protocol {
+object Protocol extends DeltaLogging {
   import TableFeatureProtocolUtils._
 
   val MIN_READER_VERSION_PROP = "delta.minReaderVersion"
@@ -687,6 +687,100 @@ object Protocol {
       }
     }
   }
+
+  /**
+   * Asserts that the client is up to date with the protocol and allowed to read the table that is
+   * using the given `protocol`.
+   */
+  private[delta] def protocolRead(
+      spark: SparkSession,
+      protocol: Protocol,
+      tablePath: String,
+      loggingProvider: DeltaLoggingProvider): Unit = {
+    protocolCheck(spark, protocol, "read", tablePath, loggingProvider)
+  }
+
+
+  /**
+   * Asserts the highest protocol supported by this client is not less than what required by the
+   * table for performing read or write operations. This ensures the client to support a
+   * greater-or-equal protocol versions and recognizes/supports all features enabled by the table.
+   *
+   * The operation type to be checked is passed as a string in `readOrWrite`. Valid values are
+   * `read` and `write`.
+   */
+  private[delta] def protocolCheck(
+      spark: SparkSession,
+      tableProtocol: Protocol,
+      readOrWrite: String,
+      tablePath: String,
+      loggingProvider: DeltaLoggingProvider): Unit = {
+    val unsupportedTestFeatures =
+      if (spark.conf.get(DeltaSQLConf.UNSUPPORTED_TESTING_FEATURES_ENABLED)) {
+        TableFeature.testUnsupportedFeatures.toSeq
+      } else {
+        Seq.empty
+      }
+
+    val clientSupportedProtocol =
+      Action.supportedProtocolVersion(featuresToExclude = unsupportedTestFeatures)
+    // Depending on the operation, pull related protocol versions out of Protocol objects.
+    // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
+    val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
+      case "read" => (
+        Action.supportedReaderVersionNumbers,
+        tableProtocol.minReaderVersion,
+        (f: Protocol) => f.readerFeatureNames)
+      case "write" => (
+        Action.supportedWriterVersionNumbers,
+        tableProtocol.minWriterVersion,
+        (f: Protocol) => f.writerFeatureNames)
+      case _ =>
+        throw new IllegalArgumentException("Table operation must be either `read` or `write`.")
+    }
+
+    // Check is complete when both the protocol version and all referenced features are supported.
+    val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol)
+    val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol)
+    if (tableEnabledFeatureNames.subsetOf(clientSupportedFeatureNames) &&
+      clientSupportedVersions.contains(tableRequiredVersion)) {
+      return
+    }
+
+    // Otherwise, either the protocol version, or few features referenced by the table, is
+    // unsupported.
+    val clientUnsupportedFeatureNames =
+      tableEnabledFeatureNames.diff(clientSupportedFeatureNames)
+    // Prepare event log constants and the appropriate error message handler.
+    val (opType, versionKey, unsupportedFeaturesException) = readOrWrite match {
+      case "read" => (
+          "delta.protocol.failure.read",
+          "minReaderVersion",
+          DeltaErrors.unsupportedReaderTableFeaturesInTableException _)
+      case "write" => (
+          "delta.protocol.failure.write",
+          "minWriterVersion",
+          DeltaErrors.unsupportedWriterTableFeaturesInTableException _)
+    }
+    recordDeltaEvent(
+      loggingProvider,
+      opType,
+      data = Map(
+        "clientVersion" -> clientSupportedVersions.max,
+        versionKey -> tableRequiredVersion,
+        "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
+        "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
+    if (!clientSupportedVersions.contains(tableRequiredVersion)) {
+      throw new InvalidProtocolVersionException(
+        tablePath,
+        tableProtocol.minReaderVersion,
+        tableProtocol.minWriterVersion,
+        Action.supportedReaderVersionNumbers.toSeq,
+        Action.supportedWriterVersionNumbers.toSeq)
+    } else {
+      throw unsupportedFeaturesException(tablePath, clientUnsupportedFeatureNames)
+    }
+  }
 }
 
 /**
@@ -871,7 +965,7 @@ object FileAction {
       metadata: Metadata,
       protocol: Protocol,
       spark: SparkSession): Boolean =
-    AMTUtils.amtEnabled(metadata, protocol) ||
+    AMTUtils.amtSupported(protocol, isPreviewCompatible = true) ||
       spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
 
   /**
@@ -897,6 +991,15 @@ object FileAction {
       UniqueFileActionTuple(
         action.pathAsUri,
         Option(action.deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity)))
+  }
+
+  /**
+   * Whether `action` is an [[AddFile]] or a [[RemoveFile]], the file actions an AMT manifest
+   * commit reads from its tree rather than from its log file.
+   */
+  private[delta] def isAddOrRemove(action: Action): Boolean = action match {
+    case _: AddFile | _: RemoveFile => true
+    case _ => false
   }
 }
 
@@ -1659,6 +1762,26 @@ case class CommitInfo(
   @JsonIgnore
   override def getVersion: Long = version.get
 
+  /**
+   * Whether this is the CommitInfo of an AMT manifest commit whose tree describes the commit's own
+   * version.
+   *
+   * @param commitVersion the version of the commit this CommitInfo belongs to.
+   */
+  @JsonIgnore
+  def isAMTInlineManifestCommit(commitVersion: Long): Boolean =
+    lastManifestCommit.contains(
+      LastManifestCommit(version = commitVersion, contentRootVersion = commitVersion))
+
+  /**
+   * The commit-level `dataChange`, which must be present for AMT tables.
+   */
+  @JsonIgnore
+  def getDataChangeOrThrow: Boolean =
+    dataChange.getOrElse(throw new IllegalStateException(
+      s"Commit ${version.map(_.toString).getOrElse("unknown")} does not have a dataChange flag " +
+        "in its CommitInfo."))
+
 }
 
 case class JobInfo(
@@ -1716,7 +1839,7 @@ object CommitInfo {
       metadata: Metadata,
       protocol: Protocol,
       spark: SparkSession): Option[Boolean] = {
-    if (AMTUtils.amtEnabled(metadata, protocol) ||
+    if (AMTUtils.amtEnabled(metadata, protocol, isPreviewCompatible = true) ||
         spark.conf.get(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED)) {
       Some(dataChange)
     } else {

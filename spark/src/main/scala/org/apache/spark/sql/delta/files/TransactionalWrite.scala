@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.stats.{
   StatsCollectionUtils
 }
 import org.apache.spark.sql.delta.util.TableParquetVersionOption
+import org.apache.spark.sql.delta.util.Utils
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
@@ -75,9 +76,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def getCommitter(outputPath: Path): DelayedCommitProtocol = {
     // We force the use of random prefixes in column mapping modes.
     // Note that here we need to use the txn metadata instead of the snapshot's metadata
-    val prefixLengthOpt = if (randomizeFilePrefixes || metadata.columnMappingMode != NoMapping) {
-      Some(randomPrefixLength)
-    } else None
+    val prefixLengthOpt = Utils.getRandomPrefixLengthOpt(
+      randomizeFilePrefixes, metadata.columnMappingMode, randomPrefixLength)
     new DelayedCommitProtocol("delta", outputPath.toString, prefixLengthOpt, deltaDataSubdir)
   }
 
@@ -85,7 +85,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def makeOutputNullable(output: Seq[Attribute]): Seq[Attribute] = {
     output.map {
       case ref: AttributeReference =>
-        val nullableDataType = SchemaUtils.typeAsNullable(ref.dataType)
+        val nullableDataType = SchemaUtils.typeAsFullyNullable(ref.dataType)
         ref.copy(dataType = nullableDataType, nullable = true)(ref.exprId, ref.qualifier)
       case attr => attr.withNullability(true)
     }

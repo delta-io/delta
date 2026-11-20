@@ -107,7 +107,7 @@ trait ColumnMappingStreamingTestUtils extends StreamTest with DeltaColumnMapping
 trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStreamingTestUtils {
   self: DeltaSourceConnectorTrait with DeltaSQLCommandTest =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Start a streaming read on the configured connector (V1 vs V2). MAX_FILES_PER_TRIGGER=1
   // ensures we catch failures ASAP; CDC_READ_OPTION is layered in for CDC variants.

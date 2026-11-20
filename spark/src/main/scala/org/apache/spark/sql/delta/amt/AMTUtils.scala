@@ -16,16 +16,20 @@
 
 package org.apache.spark.sql.delta.amt
 
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaErrors, DeltaIllegalStateException, DeltaLog, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaConfigs, DeltaErrors, DeltaIllegalStateException, DeltaLog, DeltaOperations, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
 import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.optimizer.ConvertToLocalRelation
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -36,20 +40,90 @@ import org.apache.spark.sql.SparkSession
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
 object AMTUtils extends DeltaLogging {
-  /** Whether AMT is **supported** as per the protocol. */
-  def amtSupported(protocol: Protocol): Boolean =
-    AdaptiveMetadataTableFeatureBase.isSupportedBy(protocol)
+  /**
+   * Whether AMT is **supported** as per the protocol. Code that reads or keeps AMT state (trees,
+   * back references, `r` DVs) checks this, because that state stays while AMT writes are off.
+   *
+   * `isPreviewCompatible` says whether the caller also handles private-preview AMT tables, that
+   * is, tables with [[AdaptiveMetadataPreviewTableFeature]]. Only code paths that predate
+   * [[AdaptiveMetadataTableFeature]] may treat preview tables as AMT tables; those callers pass
+   * `true`. New code paths pass `false` and only see tables with [[AdaptiveMetadataTableFeature]].
+   */
+  def amtSupported(protocol: Protocol, isPreviewCompatible: Boolean): Boolean =
+    AdaptiveMetadataTableFeatureBase.supportedBy(protocol) match {
+      case Some(AdaptiveMetadataPreviewTableFeature) => isPreviewCompatible
+      case Some(AdaptiveMetadataTableFeature) => true
+      case None => false
+    }
 
   /**
    * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
-   * `metadata`.
+   * `metadata`. See [[amtSupported]] for `isPreviewCompatible`.
    */
-  def amtEnabled(metadata: Metadata, protocol: Protocol): Boolean =
-    AdaptiveMetadataTableFeatureBase.isSupportedBy(protocol)
+  def amtEnabled(metadata: Metadata, protocol: Protocol, isPreviewCompatible: Boolean): Boolean =
+    AdaptiveMetadataTableFeatureBase.supportedBy(protocol) match {
+      // Preview tables were created before the AMT property existed.
+      case Some(AdaptiveMetadataPreviewTableFeature) => isPreviewCompatible
+      case Some(AdaptiveMetadataTableFeature) =>
+        DeltaConfigs.ADAPTIVE_METADATA_ENABLED.fromMetaData(metadata)
+      case None => false
+    }
 
-  /** Whether AMT writes are enabled for `snapshot`. */
-  def amtEnabled(snapshot: SnapshotDescriptor): Boolean =
-    amtEnabled(snapshot.metadata, snapshot.protocol)
+  /**
+   * The value of the AMT property that `configuration` sets. `fromMetaData` returns the default
+   * when the property is unset. The upgrade reads this value instead, because only a command that
+   * sets the property to true upgrades a table.
+   */
+  def amtPropertyValue(configuration: Map[String, String]): Option[Boolean] =
+    configuration.get(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key).map(_.toBoolean)
+
+  /** The AMT state of a table. `Downgrading` lasts from the pre-downgrade commit to the drop. */
+  private sealed trait AMTState
+  private case object NotAMT extends AMTState
+  private case object AMTEnabled extends AMTState
+  private case object Downgrading extends AMTState
+
+  private def amtState(metadata: Metadata, protocol: Protocol): AMTState =
+    if (!amtSupported(protocol, isPreviewCompatible = true)) NotAMT
+    else if (amtEnabled(metadata, protocol, isPreviewCompatible = true)) AMTEnabled
+    else Downgrading
+
+  /**
+   * Only CREATE, the upgrade (ALTER TABLE SET TBLPROPERTIES) and DROP FEATURE may change the AMT
+   * state. Another commit, for example REPLACE or CLONE, would skip the checks of the upgrade or
+   * the steps of the drop.
+   */
+  def checkPropertyChange(
+      readSnapshot: SnapshotDescriptor,
+      newMetadata: Metadata,
+      newProtocol: Protocol,
+      op: DeltaOperations.Operation): Unit = {
+    val isNewTable = readSnapshot.version < 0
+    val isSetProperties = op.isInstanceOf[DeltaOperations.SetTableProperties]
+    val isDropFeature = op.isInstanceOf[DeltaOperations.DropTableFeature]
+    val before = if (isNewTable) NotAMT else amtState(readSnapshot.metadata, readSnapshot.protocol)
+    val after = amtState(newMetadata, newProtocol)
+    val allowed = (before, after) match {
+      case _ if before == after => true
+      // CREATE of an AMT table, or the enablement commit of an upgrade.
+      case (NotAMT, AMTEnabled) => isNewTable || isSetProperties
+      // The pre-downgrade commit of DROP FEATURE. `AMTDowngrade.commitPreDowngrade` makes it with
+      // an internal `AlterTableSetPropertiesDeltaCommand`, so its operation is SetTableProperties.
+      case (AMTEnabled, Downgrading) => isSetProperties
+      // The drop commit of DROP FEATURE.
+      case (_, NotAMT) => isDropFeature
+      case _ => false
+    }
+    if (!allowed) {
+      throw DeltaErrors.cannotModifyTableProperty(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key)
+    }
+  }
+
+  /**
+   * Whether AMT writes are enabled for `snapshot`. See [[amtSupported]] for `isPreviewCompatible`.
+   */
+  def amtEnabled(snapshot: SnapshotDescriptor, isPreviewCompatible: Boolean): Boolean =
+    amtEnabled(snapshot.metadata, snapshot.protocol, isPreviewCompatible)
 
   /**
    * Whether `amtCheckpointOpt` holds a ROOT-ONLY tree (no leaf manifests). A root-only tree keeps
@@ -67,7 +141,8 @@ object AMTUtils extends DeltaLogging {
    * Asserts that a commit taking a table from `snapshot` to `protocol` and `metadata` follows the
    * rules for the AMT table features (see [[AdaptiveMetadataTableFeatureBase]]):
    *  - a table has at most one of them;
-   *  - AMT cannot be added to an existing table, including through REPLACE and REPLACE CLONE;
+   *  - AMT cannot be added to an existing table, including through REPLACE and REPLACE CLONE.
+   *    The one exception is the enablement commit of an upgrade to `adaptiveMetadata-dev`;
    *  - adding an AMT feature needs its creation SQL conf (`creationConf`). Tables that already
    *    have it stay readable and writable with the conf off;
    *  - an AMT table cannot add a feature AMT is incompatible with, either to the protocol or by
@@ -100,10 +175,15 @@ object AMTUtils extends DeltaLogging {
         tableName, feature1 = amtFeatures(0).name, feature2 = amtFeatures(1).name)
     }
     amtFeatures.foreach { amtFeature =>
-      // Adding AMT to an existing table is an unsupported upgrade. `updateMetadata` already rejects
-      // it, but CLONE adds the source's protocol after that, so REPLACE CLONE is caught here.
-      if (snapshot.version >= 0 && !amtEnabled(snapshot)) {
-        throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeature.name)
+      // Only the enablement commit of an upgrade adds AMT to an existing table. `updateMetadata`
+      // already rejects other commits, but CLONE adds the source's protocol after that, so
+      // REPLACE CLONE is caught here.
+      if (snapshot.version >= 0 && !amtSupported(snapshot.protocol, isPreviewCompatible = true)) {
+        val isEnablementCommit = false
+        val amtUpgradesDisabled = true
+        if (!isEnablementCommit || amtUpgradesDisabled) {
+          throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeature.name)
+        }
       }
       val creationConf = AdaptiveMetadataTableFeatureBase.creationConf(amtFeature)
       if (added(amtFeature) && !spark.sessionState.conf.getConf(creationConf)) {
@@ -304,4 +384,24 @@ object AMTUtils extends DeltaLogging {
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
   private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
     ManifestBitmap.fromSerializedByteArray(bytes)
+
+  private[amt] def shouldCacheRootRows(
+      spark: SparkSession,
+      numEntries: => Long): Boolean = {
+    val columnarEnabled = spark.sessionState.conf
+      .getConf(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED)
+    val maxNumEntries = spark.sessionState.conf
+      .getConf(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES)
+    columnarEnabled && maxNumEntries > 0 && numEntries < maxNumEntries
+  }
+
+  /**
+   * Applies [[ConvertToLocalRelation]] until the plan stops changing. When the rule visits the plan
+   * top-down, one application folds only the `Project` directly above the `LocalRelation`.
+   */
+  @tailrec
+  private[amt] def convertToLocalRelationFully(plan: LogicalPlan): LogicalPlan = {
+    val converted = ConvertToLocalRelation(plan)
+    if (converted.fastEquals(plan)) plan else convertToLocalRelationFully(converted)
+  }
 }

@@ -104,7 +104,7 @@ class DeltaColumnMappingSuite extends QueryTest
   with GivenWhenThen
   with DeltaColumnMappingSuiteUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def withId(id: Long): Metadata =
     new MetadataBuilder()

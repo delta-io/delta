@@ -19,6 +19,8 @@ import java.util.Collections
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.util.matching.Regex
+
 import org.apache.spark.sql.delta.{DeltaSingleCommit, Snapshot}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.{ClosableIterator, LogStore}
@@ -30,10 +32,12 @@ import com.google.common.base.Ticker
 import io.delta.kernel.{CommitRange => KernelCommitRange}
 import io.delta.kernel.engine.{Engine => KernelEngine}
 import io.delta.kernel.internal.{DeltaHistoryManager => KernelDeltaHistoryManager}
+import org.apache.logging.log4j.Level
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
@@ -67,6 +71,29 @@ class DeltaV2TableManagerCacheSuite
       val second = cache.getOrCreate(key)
       assert(first eq second)
       assert(cache.size() == 1)
+    }
+  }
+
+  test("per-instance: cache hits do not evaluate path redaction") {
+    val redactionCalls = new AtomicInteger()
+    val sqlConf = new SQLConf {
+      override def stringRedactionPattern: Option[Regex] = {
+        redactionCalls.incrementAndGet()
+        super.stringRedactionPattern
+      }
+    }
+    val stub = new StubTableManager("redaction")
+    val cache = new DeltaV2TableManagerCache(
+      maxSize = 1000, ttlMinutes = 60,
+      managerFactory = (_, _) => stub)
+    withTempDir { dir =>
+      val key = makeKey(dir.getCanonicalPath)
+      assert(cache.getOrCreate(key, sqlConf = sqlConf) eq stub)
+      assert(redactionCalls.get() === 1)
+      assert(cache.getOrCreate(key, sqlConf = sqlConf) eq stub)
+      assert(redactionCalls.get() === 1, "cache hits must not redact the path again")
+      cache.invalidate(key)
+      assert(redactionCalls.get() === 1, "eviction must reuse the loading caller's redacted path")
     }
   }
 
@@ -161,6 +188,113 @@ class DeltaV2TableManagerCacheSuite
 
       assert(stub.retired, "expired entry should be retired")
       assert(!cache.contains(key))
+    }
+  }
+
+  test("per-instance: eviction retains the loading caller's path redaction") {
+    val stub = new StubTableManager("redaction")
+    val cache = new DeltaV2TableManagerCache(
+      maxSize = 1000, ttlMinutes = 60,
+      managerFactory = (_, _) => stub)
+    val loadingSession = spark.newSession()
+    loadingSession.conf.set("spark.sql.redaction.string.regex", "loading-secret")
+    val appender = new LogAppender("table manager path redaction", maxEvents = 100)
+    appender.setThreshold(Level.INFO)
+    withTempDir { dir =>
+      val key = makeKey(s"${dir.getCanonicalPath}/loading-secret/evicting-secret")
+      withSQLConf("spark.sql.redaction.string.regex" -> "evicting-secret") {
+        withLogAppender(
+            appender,
+            loggerNames = Seq(classOf[DeltaV2TableManagerCache].getName),
+            level = Some(Level.INFO)) {
+          cache.getOrCreate(key, sqlConf = loadingSession.sessionState.conf)
+          assert(cache.getOrCreate(key) eq stub)
+          cache.invalidate(key)
+        }
+      }
+      val messages = appender.loggingEvents.map(_.getMessage.getFormattedMessage)
+        .filter(message => message.startsWith("Created Delta V2 table manager for ") ||
+          message.startsWith("Retired Delta V2 table manager for "))
+      assert(messages.size === 2)
+      assert(messages.forall(!_.contains("loading-secret")))
+      assert(messages.forall(_.contains("evicting-secret")))
+      assert(messages.forall(!_.contains("_delta_log")))
+    }
+  }
+
+  test("per-instance: lifecycle logging measures elapsed time with the injected ticker") {
+    val ticker = new TestTicker()
+    val stub = new StubTableManager("timing") {
+      override def retire(): Unit = {
+        ticker.advance(2L)
+        super.retire()
+      }
+    }
+    val cache = new DeltaV2TableManagerCache(
+      maxSize = 1000, ttlMinutes = 60, ticker = ticker,
+      managerFactory = (_, _) => {
+        ticker.advance(1L)
+        stub
+      })
+    val appender = new LogAppender("table manager elapsed time", maxEvents = 100)
+    appender.setThreshold(Level.INFO)
+    withTempDir { dir =>
+      val key = makeKey(dir.getCanonicalPath)
+      withLogAppender(
+          appender,
+          loggerNames = Seq(classOf[DeltaV2TableManagerCache].getName),
+          level = Some(Level.INFO)) {
+        cache.getOrCreate(key)
+        cache.getOrCreate(key)
+        cache.invalidate(key)
+      }
+      val messages = appender.loggingEvents.map(_.getMessage.getFormattedMessage)
+      val creation = messages.filter(_.startsWith("Created Delta V2 table manager for "))
+      val retirement = messages.filter(_.startsWith("Retired Delta V2 table manager for "))
+      assert(creation.size === 1, "cache hits must not log a second creation")
+      val dataPath = key.path.getParent.toUri.toString
+      assert(creation.head === s"Created Delta V2 table manager for $dataPath in 1000 ms")
+      assert(retirement.size === 1)
+      assert(retirement.head === s"Retired Delta V2 table manager for $dataPath " +
+        "after cache eviction (EXPLICIT) in 2000 ms")
+    }
+  }
+
+  test("per-instance: retirement failure is logged once at WARN and does not stop cleanup") {
+    val cause = new IllegalStateException("retirement-cause")
+    val failing = new StubTableManager("failing") {
+      override def retire(): Unit = throw cause
+    }
+    val healthy = new StubTableManager("healthy")
+    val stubs = Iterator(failing, healthy)
+    val cache = new DeltaV2TableManagerCache(
+      maxSize = 1000, ttlMinutes = 60,
+      managerFactory = (_, _) => stubs.next())
+    val appender = new LogAppender("table manager retirement failure", maxEvents = 100)
+    appender.setThreshold(Level.INFO)
+    withTempDir { dirA =>
+      withTempDir { dirB =>
+        val failingKey = makeKey(dirA.getCanonicalPath)
+        cache.getOrCreate(failingKey)
+        cache.getOrCreate(makeKey(dirB.getCanonicalPath))
+        withLogAppender(
+            appender,
+            loggerNames = Seq(
+              classOf[DeltaV2TableManagerCache].getName,
+              "com.google.common.cache.LocalCache"),
+            level = Some(Level.INFO)) {
+          cache.invalidateAll()
+          cache.cleanUp()
+        }
+        assert(cache.size() === 0L)
+        assert(healthy.retired, "a failing retirement must not stop other entries retiring")
+        val failures = appender.loggingEvents.filter(_.getThrown eq cause)
+        assert(failures.size === 1, "retirement failure must not also escape to Guava logging")
+        assert(failures.head.getLevel === Level.WARN)
+        assert(failures.head.getMessage.getFormattedMessage.startsWith(
+          s"Failed to retire Delta V2 table manager for ${failingKey.path.getParent.toUri} " +
+            "after cache eviction (EXPLICIT) in "))
+      }
     }
   }
 
@@ -439,7 +573,7 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
   override private[v2] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Option[Long],
-      catalogTableOpt: Option[CatalogTable],
+      queryContext: DeltaV2QueryContext,
       failOnDataLoss: Boolean)
       : ClosableIterator[DeltaSingleCommit] =
     throw new UnsupportedOperationException("stub")

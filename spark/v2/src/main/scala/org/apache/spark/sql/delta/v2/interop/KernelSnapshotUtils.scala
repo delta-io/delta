@@ -26,6 +26,7 @@ import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, DeletionVecto
 
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor => V1DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.implicits._
+import org.apache.spark.sql.delta.v2.DeltaV2Logging
 
 import org.apache.spark.sql.{Dataset, SparkSession}
 
@@ -36,7 +37,7 @@ import org.apache.spark.sql.{Dataset, SparkSession}
  * This object does not create a SparkSession or Kernel Engine. The caller passes them in so the
  * caller controls which Spark context and Hadoop configuration are used.
  */
-private[delta] object KernelSnapshotUtils {
+private[delta] object KernelSnapshotUtils extends DeltaV2Logging {
 
   /**
    * Reads the active files in the Kernel snapshot and returns them as V1 [[AddFile]] rows.
@@ -49,7 +50,13 @@ private[delta] object KernelSnapshotUtils {
       kernelSnapshot: SnapshotImpl,
       spark: SparkSession,
       engine: Engine): Dataset[AddFile] = {
-    spark.createDataset(collectV1AddFiles(kernelSnapshot, engine))
+    recordDeltaOperationForTablePath(
+      kernelSnapshot.getDataPath.toString, "scan.buildAllFiles") {
+      def buildTableState(): Dataset[AddFile] = {
+        spark.createDataset(collectV1AddFiles(kernelSnapshot, engine))
+      }
+      buildTableState()
+    }
   }
 
   /**

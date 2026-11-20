@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -61,12 +61,6 @@ import org.apache.spark.util.{ManualClock, SystemClock, Utils}
 
 object DeltaTestUtilsBase {
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
-
-  /**
-   * Whether the running Spark version supports NullType (VOID) columns in Delta tables.
-   * Used to gate NullType tests so they run on Spark 4.1+ and are skipped on Spark 4.0.
-   */
-  def nullTypeColumnsSupported: Boolean = !org.apache.spark.SPARK_VERSION.startsWith("4.0")
 
   /**
    * Collects `t` and every throwable in its cause chain (cycle-guarded) and asserts that at
@@ -144,7 +138,7 @@ trait ChangelogV2CDCUtilMixin
   // CDCTestMixin has no `excluded` hook, so filter by name in a test() override and ignore()
   // the matches; everything else runs. The V2 changelog read path uses the `SELECT ... CHANGES`
   // clause, which only the Spark 4.2 parser supports; supportsChangelogSyntax is a compile-time
-  // shim (true on spark-4.2, false on spark-4.0-4.1) so tests cancel on older versions.
+  // shim (true on spark-4.2+, false on spark-4.1) so tests cancel on older versions.
   override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
       implicit pos: org.scalactic.source.Position): Unit = {
     if (excludedV2Exact.contains(testName)) {
@@ -192,16 +186,14 @@ trait DeltaTestUtilsBase {
   // Re-define here to avoid the need to import it before using
   final def BOOLEAN_DOMAIN: Seq[Boolean] = DeltaTestUtilsBase.BOOLEAN_DOMAIN
 
-  /** Spark version bucket ("4.0", "4.1", "4.2+") that version-dependent behavior keys off. */
+  /** Spark version bucket ("4.1", "4.2+") that version-dependent behavior keys off. */
   def sparkVersionBucket(spark: SparkSession): String = {
     // Parse major and minor numerically so the bucket stays correct once Spark reaches 4.10,
     // where a lexicographic string compare would wrongly rank "4.10" below "4.2".
     val versionParts = spark.version.split('.')
     val major = versionParts(0).toInt
     val minor = versionParts(1).toInt
-    if (major > 4 || (major == 4 && minor >= 2)) "4.2+"
-    else if (major == 4 && minor >= 1) "4.1"
-    else "4.0"
+    if (major > 4 || (major == 4 && minor >= 2)) "4.2+" else "4.1"
   }
 
   class PlanCapturingListener() extends QueryExecutionListener {
@@ -532,11 +524,11 @@ trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
       tableRoot = deltaLog.dataPath,
       useDeletionVectorObjectIdentity = FileAction.useDeletionVectorObjectIdentity(
         snapshotForReplay.metadata, snapshotForReplay.protocol, spark),
-      retainFirstBackreference = AMTUtils.amtEnabled(snapshotForReplay))
+      retainFirstBackreference = AMTUtils.amtEnabled(snapshotForReplay, isPreviewCompatible = true))
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val catalogTable = tableName
       .map(name => spark.sessionState.catalog.getTableMetadata(new TableIdentifier(name)))
-    CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+    CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark, catalogTable, snapshotForReplay).foreach {
       tableCommitCoordinatorClient =>
         CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
@@ -916,9 +908,10 @@ trait DeltaDMLTestUtils
   with DeltaTestUtilsBase
   with DeltaTableProvider
   with BeforeAndAfterEach
+  with DeltaSQLCommandTest
   with CDCTestMixin {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def tableSQLIdentifier: String
 
@@ -988,7 +981,7 @@ trait DeltaDMLTestUtils
       targetKeyValueNames: (String, String) = ("key", "value"))(
       thunk: (String, String) => Unit = null): Unit = {
 
-    import testImplicits._
+    import deltaImplicits._
 
     append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
       if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)

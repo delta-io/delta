@@ -31,7 +31,7 @@ class DeltaInsertReplaceWhereTargetAliasSuite
   with SharedSparkSession
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   var testTableName: String = _
 
