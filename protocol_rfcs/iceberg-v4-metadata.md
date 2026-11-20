@@ -62,8 +62,6 @@ This design enables:
 
 <ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
 
-<ins>Because removes carry the removed file's stats, filtered log replay can apply the same data skipping to removes as to adds: a `remove` whose stats do not match the scan filter can only cancel entries that the filter also eliminates, so both can be dropped without tracking. This keeps reconciliation state bounded when replaying a high-churn log tail.</ins>
-
 
 ### Last Checkpoint File
 
@@ -505,7 +503,7 @@ A `DATA_MANIFEST` entry's `tight_stats` may be `true` only if every constituent 
 
 ### Stats Reconciliation
 
-Delta `add` actions carry statistics as a JSON `stats` string (`numRecords`, `nullCount`, `minValues`, `maxValues`, `tightStats`, `tightBounds`), keyed by physical column name. Manifest entries carry the same information as `content_stats`, keyed by column-mapping field ID and stored in each field's type. A live file's stats exist as `add.stats` while it is only in the Delta log, and as `content_stats` once it is folded into the tree — never both. Readers must treat the two representations as equivalent for data skipping. `remove` actions carry a copy of the removed file's stats so that log replay can prune them (see [Remove File](#remove-file)).
+Delta `add` actions carry statistics as a JSON `stats` string (`numRecords`, `nullCount`, `minValues`, `maxValues`, `tightStats`, `tightBounds`), keyed by physical column name. Manifest entries carry the same information as `content_stats`, keyed by column-mapping field ID and stored in each field's type. A live file's stats exist as `add.stats` while it is only in the Delta log, and as `content_stats` once it is folded into the tree — never both. Readers must treat the two representations as equivalent for data skipping. `remove` actions carry a copy of the removed file's stats (see [Remove File](#remove-file)).
 
 When folding a log `add` into a manifest, writers convert `add.stats` to `content_stats` as follows. Field IDs are the schema's column mapping IDs (`delta.columnMapping.id`), which are assigned in both `name` and `id` mode: the stats key (a physical column name) is matched to the schema field with that `delta.columnMapping.physicalName`, and that field's ID keys the stats struct. `minValues`/`maxValues` are converted from their JSON representation to the field's typed value.
 
