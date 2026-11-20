@@ -69,6 +69,14 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     super.sparkConf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
   }
 
+  override def afterAll(): Unit = {
+    try {
+      super.afterAll()
+    } finally {
+      featureRemovalFixtureDirs.foreach(dir => Utils.deleteRecursively(dir))
+    }
+  }
+
   // This is solely a test hook. Users cannot create new Delta tables with protocol lower than
   // that of their current version.
   protected def createTableWithProtocol(
@@ -2500,7 +2508,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     val batches = featureRemovalRanges.map { case (start, end) =>
       spark.range(start, end, 1L, 1)
     }
-    batches.reduce(_.union(_)).write.format("delta").save(dir.getCanonicalPath)
+    // Range lookup requires statistics-bearing files that retain the input partitions.
+    withSQLConf(
+        DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true",
+        DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false") {
+      batches.reduce(_.union(_)).write.format("delta").save(dir.getCanonicalPath)
+    }
     val produced = DeltaLog.forTable(spark, dir).getChanges(0L).flatMap(_._2)
       .collect { case file: AddFile => file }.toVector
     val byRange = produced.groupBy { file =>
@@ -2518,19 +2532,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
     // Qualify actual writer output; union partitions alone do not guarantee file grouping.
     assert(byRange.keySet == featureRemovalRanges.toSet)
-    assert(byRange.values.forall(_.size == 1))
-    val files = featureRemovalRanges.zipWithIndex.map { case (range, batch) =>
-      batch -> byRange(range)
-    }.toMap
-    (dir, files)
-  }
-
-  override def afterAll(): Unit = {
-    try {
-      super.afterAll()
-    } finally {
-      featureRemovalFixtureDirs.foreach(dir => Utils.deleteRecursively(dir))
-    }
+    assert(byRange.map { case (range, files) => range -> files.size } ==
+      featureRemovalRanges.map(_ -> 1).toMap)
+    (dir, byRange)
   }
 
   private def appendFeatureRemovalData(
@@ -2542,9 +2546,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       spark.range(start, end).write.format("delta").mode("append").save(log.dataPath.toString)
     } else {
       val (dir, batches) = featureRemovalData
-      val batch = featureRemovalRanges.indexOf((start, end))
       // Share encoding only. Every history owns its files and commits fresh transactions.
-      val files = batches(batch).map { file =>
+      val prepared = batches.getOrElse((start, end), fail(s"No prepared range ($start, $end)"))
+      val files = prepared.map { file =>
         val target = new File(
           DeltaFileOperations.absolutePath(log.dataPath.toString, file.path).toUri.getPath).toPath
         Files.createDirectories(target.getParent)
