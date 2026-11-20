@@ -24,9 +24,10 @@ An update that writes a new row version assigns a new Row Commit Timestamp. A pl
 
 ## Compatibility & Interaction with other features
 
-* It requires writer version 7 and reader version 3.  
+* It requires Writer Version 7. This feature does not impose an additional Reader Version requirement.
 * Writers may enable Row Commit Timestamps on an existing table after completing the required backfill and satisfying the enablement invariants for all existing rows.
-* Clients that do not support the new reader-writer table feature must reject tables using it.
+* Writers that do not support `rowCommitTimestamp` must reject writes to tables supporting the feature.
+* Readers do not need to support Row Commit Timestamps to read ordinary table columns, provided they support the table's other reader requirements.
 * Tables without the feature remain unaffected.
 * Row Tracking must be enabled.
 * In-Commit Timestamps must be enabled. Their values are used as Row Commit Timestamps.
@@ -96,8 +97,8 @@ When a row is inserted or updated, it is assigned the commit timestamp of the lo
 
 When Row Commit Timestamps are enabled:
 
-- The table must be on Writer Version 7 and Reader Version 3.
-- The feature `rowCommitTimestamp` must exist in the table `protocol`'s `writerFeatures` and `readerFeatures`.
+- The table must be on Writer Version 7.
+- The feature `rowCommitTimestamp` must exist in the table `protocol`'s `writerFeatures` and must not be listed in `readerFeatures`.
 - The features rowTracking, domainMetadata and inCommitTimestamp MUST  
 exist in writerFeatures.
 - The table properties delta.enableRowCommitTimestamps,
@@ -183,4 +184,4 @@ The writer requirements for Row Commit Versions apply correspondingly to Row Com
 
 | Feature                                         | Name                  | Readers or Writers? |
 | ----------------------------------------------- | --------------------- | ------------------- |
-| [Row Commit Timestamps](#row-commit-timestamps) | `rowCommitTimestamp` | Readers and Writers |
+| [Row Commit Timestamps](#row-commit-timestamps) | `rowCommitTimestamp` | Writers only |
