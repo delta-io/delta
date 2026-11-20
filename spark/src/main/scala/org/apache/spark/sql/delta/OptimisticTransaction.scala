@@ -992,7 +992,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
    */
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
     assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
-      "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
+      "Command-specified catalog-managed table UUID (ucTableId) should have been blocked earlier.")
     // Extract any existing ucTableId from the snapshot metadata.
     val existingUCTableIdConf: Map[String, String] =
       snapshot.metadata.configuration.filter { case (k, v) =>
