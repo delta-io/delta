@@ -26,8 +26,8 @@ import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
-import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.apache.spark.sql.types.DataType;
@@ -253,8 +253,12 @@ final class DeltaV2MicroBatchStreamUtils {
       long version, long index, CDCDataFile cdcFile) {
     IndexedFile file =
         new IndexedFile(
-            version, index, cdcFile.getAddFile(), cdcFile.getRemoveFile(),
-            cdcFile.getAddCDCFile(), /* shouldSkip= */ false);
+            version,
+            index,
+            cdcFile.getAddFile(),
+            cdcFile.getRemoveFile(),
+            cdcFile.getAddCDCFile(),
+            /* shouldSkip= */ false);
     return new Tuple2<>(file, cdcFile);
   }
 

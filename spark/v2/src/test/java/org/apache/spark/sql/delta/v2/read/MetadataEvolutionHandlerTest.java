@@ -31,11 +31,11 @@ import org.apache.spark.sql.delta.actions.Format;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.Protocol$;
-import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
+import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
@@ -349,10 +349,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             Option.empty(), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ true));
 
     List<IndexedFile> inputFiles =
-        Arrays.asList(
-            sentinel(1L, 0L),
-            sentinel(1L, 1L),
-            sentinel(1L, 2L));
+        Arrays.asList(sentinel(1L, 0L), sentinel(1L, 1L), sentinel(1L, 2L));
 
     List<IndexedFile> result =
         drainIndexedFiles(

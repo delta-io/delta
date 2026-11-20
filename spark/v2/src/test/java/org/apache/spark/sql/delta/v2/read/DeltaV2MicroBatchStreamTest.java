@@ -59,11 +59,11 @@ import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.amt.AMTTriggerMode;
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot;
-import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
@@ -780,8 +780,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
 
   /** Package-private so CDC tests can reuse without duplication. */
   static void compareFileChanges(
-      List<IndexedFile> deltaSourceFiles,
-      List<IndexedFile> kernelFiles) {
+      List<IndexedFile> deltaSourceFiles, List<IndexedFile> kernelFiles) {
     assertEquals(
         deltaSourceFiles.size(),
         kernelFiles.size(),
