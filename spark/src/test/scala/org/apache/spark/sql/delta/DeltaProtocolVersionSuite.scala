@@ -36,7 +36,7 @@ import org.apache.spark.sql.delta.redirect.{PathBasedRedirectSpec, RedirectReade
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.FileNames.{unsafeDeltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
@@ -46,13 +46,13 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.CalendarInterval
-import org.apache.spark.util.ManualClock
+import org.apache.spark.util.{ManualClock, Utils}
 
 trait DeltaProtocolVersionSuiteBase extends QueryTest
   with SharedSparkSession
@@ -2490,6 +2490,73 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     DeltaConfigs.parseCalendarInterval(
       DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION.defaultValue)
 
+  private val featureRemovalRanges = Seq((0L, 100L), (100L, 120L), (120L, 140L), (1L, 100L))
+  private var featureRemovalFixtureDirs = Vector.empty[File]
+
+  private lazy val featureRemovalData = {
+    val dir = Utils.createTempDir()
+    // Register partial preparations too, so failed writers cannot leak the fixture directory.
+    featureRemovalFixtureDirs :+= dir
+    val batches = featureRemovalRanges.map { case (start, end) =>
+      spark.range(start, end, 1L, 1)
+    }
+    batches.reduce(_.union(_)).write.format("delta").save(dir.getCanonicalPath)
+    val produced = DeltaLog.forTable(spark, dir).getChanges(0L).flatMap(_._2)
+      .collect { case file: AddFile => file }.toVector
+    val byRange = produced.groupBy { file =>
+      assert(file.partitionValues.isEmpty)
+      val stats = JsonUtils.mapper.readTree(file.stats)
+      assert(stats.has("numRecords"))
+      assert(stats.path("minValues").has("id"))
+      assert(stats.path("maxValues").has("id"))
+      assert(stats.path("nullCount").has("id"))
+      val start = stats.path("minValues").path("id").asLong()
+      val end = stats.path("maxValues").path("id").asLong() + 1L
+      assert(stats.path("numRecords").asLong() == end - start)
+      assert(stats.path("nullCount").path("id").asLong() == 0L)
+      (start, end)
+    }
+    // Qualify actual writer output; union partitions alone do not guarantee file grouping.
+    assert(byRange.keySet == featureRemovalRanges.toSet)
+    assert(byRange.values.forall(_.size == 1))
+    val files = featureRemovalRanges.zipWithIndex.map { case (range, batch) =>
+      batch -> byRange(range)
+    }.toMap
+    (dir, files)
+  }
+
+  override def afterAll(): Unit = {
+    try {
+      super.afterAll()
+    } finally {
+      featureRemovalFixtureDirs.foreach(dir => Utils.deleteRecursively(dir))
+    }
+  }
+
+  private def appendFeatureRemovalData(
+      log: DeltaLog,
+      start: Long,
+      end: Long,
+      useDataFrameWriter: Boolean = false): Unit = {
+    if (useDataFrameWriter) {
+      spark.range(start, end).write.format("delta").mode("append").save(log.dataPath.toString)
+    } else {
+      val (dir, batches) = featureRemovalData
+      val batch = featureRemovalRanges.indexOf((start, end))
+      // Share encoding only. Every history owns its files and commits fresh transactions.
+      val files = batches(batch).map { file =>
+        val target = new File(
+          DeltaFileOperations.absolutePath(log.dataPath.toString, file.path).toUri.getPath).toPath
+        Files.createDirectories(target.getParent)
+        val source = new File(
+          DeltaFileOperations.absolutePath(dir.toString, file.path).toUri.getPath).toPath
+        Files.copy(source, target)
+        file.copy(modificationTime = Files.getLastModifiedTime(target).toMillis)
+      }
+      log.startTransaction().commit(files, DeltaOperations.Write(SaveMode.Append))
+    }
+  }
+
   def testReaderFeatureRemoval(
       feature: TableFeature,
       featurePropertyKey: String,
@@ -2528,9 +2595,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "logRetentionPeriod" -> "30 days",
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryRetention.toString))
 
-      // Add some more commits.
-      spark.range(0, 100).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      // Retain complete writer histories for native and legacy features at default expiry.
+      val useDataFrameWriter = advanceClockPastRetentionPeriod && !truncateHistory
+      appendFeatureRemovalData(deltaLog, 0L, 100L, useDataFrameWriter)
+      appendFeatureRemovalData(deltaLog, 100L, 120L, useDataFrameWriter)
 
       // Table still contains historical data with the feature. Attempt should fail.
       val e2 = intercept[DeltaTableFeatureException] {
@@ -2548,7 +2616,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryRetention.toString))
 
       // Generate commit.
-      spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      appendFeatureRemovalData(deltaLog, 120L, 140L, useDataFrameWriter)
 
       // Pretend retention period has passed.
       if (advanceClockPastRetentionPeriod) {
@@ -2601,7 +2669,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Validate extra commits.
       val table = io.delta.tables.DeltaTable.forPath(deltaLog.dataPath.toString)
-      assert(table.toDF.count() == 140)
+      QueryTest.checkAnswer(table.toDF, (0L until 140L).map(Row(_)), checkToRDD = false)
     }
   }
 
@@ -2910,8 +2978,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         featureProperty = TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
 
       // Add some more commits.
-      spark.range(0, 100).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      appendFeatureRemovalData(deltaLog, 0L, 100L)
+      appendFeatureRemovalData(deltaLog, 100L, 120L)
 
       // First attempt should cleanup feature traces but fail with a message due to historical
       // log entries containing the feature.
@@ -2933,7 +3001,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       clock.advance(TimeUnit.DAYS.toMillis(1) + TimeUnit.HOURS.toMillis(24))
 
       // Generate commit.
-      spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      appendFeatureRemovalData(deltaLog, 120L, 140L)
 
       // Add feature property again.
       val v2Table = DeltaTableV2(spark, deltaLog.dataPath)
@@ -3008,7 +3076,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "logRetentionPeriod" -> "1 days",
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
-      spark.range(1, 100).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      appendFeatureRemovalData(deltaLog, 1L, 100L)
 
       // Pretend retention period has passed.
       clock.advance(
@@ -3060,8 +3128,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
       // Add some more commits.
-      spark.range(0, 100).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      appendFeatureRemovalData(deltaLog, 0L, 100L)
+      appendFeatureRemovalData(deltaLog, 100L, 120L)
 
       // Restore table to an older version with feature traces.
       sql(s"RESTORE delta.`${deltaLog.dataPath}` TO VERSION AS OF $preRemovalVersion")
@@ -3111,8 +3179,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
       // Add some more commits.
-      spark.range(0, 100).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      appendFeatureRemovalData(deltaLog, 0L, 100L)
+      appendFeatureRemovalData(deltaLog, 100L, 120L)
 
       // Pretend retention period has passed.
       clock.advance(
