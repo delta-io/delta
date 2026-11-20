@@ -89,10 +89,10 @@ import org.apache.spark.sql.types.StructType
  */
 private[read] class DeltaV2MicroBatchStream(
       tableManager: DeltaV2TableManager,
-      snapshotAtSourceInit: Snapshot,
+      override protected val snapshotAtSourceInit: Snapshot,
       hadoopConf: Configuration,
       override protected val spark: SparkSession,
-      options: DeltaOptions,
+      override protected val options: DeltaOptions,
       inputTablePath: String,
       dataSchema: StructType,
       partitionSchema: StructType,
@@ -204,6 +204,8 @@ private[read] class DeltaV2MicroBatchStream(
   }
   private val readSchemaAtSourceInit: StructType =
       Objects.requireNonNull(readSnapshotDescriptor.schema, "readSchemaAtSourceInit is null")
+  override protected val schema: StructType =
+      DeltaSource.sourceSchema(spark, options, readSchemaAtSourceInit)
   private val readerSupportsDeletionVectors: Boolean =
       DeletionVectorUtils.deletionVectorsReadable(
           readSnapshotDescriptor.protocol, readSnapshotDescriptor.metadata)
@@ -1169,96 +1171,6 @@ private[read] class DeltaV2MicroBatchStream(
     }
 
     new CommitValidationResult(shouldSkipCommit, metadataAction, protocolAction)
-  }
-
-  /**
-   * Narrow waist to verify a metadata action for read-incompatible schema changes, specifically: 1.
-   * Any column mapping related schema changes (rename / drop) columns 2. Standard
-   * read-compatibility changes including: a) No missing columns b) No data type changes c) No
-   * read-incompatible nullability changes If the check fails, we throw an exception to exit the
-   * stream. If lazy log initialization is required, we also run a one time scan to safely
-   * initialize the metadata tracking log upon any non-additive schema change failures.
-   *
-   * @param metadata Metadata that contains a potential schema change
-   * @param version Version for the metadata action
-   * @param batchStartVersion Starting version of the batch being processed
-   * @param batchEndVersion Ending version of the batch being processed, or None for the latest
-   * @param validatedDuringStreamStart Whether this check is being done during stream start.
-   */
-  private def checkReadIncompatibleSchemaChanges(
-      metadata: Metadata,
-      version: Long,
-      batchStartVersion: Long,
-      batchEndVersion: Option[Long],
-      validatedDuringStreamStart: Boolean): Unit = {
-    logger.info(
-        "checking read incompatibility with schema at version {}, inside batch[{}, {}].",
-        Long.box(version),
-        Long.box(batchStartVersion),
-        batchEndVersion.map(_.toString).getOrElse("latest"))
-
-    var newMetadata, oldMetadata: Metadata = null
-    if (version < snapshotAtSourceInit.version) {
-      newMetadata = snapshotAtSourceInit.metadata
-      oldMetadata = metadata
-    } else {
-      newMetadata = metadata
-      oldMetadata = snapshotAtSourceInit.metadata
-    }
-
-    // Table ID has changed during streaming
-    if (!Objects.equals(newMetadata.id, oldMetadata.id)) {
-      throw DeltaErrors.differentDeltaTableReadByStreamingSource(newMetadata.id, oldMetadata.id)
-    }
-
-    // Partition column change will be ignored if user enable the unsafe flag
-    var newPartitionColumns, oldPartitionColumns: Seq[String] = null
-    if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) {
-      newPartitionColumns = Seq.empty[String]
-      oldPartitionColumns = Seq.empty[String]
-    } else {
-      newPartitionColumns = newMetadata.partitionColumns.toList
-      oldPartitionColumns = oldMetadata.partitionColumns.toList
-    }
-
-    checkNonAdditiveSchemaChanges(
-        oldMetadata,
-        newMetadata,
-        validatedDuringStreamStart)
-
-    // Other standard read compatibility changes
-    if (!validatedDuringStreamStart
-        || !schemaReadOptions
-            .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
-
-      val schemaChange: StructType = metadata.schema
-
-      // There is a schema change. All files after this commit will use `schemaChange`. Hence, we
-      // check whether we can use `schema` (the fixed source schema we use in the same run of the
-      // query) to read these new files safely.
-      val backfilling: Boolean = version < snapshotAtSourceInit.version
-
-      val checkResult: DeltaStreamUtils.SchemaCompatibilityResult =
-          DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
-              schemaChange,
-              readSchemaAtSourceInit,
-              newPartitionColumns,
-              oldPartitionColumns,
-              backfilling,
-              schemaReadOptions)
-
-      if (!DeltaStreamUtils.SchemaCompatibilityResult.isCompatible(checkResult)) {
-        val isRetryable: Boolean =
-            DeltaStreamUtils.SchemaCompatibilityResult.isRetryableIncompatible(
-                checkResult)
-        throw DeltaErrors.schemaChangedException(
-                readSchemaAtSourceInit,
-                schemaChange,
-                isRetryable,
-                Some.apply(version),
-                options.containsStartingVersionOrTimestamp)
-      }
-    }
   }
 
   /**

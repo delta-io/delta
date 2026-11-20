@@ -34,6 +34,7 @@ import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.delta.DeltaIllegalStateException;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
@@ -1192,6 +1193,87 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         DeltaSourceOffset.METADATA_CHANGE_INDEX(),
         barrier._1().getIndex(),
         "Barrier sentinel must survive admission");
+  }
+
+  /**
+   * Verifies both connectors report the same error for a forward additive schema change on a change
+   * data feed stream, and that the schemas in the error include the CDC columns.
+   *
+   * <p>Setup: v0=CREATE, v1=ALTER ENABLE CDF, both sources start, v2=ALTER ADD COLUMNS, v3=INSERT.
+   */
+  @Test
+  public void testGetFileChangesForCDC_onForwardAdditiveChange_throwsSameErrorAsV1(
+      @TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_forward_additive_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName); // v0, v1
+    scala.collection.immutable.Map<String, String> cdcOptionsMap =
+        Map$.MODULE$.<String, String>empty().updated("readChangeFeed", "true");
+    DeltaOptions cdcOptions = new DeltaOptions(cdcOptionsMap, spark.sessionState().conf());
+
+    // Create both sources before the schema change, so that the change is a forward change.
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, tablePath, cdcOptions);
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, cdcOptions);
+
+    sql("ALTER TABLE %s ADD COLUMNS (age INT)", tableName); // v2
+    sql("INSERT INTO %s VALUES (1, 'User1', 30)", tableName); // v3
+    long fromVersion = 2L;
+
+    DeltaIllegalStateException dsv1Exception =
+        assertThrows(
+            DeltaIllegalStateException.class,
+            () -> {
+              ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
+                  deltaSource.getFileChangesWithRateLimit(
+                      fromVersion,
+                      DeltaSourceOffset.BASE_INDEX(),
+                      /* isInitialSnapshot= */ false,
+                      /* limits= */ Option.empty());
+              try {
+                while (iter.hasNext()) iter.next();
+              } finally {
+                iter.close();
+              }
+            },
+            "DSv1 should throw on the forward additive schema change");
+
+    DeltaIllegalStateException dsv2Exception =
+        assertThrows(
+            DeltaIllegalStateException.class,
+            () -> {
+              try (ClosableIterator<?> iter =
+                  stream.getFileChangesWithRateLimitForCDC(
+                      fromVersion,
+                      DeltaSourceOffset.BASE_INDEX(),
+                      /* isInitialSnapshot= */ false,
+                      /* limits= */ Optional.empty(),
+                      /* endOffset= */ Optional.empty())) {
+                while (iter.hasNext()) iter.next();
+              }
+            },
+            "DSv2 should throw on the forward additive schema change");
+
+    assertEquals(dsv1Exception.getClass(), dsv2Exception.getClass());
+    assertEquals("DELTA_SCHEMA_CHANGED_WITH_VERSION", dsv1Exception.getErrorClass());
+    assertEquals(dsv1Exception.getErrorClass(), dsv2Exception.getErrorClass());
+    Map<String, String> dsv2Parameters = dsv2Exception.getMessageParameters();
+    assertEquals(dsv1Exception.getMessageParameters(), dsv2Parameters);
+    for (String schemaParameter : List.of("readSchema", "dataSchema")) {
+      for (String cdcColumn :
+          List.of(
+              CDCReader.CDC_TYPE_COLUMN_NAME(),
+              CDCReader.CDC_COMMIT_VERSION(),
+              CDCReader.CDC_COMMIT_TIMESTAMP())) {
+        assertTrue(
+            dsv2Parameters.get(schemaParameter).contains(cdcColumn),
+            schemaParameter + " should contain " + cdcColumn + ": " + dsv2Parameters);
+      }
+    }
   }
 
   /**
