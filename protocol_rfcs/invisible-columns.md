@@ -43,6 +43,10 @@ The feature does not change the default behavior of readers that do not understa
 Columns. Those readers continue to use `metaData.schemaString` and ignore unrequested fields in
 data files.
 
+Partition columns and fields referenced by their generation expressions must remain visible.
+This allows readers to resolve partition-generation expressions against the visible schema,
+including when deriving partition filters.
+
 | Case | Outcome |
 |-|-|
 | Old reader, table with this feature | Ignores the unrecognized `metaData.invisibleSchemaString` field under [Protocol Evolution](#protocol-evolution). Reads the visible schema from `metaData.schemaString` using normal column-resolution rules and does not request invisible fields from data files. It cannot expose invisible columns through this feature. |
@@ -85,7 +89,7 @@ metadata or relax the table's reader and writer requirements.
 | Domain metadata | No new metadata domain or dependency on `domainMetadata`. Other features' domains continue to follow their existing rules. |
 | In-commit timestamps | No change to commit timestamps, `commitInfo` placement, or time-travel rules. The schemas come from the metadata of the requested snapshot. |
 | Type widening | See the Type widening requirements under [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). |
-| Generated columns, CHECK constraints, invariants, default columns, identity columns | See [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). Column invariants apply to invisible columns under the same feature-support and enforcement requirements as visible columns. |
+| Generated columns, CHECK constraints, invariants, default columns, identity columns | See [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). Generation expressions on partition columns cannot reference invisible fields. Column invariants apply to invisible columns under the same feature-support and enforcement requirements as visible columns. |
 | Clustering and partitioning | See the Clustering and Partitioning requirements under [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). |
 | Statistics and data skipping | Invisible columns use the normal per-column statistics formats and column-resolution rules, including physical names with Column Mapping. Existing requirements for statistics, including those for clustering and deletion vectors, still apply. Readers use statistics for the columns they read; no new statistics format is introduced. |
 | IcebergCompatV1/V2/V3, Iceberg writer compat | Invisible columns are prohibited when IcebergCompatV1/V2/V3 is enabled. This also excludes use with the proposed [IcebergWriterCompatV1](iceberg-writer-compat-v1.md), which requires IcebergCompatV2 to be enabled. |
@@ -297,8 +301,10 @@ satisfy the requirements in [Removing the feature](#removing-the-feature).
   [Identity Columns](#identity-columns) requirements as a visible column.
 - **Generated columns.** An invisible column MAY be a generated column, subject to the same
   [Generated Columns](#generated-columns) requirements as a visible column. Generation expressions
-  MAY reference invisible columns under the same rules as visible columns. Writers MUST resolve
-  these references against the complete data schema.
+  MAY reference invisible columns under the same rules as visible columns, except that generation
+  expressions on partition columns MUST NOT reference invisible fields. Writers MUST reject schema
+  changes that would violate this restriction. Writers MUST resolve generation-expression references
+  against the complete data schema.
 - **Column defaults.** An invisible column MAY carry a column default, subject to the same
   [Default Columns](#default-columns) requirements as a visible column.
 - **Type widening.** Invisible columns support [Type Widening](#type-widening) under the same
@@ -408,6 +414,13 @@ Hide `scores.key.id` while `scores` remains visible | No
 Hide the entire key while `scores` remains visible | No
 Hide `scores.value.internal_id` | Yes
 Hide the entire `scores` column | Yes
+
+For a generated column `day` with generation expression `CAST(ts AS DATE)`:
+
+Table configuration | May `ts` be invisible?
+-|-
+`day` is a partition column | No
+`day` is not a partition column | Yes
 
 The following two actions form a complete initial commit, `_delta_log/00000000000000000000.json`,
 for an empty, unpartitioned table with a visible `id` column and an invisible
