@@ -539,7 +539,7 @@ All fields are optional. Writers should omit the struct when every field is null
 
 Delta does not transform these fields. A writer that commits an `add` or `remove` for a file that is live in the table must copy them unchanged from the file's current `add` or content entry.
 
-When converting an `add` or `remove` to a content entry, writers copy each non-null passthrough field into its entry field. When producing an `add` from a content entry, readers and writers copy each non-null entry field into the passthrough after resolving inheritence.
+When converting an `add` or `remove` to a content entry, writers copy each non-null passthrough field into its entry field. When producing an `add` from a content entry, readers and writers copy each non-null entry field into the passthrough after resolving inheritance.
 
 ## Snapshot ID Generation
 
