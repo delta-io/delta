@@ -55,7 +55,7 @@ trait CatalogManagedStreamingSuiteBase
 
   protected def getTrackingClient: Option[TrackingCommitCoordinatorClient] =
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      Some(getCatalogOwnedCommitCoordinatorClient(
+      Some(getCatalogManagedCommitCoordinatorClient(
         CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
           .asInstanceOf[TrackingCommitCoordinatorClient])
     } else {

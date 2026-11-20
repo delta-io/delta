@@ -109,7 +109,7 @@ trait CatalogOwnedTestBaseSuite
    * @param catalogName The name of the catalog to get the commit coordinator client for.
    * @return The commit coordinator client for the specified catalog.
    */
-  protected def getCatalogOwnedCommitCoordinatorClient(
+  protected def getCatalogManagedCommitCoordinatorClient(
       catalogName: String): CommitCoordinatorClient = {
     CatalogManagedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
       throw new IllegalStateException(
