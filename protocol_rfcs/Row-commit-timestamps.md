@@ -43,7 +43,7 @@ Current way: Use only row commit versions and extract timestamps from the commit
 
 ## Open questions
 
-- What value should be backfilled for rows whose Row Commit Version cannot be resolved to a timestamp (e.g., because the log retention period has expired)?
+None.
 
 ## Examples
 
@@ -86,7 +86,7 @@ After checkpointing, removing the original JSON commit files must not change the
 
 Row Commit Timestamps record the timestamp at which a row was last modified. More precisely, a Row Commit Timestamp is the final `inCommitTimestamp` of the successful commit that inserted or updated the row. This helps retain the precise timestamps for write operations, as reading a Row Commit Timestamp must not require the originating `commitInfo` to remain available. 
 
-Row Commit Timestamps introduce `rowCommitTimestamp`, a writer table feature that extends Row Tracking with another row tracking metadata field `row_commit_timestamp`. It is directly equivalent to each row's stable `row_commit_version`. Therefore, both Row Tracking and In-Commit Timestamps have to be enabled.
+Row Commit Timestamps introduce `rowCommitTimestamp`, a writer table feature that extends Row Tracking with another row tracking metadata field `row_commit_timestamp`. It is directly equivalent to each row's stable `row_commit_version` (backfilled values might differ). Therefore, both Row Tracking and In-Commit Timestamps have to be enabled.
 
 When a row is inserted or updated, it is assigned the commit timestamp of the log entry containing the `add` entry with the new row.
   When a row is updated so that a new stable row commit version is set, the Row Commit Timestamp for this row is updated as well.
@@ -112,7 +112,14 @@ delta.rowTracking.materializedRowCommitTimestampColumnName.
 - If this field is missing from any active `add` action, writers must first commit replacement `add` actions that set it. This can be done in the enablement commit or in an earlier commit.
 - The materialized Row Commit Timestamp column name must satisfy the same uniqueness requirements as the materialized Row Commit Version column name.
 
-Enabling the feature on an existing table is supported.
+Enabling the feature on an existing table is supported. Writers must initialize the timestamps for existing rows as follows:
+
+1. If a row already has a stable Row Commit Version and the corresponding `inCommitTimestamp` is available, writers must use that timestamp.
+2. If a row already has a stable Row Commit Version but the corresponding `inCommitTimestamp` is not available, writers must use the earliest available `inCommitTimestamp` to backfill the timestamp values. If none is available rule 3 applies.
+3. If Row Tracking and Row Commit Timestamps are enabled together or no historical `inCommitTimestamp` is available, writers must use the final `inCommitTimestamp` of the commit that initializes the row's timestamp metadata.
+
+Timestamps assigned under rules 2 and 3 represent upper bounds on the historical commit time, rather than exact timestamps of the last insert or update. Rows with different stable Row Commit Versions may receive the same timestamp.
+
 
 ### Schema
 
