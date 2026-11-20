@@ -417,6 +417,13 @@ abstract class CloneTableBase(
       metadata.configuration ++
         validatedConfigurationsWithoutCoordinatedCommits ++
         finalCatalogManagedMetadata)
+    // An existing target keeps its AMT property, as it keeps the AMT feature in its protocol. Else
+    // a RESTORE to a version before the upgrade, or a REPLACE CLONE, turns AMT writes off.
+    if (tableExists(targetSnapshot)) {
+      val amtKey = DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key
+      metadata = metadata.copy(configuration = metadata.configuration - amtKey ++
+        targetSnapshot.metadata.configuration.get(amtKey).map(amtKey -> _))
+    }
     // An AMT source makes a new target AMT only through the protocol, which the defaults applied
     // while creating its metadata (e.g. the catalog-managed QoL features) do not see. Request AMT
     // in the configuration too, so that they skip the features AMT is incompatible with. An

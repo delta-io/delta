@@ -1647,12 +1647,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Rejects incompatible feature combinations in the protocol and metadata being committed.
+   * Rejects incompatible feature combinations in the protocol and metadata being committed, and a
+   * change of the AMT state by an operation that may not make it.
    */
-  protected def performTableFeatureIncompatibilityCheck(): Unit = {
+  protected def performTableFeatureIncompatibilityCheck(op: DeltaOperations.Operation): Unit = {
     val tableName = catalogTable.map(_.qualifiedName).getOrElse(dataPath.toString)
     AMTUtils.assertFeatureCompatibility(
       spark, snapshot, protocol, metadata, isCreatingNewTable, tableName)
+    // Only a commit that changes the metadata can change the AMT state.
+    newMetadata.foreach(AMTUtils.checkPropertyChange(snapshot, _, protocol, op))
   }
 
   /**
@@ -2278,7 +2281,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // feature in the metadata (if needed) and add it to the protocol.
     // e.g. Coordinated Commits requires ICT and VacuumProtocolCheck to be enabled.
     updateMetadataAndProtocolWithRequiredFeatures(newMetadata, newProtocol.toSeq)
-    performTableFeatureIncompatibilityCheck()
+    performTableFeatureIncompatibilityCheck(op)
 
     def recordCommitLargeFailure(ex: Throwable, op: DeltaOperations.Operation): Unit = {
       val coordinatedCommitsExceptionOpt = ex match {
@@ -2754,7 +2757,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       )
     newProtocol = protocolUpdate1.orElse(newProtocol)
     newMetadata = metadataUpdate1.orElse(newMetadata)
-    performTableFeatureIncompatibilityCheck()
+    performTableFeatureIncompatibilityCheck(op)
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
