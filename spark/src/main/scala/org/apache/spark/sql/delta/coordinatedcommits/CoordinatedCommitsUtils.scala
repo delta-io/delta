@@ -57,7 +57,7 @@ object CatalogManagedTableUtils extends DeltaLogging {
    *
    * @param txn The OptimisticTransaction to modify protocol and metadata on
    * @param withCatalogManagedTableFeature If true, adds CatalogManagedTableFeature to the protocol
-   *                                      and ensures ICT enablement. If false, removes it.
+   *                                       and ensures ICT enablement. If false, removes it.
    *
    * @note When adding CatalogManagedTableFeature, this method also forces a metadata update
    *       to ensure ICT (In-Commit Timestamp) is properly enabled. See the below comment
