@@ -1762,69 +1762,135 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       description: String,
       availableVersions: Seq[Long],
       stagedVersions: Seq[Long],
+      start: Long,
       maxEndVersion: Long,
       strictVersions: Seq[Long],
       strictError: Option[(Class[_ <: KernelException], Seq[String])],
-      lenientVersions: Seq[Long])
+      lenientVersions: Seq[Long],
+      expectedEnd: Long)
 
   private val maxEndRawRangeCases = Seq(
     MaxEndRawRangeCase(
       "5,6,12 with max 10 (gap proven by a commit past the bound)",
       Seq(5L, 6L, 12L),
       Seq.empty,
+      5,
       10,
       Seq(5L, 6L),
       Some(gapErrorParts(7)),
-      Seq(5L, 6L)),
+      Seq(5L, 6L),
+      6),
     MaxEndRawRangeCase(
       "5,6,8 with max 10 (gap proven by a commit inside the bound)",
       Seq(5L, 6L, 8L),
       Seq.empty,
+      5,
       10,
       Seq(5L, 6L),
       Some(gapErrorParts(7)),
-      Seq(5L, 6L, 8L)),
+      Seq(5L, 6L, 8L),
+      8),
     MaxEndRawRangeCase(
       "5,6 with max 10 (no later commit proves anything)",
       Seq(5L, 6L),
       Seq.empty,
+      5,
       10,
       Seq(5L, 6L),
       None,
-      Seq(5L, 6L)),
+      Seq(5L, 6L),
+      6),
     MaxEndRawRangeCase(
       "5,6,12 with max 6 (the range reaches the bound)",
       Seq(5L, 6L, 12L),
       Seq.empty,
+      5,
       6,
       Seq(5L, 6L),
       None,
-      Seq(5L, 6L)),
+      Seq(5L, 6L),
+      6),
     MaxEndRawRangeCase(
       "5,6 with a staged commit 12 and max 10",
       Seq(5L, 6L),
       Seq(12L),
+      5,
       10,
       Seq(5L, 6L),
       Some(gapErrorParts(7)),
-      Seq(5L, 6L)))
+      Seq(5L, 6L),
+      6),
+    // Empty ranges: with no commit in range the end is anchored at the start version
+    MaxEndRawRangeCase(
+      "only 12 with start 5 and max 10 (missing start)",
+      Seq(12L),
+      Seq.empty,
+      5,
+      10,
+      Seq.empty,
+      Some(startErrorParts(5, 12)),
+      Seq.empty,
+      5),
+    MaxEndRawRangeCase(
+      "no commits at or after 5 with max 10",
+      Seq(2L, 3L),
+      Seq.empty,
+      5,
+      10,
+      Seq.empty,
+      None,
+      Seq.empty,
+      5),
+    // Reversed: the start is above the max end version
+    MaxEndRawRangeCase(
+      "reversed start 7 and max 5 with 7,8",
+      Seq(7L, 8L),
+      Seq.empty,
+      7,
+      5,
+      Seq.empty,
+      None,
+      Seq.empty,
+      7),
+    MaxEndRawRangeCase(
+      "reversed start 7 and max 5 with only 8 (missing start)",
+      Seq(8L),
+      Seq.empty,
+      7,
+      5,
+      Seq.empty,
+      Some(startErrorParts(7, 8)),
+      Seq.empty,
+      7),
+    MaxEndRawRangeCase(
+      "reversed start 7 and max 5 with no 7+",
+      Seq(3L, 4L),
+      Seq.empty,
+      7,
+      5,
+      Seq.empty,
+      None,
+      Seq.empty,
+      7))
 
   for (testCase <- maxEndRawRangeCases; failOnDataLoss <- Seq(true, false)) {
     test(s"raw getCommitFiles withMaxEndVersion: ${testCase.description} - " +
       s"failOnDataLoss=$failOnDataLoss") {
       val commitRange = buildRawRange(
         deltaFileStatuses(testCase.availableVersions),
-        5,
+        testCase.start,
         None,
         commitRangeValidation = false,
         failOnDataLoss = failOnDataLoss,
         logData = stagedLogData(testCase.stagedVersions),
         maxEndVersion = Some(testCase.maxEndVersion))
+      assert(commitRange.getStartVersion == testCase.start)
+      assert(commitRange.getEndVersion == testCase.expectedEnd)
+      assert(commitRange.isEmpty == testCase.lenientVersions.isEmpty)
       val (yielded, error) = drainCommitFiles(commitRange)
       val expectedVersions =
         if (failOnDataLoss) testCase.strictVersions else testCase.lenientVersions
       assert(yielded.map(_.getVersion) == expectedVersions)
-      assert(commitRange.getEndVersion == testCase.lenientVersions.max)
       val expectedError = if (failOnDataLoss) testCase.strictError else None
       assert(error.isDefined == expectedError.isDefined)
       expectedError.foreach { case (errorClass, messageParts) =>
