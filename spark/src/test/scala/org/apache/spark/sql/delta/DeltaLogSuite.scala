@@ -28,7 +28,9 @@ import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
+import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -59,6 +61,53 @@ class DeltaLogSuite extends QueryTest
 
 
   protected val testOp = Truncate()
+
+  for (histogramsEnabled <- Seq(true, false)) {
+    test(s"Mixed same-path commit reports physical file metrics, histograms = $histogramsEnabled") {
+      withSQLConf(
+          DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> histogramsEnabled.toString,
+          DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+        withTempDir { dir =>
+          val log = DeltaLog.forTable(spark, dir)
+          spark.range(0).write.format("delta").save(dir.getCanonicalPath)
+          val paired = createTestAddFile("paired", size = 400L, stats = """{"numRecords":2}""")
+          val smallRemove = createTestAddFile("small-remove", size = 100L)
+          val largeRemove = createTestAddFile("large-remove", size = 14000L)
+          log.startTransaction().commit(Seq(paired, smallRemove, largeRemove),
+            DeltaOperations.ManualUpdate)
+
+          val bitmap = RoaringBitmapArray(0L)
+          val dv = DeletionVectorDescriptor.inlineInLog(
+            bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable), bitmap.cardinality)
+          val (pairedAdd, pairedRemove) = paired.removeRows(
+            dv, updateStats = true)
+          val events = Log4jUsageLogger.track {
+            log.startTransaction().commit(Seq(pairedAdd, pairedRemove, smallRemove.remove,
+              largeRemove.remove, createTestAddFile("small-add", size = 300L),
+              createTestAddFile("large-add", size = 12000L)), DeltaOperations.ManualUpdate)
+          }
+          val stats = events.filter(_.tags.get("opType").contains("delta.commit.stats"))
+            .map(e => JsonUtils.fromJson[CommitStats](e.blob)).last
+          assert(stats.numAdd === 2 && stats.numRemove === 2)
+          assert(stats.bytesNew === 12300L && stats.bytesRemoved.contains(14100L))
+          assert(stats.numDeletionVectorsAdded.contains(1L))
+          assert(stats.numDeletionVectorsBytesAdded.contains(dv.sizeInBytes.toLong))
+          assert(stats.numDeletionVectorsRemoved.contains(0L))
+          assert(stats.numDeletionVectorsBytesRemoved.contains(0L))
+          if (histogramsEnabled) {
+            val bounds = IndexedSeq(0L, 8192L, 16384L)
+            assert(stats.addFilesHistogram.contains(
+              FileSizeHistogram(bounds, Array(1L, 1L, 0L), Array(300L, 12000L, 0L))))
+            assert(stats.removeFilesHistogram.contains(
+              FileSizeHistogram(bounds, Array(1L, 1L, 0L), Array(100L, 14000L, 0L))))
+          } else {
+            assert(stats.addFilesHistogram.isEmpty && stats.removeFilesHistogram.isEmpty)
+          }
+        }
+      }
+    }
+  }
 
   testDifferentCheckpoints("checkpoint", quiet = true) { (_, _) =>
     val tempDir = Utils.createTempDir()

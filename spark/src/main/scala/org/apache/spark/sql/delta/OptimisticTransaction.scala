@@ -56,7 +56,7 @@ import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils, Unsup
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
 import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, SamePathFileActionMetrics, TransactionHelper}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
@@ -169,10 +169,13 @@ case class CommitStats(
   commitDurationMs: Long,
   fsWriteDurationMs: Long,
   stateReconstructionDurationMs: Long,
+  /** Added data-file count, excluding same-path pairs when DV-aware metrics are enabled. */
   numAdd: Int,
+  /** Removed data-file count, excluding same-path pairs when DV-aware metrics are enabled. */
   numRemove: Int,
   /** The number of [[SetTransaction]] actions in the committed actions. */
   numSetTransaction: Int,
+  /** Added dataChange=true bytes, excluding same-path pairs when DV-aware metrics are enabled. */
   bytesNew: Long,
   /** The number of files in the table as of version `readVersion`. */
   numFilesTotal: Long,
@@ -206,7 +209,17 @@ case class CommitStats(
   /** Metrics for the AMT (Adaptive Metadata Tree) write used by this commit, if any. */
   amtCommitStats: Option[AMTCommitStats] = None,
   /** The operation class derived from this commit's AddFile and RemoveFile actions. */
-  fileActionOperationClass: Option[String] = None
+  fileActionOperationClass: Option[String] = None,
+  /** Bytes in removed physical data files, excluding same-path AddFile/RemoveFile pairs. */
+  bytesRemoved: Option[Long] = None,
+  /** Gross number of AddFile actions carrying a deletion vector. */
+  numDeletionVectorsAdded: Option[Long] = None,
+  /** Gross number of RemoveFile actions carrying a deletion vector. */
+  numDeletionVectorsRemoved: Option[Long] = None,
+  /** Gross bytes of deletion vectors referenced by AddFile actions. */
+  numDeletionVectorsBytesAdded: Option[Long] = None,
+  /** Gross bytes of deletion vectors referenced by RemoveFile actions. */
+  numDeletionVectorsBytesRemoved: Option[Long] = None
 )
 
 /**
@@ -2257,6 +2270,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
    * The `nonProtocolMetadataActions` parameter should only contain non-{protocol, metadata}
    * actions only. If the protocol of table needs to be updated, it should be passed in the
    * `newProtocolOpt` parameter.
+   * Callers with same-path file pairs supply their precomputed metrics so the action iterator
+   * can be consumed in one pass.
    */
   def commitLarge(
       spark: SparkSession,
@@ -2265,7 +2280,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       op: DeltaOperations.Operation,
       context: Map[String, String],
       metrics: Map[String, String],
-      dataChange: Boolean
+      dataChange: Boolean,
+      samePathPairMetrics: SamePathFileActionMetrics.SamePathPairMetrics =
+        SamePathFileActionMetrics.empty
   ): (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
     assert(committed.isEmpty, "Transaction already committed.")
     commitStartNano = System.nanoTime()
@@ -2378,7 +2395,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       val catalogTrackedInfo = new CatalogTrackedInfo(
         icebergTrackedInfo.deltaUniformIceberg(), capturedDomainMetadata.asJava)
 
-      val commitStatsComputer = new CommitStatsComputer()
+      val commitStatsComputer = new CommitStatsComputer(samePathPairMetrics)
       allActions = commitStatsComputer.addToCommitStats(allActions)
       allActions = ConflictChecker.trackDataChange(
         spark, allActions, deltaLog, op, callerContext = "commitLarge")
@@ -3509,7 +3526,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       AMTWriterManager.planMaintenanceAfterInlineWrite(
         spark, snapshot, committedTransactionInfo.op, attemptVersion, postCommitSnapshot)
     }
-    val commitStatsComputer = new CommitStatsComputer()
+    val commitStatsComputer = new CommitStatsComputer(getSamePathFileActionMetrics(actions))
     // Add to commit stats and consume the returned iterator.
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
     partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
