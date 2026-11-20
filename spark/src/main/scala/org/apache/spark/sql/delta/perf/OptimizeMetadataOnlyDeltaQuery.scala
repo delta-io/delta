@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.{DataFrameUtils, DeltaColumnMapping, DeltaTabl
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
@@ -175,8 +176,18 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       child = files.queryExecution.logical)
     // Collect InternalRows to keep values in Catalyst form. Converting through external Rows would
     // rebase DATE and TIMESTAMP values via java.sql types, shifting e.g. 1582-10-10 to 1582-10-15.
+    // At most maxValues + 1 groups are collected, to bound the rows held on the driver.
+    val maxValues = SQLConf.get.getConf(
+      DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_DISTINCT_PARTITIONS_MAX_VALUES)
     val partitions = DataFrameUtils.ofRows(files.sparkSession, aggregate)
+      .limit(maxValues + 1)
       .queryExecution.executedPlan.executeCollect()
+
+    if (partitions.length > maxValues) {
+      logInfo(log"Query can't be optimized using metadata because there are too many " +
+        log"distinct partition values")
+      return plan
+    }
 
     val numKeys = keys.size
     if (partitions.exists(_.getLong(numKeys) > 0)) {

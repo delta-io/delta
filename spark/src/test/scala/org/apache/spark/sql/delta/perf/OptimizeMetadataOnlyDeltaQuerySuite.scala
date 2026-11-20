@@ -1109,6 +1109,27 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     }
   }
 
+  test("distinct partition values - max values cap") {
+    val tableName = "TestDistinctPartitionsMaxValues"
+    withTable(tableName) {
+      spark.sql(s"CREATE TABLE $tableName (id INT, p INT) USING DELTA PARTITIONED BY (p)")
+      spark.sql(s"INSERT INTO $tableName VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, NULL)")
+      val maxValuesKey =
+        DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_DISTINCT_PARTITIONS_MAX_VALUES.key
+
+      // 5 distinct values, including NULL
+      withSQLConf(maxValuesKey -> "5") {
+        checkDistinctPartitionsOptimized(s"SELECT DISTINCT p FROM $tableName")
+      }
+      withSQLConf(maxValuesKey -> "4") {
+        checkOptimizationIsNotTriggered(s"SELECT DISTINCT p FROM $tableName")
+      }
+      withSQLConf(maxValuesKey -> "0") {
+        checkOptimizationIsNotTriggered(s"SELECT DISTINCT p FROM $tableName")
+      }
+    }
+  }
+
   test("optimization not supported - distinct partition values missing stats") {
     val tableName = "TestDistinctPartitionsNoStats"
     withTable(tableName) {
