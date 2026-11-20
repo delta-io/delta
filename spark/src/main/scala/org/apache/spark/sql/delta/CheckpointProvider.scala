@@ -23,8 +23,9 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.SnapshotManagement.checkpointV2ThreadPool
+import org.apache.spark.sql.delta.SnapshotManagement.checkpointThreadPool
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTRootInfo, LazyCompleteAMTCheckpointProvider, UninitializedAMTCheckpointProvider}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -190,6 +191,28 @@ object CheckpointProvider extends DeltaLogging {
   }
 
   /**
+   * Wraps `checkpointProviderFuture` in a [[LazyCompleteAMTCheckpointProvider]]. The future is not
+   * waited on until a complete-checkpoint-provider method is actually called.
+   */
+  private def lazyAMTCheckpointProvider(
+      spark: SparkSession,
+      provider: UninitializedAMTCheckpointProvider,
+      checkpointReadFuture: NonFateSharingFuture[AMTRootInfo])
+      : CheckpointProvider = {
+    new LazyCompleteAMTCheckpointProvider(provider) {
+      override def createCheckpointProvider(): AMTCheckpointProvider = {
+        val rootInfo = checkpointReadFuture.get(Duration.Inf)
+        AMTCheckpointProvider(
+          spark = spark,
+          manifestCommitVersion = provider.manifestCommitVersion,
+          checkpointAction = provider.checkpointAction,
+          rootInfo = rootInfo,
+          tableRoot = provider.tableRoot)
+      }
+    }
+  }
+
+  /**
    * Wraps `v2ActionsFuture` in a [[LazyCompleteCheckpointProvider]] which resolves to a
    * [[V2CheckpointProvider]]. The future is not waited on until a complete-checkpoint-provider
    * method is actually called.
@@ -227,6 +250,8 @@ object CheckpointProvider extends DeltaLogging {
       checksumOpt: Option[VersionChecksum],
       uninitializedCheckpointProvider: UninitializedCheckpointProvider)
       : CheckpointProvider = uninitializedCheckpointProvider match {
+    case provider: UninitializedAMTCheckpointProvider =>
+      lazyAMTCheckpointProvider(spark, provider, provider.nonFateSharingCheckpointReadFuture)
     // Note: snapshotDescriptor.protocol should be accessed as late as possible inside the futures
     // as it might need I/O.
     case provider: UninitializedV2CheckpointProvider =>
@@ -244,7 +269,7 @@ object CheckpointProvider extends DeltaLogging {
       // a lazy checkpoint provider wrapping the future. we won't wait on the future unless/until
       // somebody calls a complete checkpoint provider method.
       val deltaLog = snapshotDescriptor.deltaLog
-      val future = checkpointV2ThreadPool.submitNonFateSharing { spark: SparkSession =>
+      val future = checkpointThreadPool.submitNonFateSharing { spark: SparkSession =>
         provider.readV2Actions(
           spark, deltaLog.store, deltaLog.newDeltaHadoopConf(), deltaLog.options)
       }
@@ -571,7 +596,7 @@ case class UninitializedV2CheckpointProvider(
 
   val nonFateSharingCheckpointReadFuture
       : NonFateSharingFuture[(Option[CheckpointMetadata], Seq[SidecarFile])] = {
-    checkpointV2ThreadPool.submitNonFateSharing { spark: SparkSession =>
+    checkpointThreadPool.submitNonFateSharing { spark: SparkSession =>
       loadV2Actions(spark, logStore, hadoopConf, deltaLogOptions)
     }
   }
@@ -712,7 +737,7 @@ object V2CheckpointProvider {
     def getSidecarSchemaFetcher: () => Option[StructType] = {
       val sidecarSchemaFromMetadata = checkpointMetadata.sidecarFileSchema
       val nonFateSharingSidecarSchemaFuture: NonFateSharingFuture[Option[StructType]] = {
-        checkpointV2ThreadPool.submitNonFateSharing { spark: SparkSession =>
+        checkpointThreadPool.submitNonFateSharing { spark: SparkSession =>
           sidecarFiles.headOption.map { sidecarFile =>
             val sidecarFileStatus =
               sidecarFile.toFileStatus(uninitializedV2LikeCheckpointProvider.logPath)

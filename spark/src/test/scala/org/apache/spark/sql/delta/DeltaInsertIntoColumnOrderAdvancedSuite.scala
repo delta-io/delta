@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.internal.SQLConf
 
@@ -31,26 +33,45 @@ import org.apache.spark.sql.internal.SQLConf
  */
 class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
 
+  private lazy val columnListInserts: Set[Insert] = Set(
+    SQLInsertColList(SaveMode.Append),
+    SQLInsertColList(SaveMode.Overwrite),
+    SQLInsertOverwritePartitionColList)
+
+  private lazy val insertsByNestedName: Set[Insert] = insertsByName -- columnListInserts
+  private lazy val insertsByNestedPosition: Set[Insert] = {
+    allInsertTypes -- insertsByNestedName -- columnListInserts
+  }
+
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
   test("all test cases are implemented") {
-    checkAllTestCasesImplemented()
+    checkAllTestCasesImplemented(
+      testCases.keys.map(_ -> columnListInserts).toMap
+    )
   }
 
   // --- struct<arr: array<struct<x, y>>>: no cast ---
 
   for {
     (inserts: Set[Insert], expectedAnswer) <- Seq(
-      insertsAppend ->
+      insertsAppend.intersect(insertsByNestedName) ->
         TestData("a int, s struct<arr: array<struct<x: int, y: int>>>",
           Seq("""{ "a": 1, "s": { "arr": [{ "x": 2, "y": 3 }] } }""",
               """{ "a": 1, "s": { "arr": [{ "x": 4, "y": 5 }] } }""")),
-      insertsOverwrite ->
+      insertsOverwrite.intersect(insertsByNestedName) ->
         TestData("a int, s struct<arr: array<struct<x: int, y: int>>>",
-          Seq("""{ "a": 1, "s": { "arr": [{ "x": 4, "y": 5 }] } }"""))
+          Seq("""{ "a": 1, "s": { "arr": [{ "x": 4, "y": 5 }] } }""")),
+      insertsAppend.intersect(insertsByNestedPosition) ->
+        TestData("a int, s struct<arr: array<struct<x: int, y: int>>>",
+          Seq("""{ "a": 1, "s": { "arr": [{ "x": 2, "y": 3 }] } }""",
+              """{ "a": 1, "s": { "arr": [{ "x": 5, "y": 4 }] } }""")),
+      insertsOverwrite.intersect(insertsByNestedPosition) ->
+        TestData("a int, s struct<arr: array<struct<x: int, y: int>>>",
+          Seq("""{ "a": 1, "s": { "arr": [{ "x": 5, "y": 4 }] } }"""))
     )
   } {
     testInserts("struct with array of structs field reordering")(
@@ -63,7 +84,9 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
         "a int, s struct<arr: array<struct<y: int, x: int>>>",
         Seq("""{ "a": 1, "s": { "arr": [{ "y": 5, "x": 4 }] } }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "true")
     )
   }
 
@@ -71,21 +94,19 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
 
   for {
     (inserts: Set[Insert], expectedAnswer) <- Seq(
-      insertsAppend - StreamingInsert
-        -- insertsByName.intersect(insertsDataframe) ->
+      (insertsAppend.intersect(insertsByNestedPosition) - StreamingInsert) ->
         TestData("a int, s struct<arr: array<struct<x: int, y: int>>>",
           Seq("""{ "a": 1, "s": { "arr": [{ "x": 2, "y": 3 }] } }""",
               """{ "a": 1, "s": { "arr": [{ "x": 5, "y": 4 }] } }""")),
-      insertsOverwrite
-        -- insertsByName.intersect(insertsDataframe) ->
+      insertsOverwrite.intersect(insertsByNestedPosition) ->
         TestData("a int, s struct<arr: array<struct<x: int, y: int>>>",
           Seq("""{ "a": 1, "s": { "arr": [{ "x": 5, "y": 4 }] } }""")),
-      (insertsAppend.intersect(insertsByName.intersect(insertsDataframe))
+      (insertsAppend.intersect(insertsByNestedName)
         -- insertsWithoutImplicitCastSupport - StreamingInsert) ->
         TestData("a int, s struct<arr: array<struct<x: int, y: int>>>",
           Seq("""{ "a": 1, "s": { "arr": [{ "x": 2, "y": 3 }] } }""",
               """{ "a": 1, "s": { "arr": [{ "x": 4, "y": 5 }] } }""")),
-      (insertsOverwrite.intersect(insertsByName.intersect(insertsDataframe))
+      (insertsOverwrite.intersect(insertsByNestedName)
         -- insertsWithoutImplicitCastSupport) ->
         TestData("a int, s struct<arr: array<struct<x: int, y: int>>>",
           Seq("""{ "a": 1, "s": { "arr": [{ "x": 4, "y": 5 }] } }""")),
@@ -106,7 +127,9 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
         "a int, s struct<arr: array<struct<y: long, x: int>>>",
         Seq("""{ "a": 1, "s": { "arr": [{ "y": 5, "x": 4 }] } }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "true")
     )
   }
 
@@ -132,17 +155,28 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
 
   for {
     (inserts: Set[Insert], expectedAnswer) <- Seq(
-      insertsAppend ->
+      insertsAppend.intersect(insertsByNestedName) ->
         TestData(
           "a int, s struct<m: map<string, struct<x: int, y: int>>>",
           Seq(
             """{ "a": 1, "s": { "m": { "k": { "x": 2, "y": 3 } } } }""",
             """{ "a": 1, "s": { "m": { "k": { "x": 4, "y": 5 } } } }""")),
-      insertsOverwrite ->
+      insertsOverwrite.intersect(insertsByNestedName) ->
         TestData(
           "a int, s struct<m: map<string, struct<x: int, y: int>>>",
           Seq(
-            """{ "a": 1, "s": { "m": { "k": { "x": 4, "y": 5 } } } }"""))
+            """{ "a": 1, "s": { "m": { "k": { "x": 4, "y": 5 } } } }""")),
+      insertsAppend.intersect(insertsByNestedPosition) ->
+        TestData(
+          "a int, s struct<m: map<string, struct<x: int, y: int>>>",
+          Seq(
+            """{ "a": 1, "s": { "m": { "k": { "x": 2, "y": 3 } } } }""",
+            """{ "a": 1, "s": { "m": { "k": { "x": 5, "y": 4 } } } }""")),
+      insertsOverwrite.intersect(insertsByNestedPosition) ->
+        TestData(
+          "a int, s struct<m: map<string, struct<x: int, y: int>>>",
+          Seq(
+            """{ "a": 1, "s": { "m": { "k": { "x": 5, "y": 4 } } } }"""))
     )
   } {
     testInserts("struct with map of structs field reordering")(
@@ -157,7 +191,9 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
         Seq(
           """{ "a": 1, "s": { "m": { "k": { "y": 5, "x": 4 } } } }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "true")
     )
   }
 
@@ -165,27 +201,25 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
 
   for {
     (inserts: Set[Insert], expectedAnswer) <- Seq(
-      insertsAppend - StreamingInsert
-        -- insertsByName.intersect(insertsDataframe) ->
+      (insertsAppend.intersect(insertsByNestedPosition) - StreamingInsert) ->
         TestData(
           "a int, s struct<m: map<string, struct<x: int, y: int>>>",
           Seq(
             """{ "a": 1, "s": { "m": { "k": { "x": 2, "y": 3 } } } }""",
             """{ "a": 1, "s": { "m": { "k": { "x": 5, "y": 4 } } } }""")),
-      insertsOverwrite
-        -- insertsByName.intersect(insertsDataframe) ->
+      insertsOverwrite.intersect(insertsByNestedPosition) ->
         TestData(
           "a int, s struct<m: map<string, struct<x: int, y: int>>>",
           Seq(
             """{ "a": 1, "s": { "m": { "k": { "x": 5, "y": 4 } } } }""")),
-      (insertsAppend.intersect(insertsByName.intersect(insertsDataframe))
+      (insertsAppend.intersect(insertsByNestedName)
         -- insertsWithoutImplicitCastSupport - StreamingInsert) ->
         TestData(
           "a int, s struct<m: map<string, struct<x: int, y: int>>>",
           Seq(
             """{ "a": 1, "s": { "m": { "k": { "x": 2, "y": 3 } } } }""",
             """{ "a": 1, "s": { "m": { "k": { "x": 4, "y": 5 } } } }""")),
-      (insertsOverwrite.intersect(insertsByName.intersect(insertsDataframe))
+      (insertsOverwrite.intersect(insertsByNestedName)
         -- insertsWithoutImplicitCastSupport) ->
         TestData(
           "a int, s struct<m: map<string, struct<x: int, y: int>>>",
@@ -212,7 +246,9 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
         Seq(
           """{ "a": 1, "s": { "m": { "k": { "y": 5, "x": 4 } } } }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "true")
     )
   }
 
@@ -240,17 +276,28 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
 
   for {
     (inserts: Set[Insert], expectedAnswer) <- Seq(
-      insertsAppend ->
+      insertsAppend.intersect(insertsByNestedName) ->
         TestData(
           "a int, complex array<map<string, struct<x: int, y: int>>>",
           Seq(
             """{ "a": 1, "complex": [{ "k": { "x": 2, "y": 3 } }] }""",
             """{ "a": 1, "complex": [{ "k": { "x": 4, "y": 5 } }] }""")),
-      insertsOverwrite ->
+      insertsOverwrite.intersect(insertsByNestedName) ->
         TestData(
           "a int, complex array<map<string, struct<x: int, y: int>>>",
           Seq(
-            """{ "a": 1, "complex": [{ "k": { "x": 4, "y": 5 } }] }"""))
+            """{ "a": 1, "complex": [{ "k": { "x": 4, "y": 5 } }] }""")),
+      insertsAppend.intersect(insertsByNestedPosition) ->
+        TestData(
+          "a int, complex array<map<string, struct<x: int, y: int>>>",
+          Seq(
+            """{ "a": 1, "complex": [{ "k": { "x": 2, "y": 3 } }] }""",
+            """{ "a": 1, "complex": [{ "k": { "x": 5, "y": 4 } }] }""")),
+      insertsOverwrite.intersect(insertsByNestedPosition) ->
+        TestData(
+          "a int, complex array<map<string, struct<x: int, y: int>>>",
+          Seq(
+            """{ "a": 1, "complex": [{ "k": { "x": 5, "y": 4 } }] }"""))
     )
   } {
     testInserts("array of maps with struct values field reordering")(
@@ -265,7 +312,9 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
         Seq(
           """{ "a": 1, "complex": [{ "k": { "y": 5, "x": 4 } }] }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "true")
     )
   }
 
@@ -274,27 +323,25 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
 
   for {
     (inserts: Set[Insert], expectedAnswer) <- Seq(
-      insertsAppend - StreamingInsert
-        -- insertsByName.intersect(insertsDataframe) ->
+      (insertsAppend.intersect(insertsByNestedPosition) - StreamingInsert) ->
         TestData(
           "a int, complex array<map<string, struct<x: int, y: int>>>",
           Seq(
             """{ "a": 1, "complex": [{ "k": { "x": 2, "y": 3 } }] }""",
             """{ "a": 1, "complex": [{ "k": { "x": 5, "y": 4 } }] }""")),
-      insertsOverwrite
-        -- insertsByName.intersect(insertsDataframe) ->
+      insertsOverwrite.intersect(insertsByNestedPosition) ->
         TestData(
           "a int, complex array<map<string, struct<x: int, y: int>>>",
           Seq(
             """{ "a": 1, "complex": [{ "k": { "x": 5, "y": 4 } }] }""")),
-      (insertsAppend.intersect(insertsByName.intersect(insertsDataframe))
+      (insertsAppend.intersect(insertsByNestedName)
         -- insertsWithoutImplicitCastSupport - StreamingInsert) ->
         TestData(
           "a int, complex array<map<string, struct<x: int, y: int>>>",
           Seq(
             """{ "a": 1, "complex": [{ "k": { "x": 2, "y": 3 } }] }""",
             """{ "a": 1, "complex": [{ "k": { "x": 4, "y": 5 } }] }""")),
-      (insertsOverwrite.intersect(insertsByName.intersect(insertsDataframe))
+      (insertsOverwrite.intersect(insertsByNestedName)
         -- insertsWithoutImplicitCastSupport) ->
         TestData(
           "a int, complex array<map<string, struct<x: int, y: int>>>",
@@ -322,7 +369,9 @@ class DeltaInsertIntoColumnOrderAdvancedSuite extends DeltaInsertIntoTest {
         Seq(
           """{ "a": 1, "complex": [{ "k": { "y": 5, "x": 4 } }] }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts
+      includeInserts = inserts,
+      confs = Seq(
+        DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED.key -> "true")
     )
   }
 

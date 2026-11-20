@@ -16,9 +16,20 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
-import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.hadoop.fs.{FileSystem, Path}
+import scala.annotation.tailrec
+import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, AdaptiveMetadataTableFeatureBase, CurrentTransactionInfo, DeltaConfigs, DeltaErrors, DeltaIllegalStateException, DeltaLog, DeltaOperations, FeatureAutomaticallyEnabledByMetadata, Snapshot, SnapshotDescriptor, TableFeature, WinningCommitSummary}
+import org.apache.spark.sql.delta.actions.{Checkpoint, LastManifestCommit, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.optimizer.ConvertToLocalRelation
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 /**
  * Path helpers for AMT (Adaptive Metadata Tree) manifest files.
@@ -28,15 +39,296 @@ import org.apache.hadoop.fs.{FileSystem, Path}
  * file lives under it and resolved back by string concatenation (`tableRoot + "/" + relative`).
  * This differs from Delta's `AddFile.path`, which is URL-encoded.
  */
-object AMTUtils {
+object AMTUtils extends DeltaLogging {
+  /**
+   * Whether AMT is **supported** as per the protocol. Code that reads or keeps AMT state (trees,
+   * back references, `r` DVs) checks this, because that state stays while AMT writes are off.
+   *
+   * `isPreviewCompatible` says whether the caller also handles private-preview AMT tables, that
+   * is, tables with [[AdaptiveMetadataPreviewTableFeature]]. Only code paths that predate
+   * [[AdaptiveMetadataTableFeature]] may treat preview tables as AMT tables; those callers pass
+   * `true`. New code paths pass `false` and only see tables with [[AdaptiveMetadataTableFeature]].
+   */
+  def amtSupported(protocol: Protocol, isPreviewCompatible: Boolean): Boolean =
+    AdaptiveMetadataTableFeatureBase.supportedBy(protocol) match {
+      case Some(AdaptiveMetadataPreviewTableFeature) => isPreviewCompatible
+      case Some(AdaptiveMetadataTableFeature) => true
+      case None => false
+    }
 
   /**
-   * Relativizes an AMT manifest file `path` against `tableRoot`, returning the raw
-   * (non-URL-encoded) string to store in a manifest `location` / `contentRoot.path`. Paths under
-   * the table root become relative; paths elsewhere are returned absolute.
+   * Whether AMT (Adaptive Metadata Tree) writes are enabled for a table with this `protocol` and
+   * `metadata`. See [[amtSupported]] for `isPreviewCompatible`.
    */
-  def relativizeManifestPathToTableRoot(fs: FileSystem, tableRoot: Path, path: Path): String =
-    DeltaFileOperations.tryRelativizePath(fs, tableRoot, path).toString
+  def amtEnabled(metadata: Metadata, protocol: Protocol, isPreviewCompatible: Boolean): Boolean =
+    AdaptiveMetadataTableFeatureBase.supportedBy(protocol) match {
+      // Preview tables were created before the AMT property existed.
+      case Some(AdaptiveMetadataPreviewTableFeature) => isPreviewCompatible
+      case Some(AdaptiveMetadataTableFeature) =>
+        DeltaConfigs.ADAPTIVE_METADATA_ENABLED.fromMetaData(metadata)
+      case None => false
+    }
+
+  /**
+   * The value of the AMT property that `configuration` sets. `fromMetaData` returns the default
+   * when the property is unset. The upgrade reads this value instead, because only a command that
+   * sets the property to true upgrades a table.
+   */
+  def amtPropertyValue(configuration: Map[String, String]): Option[Boolean] =
+    configuration.get(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key).map(_.toBoolean)
+
+  /** The AMT state of a table. `Downgrading` lasts from the pre-downgrade commit to the drop. */
+  private sealed trait AMTState
+  private case object NotAMT extends AMTState
+  private case object AMTEnabled extends AMTState
+  private case object Downgrading extends AMTState
+
+  private def amtState(metadata: Metadata, protocol: Protocol): AMTState =
+    if (!amtSupported(protocol, isPreviewCompatible = true)) NotAMT
+    else if (amtEnabled(metadata, protocol, isPreviewCompatible = true)) AMTEnabled
+    else Downgrading
+
+  /**
+   * Only CREATE, the upgrade (ALTER TABLE SET TBLPROPERTIES) and DROP FEATURE may change the AMT
+   * state. Another commit, for example REPLACE or CLONE, would skip the checks of the upgrade or
+   * the steps of the drop.
+   */
+  def checkPropertyChange(
+      readSnapshot: SnapshotDescriptor,
+      newMetadata: Metadata,
+      newProtocol: Protocol,
+      op: DeltaOperations.Operation): Unit = {
+    val isNewTable = readSnapshot.version < 0
+    val isSetProperties = op.isInstanceOf[DeltaOperations.SetTableProperties]
+    val isDropFeature = op.isInstanceOf[DeltaOperations.DropTableFeature]
+    val before = if (isNewTable) NotAMT else amtState(readSnapshot.metadata, readSnapshot.protocol)
+    val after = amtState(newMetadata, newProtocol)
+    val allowed = (before, after) match {
+      case _ if before == after => true
+      // CREATE of an AMT table, or the enablement commit of an upgrade.
+      case (NotAMT, AMTEnabled) => isNewTable || isSetProperties
+      // The pre-downgrade commit of DROP FEATURE. `AMTDowngrade.commitPreDowngrade` makes it with
+      // an internal `AlterTableSetPropertiesDeltaCommand`, so its operation is SetTableProperties.
+      case (AMTEnabled, Downgrading) => isSetProperties
+      // The drop commit of DROP FEATURE.
+      case (_, NotAMT) => isDropFeature
+      case _ => false
+    }
+    if (!allowed) {
+      throw DeltaErrors.cannotModifyTableProperty(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key)
+    }
+  }
+
+  /**
+   * Whether AMT writes are enabled for `snapshot`. See [[amtSupported]] for `isPreviewCompatible`.
+   */
+  def amtEnabled(snapshot: SnapshotDescriptor, isPreviewCompatible: Boolean): Boolean =
+    amtEnabled(snapshot.metadata, snapshot.protocol, isPreviewCompatible)
+
+  /**
+   * Whether `amtCheckpointOpt` holds a ROOT-ONLY tree (no leaf manifests). A root-only tree keeps
+   * every live file in the root, so state reconstruction stamps no back reference on any of them.
+   */
+  def isRootOnlyCheckpoint(amtCheckpointOpt: Option[Checkpoint]): Boolean =
+    amtCheckpointOpt.exists(_.contentRoot.numLeaves.contains(0L))
+
+  /** Whether a new table's `configuration` asks for AMT. */
+  def amtRequested(configuration: Map[String, String]): Boolean =
+    AdaptiveMetadataTableFeatureBase.features.exists(
+      TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(configuration, _))
+
+  /**
+   * Asserts that a commit taking a table from `snapshot` to `protocol` and `metadata` follows the
+   * rules for the AMT table features (see [[AdaptiveMetadataTableFeatureBase]]):
+   *  - a table has at most one of them;
+   *  - AMT cannot be added to an existing table, including through REPLACE and REPLACE CLONE.
+   *    The one exception is the enablement commit of an upgrade to `adaptiveMetadata-dev`;
+   *  - adding an AMT feature needs its creation SQL conf (`creationConf`). Tables that already
+   *    have it stay readable and writable with the conf off;
+   *  - an AMT table cannot add a feature AMT is incompatible with, either to the protocol or by
+   *    setting a table property that enables it (e.g. `delta.checkpointPolicy` = `v2`).
+   *
+   * Every commit runs this on its final protocol and metadata (`prepareCommit` and `commitLarge`
+   * both call it through `performTableFeatureIncompatibilityCheck`), so it also catches features
+   * added after `updateMetadata`: session defaults, CLONE, CREATE TABLE LIKE, protocol actions
+   * and the deprecated `enabled` feature property status. A feature counts as added when the new
+   * state has it and the table did not. When creating a table every feature counts as added,
+   * because the initial snapshot of a new table already has the session defaults merged into its
+   * metadata and protocol. Features an existing table already had are left alone, so the table
+   * can still be updated.
+   *
+   * @param isCreatingNewTable whether the commit creates the table, including by REPLACE.
+   */
+  def assertFeatureCompatibility(
+      spark: SparkSession,
+      snapshot: Snapshot,
+      protocol: Protocol,
+      metadata: Metadata,
+      isCreatingNewTable: Boolean,
+      tableName: String): Unit = {
+    def added(feature: TableFeature): Boolean = protocol.isFeatureSupported(feature) &&
+      (isCreatingNewTable || !snapshot.protocol.isFeatureSupported(feature))
+
+    val amtFeatures = AdaptiveMetadataTableFeatureBase.features.filter(protocol.isFeatureSupported)
+    if (amtFeatures.size > 1) {
+      throw DeltaErrors.incompatibleTableFeatures(
+        tableName, feature1 = amtFeatures(0).name, feature2 = amtFeatures(1).name)
+    }
+    amtFeatures.foreach { amtFeature =>
+      // Only the enablement commit of an upgrade adds AMT to an existing table. `updateMetadata`
+      // already rejects other commits, but CLONE adds the source's protocol after that, so
+      // REPLACE CLONE is caught here.
+      if (snapshot.version >= 0 && !amtSupported(snapshot.protocol, isPreviewCompatible = true)) {
+        val isEnablementCommit = false
+        val amtUpgradesDisabled = true
+        if (!isEnablementCommit || amtUpgradesDisabled) {
+          throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(amtFeature.name)
+        }
+      }
+      val creationConf = AdaptiveMetadataTableFeatureBase.creationConf(amtFeature)
+      if (added(amtFeature) && !spark.sessionState.conf.getConf(creationConf)) {
+        throw DeltaErrors.adaptiveMetadataNotEnabled(amtFeature.name)
+      }
+      amtFeature.incompatibleFeatures.foreach { feature =>
+        def enabledByMetadata(p: Protocol, m: Metadata): Boolean = feature match {
+          case f: FeatureAutomaticallyEnabledByMetadata =>
+            f.metadataRequiresFeatureToBeEnabled(p, m, spark)
+          case _ => false
+        }
+        val enabledByNewMetadata = enabledByMetadata(protocol, metadata) &&
+          (isCreatingNewTable || !enabledByMetadata(snapshot.protocol, snapshot.metadata))
+        if (added(feature) || enabledByNewMetadata) {
+          throw DeltaErrors.incompatibleTableFeatures(
+            tableName, feature1 = amtFeature.name, feature2 = feature.name)
+        }
+      }
+    }
+  }
+
+  /** Logs and throws an [[IllegalStateException]] when an AMT invariant does not hold. */
+  def invariantCheckWithLogging(
+      checkInvariant: => Boolean,
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Unit = {
+    if (!checkInvariant) {
+      failWithLogging(
+        opTypeSuffix = opTypeSuffix,
+        message = message,
+        deltaLog = deltaLog,
+        data = data)
+    }
+  }
+
+  /** Logs and throws an [[IllegalStateException]] with the given message. */
+  def failWithLogging(
+      opTypeSuffix: String,
+      message: String,
+      deltaLog: DeltaLog = null,
+      data: Map[String, Any] = Map.empty): Nothing = {
+    val stackTrace = Thread.currentThread().getStackTrace.drop(2).take(30).mkString("\n\t")
+    deltaAssertAndThrow(
+      check = false,
+      name = opTypeSuffix,
+      msg = message,
+      throwable = new DeltaIllegalStateException(
+        errorClass = "INTERNAL_ERROR",
+        messageParameters = Array(message)),
+      deltaLog = deltaLog,
+      data = data ++ Map("message" -> message, "stackTrace" -> stackTrace))
+    throw new IllegalStateException("should not reach here")
+  }
+
+  /**
+   * Runs invariant checks, logging unexpected non-fatal exceptions in production and propagating
+   * them in tests.
+   */
+  def runInvariantsSafely(
+      checkName: String,
+      deltaLog: Option[DeltaLog],
+      logPath: Path)(checkInvariant: => Unit): Unit = {
+    try {
+      checkInvariant
+    } catch {
+      case NonFatal(e) if !DeltaUtils.isTesting =>
+        recordDeltaEvent(
+          provider = deltaLog.orNull,
+          opType = AMTUsageLogs.EXCEPTIONS_THROWN_DUE_TO_LOGGING,
+          data = Map(
+            "check" -> checkName,
+            "exceptionClass" -> e.getClass.getName,
+            "exception" -> e.getMessage,
+            "stackTrace" -> e.getStackTrace.take(30).mkString("\n\t")),
+          path = Option(logPath)
+        )
+    }
+  }
+
+  private val PathSeparator = "/"
+
+  /**
+   * Returns true if the location contains a URI scheme, per RFC 3986 section 3.1.
+   * https://datatracker.ietf.org/doc/html/rfc3986#section-3.1
+   */
+  private[amt] def hasScheme(location: String): Boolean = {
+    var i = 0
+    while (i < location.length) {
+      val ch = location.charAt(i)
+      if (ch == ':') {
+        return i > 0
+      }
+      if (!isSchemeChar(ch, i)) {
+        return false
+      }
+      i += 1
+    }
+    false
+  }
+
+  private def isSchemeChar(ch: Char, position: Int): Boolean = {
+    (ch >= 'a' && ch <= 'z') ||
+      (ch >= 'A' && ch <= 'Z') ||
+      (position > 0 && ((ch >= '0' && ch <= '9') || ch == '+' || ch == '-' || ch == '.'))
+  }
+
+  /**
+   * Returns true if a location is absolute.
+   * NOTE: This is not the same implementation as Hadoop [[Path.isAbsolute]].
+   */
+  def isAbsoluteLocation(location: String): Boolean = {
+    hasScheme(location) || location.startsWith(PathSeparator)
+  }
+
+  /**
+   * Relativizes a location against a table location. A trailing slash on `tableLocation` is
+   * ignored. If `location` starts with the normalized table location immediately followed by `/`,
+   * the prefix and separator are removed. Otherwise, `location` is returned as-is.
+   * This is a lightweight string manipulation.
+   *
+   * Because the relativization is prefix matching based, callers are expected to pass locations in
+   * the same format and encoding (either both raw or both URL-encoded).
+   * No such checks are performed here.
+   */
+  def relativizeLocation(tableLocation: String, location: String): String = {
+    // Strip trailing slash from tableLocation if present.
+    val normalizedTableLocation =
+      if (tableLocation.length > PathSeparator.length && tableLocation.endsWith(PathSeparator)) {
+        tableLocation.dropRight(PathSeparator.length)
+      } else {
+        tableLocation
+      }
+
+    // Prefix matching based location relativization
+    val prefixLength = normalizedTableLocation.length
+    if (location.length > prefixLength &&
+        location.startsWith(PathSeparator, prefixLength) &&
+        location.startsWith(normalizedTableLocation)) {
+      location.substring(prefixLength + PathSeparator.length)
+    } else {
+      location
+    }
+  }
 
   /**
    * Resolves a manifest `location` / `contentRoot.path` back to an absolute [[Path]] against
@@ -50,11 +342,66 @@ object AMTUtils {
     else new Path(tableRoot, child)
   }
 
+  /** Returns a copy of the passed-in current transaction info with `lastManifestCommit` updated. */
+  def updateCurrentTransactionInfo(
+      currentTransactionInfo: CurrentTransactionInfo,
+      newLastManifestCommit: LastManifestCommit): CurrentTransactionInfo = {
+    currentTransactionInfo.copy(
+      commitInfo = currentTransactionInfo.commitInfo.map(_.copy(
+        lastManifestCommit = Some(newLastManifestCommit)))
+    )
+  }
+
+  /**
+   * Returns a copy of the passed-in current transaction info folded onto the winning commit, ready
+   * for the next commit attempt.
+   */
+  def updateCurrentTransactionInfo(
+      currentTransactionInfo: CurrentTransactionInfo,
+      winningCommitSummary: WinningCommitSummary): CurrentTransactionInfo = {
+    // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
+    // before the next commit attempt.
+    val withWinnerTree = winningCommitSummary.amtCheckpoint.map { winningAMTCheckpoint =>
+      currentTransactionInfo.copy(
+        // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
+        // before the next commit attempt.
+        preCommitLatestAMTCheckpointOpt = Some(winningAMTCheckpoint),
+        // Update the current commitInfo to reflect the winning manifest commit.
+        commitInfo = currentTransactionInfo.commitInfo.map(_.copy(
+          lastManifestCommit = Some(LastManifestCommit(
+            version = winningCommitSummary.commitVersion,
+            contentRootVersion = winningAMTCheckpoint.contentRoot.version))))
+      )
+    }.getOrElse(currentTransactionInfo)
+    // Clear `currentCommitAttemptAMTCheckpointOpt` because it is stale once we rebase.
+    withWinnerTree.copy(currentCommitAttemptAMTCheckpointOpt = None)
+  }
+
   // Serializes a Manifest Deletion Vector to the on-disk byte form carried in `manifest_info.dv`.
-  private[amt] def serializeMdv(mdv: RoaringBitmapArray): Array[Byte] =
-    mdv.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+  private[amt] def serializeMdv(mdv: ManifestBitmap): Array[Byte] =
+    mdv.serializeAsByteArray()
 
   // Deserializes a Manifest Deletion Vector previously written by [[serializeMdv]].
-  private[amt] def deserializeMdv(bytes: Array[Byte]): RoaringBitmapArray =
-    RoaringBitmapArray.readFrom(bytes)
+  private[amt] def deserializeMdv(bytes: Array[Byte]): ManifestBitmap =
+    ManifestBitmap.fromSerializedByteArray(bytes)
+
+  private[amt] def shouldCacheRootRows(
+      spark: SparkSession,
+      numEntries: => Long): Boolean = {
+    val columnarEnabled = spark.sessionState.conf
+      .getConf(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED)
+    val maxNumEntries = spark.sessionState.conf
+      .getConf(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES)
+    columnarEnabled && maxNumEntries > 0 && numEntries < maxNumEntries
+  }
+
+  /**
+   * Applies [[ConvertToLocalRelation]] until the plan stops changing. When the rule visits the plan
+   * top-down, one application folds only the `Project` directly above the `LocalRelation`.
+   */
+  @tailrec
+  private[amt] def convertToLocalRelationFully(plan: LogicalPlan): LogicalPlan = {
+    val converted = ConvertToLocalRelation(plan)
+    if (converted.fastEquals(plan)) plan else convertToLocalRelationFully(converted)
+  }
 }

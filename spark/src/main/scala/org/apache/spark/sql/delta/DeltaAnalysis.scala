@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.convert.ConvertUtils
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -62,12 +62,13 @@ import org.apache.spark.sql.delta.shims.StreamingRelationV2Shim
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog, TableWritePrivilege}
+import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogV2Util, Identifier, TableCatalog, TableWritePrivilege, V1Table}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
+import org.apache.spark.sql.execution.command.ShowPartitionsCommand
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
@@ -83,6 +84,9 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 class DeltaAnalysis(protected val session: SparkSession)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaInsertCastSupport {
 
+  private def shouldExpandCollectionCasts: Boolean =
+    conf.getConf(DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED)
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
     // Intercept SHOW PARTITIONS for Delta tables
     // Spark's ShowPartitions command requires SUPPORTS_PARTITION_MANAGEMENT capability,
@@ -96,6 +100,36 @@ class DeltaAnalysis(protected val session: SparkSession)
         case UnresolvedPartitionSpec(spec, _) => spec
       }.getOrElse(Map.empty[String, String])
       ShowDeltaPartitionsCommand(r, partitionSpec)
+
+    // Managed Delta tables can resolve to a V1Table (e.g. when loaded through a delegating
+    // catalog) instead of directly to a DeltaTableV2. Intercept that shape too, mirroring
+    // DeltaTableV2.maybeExtractFrom.
+    case ShowPartitions(
+        r @ ResolvedTable(_, _, t: V1Table, _), partSpec, _)
+        if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
+      val partitionSpec = partSpec.collect {
+        case UnresolvedPartitionSpec(spec, _) => spec
+      }.getOrElse(Map.empty[String, String])
+      ShowDeltaPartitionsCommand(r, partitionSpec)
+
+    // Spark's ResolveSessionCatalog rule matches SHOW PARTITIONS on any V1Table resolved through
+    // the session catalog and eagerly rewrites it to the V1 ShowPartitionsCommand, before the
+    // ShowPartitions case above (also an extended resolution rule, applied after
+    // ResolveSessionCatalog in the same pass) ever sees it. Catch that shape here as well by
+    // re-resolving the table identifier and checking whether it refers to a Delta table.
+    case s: ShowPartitionsCommand =>
+      // ShowPartitionsCommand always targets the session catalog, but under
+      // spark.sql.legacy.v1IdentifierNoCatalog=true, tableName may omit the catalog part
+      // (just "db.t"). Re-resolving that bare name would look it up against whatever catalog is
+      // currently active instead of the session catalog, so pin the catalog explicitly.
+      val tableName = s.tableName.copy(
+        catalog = s.tableName.catalog.orElse(Some(CatalogManager.SESSION_CATALOG_NAME)))
+      val resolvedTable = session.sessionState.analyzer.ResolveRelations(
+        UnresolvedTable(tableName.nameParts, "SHOW PARTITIONS"))
+      DeltaTableV2.maybeExtractFrom(resolvedTable) match {
+        case Some(_) => ShowDeltaPartitionsCommand(resolvedTable, s.spec.getOrElse(Map.empty))
+        case None => s
+      }
 
     // INSERT INTO by ordinal and df.insertInto()
     case a @ AppendDelta(r, d) if !a.isByName &&
@@ -119,7 +153,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         deltaTable = d,
         writeOptions = a.writeOptions,
         allowSchemaEvolution = true,
-        isDfByNameInsert = false)
+        isSqlInsert = true)
       if (projection != a.query) {
         a.copy(query = projection)
       } else {
@@ -165,8 +199,8 @@ class DeltaAnalysis(protected val session: SparkSession)
         }
 
 
-      // Whether we are enabling Catalog-Owned via explicit property overrides.
-      var isEnablingCatalogOwnedViaExplicitPropertyOverrides: Boolean = false
+      // Whether we are enabling Catalog-Managed via explicit property overrides.
+      var isEnablingCatalogManagedViaExplicitPropertyOverrides: Boolean = false
 
       val catalogTableTarget =
         // If source table is Delta format
@@ -177,28 +211,28 @@ class DeltaAnalysis(protected val session: SparkSession)
           // used on the source delta table, then the corresponding fields would be set for the
           // sourceTable and needs to be removed from the targetTable's configuration. The fields
           // will then be set in the targetTable's configuration internally after.
-          // Coordinated commits/Catalog-Owned configurations from the source delta table should
+          // Coordinated commits/Catalog-Managed configurations from the source delta table should
           // also be left out, since CREATE LIKE is similar to CLONE, and we do not copy the
           // commit coordinator from the source table.
           // If users want a commit coordinator for the target table, they can
           // specify the configurations in the CREATE LIKE command explicitly.
           val sourceMetadata = deltaLogSrc.initialSnapshot.metadata
 
-          // Catalog-Owned: Specifying the table UUID in the TBLPROPERTIES clause
+          // Catalog-Managed: Specifying the table UUID in the TBLPROPERTIES clause
           // should be blocked.
-          CatalogOwnedTableUtils.validateUCTableIdNotPresent(property = ctl.properties)
+          CatalogManagedTableUtils.validateUCTableIdNotPresent(property = ctl.properties)
 
-          // Check whether we are trying to enable Catalog-Owned via explicit property overrides.
-          // The reason to check this is, if the source table is a Catalog-Owned table, and
-          // we are also trying to enable Catalog-Owned for the target table - We do *NOT*
-          // want to filter out [[CatalogOwnedTableFeature]] from the source table. If we do that,
-          // the resulting target table's protocol will *NOT* have CatalogOwned table feature
+          // Check whether we are trying to enable Catalog-Managed via explicit property overrides.
+          // The reason to check this is, if the source table is a Catalog-Managed table, and
+          // we are also trying to enable Catalog-Managed for the target table - We do *NOT*
+          // want to filter out [[CatalogManagedTableFeature]] from the source table. If we do that,
+          // the resulting target table's protocol will *NOT* have CatalogManaged table feature
           // present though we have explicitly specified it in the TBLPROPERTIES clause.
-          // This only applies to cases where source table has Catalog-Owned enabled.
+          // This only applies to cases where source table has Catalog-Managed enabled.
           // It works as intended if source table is a normal delta table.
           if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
-                configs = ctl.properties).contains(CatalogOwnedTableFeature)) {
-            isEnablingCatalogOwnedViaExplicitPropertyOverrides = true
+                configs = ctl.properties).contains(CatalogManagedTableFeature)) {
+            isEnablingCatalogManagedViaExplicitPropertyOverrides = true
           }
 
           val config =
@@ -206,7 +240,9 @@ class DeltaAnalysis(protected val session: SparkSession)
               .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
               .-(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
               .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_)).toMap
-              // Catalog-Owned: Do not copy table UUID from source table
+              // ICT enablement provenance info should not be copied from the source
+              .filterKeys(!InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(_)).toMap
+              // Catalog-Managed: Do not copy table UUID from source table
               .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY).toMap
 
           new CatalogTable(
@@ -244,22 +280,22 @@ class DeltaAnalysis(protected val session: SparkSession)
         } else {
           None
         }
-      // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table
+      // Catalog-Managed: Do not copy over [[CatalogManagedTableFeature]] from source table
       //                except the certain case.
-      val protocolAfterFilteringCatalogOwnedFromSource = protocol match {
-        case Some(p) if !isEnablingCatalogOwnedViaExplicitPropertyOverrides =>
-          // Only filter out [[CatalogOwnedTableFeature]] when target table is not enabling
-          // CatalogOwned.
+      val protocolAfterFilteringCatalogManagedFromSource = protocol match {
+        case Some(p) if !isEnablingCatalogManagedViaExplicitPropertyOverrides =>
+          // Only filter out [[CatalogManagedTableFeature]] when target table is not enabling
+          // CatalogManaged.
           // E.g.,
           // - CREATE TABLE t1 LIKE t2
-          //   - Filter CatalogOwned table feature out since target table is not enabling
-          //     CatalogOwned explicitly.
+          //   - Filter CatalogManaged table feature out since target table is not enabling
+          //     CatalogManaged explicitly.
           // - CREATE TABLE t1 LIKE t2 TBLPROPERTIES (
           //     'delta.feature.catalogManaged' = 'supported'
           //   )
-          //   - Do not filter CatalogOwned table feature out if target table is enabling
-          //     CatalogOwned.
-          Some(p.removeFeature(targetFeature = CatalogOwnedTableFeature))
+          //   - Do not filter CatalogManaged table feature out if target table is enabling
+          //     CatalogManaged.
+          Some(p.removeFeature(targetFeature = CatalogManagedTableFeature))
         case _ =>
           protocol
       }
@@ -279,7 +315,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         mode = saveMode,
         query = None,
         output = ctl.output,
-        protocol = protocolAfterFilteringCatalogOwnedFromSource,
+        protocol = protocolAfterFilteringCatalogManagedFromSource,
         tableByPath = isTableByPath)
 
     // Handling df.insertInto() with `replaceOn`/`replaceUsing`.
@@ -302,13 +338,16 @@ class DeltaAnalysis(protected val session: SparkSession)
         deltaTable = deltaTableV2,
         query = o.query,
         schema = tableRelation.schema,
-        writeOptions = o.writeOptions)
+        writeOptions = o.writeOptions,
+        checkNestedFieldsByOrdinal =
+          conf.getConf(DeltaSQLConf.DELTA_INSERT_IMPLICIT_CAST_RESOLUTION_FIX_ENABLED))
       val projectedQuery = if (needsAdjustment) {
         resolveQueryColumnsByOrdinal(
           query = o.query,
           targetAttrs = tableRelation.output,
           deltaTable = deltaTableV2,
-          writeOptions = o.writeOptions)
+          writeOptions = o.writeOptions,
+          expandCollectionCasts = shouldExpandCollectionCasts)
       } else {
         DeltaInsertReplaceOnOrUsingCommand.addOrdinalAliasProjection(
           queryToAlias = o.query, aliasAttrs = tableRelation.output)
@@ -360,7 +399,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         deltaTable = d,
         writeOptions = o.writeOptions,
         allowSchemaEvolution = true,
-        isDfByNameInsert = false)
+        isSqlInsert = true)
       if (projection != o.query) {
         val aliases = AttributeMap(o.query.output.zip(projection.output).collect {
           case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
@@ -392,7 +431,7 @@ class DeltaAnalysis(protected val session: SparkSession)
           deltaTable = d,
           writeOptions = o.writeOptions,
           allowSchemaEvolution = true,
-          isDfByNameInsert = false)
+          isSqlInsert = true)
       } else {
         o.query
       }

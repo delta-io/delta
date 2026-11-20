@@ -27,7 +27,7 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -251,7 +251,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            featuresToExclude =
+              Seq(CatalogManagedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
             Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
@@ -282,7 +283,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            featuresToExclude =
+              Seq(CatalogManagedTableFeature) ++ AdaptiveMetadataTableFeatureBase.features),
             Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
@@ -404,7 +406,7 @@ class DeltaLogSuite extends QueryTest
     testDifferentCheckpoints(s"state reconstruction from checkpoint with" +
         s" missing $action should fail", quiet = true) { (_, _) =>
       withTempDir { tempDir =>
-        import testImplicits._
+        import deltaImplicits._
         val staleLog = DeltaLog.forTable(spark, tempDir)
         DeltaLog.clearCache()
 
@@ -516,11 +518,11 @@ class DeltaLogSuite extends QueryTest
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
       if (catalogOwnedDefaultCreationEnabledInTests) {
-        // For Catalog Owned table with a commit that is not backfilled, we can't use
+        // For Catalog Managed table with a commit that is not backfilled, we can't use
         // 00000000002.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
-        val oc = getCatalogOwnedCommitCoordinatorClient(
-          catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+        val oc = getCatalogManagedCommitCoordinatorClient(
+          catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         val tableDesc =
           new TableDescriptor(deltaLog.logPath, Optional.empty(), Map.empty[String, String].asJava)
         val commitResponse = oc.getCommits(tableDesc, 2, null)
@@ -550,8 +552,8 @@ class DeltaLogSuite extends QueryTest
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
       if (catalogOwnedDefaultCreationEnabledInTests) {
-        val oc = getCatalogOwnedCommitCoordinatorClient(
-          catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+        val oc = getCatalogManagedCommitCoordinatorClient(
+          catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         oc.asInstanceOf[TrackingCommitCoordinatorClient]
           .delegatingCommitCoordinatorClient
           .asInstanceOf[InMemoryCommitCoordinator]
@@ -628,11 +630,11 @@ class DeltaLogSuite extends QueryTest
       val log = DeltaLog.forTable(spark, path)
       var commitFilePath = FileNames.unsafeDeltaFile(log.logPath, 1L)
       if (catalogOwnedDefaultCreationEnabledInTests) {
-        // For Catalog Owned table with a commit that is not backfilled, we can't use
+        // For Catalog Managed table with a commit that is not backfilled, we can't use
         // 00000000001.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
-        val oc = getCatalogOwnedCommitCoordinatorClient(
-          catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+        val oc = getCatalogManagedCommitCoordinatorClient(
+          catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         val tableDesc =
           new TableDescriptor(log.logPath, Optional.empty(), Map.empty[String, String].asJava)
         val commitResponse = oc.getCommits(tableDesc, 1, null)
@@ -808,7 +810,7 @@ class DeltaLogSuite extends QueryTest
       val expected =
         commits.map(c => c.version -> c.getActionsIterator().processAndClose(_.toList))
       val parallelActions =
-        DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, log, commits)
+        DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, commits)
           .map(_.processAndClose(_.toList))
       val actual = commits.map(_.version).zip(parallelActions)
       assert(actual === expected)
@@ -1010,105 +1012,6 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  private def createDeltaTableWithCommits(tableDir: File, numVersions: Int): DeltaLog = {
-    val log = DeltaLog.forTable(spark, tableDir.getCanonicalPath)
-    spark.sql(s"CREATE TABLE delta.`${tableDir.getCanonicalPath}` (id INT) USING delta")
-    (1 to numVersions).foreach { i =>
-      spark.sql(s"INSERT INTO delta.`${tableDir.getCanonicalPath}` VALUES ($i)")
-    }
-    log
-  }
-
-  test("getChangesIterator yields one SingleCommit per commit with the right version") {
-    withTempDir { tableDir =>
-      val log = createDeltaTableWithCommits(tableDir, numVersions = 3)
-      // CREATE is version 0, the three INSERTs are versions 1..3.
-      val commits = log.getChangesIterator(startVersion = 0).toList
-      assert(commits.map(_.version) === (0L to 3L).toList)
-
-      // The handle exposes the commit file's modification time (not the in-commit timestamp), so it
-      // matches what getChangeLogFiles reports for the same commit.
-      val fileModTimes =
-        log.getChangeLogFiles(startVersion = 0).map(_._2.getModificationTime).toList
-      assert(commits.map(_.fileModificationTimestamp) === fileModTimes)
-    }
-  }
-
-  test("getChangesIterator endVersion override bounds the range (both inclusive)") {
-    withTempDir { tableDir =>
-      val log = createDeltaTableWithCommits(tableDir, numVersions = 5)
-      val commits = log.getChangesIterator(
-        startVersion = 1, endVersion = 3, catalogTableOpt = None, failOnDataLoss = true).toList
-      assert(commits.map(_.version) === List(1L, 2L, 3L))
-    }
-  }
-
-  test("SingleCommit.getActionsIterator returns the commit's actions and matches getChanges") {
-    withTempDir { tableDir =>
-      val log = createDeltaTableWithCommits(tableDir, numVersions = 3)
-      val viaHandle = log.getChangesIterator(startVersion = 0).map { commit =>
-        (commit.version, commit.getActionsIterator().processAndClose(_.toList))
-      }.toList
-      val viaGetChanges = log.getChanges(startVersion = 0).map {
-        case (version, actions) => (version, actions.toList)
-      }.toList
-      assert(viaHandle === viaGetChanges)
-    }
-  }
-
-  test("SingleCommit.getActionsIterator is rewindable and replays the same actions") {
-    withTempDir { tableDir =>
-      val log = createDeltaTableWithCommits(tableDir, numVersions = 1)
-      // Version 1 is the single INSERT; open its actions and read twice via rewind().
-      val commit = log.getChangesIterator(startVersion = 1).next()
-      val iter = commit.getActionsIterator()
-      try {
-        val firstPass = iter.toList
-        assert(firstPass.nonEmpty)
-        iter.rewind()
-        val secondPass = iter.toList
-        assert(secondPass === firstPass)
-      } finally {
-        iter.close()
-      }
-    }
-  }
-
-  test("SingleCommit.getActionsIterator returns all actions of a multi-action commit") {
-    withTempDir { dir =>
-      val log = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
-      // Commit 0 creates the table and adds "old". Commit 1 packs several data actions -- three new
-      // AddFiles and a RemoveFile of "old" -- into one commit so the commit has more than one
-      // action.
-      log.startTransaction().commitManually(
-        Metadata(configuration = Map(DeltaConfigs.CHECKPOINT_INTERVAL.key -> "10")),
-        createTestAddFile(encodedPath = "old"))
-      val dataActions: Seq[Action] = Seq(
-        createTestAddFile(encodedPath = "a"),
-        createTestAddFile(encodedPath = "b"),
-        createTestAddFile(encodedPath = "c"),
-        RemoveFile("old", Some(System.currentTimeMillis()), dataChange = true))
-      log.startTransaction().commitManually(dataActions: _*)
-
-      // Read commit 1 (the multi-action one) back through the new API.
-      val commit = log.getChangesIterator(startVersion = 1).next()
-      assert(commit.version === 1L)
-      val actions = commit.getActionsIterator().processAndClose(_.toList)
-
-      // It contains more than one action, and every data action we committed is present (order and
-      // exact identity of synthesized CommitInfo/Protocol are not asserted -- commit() adds those).
-      assert(actions.size > 1, s"expected a multi-action commit, got: $actions")
-      val addedPaths = actions.collect { case a: AddFile => a.path }.toSet
-      assert(addedPaths === Set("a", "b", "c"), s"missing AddFiles, got: $addedPaths")
-      val removedPaths = actions.collect { case r: RemoveFile => r.path }.toSet
-      assert(removedPaths === Set("old"), s"missing RemoveFile, got: $removedPaths")
-
-      // The authoritative invariant: getActionsIterator returns exactly what getChanges returns for
-      // this same multi-action commit.
-      val viaGetChanges = log.getChanges(startVersion = 1).next()._2.toList
-      assert(actions === viaGetChanges)
-    }
-  }
 }
 
 class DeltaLogWithCatalogOwnedBatch1Suite extends DeltaLogSuite {

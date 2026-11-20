@@ -35,14 +35,12 @@ class DeltaSourceFastDropFeatureSuite
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "true")
   }
-
-  protected def executeDml(sqlText: String): Unit = sql(sqlText)
 
   protected def dropUnsupportedFeature(dir: File): Unit =
     executeDml(

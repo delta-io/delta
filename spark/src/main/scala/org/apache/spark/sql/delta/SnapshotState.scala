@@ -83,9 +83,36 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   protected def fileSizeHistogramEnabled: Boolean =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)
 
+  protected def deletedRecordCountsHistogramEnabled: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
+
+  /**
+   * Whether [[aggregationsToComputeState]] computes the deletion vector metrics
+   * (`numDeletedRecordsOpt` / `numDeletionVectorsOpt`, and with
+   * [[deletedRecordCountsHistogramEnabled]] also `deletedRecordCountsHistogramOpt`); when it does
+   * not, those aggregates are `null` and the corresponding fields end up as [[None]]. This is the
+   * *writable* predicate; the DV accessors instead gate their reads on the *readable* predicate
+   * ([[deletionVectorsReadableAndMetricsEnabled]]).
+   */
+  protected def checksumDVMetricsComputed: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED) &&
+      DeletionVectorUtils.deletionVectorsWritable(this)
+
   /** Whether computedState is already computed or not */
   @volatile protected var _computedStateTriggered: Boolean = false
 
+  /** Set when accessing computedState, recording which accessor forced the reconstruction. */
+  @volatile protected var lastComputedStateAccessor: String = ""
+
+  /**
+   * Runs `thunk`, the access to [[computedState]] that `accessor` is forcing, recording
+   * `lastComputedStateAccessor` for logging. All callers that reach [[computedState]] should go
+   * through this method.
+   */
+  protected def recordComputedStateAccess[T](accessor: String)(thunk: => T): T = {
+    lastComputedStateAccessor = accessor
+    thunk
+  }
 
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
@@ -157,15 +184,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * A Map of alias to aggregations which needs to be done to calculate the `computedState`
    */
   protected def aggregationsToComputeState: Map[String, Column] = {
-    val checksumDVMetricsEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED)
-    val deletedRecordCountsHistogramEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
-    lazy val persistentDVsOnTableSupported =
-      DeletionVectorUtils.deletionVectorsWritable(this)
-
-    val computeChecksumDVMetrics = checksumDVMetricsEnabled &&
-      persistentDVsOnTableSupported
+    val computeChecksumDVMetrics = checksumDVMetricsComputed
     val persistentDVsAggs =
       if (computeChecksumDVMetrics) {
         Map(
@@ -207,25 +226,153 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   }
 
   /**
-   * The following is a list of convenience methods for accessing the computedState.
+   * The checksum this snapshot serves its state fields from, when present. This is the snapshot's
+   * own checksum, gated on [[DeltaSQLConf.FAST_QUERY_PATH_ENABLED]].
    */
-  def sizeInBytes: Long = computedState.sizeInBytes
-  def numOfSetTransactions: Long = computedState.numOfSetTransactions
-  def numOfFiles: Long = computedState.numOfFiles
-  def numOfRemoves: Long = computedState.numOfRemoves
-  def numOfMetadata: Long = computedState.numOfMetadata
-  def numOfProtocol: Long = computedState.numOfProtocol
-  def setTransactions: Seq[SetTransaction] = computedState.setTransactions
-  def fileSizeHistogram: Option[FileSizeHistogram] = computedState.fileSizeHistogram
-  def domainMetadata: Seq[DomainMetadata] = computedState.domainMetadata
-  protected[delta] def sizeInBytesIfKnown: Option[Long] = Some(sizeInBytes)
-  protected[delta] def setTransactionsIfKnown: Option[Seq[SetTransaction]] = Some(setTransactions)
-  protected[delta] def numOfFilesIfKnown: Option[Long] = Some(numOfFiles)
-  protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] = Some(domainMetadata)
-  def numDeletedRecordsOpt: Option[Long] = computedState.numDeletedRecordsOpt
-  def numDeletionVectorsOpt: Option[Long] = computedState.numDeletionVectorsOpt
-  def deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram] =
-    computedState.deletedRecordCountsHistogramOpt
+  protected def checksumOptForState: Option[VersionChecksum] =
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.FAST_QUERY_PATH_ENABLED)) checksumOpt
+    else None
+
+  /**
+   * The following is a list of convenience methods for accessing the computedState.
+   *
+   * Each of them first tries to answer from [[checksumOptForState]] and only falls back to
+   * [[computedState]] -- which triggers the expensive aggregation over the state reconstruction --
+   * when the checksum cannot serve the value. [[recordComputedStateAccess]] records which accessor
+   * forced the fallback.
+   */
+  def sizeInBytes: Long =
+    checksumOptForState.map(_.tableSizeBytes).getOrElse {
+      recordComputedStateAccess("sizeInBytes") { computedState.sizeInBytes }
+    }
+  def numOfSetTransactions: Long =
+    setTransactionsIfKnown.map(_.size.toLong).getOrElse {
+      recordComputedStateAccess("numOfSetTransactions") { computedState.numOfSetTransactions }
+    }
+  def numOfFiles: Long =
+    checksumOptForState.map(_.numFiles).getOrElse {
+      recordComputedStateAccess("numOfFiles") { computedState.numOfFiles }
+    }
+  // The number of tombstones is not tracked by the checksum, so this always needs the state
+  // reconstruction.
+  def numOfRemoves: Long =
+    recordComputedStateAccess("numOfRemoves") { computedState.numOfRemoves }
+  def numOfMetadata: Long =
+    checksumOptForState.map(_.numMetadata).getOrElse {
+      recordComputedStateAccess("numOfMetadata") { computedState.numOfMetadata }
+    }
+  def numOfProtocol: Long =
+    checksumOptForState.map(_.numProtocol).getOrElse {
+      recordComputedStateAccess("numOfProtocol") { computedState.numOfProtocol }
+    }
+  def setTransactions: Seq[SetTransaction] =
+    setTransactionsIfKnown.getOrElse {
+      recordComputedStateAccess("setTransactions") { computedState.setTransactions }
+    }
+  def fileSizeHistogram: Option[FileSizeHistogram] =
+    if (fileSizeHistogramEnabled) {
+      checksumOptForState.flatMap(_.fileSizeHistogram).orElse {
+        recordComputedStateAccess("fileSizeHistogram") { computedState.fileSizeHistogram }
+      }
+    } else None
+  def domainMetadata: Seq[DomainMetadata] =
+    domainMetadatasIfKnown.getOrElse {
+      recordComputedStateAccess("domainMetadata") { computedState.domainMetadata }
+    }
+
+  /**
+   * Returns the table size in bytes if it is cheaply available from the checksum or from
+   * already-computed state, and [[None]] if answering would require state reconstruction.
+   */
+  protected[delta] def sizeInBytesIfKnown: Option[Long] =
+    getFieldFromVersionChecksumIfKnown(c => Some(c.tableSizeBytes), sizeInBytes)
+
+  /**
+   * Returns the number of files if it is cheaply available from the checksum or from
+   * already-computed state, and [[None]] if answering would require state reconstruction.
+   */
+  protected[delta] def numOfFilesIfKnown: Option[Long] =
+    getFieldFromVersionChecksumIfKnown(c => Some(c.numFiles), numOfFiles)
+
+  /**
+   * Returns the [[SetTransaction]]s if they are already pre-computed or available via the
+   * checksum, and [[None]] if answering would require state reconstruction.
+   */
+  protected[delta] def setTransactionsIfKnown: Option[Seq[SetTransaction]] =
+    checksumOptForState
+      .filter(_ => spark.conf.get(DeltaSQLConf.DELTA_READ_SET_TRANSACTIONS_FROM_CRC))
+      .flatMap(_.setTransactions)
+      .map { setTransactionActions =>
+        recordDeltaEvent(deltaLog, "delta.snapshot.setTransactions.viaCRC")
+        setTransactionActions
+      }
+      .orElse { if (_computedStateTriggered) Some(computedState.setTransactions) else None }
+
+  /**
+   * Returns the [[DomainMetadata]]s if they are already pre-computed or available via the
+   * checksum, and [[None]] if answering would require state reconstruction.
+   */
+  protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] =
+    metadataDomainFromChecksumOpt.orElse {
+      if (_computedStateTriggered) Some(computedState.domainMetadata) else None
+    }
+
+  /** The [[DomainMetadata]]s carried by [[checksumOptForState]], if any. */
+  private lazy val metadataDomainFromChecksumOpt: Option[Seq[DomainMetadata]] =
+    checksumOptForState
+      .flatMap(_.domainMetadata)
+      .map { domainMetadata =>
+        recordDeltaEvent(deltaLog, "delta.snapshot.domainMetadata.viaCRC")
+        domainMetadata
+      }
+
+  // For DV metrics (numDeletedRecordsOpt / numDeletionVectorsOpt / deletedRecordCountsHistogramOpt)
+  // we only return a value for tables where DVs and DV metrics are readable, and fall back to a
+  // state recomputation when the checksum cannot serve them. The "IfKnown" getters only return a
+  // value when the answer is available without a fresh state reconstruction.
+  def numDeletedRecordsOpt: Option[Long] = {
+    if (!deletionVectorsReadableAndMetricsEnabled) return None
+    checksumOptForState.flatMap(_.numDeletedRecordsOpt).orElse {
+      recordComputedStateAccess("numDeletedRecordsOpt") { computedState.numDeletedRecordsOpt }
+    }
+  }
+  def numDeletionVectorsOpt: Option[Long] = {
+    if (!deletionVectorsReadableAndMetricsEnabled) return None
+    checksumOptForState.flatMap(_.numDeletionVectorsOpt).orElse {
+      recordComputedStateAccess("numDeletionVectorsOpt") { computedState.numDeletionVectorsOpt }
+    }
+  }
+  def deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram] = {
+    if (!deletionVectorsReadableAndHistogramEnabled) return None
+    checksumOptForState.flatMap(_.deletedRecordCountsHistogramOpt).orElse {
+      recordComputedStateAccess("deletedRecordCountsHistogramOpt") {
+        computedState.deletedRecordCountsHistogramOpt
+      }
+    }
+  }
+
+  /**
+   * Returns `Some(fromState)` when the field is known without a fresh state reconstruction, else
+   * `None`. It is known when [[checksumOptForState]] carries the field (`fromChecksum` is defined)
+   * or the state is already computed; only the presence of `fromChecksum` is used -- the value, and
+   * any of its own gating (e.g. DV readability), come from `fromState`.
+   */
+  protected def getFieldFromVersionChecksumIfKnown[T](
+      fromChecksum: VersionChecksum => Option[Any],
+      fromState: => T): Option[T] =
+    if (checksumOptForState.flatMap(fromChecksum).isEmpty && !_computedStateTriggered) None
+    else Some(fromState)
+
+  protected[delta] def numDeletedRecordsOptIfKnown: Option[Option[Long]] =
+    getFieldFromVersionChecksumIfKnown(_.numDeletedRecordsOpt, numDeletedRecordsOpt)
+
+  protected[delta] def numDeletionVectorsOptIfKnown: Option[Option[Long]] =
+    getFieldFromVersionChecksumIfKnown(_.numDeletionVectorsOpt, numDeletionVectorsOpt)
+
+  protected[delta] def deletedRecordCountsHistogramOptIfKnown:
+      Option[Option[DeletedRecordCountsHistogram]] =
+    getFieldFromVersionChecksumIfKnown(
+      _.deletedRecordCountsHistogramOpt, deletedRecordCountsHistogramOpt)
 
   protected def deletionVectorsReadableAndMetricsEnabled: Boolean = {
     val checksumDVMetricsEnabled =
@@ -235,8 +382,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   }
 
   protected def deletionVectorsReadableAndHistogramEnabled: Boolean = {
-    val deletedRecordCountsHistogramEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
     deletionVectorsReadableAndMetricsEnabled && deletedRecordCountsHistogramEnabled
   }
 

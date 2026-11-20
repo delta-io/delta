@@ -22,26 +22,27 @@ import java.util.concurrent.CountDownLatch
 import scala.collection.mutable
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
-import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTestBaseSuite, CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorBuilder, CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.storage.LogStore.logStoreClassConfKey
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{Commit, CommitCoordinatorClient, GetCommitsResponse, TableDescriptor}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
+import org.mockito.ArgumentMatchers.{any, anyLong}
+import org.mockito.Mockito.{doReturn, spy}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkException
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.storage.StorageLevel
 
@@ -498,7 +499,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
     //    and `cachedSnapshot`.
     withTempDir { dir =>
       val path = dir.getCanonicalPath
-      import testImplicits._
+      import deltaImplicits._
       // Commit 0 - to trigger the initial snapshot construction for version 0
       Seq(1).toDF().write.format("delta").mode("overwrite").save(path)
       val snapshot = DeltaLog.forTable(spark, path).update()
@@ -623,6 +624,62 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
     }
   }
 
+  private def hasDeltaEvent(records: Seq[UsageRecord], opType: String): Boolean = {
+    records.exists(_.tags.get("opType").contains(opType))
+  }
+
+  test("updateAfterCommit retries a stale listing: throws when exhausted, else resolves") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format("delta").save(path)
+      val log = DeltaLog.forTable(spark, new Path(path))
+      val staleSegment = log.unsafeVolatileSnapshot.logSegment
+
+      // Spy now, while the in-memory snapshot is at v0.
+      val spyLog = spy(log)
+      spark.range(1).write.format("delta").mode("append").save(path)
+
+      val freshSnapshot = log.unsafeVolatileSnapshot
+      val freshSegment = freshSnapshot.logSegment
+      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+      val commit =
+        new Commit(1, fs.getFileStatus(DeltaCommitFileProvider(freshSnapshot).deltaFile(1)), 0)
+
+      // With retries disabled, a persistently stale listing throws and logs inconsistentList.
+      doReturn(staleSegment, Nil: _*).when(spyLog)
+        .getLogSegmentAfterCommit(anyLong(), any(), any(), any(), any(), any(), any(), any())
+      withSQLConf(DeltaSQLConf.DELTA_COMMIT_INCONSISTENT_LIST_MAX_RETRIES.key -> "0") {
+        val records = Log4jUsageLogger.track {
+          val e = intercept[DeltaIllegalStateException] {
+            spyLog.updateAfterCommit(
+              committedVersion = 1,
+              commitOpt = Some(commit),
+              newChecksumOpt = None,
+              preCommitLogSegment = staleSegment,
+              catalogTableOpt = None)
+          }
+          assert(e.getErrorClass == "DELTA_INVALID_COMMITTED_VERSION")
+        }
+        assert(hasDeltaEvent(records, "delta.assertions.commit.inconsistentList"))
+        assert(!hasDeltaEvent(records, "delta.commit.mitigatedInconsistentList"))
+      }
+
+      // A listing that catches up on retry succeeds and logs an event instead of throwing.
+      doReturn(staleSegment, freshSegment).when(spyLog)
+        .getLogSegmentAfterCommit(anyLong(), any(), any(), any(), any(), any(), any(), any())
+      val records = Log4jUsageLogger.track {
+        spyLog.updateAfterCommit(
+          committedVersion = 1,
+          commitOpt = Some(commit),
+          newChecksumOpt = None,
+          preCommitLogSegment = staleSegment,
+          catalogTableOpt = None)
+      }
+      assert(hasDeltaEvent(records, "delta.commit.mitigatedInconsistentList"))
+      assert(!hasDeltaEvent(records, "delta.assertions.commit.inconsistentList"))
+    }
+  }
+
   testQuietly("checkpoint/json not found when executor restart " +
     "after expired checkpoints in the snapshot cache are cleaned up") {
     // This test deletes a classic checkpoint file by version.
@@ -713,7 +770,7 @@ class CountDownLatchLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
   }
 }
 object CountDownLatchLogStore {
-  val listFromCalled = new CountDownLatch(1)
+  @volatile var listFromCalled = new CountDownLatch(1)
 }
 
 case class ConcurrentBackfillCommitCoordinatorClient(
@@ -753,14 +810,21 @@ object ConcurrentBackfillCommitCoordinatorClient {
   var beginConcurrentBackfills = false
 }
 
-object ConcurrentBackfillCommitCoordinatorBuilder extends CommitCoordinatorBuilder {
+object ConcurrentBackfillCommitCoordinatorBuilder extends CatalogOwnedCommitCoordinatorBuilder {
   val batchSize = 5
-  private lazy val concurrentBackfillCommitCoordinatorClient =
+  private var concurrentBackfillCommitCoordinatorClient =
     ConcurrentBackfillCommitCoordinatorClient(synchronousBackfillThreshold = 2, batchSize)
+  def resetClient(): Unit = {
+    concurrentBackfillCommitCoordinatorClient =
+      ConcurrentBackfillCommitCoordinatorClient(synchronousBackfillThreshold = 2, batchSize)
+  }
   override def getName: String = "awaiting-commit-coordinator"
   override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
     concurrentBackfillCommitCoordinatorClient
   }
+  override def buildForCatalog(
+      spark: SparkSession,
+      catalogName: String): CommitCoordinatorClient = concurrentBackfillCommitCoordinatorClient
 }
 
 /**
@@ -784,27 +848,38 @@ class SnapshotManagementParallelListingSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
+  private val testTableIdentifier = TableIdentifier(
+    "snapshot_listing_catalog_managed",
+    Some("default"),
+    Some(CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING))
+  private val qualifiedTableName = testTableIdentifier.unquotedString
+
   override protected def sparkConf: SparkConf =
     super.sparkConf.set(logStoreClassConfKey, classOf[CountDownLatchLogStore].getName)
 
   override protected def beforeEach(): Unit = {
     super.beforeEach()
-    CommitCoordinatorProvider.clearNonDefaultBuilders()
-    CommitCoordinatorProvider.registerBuilder(ConcurrentBackfillCommitCoordinatorBuilder)
+    ConcurrentBackfillCommitCoordinatorBuilder.resetClient()
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+      CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      ConcurrentBackfillCommitCoordinatorBuilder)
     ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills = false
     ConcurrentBackfillCommitCoordinatorClient.deferBackfills = false
+    CountDownLatchLogStore.listFromCalled = new CountDownLatch(1)
   }
 
-  private def writeDeltaData(path: String, endVersion: Long): Unit = {
-    spark.range(10).write.format("delta").save(path)
+  private def writeDeltaData(tableName: String, endVersion: Long): Unit = {
+    val featureKey = s"delta.feature.${CatalogOwnedTableFeature.name}"
+    spark.range(10).write.format("delta").option(featureKey, "supported").saveAsTable(tableName)
     (1L to endVersion).foreach(
-      _ => spark.range(10).write.format("delta").mode("append").save(path))
+      _ => spark.range(10).write.format("delta").mode("append").saveAsTable(tableName))
   }
 
-  private def captureUsageRecordsAndGetSnapshot(dataPath: Path): (Snapshot, Seq[UsageRecord]) = {
+  private def captureUsageRecordsAndGetSnapshot(): (Snapshot, Seq[UsageRecord]) = {
     var snapshot: Snapshot = null
     val records = Log4jUsageLogger.track {
-      snapshot = DeltaLog.forTable(spark, dataPath).update()
+      snapshot = DeltaLog.forTable(spark, testTableIdentifier).update()
     }
     (snapshot, records)
   }
@@ -842,20 +917,17 @@ class SnapshotManagementParallelListingSuite extends QueryTest
         val batchSize = ConcurrentBackfillCommitCoordinatorBuilder.batchSize
         val endVersion = if (tryIncludeGapAtTheEnd) { batchSize } else { batchSize + 3 }
         withSQLConf(
-            COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-              ConcurrentBackfillCommitCoordinatorBuilder.getName,
             DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
-          withTempDir { tempDir =>
-            val path = tempDir.getCanonicalPath
-            val dataPath = new Path(path)
-
-            writeDeltaData(path, endVersion)
+          withTable(qualifiedTableName) {
+            writeDeltaData(qualifiedTableName, endVersion)
+            val deltaLog = DeltaLog.forTable(spark, testTableIdentifier)
+            assert(deltaLog.update().isCatalogOwned)
 
             // Invalidate cache to ensure re-listing.
-            DeltaLog.invalidateCache(spark, dataPath)
+            DeltaLog.invalidateCache(spark, deltaLog.dataPath)
             ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills = true
 
-            val (snapshot, records) = captureUsageRecordsAndGetSnapshot(dataPath)
+            val (snapshot, records) = captureUsageRecordsAndGetSnapshot()
             val expectedNeedAdditionalFsListingCount = if (concurrentBackfills) { 1 } else { 0 }
             verifyUsageRecords(records, expectedNeedAdditionalFsListingCount)
             verifySnapshotBackfills(snapshot, backfillUntilInclusive = batchSize)
@@ -869,28 +941,67 @@ class SnapshotManagementParallelListingSuite extends QueryTest
     val batchSize = ConcurrentBackfillCommitCoordinatorBuilder.batchSize
     val endVersion = batchSize + 3
     withSQLConf(
-        COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-          ConcurrentBackfillCommitCoordinatorBuilder.getName,
         DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
-      withTempDir { tempDir =>
-        val path = tempDir.getCanonicalPath
-        val dataPath = new Path(path)
-
-        writeDeltaData(path, endVersion)
+      withTable(qualifiedTableName) {
+        writeDeltaData(qualifiedTableName, endVersion)
+        val deltaLog = DeltaLog.forTable(spark, testTableIdentifier)
+        assert(deltaLog.update().isCatalogOwned)
 
         // Delete 5.json to create a permanent gap between file-system i.e. [0, 4] and
         // commit-store [6, 8] which would even an additional listing won't be able to reconcile.
-        val deltaLog = DeltaLog.forTable(spark, dataPath)
         deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf()).delete(
           FileNames.unsafeDeltaFile(deltaLog.logPath, batchSize), true)
 
         // Invalidate cache to ensure re-listing.
-        DeltaLog.invalidateCache(spark, dataPath)
-
+        DeltaLog.invalidateCache(spark, deltaLog.dataPath)
         val e = intercept[IllegalStateException] {
-          DeltaLog.forTable(spark, dataPath).update()
+          DeltaLog.forTable(spark, testTableIdentifier).update()
         }
         assert(e.getMessage.contains("unexpectedly still requires additional file-system listing"))
+      }
+    }
+  }
+
+  test("LogSegment.toString truncates deltas above the configured limit") {
+    val logPath = new Path("/tmp/fake-table/_delta_log")
+    def deltaStatus(version: Long): FileStatus =
+      new FileStatus(1L, false, 1, 1L, version, FileNames.unsafeDeltaFile(logPath, version))
+    val segment = LogSegment(
+      logPath,
+      version = 19L,
+      deltas = (0L until 20L).map(deltaStatus),
+      nonCompactedDeltasOpt = None,
+      checkpointProviderOpt = None,
+      deltaAtCheckpointVersionOpt = None,
+      lastCommitTimestamp = 0L)
+
+    // Each rendered delta path ends in ".json"; the truncation marker does not.
+    def numRenderedDeltas(str: String): Int = str.split("\\.json", -1).length - 1
+
+    withSQLConf(DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT.key -> "5") {
+      val str = segment.toString
+      assert(str.contains("15 of 20 deltas omitted"), str)
+      assert(numRenderedDeltas(str) === 5, str)
+    }
+
+    // A negative limit disables truncation.
+    withSQLConf(DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT.key -> "-1") {
+      val str = segment.toString
+      assert(!str.contains("omitted"), str)
+      assert(numRenderedDeltas(str) === 20, str)
+    }
+
+    // Below the limit, every delta is rendered with no truncation marker.
+    withSQLConf(DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT.key -> "100") {
+      val str = segment.toString
+      assert(!str.contains("omitted"), str)
+      assert(numRenderedDeltas(str) === 20, str)
+    }
+
+    // Values below -1 are rejected.
+    intercept[IllegalArgumentException] {
+      withSQLConf(DeltaSQLConf.DELTA_LOG_SEGMENT_DELTAS_TO_STRING_LIMIT.key -> "-2") {
+        segment.toString
       }
     }
   }

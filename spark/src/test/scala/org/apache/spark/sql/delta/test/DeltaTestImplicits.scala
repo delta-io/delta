@@ -21,7 +21,7 @@ import java.sql.Timestamp
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeatureBase, CatalogManagedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
@@ -72,15 +72,16 @@ object DeltaTestImplicits {
             // If neither metadata nor protocol is explicitly passed, then use default Metadata and
             // with the maximum protocol.
             txn.updateMetadataForNewTable(Metadata())
-            // AdaptiveMetadataTableFeature is WIP. Don't enable it by default in test tables.
-            val featuresToExclude = ArrayBuffer[TableFeature](AdaptiveMetadataTableFeature)
+            // The AMT features are WIP. Don't enable them by default in test tables.
+            val featuresToExclude =
+              ArrayBuffer[TableFeature](AdaptiveMetadataTableFeatureBase.features: _*)
             val enableCatalogOwnedByDefault = SparkSession.active.conf.getOption(
-              TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
+              TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature))
                 .contains("supported")
             if (!enableCatalogOwnedByDefault) {
-              // CatalogOwnedTableFeature is enabled by protocol only without metadata, and should
+              // CatalogManagedTableFeature is enabled by protocol only without metadata, and should
               // not be enabled by default.
-              featuresToExclude += CatalogOwnedTableFeature
+              featuresToExclude += CatalogManagedTableFeature
             }
             txn.updateProtocol(
               Action.supportedProtocolVersion(featuresToExclude = featuresToExclude.toSeq))

@@ -254,10 +254,8 @@ public interface Transaction {
   }
 
   /**
-   * Get the context for writing data into a table. The context tells the connector where the data
-   * should be written. For partitioned table context is generated per partition. So, the connector
-   * should call this API for each partition. For un-partitioned table, the context is same for all
-   * the data.
+   * Equivalent to {@link #getWriteContext(Engine, Row, Map, PartitionKeyType)} with {@link
+   * PartitionKeyType#LOGICAL}; {@code partitionValues} keys are logical partition column names.
    *
    * @param engine {@link Engine} instance to use.
    * @param transactionState The transaction state
@@ -269,6 +267,30 @@ public interface Transaction {
    */
   static DataWriteContext getWriteContext(
       Engine engine, Row transactionState, Map<String, Literal> partitionValues) {
+    return getWriteContext(engine, transactionState, partitionValues, PartitionKeyType.LOGICAL);
+  }
+
+  /**
+   * Get the context for writing data into a table. The context tells the connector where the data
+   * should be written. For partitioned table context is generated per partition. So, the connector
+   * should call this API for each partition. For un-partitioned table, the context is same for all
+   * the data.
+   *
+   * @param engine {@link Engine} instance to use.
+   * @param transactionState The transaction state
+   * @param partitionValues The partition values for the data, keyed per {@code partitionKeyType}.
+   *     If the table is un-partitioned, the map should be empty.
+   * @param partitionKeyType whether {@code partitionValues} keys are logical or physical partition
+   *     column names.
+   * @return {@link DataWriteContext} containing metadata about where and how the data for partition
+   *     should be written. The target directory and the returned partition-value keys use the
+   *     physical partition column names.
+   */
+  static DataWriteContext getWriteContext(
+      Engine engine,
+      Row transactionState,
+      Map<String, Literal> partitionValues,
+      PartitionKeyType partitionKeyType) {
     // Column mapping check removed from getWriteContext: connectors that handle column
     // name translation themselves (e.g. using Spark's Parquet writer instead of Kernel's)
     // only need the target directory and partition metadata from this method. The column
@@ -276,15 +298,18 @@ public interface Transaction {
     StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
 
-    partitionValues =
-        validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
-
-    // The on-disk partition directory and AddFile partition-value keys use physical names, so
-    // translate the column-name list and the value-map keys to physical.
     ColumnMapping.ColumnMappingMode mode = getColumnMappingMode(transactionState);
+    // The on-disk partition directory and AddFile partition-value keys use physical names.
+    // Validate in the caller's key space, then ensure the values are physically keyed.
+    partitionValues =
+        validateAndSanitizePartitionValues(
+            tableSchema, partitionColNames, partitionValues, partitionKeyType);
+    if (partitionKeyType == PartitionKeyType.LOGICAL) {
+      partitionValues =
+          PartitionUtils.toPhysicalPartitionValues(tableSchema, partitionValues, mode);
+    }
     partitionColNames =
         PartitionUtils.toPhysicalPartitionColNames(tableSchema, partitionColNames, mode);
-    partitionValues = PartitionUtils.toPhysicalPartitionValues(tableSchema, partitionValues, mode);
 
     String targetDirectory =
         getTargetDirectory(getTablePath(transactionState), partitionColNames, partitionValues);

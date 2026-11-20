@@ -61,7 +61,7 @@ trait HDFSLogStoreSuiteBase extends LogStoreSuiteBase {
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("writes on systems without AbstractFileSystem implemented") {
     withSQLConf("fs.fake.impl" -> classOf[FakeFileSystem].getName,
@@ -346,6 +346,11 @@ class PublicS3SingleDriverLogStoreSuite
 class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.AzureLogStore].getName
+}
+
+class PublicGooseFSLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
+  override protected val publicLogStoreClassName: String =
+    classOf[io.delta.storage.GooseFSLogStore].getName
 }
 
 class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSuiteBase {

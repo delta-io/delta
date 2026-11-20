@@ -26,14 +26,14 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.amt.AMTPassthrough
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.shims.VariantStatsShims
-import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
 import org.apache.spark.sql.delta.util.{Codec, DeltaCommitFileProvider, DeltaStatsJsonUtils, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
@@ -48,7 +48,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{LongType, StructType}
 import org.apache.spark.types.variant.{Variant, VariantUtil}
 import org.apache.spark.unsafe.types.VariantVal
 
@@ -723,7 +723,7 @@ class CheckpointsSuite
     }
   }
 
-  test("non-AMT tables do not persist backReference in checkpoint or commit JSON") {
+  test("non-AMT tables do not persist AMT-only AddFile fields") {
     withClassicCheckpointPolicyForCatalogOwned {
       withTempDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
@@ -734,7 +734,7 @@ class CheckpointsSuite
         deltaLog.checkpoint()
         val version = deltaLog.snapshot.version
 
-        // 1. The classic checkpoint parquet must not carry backReference on add or remove.
+        // 1. The classic checkpoint parquet must not carry AMT-only AddFile fields.
         val checkpointFile =
           FileNames.checkpointFileSingular(deltaLog.logPath, version).toString
         val checkpointSchema = spark.read.format("parquet").load(checkpointFile).schema
@@ -746,8 +746,16 @@ class CheckpointsSuite
           s"checkpoint add struct must not contain backReference, got: $addFields")
         assert(!removeFields.contains("backReference"),
           s"checkpoint remove struct must not contain backReference, got: $removeFields")
+        assert(!addFields.contains("amtPassthrough"),
+          s"checkpoint add struct must not contain amtPassthrough, got: $addFields")
+        Seq("snapshotId", "modifiedSnapshotId").foreach { field =>
+          assert(!addFields.contains(field),
+            s"checkpoint add struct must not contain $field, got: $addFields")
+          assert(!removeFields.contains(field),
+            s"checkpoint remove struct must not contain $field, got: $removeFields")
+        }
 
-        // 2. No commit JSON should mention backReference (null fields are omitted from JSON).
+        // 2. No commit JSON should mention AMT-only fields.
         val commitProvider = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot)
         val hadoopConf = deltaLog.newDeltaHadoopConf()
         (0L to version).foreach { v =>
@@ -755,6 +763,13 @@ class CheckpointsSuite
           val content = deltaLog.store.read(deltaFile, hadoopConf)
           assert(!content.exists(_.contains("backReference")),
             s"commit JSON for version $v must not contain backReference: ${content.mkString("\n")}")
+          assert(!content.exists(_.contains("amtPassthrough")),
+            s"commit JSON for version $v must not contain amtPassthrough: " +
+              s"${content.mkString("\n")}")
+          Seq("snapshotId", "modifiedSnapshotId").foreach { field =>
+            assert(!content.exists(_.contains(field)),
+              s"commit JSON for version $v must not contain $field: ${content.mkString("\n")}")
+          }
         }
       }
     }
@@ -795,7 +810,7 @@ class CheckpointsSuite
       }
 
       // Make sure the contents are the same
-      import testImplicits._
+      import deltaImplicits._
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
         (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
@@ -1086,12 +1101,19 @@ class CheckpointsSuite
 
     val actionsToWrite = Checkpoints
       .buildCheckpoint(actionsDS, snapshot)
-      // buildCheckpoint drops backReference from the on-disk add/remove shape so we need to
-      // re-materialize it as a null column before .as[SingleAction].
+      // buildCheckpoint drops AMT-only fields from the on-disk shape, so re-materialize them as
+      // null columns before .as[SingleAction].
       .withColumn("add", when(col("add.path").isNotNull,
-        col("add").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
+        col("add")
+          .withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))
+          .withField("amtPassthrough", lit(null).cast(AMTPassthrough.STRUCT_TYPE))
+          .withField("snapshotId", lit(null).cast(LongType))
+          .withField("modifiedSnapshotId", lit(null).cast(LongType))))
       .withColumn("remove", when(col("remove.path").isNotNull,
-        col("remove").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
+        col("remove")
+          .withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))
+          .withField("snapshotId", lit(null).cast(LongType))
+          .withField("modifiedSnapshotId", lit(null).cast(LongType))))
       .as[SingleAction]
       .collect()
       .toSeq
@@ -1199,7 +1221,9 @@ class CheckpointsSuite
     }
   }
 
-  test("validate metadata cleanup is not called with createCheckpointAtVersion API") {
+  test(
+      "validate metadata cleanup is not called with createCheckpointAtVersion API",
+      CatalogManagedMaintenanceIncompatible) {
     withTempDir { dir =>
       val usageRecords1 = Log4jUsageLogger.track {
         spark.range(10).write.format("delta").save(dir.getAbsolutePath)
@@ -1426,8 +1450,6 @@ class CheckpointsSuite
 
   test("DML with DVs corrupts variant stats when collectVariantDataSkippingStats is disabled") {
     // This test reads from golden files containing the variant logical type annotation
-    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
-      "parse_json requires Spark 4.1+")
 
     // This test verifies that when:
     // 1. A table has variant stats
@@ -1521,8 +1543,6 @@ class CheckpointsSuite
 
   test("DML with DVs preserves variant stats when collectVariantDataSkippingStats is enabled") {
     // This test reads from golden files containing the variant logical type annotation
-    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
-      "parse_json requires Spark 4.1+")
 
     // This test verifies that when:
     // 1. A table has variant stats
@@ -1637,8 +1657,6 @@ class CheckpointsSuite
   test("DML with DVs preserves nested variant stats " +
       "when collectVariantDataSkippingStats is enabled") {
     // This test reads from golden files containing the variant logical type annotation
-    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
-      "parse_json requires Spark 4.1+")
 
     // This test verifies that variant stats for a variant column nested inside a struct
     // (schema: i int, s struct<v variant>) are preserved after DML operations with DVs.
@@ -1761,8 +1779,6 @@ class CheckpointsSuite
   test("DML with DVs preserves variant and struct stats " +
       "when collectVariantDataSkippingStats is enabled") {
     // This test reads from golden files containing the variant logical type annotation
-    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
-      "parse_json requires Spark 4.1+")
 
     // This test verifies that for a table with both variant and struct columns
     // (schema: v variant, s struct<i int, j string>), stats are preserved for ALL columns

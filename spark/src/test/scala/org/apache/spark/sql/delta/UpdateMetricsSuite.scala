@@ -119,7 +119,7 @@ class UpdateMetricsSuite extends QueryTest
       ""
     }
     var operationMetrics: Map[String, Long] = null
-    import testImplicits._
+    import deltaImplicits._
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
       DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> "false",
@@ -348,6 +348,16 @@ class UpdateMetricsSuite extends QueryTest
       ),
       testConfig = testConfig
     )
+  }
+
+  test("UPDATE output metrics schema is not nullable") {
+    withTable("target") {
+      spark.range(10).write.format("delta").saveAsTable("target")
+
+      val schema = spark.sql("UPDATE target SET id = id + 100 WHERE id < 5").schema
+
+      assert(schema.forall(!_.nullable))
+    }
   }
 
 }

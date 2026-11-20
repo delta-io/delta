@@ -20,7 +20,7 @@ import java.util.Date
 
 import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.Protocol
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
@@ -475,3 +475,6 @@ class DeltaCDCSQLWithCatalogOwnedBatch2Suite extends DeltaCDCSQLSuite {
 class DeltaCDCSQLWithCatalogOwnedBatch100Suite extends DeltaCDCSQLSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
+
+// Routes cdcRead through the V2 changelog SQL surface. See [[ChangelogV2CdcReadMixin]].
+class DeltaCDCSQLChangelogV2Suite extends DeltaCDCSQLSuite with ChangelogV2CdcReadMixin

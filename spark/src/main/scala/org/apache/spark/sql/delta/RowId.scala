@@ -141,7 +141,7 @@ object RowId {
    */
   private[delta] def extractHighWatermark(snapshot: Snapshot): Option[Long] =
     if (isSupported(snapshot.protocol)) {
-      RowTrackingMetadataDomain.fromSnapshot(snapshot).map(_.rowIdHighWaterMark)
+      snapshot.getRowTrackingHighWaterMark()
     } else {
       None
     }

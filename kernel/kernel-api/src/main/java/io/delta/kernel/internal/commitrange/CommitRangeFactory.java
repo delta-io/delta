@@ -57,37 +57,33 @@ class CommitRangeFactory {
   CommitRangeImpl create(Engine engine) {
     List<ParsedCatalogCommitData> ratifiedCommits = getFileBasedRatifiedCommits();
     long startVersion = resolveStartVersion(engine, ratifiedCommits);
-    Optional<Long> endVersionOpt = resolveEndVersionIfSpecified(engine, ratifiedCommits);
+    Optional<Long> requiredEndVersionOpt = resolveRequiredEndVersion(engine, ratifiedCommits);
+    // The listing stops at the required end version if there is one, otherwise at maxEndVersion.
+    // Unlike the required end version, maxEndVersion does not have to exist.
+    Optional<Long> listingEndVersionOpt =
+        requiredEndVersionOpt.isPresent() ? requiredEndVersionOpt : ctx.maxEndVersionOpt;
 
-    // Apply maxCatalogVersion constraint
-    if (ctx.maxCatalogVersion.isPresent()) {
-      if (!endVersionOpt.isPresent()) {
-        // When maxCatalogVersion is specified and no end boundary is provided,
-        // the end version should be maxCatalogVersion
-        endVersionOpt = ctx.maxCatalogVersion;
-        logger.info(
-            "{}: Using maxCatalogVersion {} as end version", tablePath, endVersionOpt.get());
-      } else {
-        // Check that endVersion is <= maxCatalogVersion
-        if (endVersionOpt.get() > ctx.maxCatalogVersion.get()) {
-          throw DeltaErrors.resolvedEndVersionAfterMaxCatalogVersion(
-              tablePath.toString(), endVersionOpt.get(), ctx.maxCatalogVersion.get());
-        }
-      }
-    }
-
-    validateVersionRange(startVersion, endVersionOpt);
-    logResolvedVersions(startVersion, endVersionOpt);
+    validateVersionRange(startVersion, listingEndVersionOpt);
+    logResolvedVersions(startVersion, requiredEndVersionOpt);
     List<ParsedDeltaData> deltas =
         getDeltasForVersionRangeWithCatalogPriority(
-            engine, startVersion, endVersionOpt, ratifiedCommits);
-    // Once we have a list of deltas, we can resolve endVersion=latestVersion for the default case
-    long endVersion = endVersionOpt.orElseGet(() -> extractLatestVersion(deltas));
-    if (!endVersionOpt.isPresent()) {
+            engine, startVersion, listingEndVersionOpt, ratifiedCommits);
+    validateDeltasMatchVersionRange(deltas, startVersion, requiredEndVersionOpt);
+    // Use the required end version when provided. Otherwise, resolve the end to the latest
+    // version, up to maxEndVersion if it is set.
+    long endVersion = requiredEndVersionOpt.orElseGet(() -> extractLatestVersion(deltas));
+    if (!requiredEndVersionOpt.isPresent()) {
       logger.info("{}: Resolved end-boundary to the latest version {}", tablePath, endVersion);
     }
     return new CommitRangeImpl(
-        tablePath, ctx.startBoundary, ctx.endBoundaryOpt, startVersion, endVersion, deltas);
+        tablePath,
+        ctx.startBoundary,
+        ctx.endBoundaryOpt,
+        startVersion,
+        endVersion,
+        deltas,
+        ctx.commitRangeValidation,
+        ctx.failOnDataLoss);
   }
 
   private long resolveStartVersion(Engine engine, List<ParsedCatalogCommitData> catalogCommits) {
@@ -140,6 +136,35 @@ class CommitRangeFactory {
     }
   }
 
+  /**
+   * Resolves the version the commit range must end at, applying the maxCatalogVersion constraint.
+   * Returns empty when the range ends at the latest version (up to maxEndVersion if it is set), as
+   * that version cannot be resolved until after we have performed any listing.
+   */
+  private Optional<Long> resolveRequiredEndVersion(
+      Engine engine, List<ParsedCatalogCommitData> catalogCommits) {
+    Optional<Long> endVersionOpt = resolveEndVersionIfSpecified(engine, catalogCommits);
+    if (!ctx.maxCatalogVersion.isPresent()) {
+      return endVersionOpt;
+    }
+    long maxCatalogVersion = ctx.maxCatalogVersion.get();
+    if (endVersionOpt.isPresent()) {
+      // Check that endVersion is <= maxCatalogVersion
+      if (endVersionOpt.get() > maxCatalogVersion) {
+        throw DeltaErrors.resolvedEndVersionAfterMaxCatalogVersion(
+            tablePath.toString(), endVersionOpt.get(), maxCatalogVersion);
+      }
+      return endVersionOpt;
+    }
+    // When maxCatalogVersion is specified and no end boundary is provided, the end version should
+    // be maxCatalogVersion, or maxEndVersion if that is lower. Both versions are known to exist,
+    // because the catalog has ratified every version up to maxCatalogVersion.
+    long catalogEndVersion =
+        Math.min(ctx.maxEndVersionOpt.orElse(maxCatalogVersion), maxCatalogVersion);
+    logger.info("{}: Using {} as end version", tablePath, catalogEndVersion);
+    return Optional.of(catalogEndVersion);
+  }
+
   private void validateVersionRange(long startVersion, Optional<Long> endVersionOpt) {
     endVersionOpt.ifPresent(
         endVersion -> {
@@ -151,12 +176,14 @@ class CommitRangeFactory {
 
   private void logResolvedVersions(long startVersion, Optional<Long> endVersionOpt) {
     logger.info(
-        "{}: Resolved startVersion={} and endVersion={} from startBoundary={} endBoundary={}",
+        "{}: Resolved startVersion={} and endVersion={} from startBoundary={} endBoundary={} "
+            + "maxEndVersion={}",
         tablePath,
         startVersion,
         endVersionOpt,
         ctx.startBoundary,
-        ctx.endBoundaryOpt);
+        ctx.endBoundaryOpt,
+        ctx.maxEndVersionOpt);
   }
 
   private long extractLatestVersion(List<ParsedDeltaData> deltaDatas) {
@@ -174,38 +201,53 @@ class CommitRangeFactory {
   }
 
   /**
-   * Lists the _delta_log and combines the found published deltas with the catalog commits to
-   * compile a single contiguous list of deltas. Catalog commits take priority over published deltas
-   * when both are present for the same commit version. Returned deltas are guaranteed to start with
-   * startVersion, end with endVersion if endVersionOpt is non-empty, and are contiguous. Throws an
-   * exception if no deltas are found in the version range, or if startVersion or endVersion cannot
-   * be found.
+   * Lists the _delta_log up to listingEndVersionOpt and combines the found published deltas with
+   * the catalog commits to compile a single contiguous list of deltas. Catalog commits take
+   * priority over published deltas when both are present for the same commit version.
+   * listingEndVersionOpt is an upper limit and does not have to exist. This does not check that the
+   * returned deltas start with startVersion or reach any end version; the caller validates that.
    */
   private List<ParsedDeltaData> getDeltasForVersionRangeWithCatalogPriority(
       Engine engine,
       long startVersion,
-      Optional<Long> endVersionOpt,
+      Optional<Long> listingEndVersionOpt,
       List<ParsedCatalogCommitData> ratifiedCommits) {
-    // Get published deltas between startVersion and endVersionOpt
+    // Get published deltas between startVersion and listingEndVersionOpt
     List<ParsedDeltaData> publishedDeltas =
-        getPublishedDeltasInVersionRange(engine, startVersion, endVersionOpt);
+        getPublishedDeltasInVersionRange(engine, startVersion, listingEndVersionOpt);
 
-    // Get ratified deltas between startVersion and endVersionOpt
+    // Get ratified deltas between startVersion and listingEndVersionOpt
+    // Rely on the filesystem listing for leading published commits: metadata cleanup may have
+    // deleted their files even though the catalog still reports them.
     List<ParsedDeltaData> ratifiedDeltas =
-        ratifiedCommits.stream()
-            .filter(
-                x ->
-                    x.getVersion() >= startVersion
-                        && x.getVersion() <= endVersionOpt.orElse(Long.MAX_VALUE))
-            .collect(Collectors.toList());
+        dropLeadingPublishedCommits(
+            ratifiedCommits.stream()
+                .filter(
+                    commit ->
+                        commit.getVersion() >= startVersion
+                            && commit.getVersion() <= listingEndVersionOpt.orElse(Long.MAX_VALUE))
+                .collect(Collectors.toList()));
 
-    // Validate they are contiguous and valid (i.e. backfill is ordered)
+    // Validate the catalog/published relationship and, in strict mode, completeness.
     validatePublishedPlusRatifiedDeltas(publishedDeltas, ratifiedDeltas);
-    List<ParsedDeltaData> combinedDeltas =
-        LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
-            publishedDeltas, ratifiedDeltas);
-    validateDeltasMatchVersionRange(combinedDeltas, startVersion, endVersionOpt);
-    return combinedDeltas;
+    return LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
+        publishedDeltas, ratifiedDeltas);
+  }
+
+  /**
+   * Drops the leading catalog commits that are already published. Metadata cleanup may have removed
+   * those files, so the listing is authoritative for them. Published catalog commits after the
+   * first staged one are kept, since ordered backfill guarantees they still exist.
+   */
+  private static List<ParsedDeltaData> dropLeadingPublishedCommits(
+      List<ParsedDeltaData> catalogCommits) {
+    int firstStaged = 0;
+    while (firstStaged < catalogCommits.size()
+        && FileNames.isPublishedDeltaFile(
+            catalogCommits.get(firstStaged).getFileStatus().getPath())) {
+      firstStaged++;
+    }
+    return catalogCommits.subList(firstStaged, catalogCommits.size());
   }
 
   /**
@@ -227,8 +269,8 @@ class CommitRangeFactory {
     List<ParsedDeltaData> publishedDeltas =
         commitFiles.stream().map(ParsedDeltaData::forFileStatus).collect(Collectors.toList());
 
-    // Validate listed delta files are contiguous
-    if (publishedDeltas.size() > 1) {
+    // Validate listed delta files are contiguous in strict mode.
+    if (ctx.commitRangeValidation && publishedDeltas.size() > 1) {
       for (int i = 1; i < publishedDeltas.size(); i++) {
         final ParsedLogData prev = publishedDeltas.get(i - 1);
         final ParsedLogData curr = publishedDeltas.get(i);
@@ -263,7 +305,7 @@ class CommitRangeFactory {
       long lastPublishedVersion = ListUtils.getLast(publishedDeltas).getVersion();
       // We must have publishedDeltas + ratifiedDeltas be contiguous
       // Invalid example: P0, P1 + R3, R4
-      if (lastPublishedVersion + 1 < earliestRatifiedVersion) {
+      if (ctx.commitRangeValidation && lastPublishedVersion + 1 < earliestRatifiedVersion) {
         throw publishedDeltasAndCatalogCommitsNotContiguous(
             tablePath.toString(),
             publishedDeltas.stream().map(ParsedDeltaData::getVersion).collect(Collectors.toList()),
@@ -279,9 +321,12 @@ class CommitRangeFactory {
       throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersionOpt);
     }
 
+    if (!ctx.commitRangeValidation) {
+      return;
+    }
+
     long earliestVersion = ListUtils.getFirst(deltas).getVersion();
     long latestVersion = ListUtils.getLast(deltas).getVersion();
-
     if (earliestVersion != startVersion) {
       throw startVersionNotFound(tablePath.toString(), startVersion, Optional.of(earliestVersion));
     }

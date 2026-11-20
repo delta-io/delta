@@ -502,10 +502,16 @@ class RowTrackingRemovalConcurrencySuite
               }
               assert(e.getErrorClass === "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION")
             } else {
-              // Backfill fails if run together backfill.
-              assertThrows[IllegalStateException] {
+              // Backfill fails while the table is suspended during unbackfill.
+              val e = intercept[DeltaIllegalStateException] {
                 backfillTransaction(deltaLog)
               }
+              checkError(
+                e,
+                "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION",
+                parameters = Map(
+                  "property1" -> DeltaConfigs.ROW_TRACKING_ENABLED.key,
+                  "property2" -> DeltaConfigs.ROW_TRACKING_SUSPENDED.key))
             }
 
             // Commit batch 2.

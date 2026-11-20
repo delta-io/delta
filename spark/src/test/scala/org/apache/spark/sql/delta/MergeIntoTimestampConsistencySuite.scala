@@ -159,7 +159,7 @@ abstract class MergeIntoTimestampConsistencySuiteBase extends QueryTest
   }
 
   private def assertUpdatedTimestampsInTargetAreAllEqual(): Unit = {
-    import testImplicits._
+    import deltaImplicits._
 
     val timestampCombinations =
       sql(s"""SELECT timestampOne, timestampTwo

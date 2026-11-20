@@ -249,14 +249,35 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
           .save(dir.getCanonicalPath)
         val v3 = log.update().version
 
-        assertBlocked(
-            expectedIncompatSchemaVersion = v2,
-            expectedReadSchemaVersion = v3,
-            bySchemaChange = false) {
+        def readChanges(): Unit = {
           cdcRead(
             new TablePath(dir.getCanonicalPath),
             StartingVersion(v2.toString),
             EndingVersion(v3.toString)).collect()
+        }
+
+        for (schemaCheckEnabled <- Seq(true, false)) {
+          withSQLConf(
+              DeltaSQLConf.DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED.key ->
+                schemaCheckEnabled.toString) {
+            if (schemaCheckEnabled) {
+              checkError(
+                intercept[DeltaUnsupportedOperationException] { readChanges() },
+                "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_STARTING_COMMIT_SCHEMA.KNOWN_OPERATION",
+                sqlState = "0AKDC",
+                parameters = Map(
+                  "operation" -> "WRITE",
+                  "start" -> v2.toString,
+                  "priorVersion" -> v1.toString))
+            } else {
+              assertBlocked(
+                  expectedIncompatSchemaVersion = v2,
+                  expectedReadSchemaVersion = v3,
+                  bySchemaChange = false) {
+                readChanges()
+              }
+            }
+          }
         }
       }
     }

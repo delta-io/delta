@@ -25,10 +25,14 @@ class CheckpointInstanceSuite extends SparkFunSuite {
   test("checkpoint instance comparisons") {
     val ci1_single_1 = CheckpointInstance(1, Format.SINGLE, numParts = None)
     val ci1_withparts_2 = CheckpointInstance(1, Format.WITH_PARTS, numParts = Some(2))
+    val ci1_amt_2 = CheckpointInstance(
+      1, Format.AMT, numParts = Some(2), manifestCommitVersion = Some(1))
     val ci1_sentinel = CheckpointInstance.sentinelValue(Some(1))
 
     val ci2_single_1 = CheckpointInstance(2, Format.SINGLE, numParts = None)
     val ci2_withparts_4 = CheckpointInstance(2, Format.WITH_PARTS, numParts = Some(4))
+    val ci2_amt_3 = CheckpointInstance(
+      2, Format.AMT, numParts = Some(3), manifestCommitVersion = Some(2))
     val ci2_sentinel = CheckpointInstance.sentinelValue(Some(2))
 
     val ci3_single_1 = CheckpointInstance(3, Format.SINGLE, numParts = None)
@@ -37,10 +41,20 @@ class CheckpointInstanceSuite extends SparkFunSuite {
     assert(ci1_single_1 < ci2_single_1) // version takes priority
     assert(ci1_single_1 < ci1_withparts_2) // parts takes priority when versions are same
     assert(ci2_withparts_4 < ci3_withparts_2) // version takes priority over parts
+    // An AMT checkpoint has the highest priority among checkpoints of the same version.
+    assert(ci1_amt_2 > ci1_withparts_2 && ci1_amt_2 > ci1_single_1)
+    assert(ci2_amt_3 > ci2_withparts_4 && ci2_amt_3 > ci2_single_1)
+    // AMT still yields to the Sentinel value, and to any checkpoint of a later version.
+    assert(ci1_amt_2 < ci1_sentinel)
+    assert(ci1_amt_2 < ci2_single_1)
+    // AMT reuses `numParts` for its leaf count, and carries no `fileName`.
+    assert(ci1_amt_2.numParts == Some(2) && ci1_amt_2.fileName.isEmpty)
 
     // all checkpoint instances for version 1/2 are less than sentinel value for version 2.
-    Seq(ci1_single_1, ci1_withparts_2, ci1_sentinel, ci2_single_1, ci2_withparts_4)
-      .foreach(ci => assert(ci < ci2_sentinel))
+    Seq(
+      ci1_single_1, ci1_withparts_2, ci1_sentinel, ci2_single_1, ci2_withparts_4,
+      ci1_amt_2, ci2_amt_3
+    ).foreach(ci => assert(ci < ci2_sentinel))
 
     // all checkpoint instances for version 3 are greater than sentinel value for version 2.
     Seq(ci3_single_1, ci3_withparts_2).foreach(ci => assert(ci > ci2_sentinel))
@@ -49,7 +63,8 @@ class CheckpointInstanceSuite extends SparkFunSuite {
     Seq(
       ci1_single_1, ci1_withparts_2, ci1_sentinel,
       ci2_single_1, ci2_withparts_4, ci2_sentinel,
-      ci3_single_1, ci3_withparts_2
+      ci3_single_1, ci3_withparts_2,
+      ci1_amt_2, ci2_amt_3
     ).foreach(ci => assert(ci < CheckpointInstance.MaxValue))
   }
 }

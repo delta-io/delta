@@ -58,13 +58,6 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
     private final Optional<String> baseMetadataLocation;
 
 
-    // Pre-assigned snapshot ID to be used for the next snapshot creation.
-    // When set, this value will override the automatically generated snapshot ID
-    // during the next commit operation. This allows for deterministic snapshot ID
-    // generation for DBI based on delta version.
-    private Optional<Long> preAssignedNextSnapshotId;
-    private boolean preAssignedNextSnapshotIdConsumed;
-
     private List<MetadataUpdate> metadataUpdates;
     private Optional<Tuple2<String, TableMetadata>> lastWrittenTableMetadataWithLocation;
 
@@ -79,8 +72,6 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
         this.metadataUpdates = metadataUpdates;
         this.baseMetadataLocation = baseMetadataLocation;
         this.lastWrittenTableMetadataWithLocation = Optional.empty();
-        this.preAssignedNextSnapshotId = Optional.empty();
-        this.preAssignedNextSnapshotIdConsumed = false;
     }
 
     @Override
@@ -228,17 +219,4 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
     }
 
 
-    public void setPreAssignedNextSnapshotId(long preAssignedNextSnapshotId) {
-        this.preAssignedNextSnapshotId = Optional.of(preAssignedNextSnapshotId);
-        this.preAssignedNextSnapshotIdConsumed = false;
-    }
-
-    @Override
-    public long newSnapshotId() {
-        if (preAssignedNextSnapshotId.isPresent()) {
-            this.preAssignedNextSnapshotIdConsumed = true;
-            return preAssignedNextSnapshotId.get();
-        }
-        return super.newSnapshotId();
-    }
 }

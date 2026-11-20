@@ -26,8 +26,8 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * A builder for creating {@link CommitRange} instances that define a contiguous range of commits in
- * a Delta Lake table.
+ * A builder for creating {@link CommitRange} instances that define a range of commits in a Delta
+ * Lake table.
  *
  * <p>The start boundary is required and provided via {@link TableManager#loadCommitRange(String,
  * CommitBoundary)}. If no end specification is provided, the range defaults to the latest available
@@ -49,7 +49,30 @@ public interface CommitRangeBuilder {
   CommitRangeBuilder withEndBoundary(CommitBoundary endBoundary);
 
   /**
+   * Configures the builder to end the commit range at the given version, or at the latest available
+   * version if the table does not have that version yet.
+   *
+   * <p>This lets a caller read the commits of a table in bounded chunks. The log is listed only up
+   * to {@code version}, and building the range does not fail when the latest version is lower. This
+   * differs from {@link #withEndBoundary(CommitBoundary)} with a version-based boundary, which
+   * requires that exact version to exist.
+   *
+   * <p>This cannot be combined with {@link #withEndBoundary(CommitBoundary)}. The query end
+   * boundary of the resulting range ({@link CommitRange#getQueryEndBoundary()}) is empty, and
+   * {@link CommitRange#getEndVersion()} returns the resolved end version. If {@link
+   * #withMaxCatalogVersion(long)} is also used, the end version is the lower of the two versions.
+   *
+   * @param version the highest version the commit range may end at (must be {@code >= 0})
+   * @return this builder instance configured with the specified maximum end version
+   * @throws IllegalArgumentException if version is negative
+   */
+  CommitRangeBuilder withMaxEndVersion(long version);
+
+  /**
    * Provides parsed log data to optimize the commit range construction.
+   *
+   * <p>Only file-based ratified catalog commits, staged or published, sorted and contiguous by
+   * version, are supported.
    *
    * <p><strong>Note:</strong> If no end boundary is provided via {@link
    * #withEndBoundary(CommitBoundary)}, or a timestamp-based end boundary is provided, the provided
@@ -92,6 +115,29 @@ public interface CommitRangeBuilder {
    * @throws IllegalArgumentException if version is negative
    */
   CommitRangeBuilder withMaxCatalogVersion(long version);
+
+  /**
+   * Enables or disables validation that the requested commit range is complete and contiguous.
+   *
+   * <p>Validation is enabled by default. When disabled, the range may contain missing versions and
+   * only {@link CommitRange#getCommitFiles()} is supported.
+   *
+   * @param enabled whether to validate the commit range
+   * @return this builder instance
+   */
+  CommitRangeBuilder withCommitRangeValidation(boolean enabled);
+
+  /**
+   * Configures whether raw commit-file iteration fails when a version is missing.
+   *
+   * <p>This option defaults to {@code true} and only affects ranges built with {@link
+   * #withCommitRangeValidation(boolean)} disabled. When {@code false}, raw commit-file iteration
+   * skips missing versions.
+   *
+   * @param enabled whether missing versions should fail raw commit-file iteration
+   * @return this builder instance
+   */
+  CommitRangeBuilder withFailOnDataLoss(boolean enabled);
 
   /**
    * Builds and returns a {@link CommitRange} instance with the configured specifications.

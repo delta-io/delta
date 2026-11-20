@@ -22,7 +22,7 @@ import java.time.LocalDate
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, Metadata, Protocol, RemoveFile, SetTransaction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.commands._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -46,7 +46,7 @@ trait CloneTableSuiteBase extends QueryTest
   with CoordinatedCommitsTestUtils
   with DeletionVectorsTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def deleteSourceAndCompareData(
       source: String,
@@ -621,7 +621,7 @@ trait CloneTableColumnMappingSuiteBase
     "block changing column mapping mode and modify max id modes under CLONE"
   )
 
-  import testImplicits._
+  import deltaImplicits._
 
   testAllClones("block changing column mapping mode and modify max id modes under CLONE") {
     (_, _, isShallow) =>

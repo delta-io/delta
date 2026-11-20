@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.engine;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
+import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -44,7 +45,7 @@ public class DefaultJsonHandler implements JsonHandler {
   private static final ObjectMapper mapper = new ObjectMapper();
   // by default BigDecimals are truncated and read as floats
   private static final ObjectReader objectReaderReadBigDecimals =
-      new ObjectMapper().reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+      createObjectMapper().reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
 
   private final FileIO fileIO;
   private final int maxBatchSize;
@@ -169,6 +170,15 @@ public class DefaultJsonHandler implements JsonHandler {
   public void writeJsonFileAtomically(
       String filePath, CloseableIterator<Row> data, boolean overwrite) throws IOException {
     fileIO.newOutputFile(filePath).writeAtomically(data.map(JsonUtils::rowToJson), overwrite);
+  }
+
+  private static ObjectMapper createObjectMapper() {
+    ObjectMapper mapper = new ObjectMapper();
+    JsonFactory factory = mapper.getFactory();
+    // Delta metadata and statistics can contain strings larger than Jackson's default limit.
+    factory.setStreamReadConstraints(
+        factory.streamReadConstraints().rebuild().maxStringLength(Integer.MAX_VALUE).build());
+    return mapper;
   }
 
   private Row parseJson(String json, StructType readSchema) {

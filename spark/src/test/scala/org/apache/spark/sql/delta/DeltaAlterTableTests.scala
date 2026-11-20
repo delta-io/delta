@@ -96,7 +96,7 @@ trait DeltaAlterTableTestBase
 
 trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
 
-  import testImplicits._
+  import deltaImplicits._
 
   ///////////////////////////////
   // SET/UNSET TBLPROPERTIES
@@ -146,8 +146,12 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
             |  'key' = 'value'
             |)""".stripMargin)
       }
-      assert(e.getMessage.contains("expects a table. Please use ALTER VIEW instead.") ||
-        e.getMessage.contains("EXPECT_TABLE_NOT_VIEW.USE_ALTER_VIEW"))
+      checkError(
+        e,
+        "EXPECT_TABLE_NOT_VIEW.USE_ALTER_VIEW",
+        parameters = Map(
+          "operation" -> "ALTER TABLE ... SET TBLPROPERTIES", "viewName" -> "`v`"),
+        queryContext = Array(ExpectedContext(fragment = "v", start = 13, stop = 13)))
     }
   }
 
@@ -2167,7 +2171,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
 }
 
 trait DeltaAlterTableByNameTests extends DeltaAlterTableTests {
-  import testImplicits._
+  import deltaImplicits._
 
   override protected def createTable(schema: String, tblProperties: Map[String, String]): String = {
     val props = tblProperties.map { case (key, value) =>
@@ -2340,7 +2344,7 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
     }
   }
 
-  import testImplicits._
+  import deltaImplicits._
 
   ddlTest("SET/UNSET TBLPROPERTIES - simple") {
     withDeltaTable("v1 int, v2 string") { tableName =>

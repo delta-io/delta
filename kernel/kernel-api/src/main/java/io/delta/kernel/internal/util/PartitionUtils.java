@@ -24,6 +24,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static java.util.Arrays.asList;
 
+import io.delta.kernel.PartitionKeyType;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.ExpressionHandler;
@@ -145,9 +146,9 @@ public class PartitionUtils {
   }
 
   /**
-   * Validate {@code partitionValues} contains values for every partition column in the table and
-   * the type of the value is correct. Once validated the partition values are sanitized to match
-   * the case of the partition column names in the table schema and returned
+   * Equivalent to {@link #validateAndSanitizePartitionValues(StructType, List, Map,
+   * PartitionKeyType)} with {@link PartitionKeyType#LOGICAL}; {@code partitionValues} keys are
+   * logical partition column names.
    *
    * @param tableSchema Schema of the table.
    * @param partitionColNames Partition column name. These should be from the table metadata that
@@ -159,13 +160,50 @@ public class PartitionUtils {
       StructType tableSchema,
       List<String> partitionColNames,
       Map<String, Literal> partitionValues) {
+    return validateAndSanitizePartitionValues(
+        tableSchema, partitionColNames, partitionValues, PartitionKeyType.LOGICAL);
+  }
 
-    if (!toLowerCaseSet(partitionColNames).equals(toLowerCaseSet(partitionValues.keySet()))) {
+  /**
+   * Validate {@code partitionValues} contains a value for every partition column and that each
+   * value's type matches its column, then return the values sanitized to the case of the partition
+   * column names.
+   *
+   * @param tableSchema Schema of the table.
+   * @param partitionColNames Logical partition column names, in the same case as in the table
+   *     schema.
+   * @param partitionValues Map of partition column to value given by the connector, keyed per
+   *     {@code partitionKeyType}.
+   * @param partitionKeyType Whether {@code partitionValues} keys are logical or physical column
+   *     names.
+   * @return Sanitized partition values, keyed per {@code partitionKeyType}.
+   */
+  public static Map<String, Literal> validateAndSanitizePartitionValues(
+      StructType tableSchema,
+      List<String> partitionColNames,
+      Map<String, Literal> partitionValues,
+      PartitionKeyType partitionKeyType) {
+
+    // Resolve the partition column names in partitionKeyType's name space, and the field for each
+    // name used to check the value's type.
+    List<String> expectedColNames = new ArrayList<>(partitionColNames.size());
+    Map<String, StructField> colNameToField = new HashMap<>();
+    for (String logicalName : partitionColNames) {
+      StructField field = tableSchema.get(logicalName);
+      String name =
+          partitionKeyType == PartitionKeyType.PHYSICAL
+              ? ColumnMapping.getPhysicalName(field)
+              : logicalName;
+      expectedColNames.add(name);
+      colNameToField.put(name, field);
+    }
+
+    if (!toLowerCaseSet(expectedColNames).equals(toLowerCaseSet(partitionValues.keySet()))) {
       throw new IllegalArgumentException(
           String.format(
               "Partition values provided are not matching the partition columns. "
                   + "Partition columns: %s, Partition values: %s",
-              partitionColNames, partitionValues));
+              expectedColNames, partitionValues));
     }
 
     // Convert the partition column names in given `partitionValues` to schema case. Schema
@@ -175,7 +213,7 @@ public class PartitionUtils {
     // (`partitionValues` in `AddFile`) or generating the target directory for writing the
     // data belonging to a partition.
     Map<String, Literal> schemaCasePartitionValues =
-        casePreservingPartitionColNames(partitionColNames, partitionValues);
+        casePreservingPartitionColNames(expectedColNames, partitionValues);
 
     // validate types are the same
     schemaCasePartitionValues
@@ -184,7 +222,7 @@ public class PartitionUtils {
             entry -> {
               String partColName = entry.getKey();
               Literal partValue = entry.getValue();
-              StructField partColField = tableSchema.get(partColName);
+              StructField partColField = colNameToField.get(partColName);
 
               // this shouldn't happen as we have already validated the partition column names
               checkArgument(

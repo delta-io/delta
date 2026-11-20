@@ -40,7 +40,7 @@ import org.apache.spark.sql.delta.DeltaConfigs.{
 import org.apache.spark.sql.delta.NonSparkReadIceberg
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.coordinatedcommits.{
-  CatalogOwnedCommitCoordinatorBuilder,
+  CatalogManagedCommitCoordinatorBuilder,
   CommitCoordinatorProvider,
   InMemoryUCClient,
   InMemoryUCCommitCoordinator,
@@ -180,7 +180,7 @@ trait WriteDeltaUCCCReadIceberg extends UniFormE2ETest
 
     /**
      * Delta blocks setting `COORDINATED_COMMITS_TABLE_CONF` in TBLPROPERTIES, so this trait
-     * simulates what the real UC catalog does: a [[CatalogOwnedCommitCoordinatorBuilder]] returns
+     * simulates what the real UC catalog does: a [[CatalogManagedCommitCoordinatorBuilder]] returns
      * a single [[TestUCBackedCommitCoordinator]] instance whose [[registerTable]] auto-assigns a
      * UUID.  Returning the same instance from every [[build]]/[[buildForCatalog]] call ensures
      * that [[UCCommitCoordinatorClient.semanticEquals]] (which uses reference equality on `conf`)
@@ -211,7 +211,7 @@ trait WriteDeltaUCCCReadIceberg extends UniFormE2ETest
     UCEnrichedSessionCatalog.currentCoordinator = Some(ucCommitCoordinator)
     val ucClient = new InMemoryUCClient("test-metastore", ucCommitCoordinator)
     testCoordinator = new TestUCBackedCommitCoordinator(ucClient)
-    CommitCoordinatorProvider.registerBuilder(new CatalogOwnedCommitCoordinatorBuilder {
+    CommitCoordinatorProvider.registerBuilder(new CatalogManagedCommitCoordinatorBuilder {
       override def getName: String = UCCommitCoordinatorBuilder.getName
       override def build(
           spark: SparkSession, conf: Map[String, String]): JCommitCoordinatorClient =

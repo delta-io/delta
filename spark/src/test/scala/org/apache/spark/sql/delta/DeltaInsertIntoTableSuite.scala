@@ -37,7 +37,6 @@ import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.internal.SQLConf.{LEAF_NODE_DEFAULT_PARALLELISM, PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
-import org.apache.spark.sql.test.{SharedSparkSession, TestSparkSession}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
@@ -47,7 +46,7 @@ class DeltaInsertIntoSQLSuite
     includeSQLOnlyTests = true)
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override protected def doInsert(tableName: String, insert: DataFrame, mode: SaveMode): Unit = {
     val tmpView = "tmp_view"
@@ -93,7 +92,7 @@ class DeltaInsertIntoSQLSuite
   }
 
   test("insertInto: append by name") {
-    import testImplicits._
+    import deltaImplicits._
     val t1 = "tbl"
     withTable(t1) {
       sql(s"CREATE TABLE $t1 (id bigint, data string) USING $v2Format")
@@ -121,7 +120,7 @@ class DeltaInsertIntoSQLSuite
   }
 
   test("insertInto: overwrite by name") {
-    import testImplicits._
+    import deltaImplicits._
     val t1 = "tbl"
     withTable(t1) {
       sql(s"CREATE TABLE $t1 (id bigint, data string) USING $v2Format")
@@ -180,7 +179,7 @@ class DeltaInsertIntoSQLSuite
   }
 
   dynamicOverwriteTest("insertInto: dynamic overwrite by name") {
-    import testImplicits._
+    import deltaImplicits._
     val t1 = "tbl"
     withTable(t1) {
       sql(s"CREATE TABLE $t1 (id bigint, data string, data2 string) " +
@@ -544,7 +543,7 @@ class DeltaInsertIntoSQLByPathSuite
   }
 
   testQuietly("insertInto: cannot insert into a table that doesn't exist") {
-    import testImplicits._
+    import deltaImplicits._
     Seq(SaveMode.Append, SaveMode.Overwrite).foreach { mode =>
       withTempDir { dir =>
         val t1 = s"delta.`${dir.getCanonicalPath}`"
@@ -596,7 +595,7 @@ class DeltaInsertIntoDataFrameByPathSuite
   }
 
   testQuietly("insertInto: cannot insert into a table that doesn't exist") {
-    import testImplicits._
+    import deltaImplicits._
     Seq(SaveMode.Append, SaveMode.Overwrite).foreach { mode =>
       withTempDir { dir =>
         val t1 = s"delta.`${dir.getCanonicalPath}`"
@@ -662,7 +661,7 @@ abstract class DeltaInsertIntoTestsWithTempViews(
   with DeltaTestUtilsForTempViews {
   protected def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]): Unit = {
     testWithTempView(s"insertInto a temp view created on top of a table - $name") { isSQLTempView =>
-      import testImplicits._
+      import deltaImplicits._
       val t1 = "tbl"
       sql(s"CREATE TABLE $t1 (key int, value int) USING $v2Format")
       Seq(SaveMode.Append, SaveMode.Overwrite).foreach { mode =>
@@ -717,7 +716,7 @@ abstract class DeltaInsertIntoTestsWithTempViews(
 
 class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override val supportsDynamicOverwrite = true
   override val includeSQLOnlyTests = true
@@ -1079,7 +1078,8 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
         """.stripMargin)
       val currentCatalog = spark.sessionState.catalogManager.currentCatalog.name()
       val stringTypeSql =
-        if (org.apache.spark.SPARK_VERSION.startsWith("4.2")) {
+        if (org.apache.spark.SPARK_VERSION.startsWith("4.2") ||
+            org.apache.spark.SPARK_VERSION.startsWith("4.3")) {
           "STRING COLLATE UTF8_BINARY"
         } else {
           "STRING"
@@ -1107,7 +1107,7 @@ abstract class DeltaInsertIntoTests(
     override protected val includeSQLOnlyTests: Boolean)
   extends InsertIntoSQLOnlyTests {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override def afterEach(): Unit = {
     spark.catalog.listTables().collect().foreach(t =>
@@ -1855,10 +1855,10 @@ abstract class DeltaInsertIntoTests(
 
 trait InsertIntoSQLOnlyTests
     extends QueryTest
-    with SharedSparkSession
+    with DeltaSQLCommandTest
     with BeforeAndAfter {
 
-  import testImplicits._
+  import deltaImplicits._
 
   /** Check that the results in `tableName` match the `expected` DataFrame. */
   protected def verifyTable(tableName: String, expected: DataFrame): Unit = {
@@ -2161,7 +2161,7 @@ trait InsertIntoSQLOnlyTests
     }
 
     test("InsertInto: overwrite - dot in column names - static mode") {
-      import testImplicits._
+      import deltaImplicits._
       val t1 = "tbl"
       withTable(t1) {
         sql(s"CREATE TABLE $t1 (`a.b` string, `c.d` string) USING $v2Format PARTITIONED BY (`a.b`)")

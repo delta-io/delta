@@ -272,6 +272,9 @@ trait IdentityColumnAdmissionSuiteBase
       withTempDir { checkpointDir =>
         val ex = intercept[StreamingQueryException] {
           val stream = MemoryStream[Int]
+          // AvailableNow snapshots the source data when the query starts, so enqueue data first.
+          // Otherwise, the query can finish before exercising the identity column write.
+          stream.addData(1 to 10)
           val q = stream
             .toDF
             .map(_ => Tuple2(1L, 1))
@@ -282,7 +285,6 @@ trait IdentityColumnAdmissionSuiteBase
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
             .trigger(Trigger.AvailableNow)
             .start(path)
-          stream.addData(1 to 10)
           q.processAllAvailable()
           q.stop()
         }

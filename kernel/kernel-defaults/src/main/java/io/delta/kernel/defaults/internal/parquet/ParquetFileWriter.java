@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import static io.delta.kernel.defaults.internal.parquet.ParquetIOUtils.createParquetOutputFile;
+import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.extractDataFileStatisticsFromInMemoryFooter;
 import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readDataFileStatistics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.emptyMap;
@@ -42,8 +43,11 @@ import org.apache.parquet.hadoop.ParquetOutputFormat;
 import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.api.WriteSupport;
 import org.apache.parquet.hadoop.metadata.CompressionCodecName;
+import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.io.api.RecordConsumer;
 import org.apache.parquet.schema.MessageType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Implements writing data given as {@link FilteredColumnarBatch} to Parquet files.
@@ -56,6 +60,8 @@ import org.apache.parquet.schema.MessageType;
  * ParquetWriter} through {@link RecordConsumer}.
  */
 public class ParquetFileWriter {
+  private static final Logger logger = LoggerFactory.getLogger(ParquetFileWriter.class);
+
   public static final String TARGET_FILE_SIZE_CONF =
       "delta.kernel.default.parquet.writer.targetMaxFileSize";
   public static final long DEFAULT_TARGET_FILE_SIZE = 128 * 1024 * 1024; // 128MB
@@ -176,11 +182,14 @@ public class ParquetFileWriter {
           return Optional.empty();
         }
 
-        org.apache.parquet.io.OutputFile parquetOutputFile =
+        ParquetIOUtils.ParquetOutputFile parquetOutputFile =
             createParquetOutputFile(generateNextOutputFile(), atomicWrite);
         assert batchWriteSupport != null : "batchWriteSupport is not initialized";
         long currentFileRowCount = 0; // tracks the number of rows written to the current file
-        try (ParquetWriter<Integer> writer = createWriter(parquetOutputFile, batchWriteSupport)) {
+        ParquetWriter<Integer> writer = null;
+        boolean committed = false;
+        try {
+          writer = createWriter(parquetOutputFile, batchWriteSupport);
           boolean maxFileSizeReached;
           do {
             if (consumeNextRow(writer)) {
@@ -193,13 +202,40 @@ public class ParquetFileWriter {
             maxFileSizeReached = !writeAsSingleFile && writer.getDataSize() >= targetMaxFileSize;
             // Keep writing until max file is reached or no more data to write
           } while (!maxFileSizeReached && hasNextRow());
+          committed = true;
         } catch (IOException e) {
           throw new UncheckedIOException(
               "Failed to write the Parquet file: " + parquetOutputFile.getPath(), e);
+        } finally {
+          if (!committed) {
+            // the read failed before completing; abort the write so no partial
+            // file is published in the subsequent close()
+            parquetOutputFile.abort();
+            try {
+              if (writer != null) {
+                writer.close();
+              }
+            } catch (Throwable closeFailure) {
+              logger.warn(
+                  "Ignoring close failure while aborting {}",
+                  parquetOutputFile.getPath(),
+                  closeFailure);
+            }
+          } else if (writer != null) {
+            try {
+              writer.close();
+            } catch (IOException e) {
+              throw new UncheckedIOException(
+                  "Failed to close the Parquet file: " + parquetOutputFile.getPath(), e);
+            }
+          }
         }
 
+        // The footer is only available once the writer has been successfully closed.
+        ParquetMetadata footer = committed && writer != null ? writer.getFooter() : null;
         return Optional.of(
-            constructDataFileStatus(parquetOutputFile.getPath(), dataSchema, currentFileRowCount));
+            constructDataFileStatus(
+                parquetOutputFile.getPath(), dataSchema, currentFileRowCount, footer));
       }
 
       /**
@@ -432,19 +468,19 @@ public class ParquetFileWriter {
   }
 
   /**
-   * Construct the {@link DataFileStatus} for the given file path. It reads the file status and
-   * Parquet footer to compute the statistics for the file.
-   *
-   * <p>Potential improvement in future to directly compute the statistics while writing the file if
-   * this becomes a sufficiently large part of the write operation time.
+   * Construct the {@link DataFileStatus} for the given file path. It reads the file status and uses
+   * the in-memory Parquet {@code footer} to compute statistics when available, falling back to
+   * reopening the file if {@code footer} is null.
    *
    * @param path the path of the file
    * @param dataSchema the schema of the data in the file
-   * @param numRows the number of rows in the file. If no column stats are required, this is used to
-   *     construct the {@link DataFileStatistics}. Otherwise, the stats are read from the file.
+   * @param numRows the number of rows in the file. Used only when no column stats are required.
+   * @param footer the in-memory footer of the closed writer, or null if the writer was never
+   *     successfully created
    * @return the {@link DataFileStatus} for the file
    */
-  private DataFileStatus constructDataFileStatus(String path, StructType dataSchema, long numRows) {
+  private DataFileStatus constructDataFileStatus(
+      String path, StructType dataSchema, long numRows, ParquetMetadata footer) {
     try {
       // Get the FileStatus to figure out the file size and modification time
       FileStatus fileStatus = fileIO.getFileStatus(path);
@@ -459,7 +495,11 @@ public class ParquetFileWriter {
                 emptyMap() /* maxValues */,
                 emptyMap() /* nullCount */,
                 Optional.empty() /* tightBounds */);
+      } else if (footer != null) {
+        // Use the in-memory footer from the writer — no need to reopen the file.
+        stats = extractDataFileStatisticsFromInMemoryFooter(footer, dataSchema, statsColumns);
       } else {
+        // Writer was never successfully created; fall back to reading the footer from storage.
         stats =
             readDataFileStatistics(
                 fileIO.newInputFile(resolvedPath, fileStatus.getSize()), dataSchema, statsColumns);

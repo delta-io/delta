@@ -20,6 +20,7 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.streaming.StreamTest
 
 /**
@@ -28,11 +29,14 @@ import org.apache.spark.sql.streaming.StreamTest
  * The base suite runs through the DSv1 connector; DeltaV2SourceRowTrackingSuite
  * re-runs the same tests through the DSv2 connector via V2ForceTest.
  */
-trait DeltaSourceRowTrackingSuiteBase extends StreamTest
+trait DeltaSourceRowTrackingSuiteBase
+  extends QueryTest
+  with DeltaSQLCommandTest
   with DeltaSourceSuiteBase
-  with DeltaColumnMappingTestUtils {
+  with DeltaColumnMappingTestUtils
+  with StreamTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("_metadata.row_id is not available in streaming") {
     // DSv1 streaming (DeltaSource / StreamingRelation) does not expose _metadata.row_id;

@@ -32,7 +32,7 @@ import org.apache.spark.sql.internal.SQLConf
 class IncrementalZCubeClusteringSuite extends QueryTest
   with ClusteredTableTestUtilsBase
   with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   private val table: String = "test_table"
 

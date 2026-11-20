@@ -104,7 +104,7 @@ class DeltaColumnMappingSuite extends QueryTest
   with GivenWhenThen
   with DeltaColumnMappingSuiteUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def withId(id: Long): Metadata =
     new MetadataBuilder()
@@ -2279,6 +2279,33 @@ class DeltaColumnMappingSuite extends QueryTest
       assert(ex.getErrorClass === "DELTA_MODE_NOT_SUPPORTED")
       assert(ex.getMessage.contains("Specified mode 'null' is not supported. " +
         s"Supported modes are: $supportedModes"))
+    }
+  }
+
+  test("column-mapping removal is blocked for a catalog-managed table") {
+    withSQLConf(DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL.key -> "true") {
+      withCatalogManagedTable() { tableName =>
+        spark.sql(
+          s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+            s"('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name')")
+        spark.sql(s"INSERT INTO $tableName VALUES (1)")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val snapshotBefore = deltaLog.update()
+
+        checkError(
+          intercept[DeltaUnsupportedOperationException] {
+            spark.sql(
+              s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+                s"('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'none')")
+          },
+          "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+          parameters = Map("operation" -> "DATA_REORGANIZATION"))
+
+        val snapshotAfter = deltaLog.update()
+        assert(snapshotAfter.version === snapshotBefore.version)
+        assert(snapshotAfter.metadata === snapshotBefore.metadata)
+        assert(snapshotAfter.allFiles.collect().toSet === snapshotBefore.allFiles.collect().toSet)
+      }
     }
   }
 

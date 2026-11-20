@@ -284,15 +284,13 @@ public class FlinkUnityCatalog extends AbstractCatalog {
   @Override
   public CatalogTableStatistics getTableStatistics(ObjectPath tablePath)
       throws TableNotExistException, CatalogException {
-    notSupported("GET TABLE STATISTICS");
-    return null;
+    return CatalogTableStatistics.UNKNOWN;
   }
 
   @Override
   public CatalogColumnStatistics getTableColumnStatistics(ObjectPath tablePath)
       throws TableNotExistException, CatalogException {
-    notSupported("GET TABLE COLUMN STATISTICS");
-    return null;
+    return CatalogColumnStatistics.UNKNOWN;
   }
 
   @Override

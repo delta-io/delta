@@ -56,7 +56,7 @@ import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNa
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
 import org.apache.spark.sql.catalyst.util.{GeneratedColumn => SparkGeneratedColumn, IdentityColumn => SparkIdentityColumn}
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Column, DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
+import org.apache.spark.sql.connector.catalog.{CatalogExtension, CatalogV2Util, Column, DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
@@ -75,11 +75,28 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 class DeltaCatalogV1 extends AbstractDeltaCatalog
 
 /**
+ * Shared type for Delta catalog implementations. It bundles the catalog interfaces a Delta catalog
+ * must satisfy. This is currently implemented by the DeltaCatalog and the forwarding wrapper
+ * [[DeltaV2SparkTransactionCatalog]]. It allows the wrapper to stay castable to
+ * namespace/function/staging operations. It also makes sure the wrapper does not carry any
+ * (unwanted) state.
+ *
+ * Only declare a method here if it is NOT on a Spark catalog interface. The wrapper's forwarding
+ * completeness is enforced by the reflection test in `DeltaV2CatalogTransactionSuite`.
+ */
+trait DeltaCatalogLike
+  extends TableCatalog
+  with CatalogExtension
+  with StagingTableCatalog {
+
+}
+
+/**
  * Base class for Dsv2 catalog implementation, it contains all dsv1 based connector logic.
  * Introduced for compatibility purpose in the implementation of dsv2 based connector
  */
 class AbstractDeltaCatalog extends DelegatingCatalogExtension
-  with StagingTableCatalog
+  with DeltaCatalogLike
   with SupportsPathIdentifier
   with DeltaLogging
   with AbstractDeltaCatalogShims {
@@ -119,6 +136,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     super.initialize(name, options)
     catalogName = name
     catalogOptions = options
+    // V2_TRANSACTIONS_ENABLED and this catalog's transactionality must agree (enabled <=>
+    // transactional catalog). No-op below Spark 4.2 (see AbstractDeltaCatalogShims).
+    checkTransactionalCatalogConsistency()
   }
 
   override def capabilities(): util.Set[TableCatalogCapability] = {
@@ -133,17 +153,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
-  }
-
-  /**
-   * In Unity Catalog environments, disable variant table feature support for Spark 4.0 clients
-   * that lack the parquet variant logical type annotation.
-   */
-  private def setVariantBlockingConfigIfUC(): Unit = {
-    if (isUnityCatalog) {
-      spark.conf.set(
-        DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key, "true")
-    }
   }
 
   /** Converts Spark's generated- and identity-column metadata into the keys persisted by Delta. */
@@ -413,7 +422,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   override def loadTable(ident: Identifier): Table = recordFrameProfile(
       "DeltaCatalog", "loadTable") {
-    setVariantBlockingConfigIfUC()
     try {
       val table = deltaCatalogClient
         .map(_.loadTable(ident))
@@ -609,7 +617,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         // TODO: we should extract write options from table properties for all the cases. We
         //       can remove the UC check when we have confidence.
         val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
-        setVariantBlockingConfigIfUC()
         val (props, writeOptions) = if (isUC) {
           val effectiveProperties = maybeStageDeltaCreate(ident, properties)
           val (props, writeOptions) = getTablePropsAndWriteOptions(effectiveProperties)
