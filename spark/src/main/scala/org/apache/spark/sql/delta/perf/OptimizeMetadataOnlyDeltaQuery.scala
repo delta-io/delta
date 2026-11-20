@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.perf
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
@@ -27,6 +28,7 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable, Snapshot}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
@@ -129,6 +131,19 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
   */
   case class DeltaColumnStat(min: Any, max: Any)
 
+  /**
+   * Collects the single row of a global aggregate as an InternalRow, keeping the values in
+   * Catalyst internal format. Converting them to external types (e.g. java.sql.Date) and back
+   * would rebase dates between the Julian and Gregorian calendars and shift dates such as
+   * 1582-10-10.
+   */
+  private def collectAggregateRow(df: DataFrame): InternalRow = {
+    val queryExecution = df.queryExecution
+    SQLExecution.withNewExecutionId(queryExecution) {
+      queryExecution.executedPlan.executeCollect().head
+    }
+  }
+
   private def extractCountMinMaxFromStats(
       deltaScanGenerator: DeltaScanGenerator,
       lowerCaseColumnNames: Set[String]): (Option[Long], Map[String, DeltaColumnStat]) = {
@@ -223,11 +238,8 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
         s"max(`max.$physicalName`) as `max_$physicalName`")
     }
 
-    // Collect as InternalRow to keep the values in Catalyst internal format. Converting them to
-    // external types (e.g. java.sql.Date) and back would rebase dates between the Julian and
-    // Gregorian calendars and shift dates such as 1582-10-10.
-    val statsResults = files.select(columnsToQuery: _*).selectExpr(minMaxExpr: _*)
-      .queryExecution.executedPlan.executeCollect().head
+    val statsResults = collectAggregateRow(
+      files.select(columnsToQuery: _*).selectExpr(minMaxExpr: _*))
 
     // statsResults contains (complete, min, max) for each column in dataColumnsWithStats.
     (Some(numRecords), dataColumnsWithStats.zipWithIndex
@@ -264,12 +276,9 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
           max(s"`$physicalName`").as(s"max_$physicalName"))
       }
 
-      // Collect as InternalRow to keep the values in Catalyst internal format, see
-      // extractCountMinMaxFromStats.
-      val partitionedColumnsQuery = snapshot.allFiles
+      val partitionedColumnsQuery = collectAggregateRow(snapshot.allFiles
         .select(partitionedColumnsValues: _*)
-        .agg(partitionedColumnsAgg.head, partitionedColumnsAgg.tail: _*)
-        .queryExecution.executedPlan.executeCollect().head
+        .agg(partitionedColumnsAgg.head, partitionedColumnsAgg.tail: _*))
 
       // partitionedColumnsQuery contains (min, max) for each column in partitionedColumns.
       partitionedColumns.zipWithIndex.map { case ((column, _), i) =>
