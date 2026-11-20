@@ -200,7 +200,7 @@ class DeltaAnalysis(protected val session: SparkSession)
 
 
       // Whether we are enabling Catalog-Managed via explicit property overrides.
-      var isEnablingCatalogOwnedViaExplicitPropertyOverrides: Boolean = false
+      var isEnablingCatalogManagedViaExplicitPropertyOverrides: Boolean = false
 
       val catalogTableTarget =
         // If source table is Delta format
@@ -232,7 +232,7 @@ class DeltaAnalysis(protected val session: SparkSession)
           // It works as intended if source table is a normal delta table.
           if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
                 configs = ctl.properties).contains(CatalogManagedTableFeature)) {
-            isEnablingCatalogOwnedViaExplicitPropertyOverrides = true
+            isEnablingCatalogManagedViaExplicitPropertyOverrides = true
           }
 
           val config =
@@ -283,7 +283,7 @@ class DeltaAnalysis(protected val session: SparkSession)
       // Catalog-Managed: Do not copy over [[CatalogManagedTableFeature]] from source table
       //                except the certain case.
       val protocolAfterFilteringCatalogManagedFromSource = protocol match {
-        case Some(p) if !isEnablingCatalogOwnedViaExplicitPropertyOverrides =>
+        case Some(p) if !isEnablingCatalogManagedViaExplicitPropertyOverrides =>
           // Only filter out [[CatalogManagedTableFeature]] when target table is not enabling
           // CatalogManaged.
           // E.g.,
