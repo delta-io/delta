@@ -43,7 +43,6 @@ Current way: Use only row commit versions and extract timestamps from the commit
 ## Open questions
 
 - What value should be backfilled for rows whose Row Commit Version cannot be resolved to a timestamp (e.g., because the log retention period has expired)?
-- How should the feature be disabled, and what are the consequences?
 
 ## Examples
 
@@ -86,7 +85,7 @@ After checkpointing, removing the original JSON commit files must not change the
 
 Row Commit Timestamps record the timestamp at which a row was last modified. More precisely, a Row Commit Timestamp is the final `inCommitTimestamp` of the successful commit that inserted or updated the row. This helps retain the precise timestamps for write operations, as reading a Row Commit Timestamp must not require the originating `commitInfo` to remain available. 
 
-Row Commit Timestamps introduce `rowCommitTimestamp`, a writer table feature that extends Row Tracking with another row tracking metadata field `row_commit_timestamp`. It is directly equivalent to each row's stable `row_commit_version`. Therefore, both Row Tracking and In-Commit Timestamps have to be enabled and the requirements are same as for row commit versions:
+Row Commit Timestamps introduce `rowCommitTimestamp`, a writer table feature that extends Row Tracking with another row tracking metadata field `row_commit_timestamp`. It is directly equivalent to each row's stable `row_commit_version`. Therefore, both Row Tracking and In-Commit Timestamps have to be enabled.
 
 When a row is inserted or updated, it is assigned the commit timestamp of the log entry containing the `add` entry with the new row.
   When a row is updated so that a new stable row commit version is set, the Row Commit Timestamp for this row is updated as well.
@@ -108,6 +107,9 @@ set to true.
 to false.
 - The materialized Row Commit Timestamp column name MUST be configured through  
 delta.rowTracking.materializedRowCommitTimestampColumnName.
+- The `defaultRowCommitTimestamp` field must be set for all active `add` actions in the version of the table in which `delta.enableRowCommitTimestamps` is set to `true`.
+- If this field is missing from any active `add` action, writers must first commit replacement `add` actions that set it. This can be done in the enablement commit or in an earlier commit.
+- The materialized Row Commit Timestamp column name must satisfy the same uniqueness requirements as the materialized Row Commit Version column name.
 
 Enabling the feature on an existing table is supported.
 
@@ -149,7 +151,7 @@ I.e., readers must use the `defaultRowCommitTimestamp` of the `add` or `remove` 
 
 ## Writer Requirements for Row Commit Timestamps
 
-When Row Commit Timestamps are enabled, writers must satisfy the following additional requirements:
+The writer requirements for Row Commit Versions apply correspondingly to Row Commit Timestamps when `rowCommitTimestamp` is present in the protocol with the timestamp-specific rules below. When Row Commit Timestamps are enabled, writers must satisfy the following additional requirements:
 
 - Writers must set defaultRowCommitTimestamp in add actions for newly written data files to the successful commit's final inCommitTimestamp. If a retry changes that timestamp, writers must update these defaults accordingly.
 - Writers must preserve the previously committed defaultRowCommitTimestamp in recommitted and checkpointed add actions and corresponding remove actions.
