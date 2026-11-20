@@ -25,13 +25,19 @@ import io.delta.kernel.engine.Engine;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.OptionalInt;
+import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.MetadataAttribute$;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
@@ -94,8 +100,81 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pruneColumns(expectedSparkSchema);
     Scan scan = builder.build();
 
-    assertTrue(scan instanceof DeltaV2Scan);
+    assertNotNull(asDeltaV2Scan(scan));
     assertEquals(expectedSparkSchema, scan.readSchema());
+  }
+
+  @Test
+  public void testPruneColumns_preservesMetadataDifferingFromPartitionOnlyByCase(
+      @TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "scan_builder_metadata_partition_case_test";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (_metadata STRING, __Metadata INT) "
+                + "USING delta PARTITIONED BY (__Metadata) LOCATION '%s'",
+            tableName, path));
+    StructType dataSchema = new StructType().add("_metadata", DataTypes.StringType);
+    StructType partitionSchema = new StructType().add("__Metadata", DataTypes.IntegerType);
+    StructType tableSchema = dataSchema.add(partitionSchema.fields()[0]);
+    StructField metadataColumn =
+        DataTypes.createStructField(
+            "__metadata",
+            new StructType().add("file_path", DataTypes.StringType),
+            false,
+            MetadataAttribute$.MODULE$.metadata("_metadata"));
+    StructType expectedDataSchema = dataSchema.add(metadataColumn);
+    StructType requiredSchema = expectedDataSchema.add(partitionSchema.fields()[0]);
+
+    // Names are already resolved before pruning, regardless of the current resolver setting.
+    for (String caseSensitive : new String[] {"true", "false"}) {
+      withSQLConf(
+          "spark.sql.caseSensitive",
+          caseSensitive,
+          () -> {
+            DeltaV2ScanBuilder builder =
+                newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
+            builder.pruneColumns(requiredSchema);
+
+            assertEquals(expectedDataSchema, getRequiredDataSchema(builder));
+          });
+    }
+  }
+
+  @Test
+  public void testPruneColumns_preservesMetadataWithCaseSensitivePartition(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String v1Table = String.format("delta.`%s`", path);
+    String queryPrefix = "SELECT id, _Metadata, _metadata.file_path FROM ";
+    withSQLConf(
+        "spark.sql.caseSensitive",
+        "true",
+        () ->
+            withSQLConf(
+                "spark.databricks.delta.v2.enableMode",
+                "NONE",
+                () -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id INT, _Metadata INT) "
+                              + "USING delta PARTITIONED BY (_Metadata)",
+                          v1Table));
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 2)", v1Table));
+                  List<Row> expectedRows = spark.sql(queryPrefix + v1Table).collectAsList();
+                  assertEquals(1, expectedRows.size());
+                  assertEquals(1, expectedRows.get(0).getInt(0));
+                  assertEquals(2, expectedRows.get(0).getInt(1));
+                  assertNotNull(expectedRows.get(0).getString(2));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () ->
+                          assertEquals(
+                              expectedRows,
+                              spark.sql(queryPrefix + dsv2Table(path)).collectAsList()));
+                }));
   }
 
   @Test
@@ -542,17 +621,21 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     Engine engine = DefaultEngine.create(spark.sessionState().newHadoopConf());
-    return new DeltaV2ScanBuilder(
-        tableName,
-        snapshot,
-        engine,
-        Option.empty(),
-        snapshotManager,
-        dataSchema,
-        partitionSchema,
-        tableSchema,
-        Option.empty(),
-        CaseInsensitiveStringMap.empty());
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, path, Collections.emptyMap(), Option.empty());
+    return (DeltaV2ScanBuilder)
+        DeltaV2ScanUtils.newScanBuilder(
+            tableName,
+            snapshot,
+            engine,
+            Option.empty(),
+            tableManager,
+            dataSchema,
+            partitionSchema,
+            tableSchema,
+            Option.empty(),
+            CaseInsensitiveStringMap.empty());
   }
 
   // Limit Pushdown Tests
@@ -583,14 +666,14 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
   public void testPushLimit_propagatedToScan(@TempDir File tempDir) {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
     builder.pushLimit(42);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(Option.apply(42), scan.getPushedLimit());
   }
 
   @Test
   public void testPushLimit_absentByDefault(@TempDir File tempDir) {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(Option.empty(), scan.getPushedLimit());
   }
 
@@ -600,7 +683,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushLimit(10);
     builder.pushLimit(20);
     assertEquals(OptionalInt.of(20), builder.getPushedLimit());
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(Option.apply(20), scan.getPushedLimit());
   }
 
@@ -619,7 +702,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     // A data filter (on a non-partition column) becomes a post-scan residual.
     pushFilters(builder, new GreaterThan("id", 10));
     builder.pushLimit(10);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(
         Option.empty(),
         scan.getPushedLimit(),
@@ -636,7 +719,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushFilters(
         scala.jdk.javaapi.CollectionConverters.<Expression>asScala(java.util.List.of()).toList());
     assertTrue(builder.pushLimit(10));
-    assertEquals(Option.empty(), ((DeltaV2Scan) builder.build()).getPushedLimit());
+    assertEquals(Option.empty(), asDeltaV2Scan(builder.build()).getPushedLimit());
   }
 
   @Test
@@ -648,7 +731,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     pushFilters(builder, new EqualTo("dep_id", 1));
 
     builder.pushLimit(10);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(
         Option.apply(10),
         scan.getPushedLimit(),

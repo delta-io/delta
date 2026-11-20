@@ -131,7 +131,7 @@ class DeltaRetentionSuite extends QueryTest
 
       log.checkpoint()
 
-      // With V2 checkpoints (QoL feature for CatalogOwned tables), checkpoint files have UUIDs
+      // With V2 checkpoints (QoL feature for CatalogManaged tables), checkpoint files have UUIDs
       // and may be .json or .parquet (e.g., "04.checkpoint.<uuid>.json" instead of
       // "04.checkpoint.parquet"). We check for the commit log and CRC, and verify that at least
       // one checkpoint file exists for version 4.
@@ -193,7 +193,7 @@ class DeltaRetentionSuite extends QueryTest
 
       assert(maxChkFile === minDeltaFile,
         "Delta files before the last checkpoint version should have been deleted")
-      // With V2 checkpoints (QoL feature for CatalogOwned tables), cleanup behavior may retain
+      // With V2 checkpoints (QoL feature for CatalogManaged tables), cleanup behavior may retain
       // additional checkpoint files for safety. We check that there are no more than 2 checkpoint
       // files remaining (classic behavior expects 1, V2 may have up to 2).
       assert(getCheckpointFiles(logPath).length <= 2,
@@ -341,7 +341,7 @@ class DeltaRetentionSuite extends QueryTest
         intervalStringToMillis("interval 1 day"))
 
       // Create new checkpoints so that the previous version can be deleted.
-      // With V2 checkpoints (QoL feature for CatalogOwned tables), we need to create version 2
+      // With V2 checkpoints (QoL feature for CatalogManaged tables), we need to create version 2
       // before version 0 can be cleaned up, as V2 checkpoints have stricter retention policies
       // that require more checkpoint history before allowing cleanup.
       log.startTransaction().commit(createTestAddFile(encodedPath = "1") :: Nil, testOp)
@@ -775,7 +775,7 @@ class DeltaRetentionSuite extends QueryTest
           .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == version)
 
         if (version % 10 == 0) {
-          // With V2 checkpoints (QoL feature for CatalogOwned), checkpoints may be single-file.
+          // With V2 checkpoints (QoL feature for CatalogManaged), checkpoints may be single-file.
           // Classic checkpoints with DELTA_CHECKPOINT_PART_SIZE=1 are multi-part (>= 2 files).
           assert(chks.length >= 1) // At least one checkpoint file
           chks.foreach { chk =>
@@ -791,7 +791,7 @@ class DeltaRetentionSuite extends QueryTest
       // ensure that the checkpoint at version 10 exists
       val checkpoint10Files = getCheckpointFiles(logPath)
         .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == 10)
-      // With V2 checkpoints (QoL feature for CatalogOwned), checkpoints may be single-file
+      // With V2 checkpoints (QoL feature for CatalogManaged), checkpoints may be single-file
       assert(checkpoint10Files.length >= 1) // At least one checkpoint file
       assert(checkpoint10Files.forall(_.exists))
       val deltaFiles = (0 to 15).map { i =>

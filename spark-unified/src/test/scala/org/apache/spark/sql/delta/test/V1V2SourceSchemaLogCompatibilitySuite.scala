@@ -78,7 +78,7 @@ trait V1V2SourceSchemaLogCompatibilitySuiteBase
   protected def withV1[T](f: => T): T = withConnector(useV2 = false)(f)
   protected def withV2[T](f: => T): T = withConnector(useV2 = true)(f)
 
-  // SparkTable (V2) is read-only; route DDL/DML through V1 regardless of the active reader.
+  // Route DDL/DML through V1 regardless of the active reader.
   override protected def executeDml(sqlText: String): Unit = {
     withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
       sql(sqlText)

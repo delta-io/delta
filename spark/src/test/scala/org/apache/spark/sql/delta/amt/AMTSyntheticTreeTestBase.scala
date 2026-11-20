@@ -133,7 +133,8 @@ trait AMTSyntheticTreeTestBase extends AMTCheckpointTestBase {
     /** Writes `rootEntries` as the root manifest and returns a provider over the resulting tree. */
     def provider(rootEntries: Seq[AMTSingleAction]): AMTCheckpointProvider = {
       val tree = checkpoint(rootEntries)
-      AMTCheckpointProvider.fromCheckpoint(deltaLog, tree, manifestCommitVersion = tree.version)
+      AMTCheckpointProvider.fromCheckpoint(
+        spark, deltaLog, tree, manifestCommitVersion = tree.version)
     }
 
     /**

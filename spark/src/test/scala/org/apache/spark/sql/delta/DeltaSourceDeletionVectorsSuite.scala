@@ -36,7 +36,7 @@ trait DeltaSourceDeletionVectorTests
   with DeletionVectorsTestUtils
   with StreamTest { self: DeltaSourceConnectorTrait =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("allow to delete files before starting a streaming query") {
     withTempDir { inputDir =>

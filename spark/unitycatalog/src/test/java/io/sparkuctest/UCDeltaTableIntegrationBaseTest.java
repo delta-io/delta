@@ -445,7 +445,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /** Returns the UC table ID for the given table. */
   protected String currentUcTableId(String fullTableName) throws Exception {
     TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
-    return tablesApi.getTable(fullTableName, false, false).getTableId();
+    return tablesApi.getTable(fullTableName, false, false, false).getTableId();
   }
 
   /** Returns the current (latest) version of the table. */

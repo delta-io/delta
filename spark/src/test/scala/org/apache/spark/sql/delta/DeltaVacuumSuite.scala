@@ -199,7 +199,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 
   protected def gcTest(table: DeltaTableV2, clock: ManualClock)(actions: Operation*): Unit = {
-    import testImplicits._
+    import deltaImplicits._
     val basePath = table.deltaLog.dataPath.toString
     val fs = new Path(basePath).getFileSystem(table.deltaLog.newDeltaHadoopConf())
     actions.foreach {
@@ -506,7 +506,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
 
 class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
   with TransactionExecutionTestMixin with PhaseLockingTestMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   override def sparkConf: SparkConf = {
     super.sparkConf.set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "2")
@@ -530,7 +530,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
     val tableName = "deltaTable"
     withEnvironment { (_, _) =>
       withTable(tableName) {
-        import testImplicits._
+        import deltaImplicits._
         spark.emptyDataset[Int].write.format("delta").saveAsTable(tableName)
         val table = DeltaTableV2(spark, new TableIdentifier(tableName))
         vacuumSQLTest(table, tableName)
@@ -543,7 +543,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
     val viewName = "v"
     withEnvironment { (_, _) =>
       withTable(tableName) {
-        import testImplicits._
+        import deltaImplicits._
         spark.emptyDataset[Int].write.format("delta").saveAsTable(tableName)
         createTempViewFromTable(tableName, isSQLTempView)
         val table = DeltaTableV2(spark, new TableIdentifier(tableName))
@@ -557,7 +557,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
 
   test("basic case - Scala on path-based table") {
     withEnvironment { (tempDir, _) =>
-      import testImplicits._
+      import deltaImplicits._
       spark.emptyDataset[Int].write.format("delta").save(tempDir.getAbsolutePath)
       val deltaTable = io.delta.tables.DeltaTable.forPath(tempDir.getAbsolutePath)
       vacuumScalaTest(deltaTable, tempDir.getAbsolutePath)
@@ -569,7 +569,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
     withEnvironment { (tempDir, _) =>
       withTable(tableName) {
         // Initialize the table so that we can create the DeltaTable object
-        import testImplicits._
+        import deltaImplicits._
         spark.emptyDataset[Int].write.format("delta").saveAsTable(tableName)
         val deltaTable = io.delta.tables.DeltaTable.forName(tableName)
         val tablePath =
@@ -714,7 +714,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
   test("vacuum using inventory delta table and should not touch hidden files") {
     withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
       withEnvironment { (tempDir, clock) =>
-        import testImplicits._
+        import deltaImplicits._
         val path = s"""${tempDir.getCanonicalPath}_data"""
         val inventoryPath = s"""${tempDir.getCanonicalPath}_inventory"""
 
@@ -765,7 +765,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
   test("vacuum using inventory query and should not touch hidden files") {
     withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
       withEnvironment { (tempDir, clock) =>
-        import testImplicits._
+        import deltaImplicits._
         val path = s"""${tempDir.getCanonicalPath}_data"""
         val reservoirPath = s"""${tempDir.getCanonicalPath}_reservoir"""
 
@@ -1024,7 +1024,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
 
   test("vacuum for a partition path") {
     withEnvironment { (tempDir, _) =>
-      import testImplicits._
+      import deltaImplicits._
       val path = tempDir.getCanonicalPath
       Seq((1, "a"), (2, "b")).toDF("v1", "v2")
         .write

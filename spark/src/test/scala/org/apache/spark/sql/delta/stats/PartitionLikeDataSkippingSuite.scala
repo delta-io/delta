@@ -37,7 +37,7 @@ trait PartitionLikeDataSkippingSuiteBase
     with BeforeAndAfter
     with DeltaSQLCommandTest
     with ClusteredTableTestUtils {
-  import testImplicits._
+  import deltaImplicits._
 
   // Disable write optimization to ensure close control over the partitioning of ingested files.
   override protected def sparkConf: SparkConf = super.sparkConf

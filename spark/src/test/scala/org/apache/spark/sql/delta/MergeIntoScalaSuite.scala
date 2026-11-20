@@ -117,7 +117,7 @@ trait MergeIntoScalaMixin extends MergeIntoSuiteBaseMixin
 
 trait MergeIntoScalaTests extends MergeIntoScalaMixin {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("basic scala API") {
     withTable("source") {

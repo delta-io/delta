@@ -164,6 +164,17 @@ public class CDCSchemaContextTest {
     assertEquals(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, augmented.fields()[4].name());
   }
 
+  @Test
+  void testAppendNonNullableCDCColumns() {
+    StructType nonNullable =
+        DATA_SCHEMA
+            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType, false)
+            .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType, false)
+            .add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, false);
+
+    assertEquals(nonNullable, CDCSchemaContext.appendNonNullableCDCColumns(DATA_SCHEMA));
+  }
+
   private static List<Integer> toJavaList(Seq<Object> seq) {
     List<Integer> result = new ArrayList<>(seq.size());
     for (int i = 0; i < seq.size(); i++) {

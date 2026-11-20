@@ -54,7 +54,7 @@ abstract class DeltaCDCSuiteBase
   with DeltaSQLTestUtils
   with CDFNondeterministicFilterTests {
 
-  import testImplicits._
+  import deltaImplicits._
 
   /** Represents path or metastore table name */
   abstract case class TblId(id: String)
@@ -1285,7 +1285,7 @@ class DeltaCDCScalaWithCatalogOwnedBatch100Suite extends DeltaCDCScalaSuite {
  *
  * STRICT mode is scoped to the read only. Path-based reads register the path as a named
  * (unmanaged) table so resolution goes through the configured V2 spark_catalog (returns a
- * SparkTable); a bare `delta.`path`` would resolve to a V1 DeltaTableV2 and be rejected by
+ * DeltaV2Table); a bare `delta.`path`` would resolve to a V1 DeltaTableV2 and be rejected by
  * ChangelogSupport.
  */
 trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase with ChangelogSyntaxSupportedShim {
@@ -1339,8 +1339,8 @@ trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase with ChangelogSyntaxSupp
 
   // Filter by name in a test() override and ignore() the matches; everything else runs. The V2
   // changelog read path uses the `SELECT ... CHANGES` clause, which only the Spark 4.2 parser
-  // supports; supportsChangelogSyntax is a compile-time shim (true on spark-4.2, false on
-  // spark-4.0-4.1) so tests cancel on older versions.
+  // supports; supportsChangelogSyntax is a compile-time shim (true on spark-4.2+, false on
+  // spark-4.1) so tests cancel on older versions.
   override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
       implicit pos: org.scalactic.source.Position): Unit = {
     if (excludedV2Exact.contains(testName) || excludedV2Prefixes.exists(testName.startsWith)) {

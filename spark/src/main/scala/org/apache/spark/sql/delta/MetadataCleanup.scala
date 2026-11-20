@@ -86,7 +86,7 @@ trait MetadataCleanup extends DeltaLogging {
    * a cleanup boundary that no AMT checkpoint backs and try to write a non-AMT checkpoint there.
    */
   protected def shouldSkipMetadataCleanupForAMT(snapshotToCleanup: Snapshot): Boolean = {
-    val skip = AMTUtils.amtEnabled(snapshotToCleanup)
+    val skip = AMTUtils.amtSupported(snapshotToCleanup.protocol, isPreviewCompatible = true)
     if (skip) {
       logInfo(log"Skipping metadata cleanup for AMT table " +
         log"${MDC(DeltaLogKeys.PATH, dataPath)}")

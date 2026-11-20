@@ -160,7 +160,7 @@ class AutoCompactExecutionSuite extends
     logs.exists(_.opType.map(_.typeName) === Some("delta.commit.hooks.autoOptimize"))
   }
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("auto compact is skipped for a catalog-managed table") {
     withCatalogManagedTable() { tableName =>

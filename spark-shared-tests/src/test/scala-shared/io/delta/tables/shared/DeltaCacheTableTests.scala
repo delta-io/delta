@@ -26,13 +26,10 @@ import org.apache.spark.sql.Row
  * Shared across classic and Connect.
  *
  * The asserted behavior is version and mode dependent, so each scenario branches explicitly on
- * `spark.version` (4.2+, 4.1, 4.0) and on [[v2EnableMode]] (STRICT vs AUTO):
+ * `spark.version` (4.2+, 4.1) and on [[v2EnableMode]] (STRICT vs AUTO):
  *   - 4.1 and 4.2+: https://github.com/apache/spark/pull/52764 made cached DSv2 tables pin
  *     their state, so the cache pins and REFRESH TABLE surfaces external changes. A STRICT
  *     schema change additionally stays pinned out until REFRESH.
- *   - 4.0 STRICT: there is no pinning, so external changes are visible immediately.
- *   - 4.0 AUTO: the cache pins but REFRESH TABLE does not surface an external write (a drop and
- *     recreate is not seen either).
  */
 trait DeltaCacheTableTests
   extends DeltaTableRefreshSharedBase { self: AnyFunSuite =>
@@ -54,16 +51,6 @@ trait DeltaCacheTableTests
           assertFinalTableState("t", Seq(Row(1, 100)))
           writerSql("REFRESH TABLE t")
           assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
-        case ("4.0", "STRICT") =>
-          // 4.0 STRICT: no pinning, the external write is visible immediately.
-          assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
-          writerSql("REFRESH TABLE t")
-          assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
-        case ("4.0", "AUTO") =>
-          // 4.0 AUTO: the cache pins and REFRESH TABLE does not surface an external write.
-          assertFinalTableState("t", Seq(Row(1, 100)))
-          writerSql("REFRESH TABLE t")
-          assertFinalTableState("t", Seq(Row(1, 100)))
       }
     }
   }
@@ -79,16 +66,6 @@ trait DeltaCacheTableTests
           assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
           writerSql("REFRESH TABLE t")
           assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
-        case ("4.0", "STRICT") =>
-          // 4.0 STRICT: no pinning, the external write is visible immediately.
-          assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
-          writerSql("REFRESH TABLE t")
-          assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
-        case ("4.0", "AUTO") =>
-          // 4.0 AUTO: the external write is pinned out and REFRESH does not surface it.
-          assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
-          writerSql("REFRESH TABLE t")
-          assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
       }
     }
   }
@@ -101,7 +78,7 @@ trait DeltaCacheTableTests
           // 4.1 and 4.2+ STRICT: the V2 connector pins the cached snapshot, so the change is
           // invisible.
           assertFinalTableState("t", Seq(Row(1, 100)))
-        case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "STRICT") | ("4.0", "AUTO") =>
+        case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
           // Everywhere else: a schema change breaks cache pinning, so the external change is
           // visible even before REFRESH.
           assertFinalTableState("t", Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -126,15 +103,10 @@ trait DeltaCacheTableTests
           assertFinalTableState("t", Seq(Row(1, 100)))
           writerSql("REFRESH TABLE t")
           assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
-        case ("4.2+", "AUTO") | ("4.1", "AUTO") | ("4.0", "AUTO") =>
+        case ("4.2+", "AUTO") | ("4.1", "AUTO") =>
           assertFinalTableState("t", Seq(Row(1, 100, null), Row(2, 200, -1)))
           writerSql("REFRESH TABLE t")
           assertFinalTableState("t", Seq(Row(1, 100, null), Row(2, 200, -1)))
-        case ("4.0", "STRICT") =>
-          // 4.0 STRICT: no pinning, the external write is visible immediately (read as 2 columns).
-          assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
-          writerSql("REFRESH TABLE t")
-          assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
       }
     }
   }
@@ -155,16 +127,6 @@ trait DeltaCacheTableTests
           assertFinalTableState("t", Seq(Row(1, 100)))
           writerSql("REFRESH TABLE t")
           assertFinalTableState("t", Seq.empty)
-        case ("4.0", "STRICT") =>
-          // 4.0 STRICT: no pinning, the drop and recreate is visible immediately.
-          assertFinalTableState("t", Seq.empty)
-          writerSql("REFRESH TABLE t")
-          assertFinalTableState("t", Seq.empty)
-        case ("4.0", "AUTO") =>
-          // 4.0 AUTO: the cache pins and REFRESH does not surface the drop and recreate.
-          assertFinalTableState("t", Seq(Row(1, 100)))
-          writerSql("REFRESH TABLE t")
-          assertFinalTableState("t", Seq(Row(1, 100)))
       }
     }
   }

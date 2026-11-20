@@ -627,6 +627,18 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
 
+  /**
+   * Whether writers write AMT state and new checkpoints are AMT trees, on a table that has the
+   * `adaptiveMetadata-dev` feature in its protocol. CREATE of such a table sets it to true. Setting
+   * it to true on an existing table upgrades it to AMT.
+   */
+  val ADAPTIVE_METADATA_ENABLED = buildConfig[Boolean](
+    key = "enableAdaptiveMetadata",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
   /*
    * This is the table property that determines which Parquet format version should be used when
    * writing new Parquet files on the table.

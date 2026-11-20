@@ -20,7 +20,7 @@ import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
@@ -39,7 +39,7 @@ import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructTy
 import org.apache.spark.util.Utils
 
 trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
-  with SharedSparkSession
+  with DeltaSQLCommandTest
   with ClusteredTableTestUtils {
 
   override protected def beforeAll(): Unit = {
@@ -484,7 +484,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   }
 
   test("Replace clustered table with non-clustered table") {
-    import testImplicits._
+    import deltaImplicits._
     val sourceTable = this.sourceTable
     val testTable = this.testTable
     withTable(sourceTable) {
@@ -519,7 +519,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   }
 
   test("Replace clustered table with non-clustered table - dataframe writer") {
-    import testImplicits._
+    import deltaImplicits._
     val sourceTable = this.sourceTable
     val testTable = this.testTable
     withTable(sourceTable) {
@@ -567,6 +567,7 @@ trait ClusteredTableDDLWithColumnMapping
     "validate dropping clustering column is not allowed: multiple clustering columns",
     "validate dropping clustering column is not allowed: clustering column + " +
       "non-clustering column",
+    "validate dropping clustering column is not allowed: struct of a nested clustering column",
     "validate RESTORE on clustered table"
   )
 
@@ -612,6 +613,27 @@ trait ClusteredTableDDLWithColumnMapping
         "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
         parameters = Map("columnList" -> "col1")
       )
+    }
+  }
+
+  test("validate dropping clustering column is not allowed: struct of a nested clustering column") {
+    val testTable = this.testTable
+    withSQLConf(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key -> "true") {
+      withClusteredTable(testTable, "id INT, a STRUCT<b INT, c INT>", "a.b") {
+        Seq("a", "A", "a.b").foreach { droppedColumn =>
+          val e = intercept[DeltaAnalysisException] {
+            sql(s"ALTER TABLE $testTable DROP COLUMNS ($droppedColumn)")
+          }
+          checkError(
+            e,
+            "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+            parameters = Map("columnList" -> "a.b")
+          )
+        }
+        sql(s"ALTER TABLE $testTable DROP COLUMNS (a.c)")
+        val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTable))
+        verifyClusteringColumnsInDomainMetadata(snapshot, Seq("a.b"))
+      }
     }
   }
 }
@@ -676,7 +698,7 @@ trait ClusteredTableDDLSuiteBase
   extends ClusteredTableCreateOrReplaceDDLSuite
     with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("cluster by with more than 4 columns - alter table") {
     val testTable = s"test_table_$tableSuffix"
@@ -913,7 +935,7 @@ trait ClusteredTableDDLSuiteBase
   test("validate CLONE on clustered table") {
     assume(!catalogOwnedDefaultCreationEnabledInTests,
       "OPTIMIZE is blocked on catalog-managed tables")
-    import testImplicits._
+    import deltaImplicits._
     val srcTable = s"SrcTbl_$tableSuffix"
     val dstTable1 = s"DestTbl1_$tableSuffix"
     val dstTable2 = s"DestTbl2_$tableSuffix"

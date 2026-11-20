@@ -32,7 +32,7 @@ class ClusteringTableFeatureSuite extends SparkFunSuite
   with SharedSparkSession
   with ClusteredTableTestUtils
   with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   test("create table without cluster by clause cannot set clustering table properties") {
     withTable("tbl") {

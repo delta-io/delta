@@ -119,7 +119,7 @@ class UpdateMetricsSuite extends QueryTest
       ""
     }
     var operationMetrics: Map[String, Long] = null
-    import testImplicits._
+    import deltaImplicits._
     withSQLConf(
       DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
       DeltaSQLConf.DELTA_SKIP_RECORDING_EMPTY_COMMITS.key -> "false",

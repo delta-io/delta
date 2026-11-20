@@ -102,10 +102,12 @@ object IcebergTransactionUtils
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
       statsParser: String => InternalRow,
-      snapshot: Snapshot): DataFile = {
+      snapshot: Snapshot,
+      disableExplicitRowIdAssignment: Boolean = false): DataFile = {
     var dataFileBuilder =
       convertFileAction(
-        add, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)
+        add, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot,
+        disableExplicitRowIdAssignment)
         // Attempt to attach the number of records metric regardless of whether the Delta stats
         // string is null/empty or not because this metric is required by Iceberg. If the number
         // of records is both unavailable here and unavailable in the Delta stats, Iceberg will
@@ -149,7 +151,8 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: SnapshotDescriptor): DataFiles.Builder = {
+      snapshot: SnapshotDescriptor,
+      disableExplicitRowIdAssignment: Boolean = false): DataFiles.Builder = {
     val absPath = canonicalizeFilePath(f, tablePath)
     var builder = DataFiles
       .builder(partitionSpec)
@@ -162,7 +165,7 @@ object IcebergTransactionUtils
           snapshot, partitionSpec, f.partitionValues, logicalToPhysicalPartitionNames))
     }
     f match {
-      case add: AddFile =>
+      case add: AddFile if !disableExplicitRowIdAssignment =>
         add.baseRowId.map { rowId =>
           builder.withFirstRowId(rowId)
         }

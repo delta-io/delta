@@ -35,7 +35,7 @@ trait DataSkippingAMTBase extends DataSkippingDeltaTestsBase
   import testImplicits._
 
   // AMT requires the catalogManaged feature. `catalogOwnedCoordinatorBackfillBatchSize = Some(1)`
-  // registers the in-memory commit coordinator (and enables catalog-owned-by-default) so
+  // registers the in-memory commit coordinator (and enables catalog-managed-by-default) so
   // catalog-managed AMT tables can be created locally, backfilling every commit immediately.
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 

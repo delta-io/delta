@@ -475,7 +475,7 @@ public abstract class UnityCatalogSupport {
     while (!serverReady && retries < maxRetries) {
       try {
         CatalogsApi catalogsApi = new CatalogsApi(setupClient);
-        catalogsApi.listCatalogs(null, null); // This will throw if server is not ready
+        catalogsApi.listCatalogs(null, null, false); // This will throw if server is not ready
         serverReady = true;
       } catch (Exception e) {
         Thread.sleep(retryDelayMs);

@@ -96,6 +96,7 @@ trait AMTCheckpointTestBase
       txns = Nil,
       sidecars = Nil)
     AMTCheckpointProvider(
+      spark = spark,
       manifestCommitVersion = cpVersion,
       checkpointAction = checkpoint,
       leaves = Nil,
@@ -740,8 +741,8 @@ trait AMTCheckpointTestBase
   protected def getJsonOnlyChanges(
       deltaLog: DeltaLog,
       startVersion: Long): Iterator[(Long, Seq[Action])] =
-    deltaLog.getSingleCommitIterator(startVersion).map { commit =>
-      (commit.version, commit.getActionsIterator().processAndClose(_.toList))
+    deltaLog.getChangeLogFiles(startVersion).map { case (version, logFile) =>
+      (version, deltaLog.store.read(logFile, deltaLog.newDeltaHadoopConf()).map(Action.fromJson))
     }
 
   /** Returns the actions committed at exactly `version`, as written in its log file. */

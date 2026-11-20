@@ -32,19 +32,17 @@ import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogV2Util, Id
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{LongType, StringType, StructType}
-import org.apache.spark.util.Utils
 
 // These tests are copied from Apache Spark (minus partition by expressions) and should work exactly
 // the same with Delta minus some writer options
 trait OpenSourceDataFrameWriterV2Tests
-    extends QueryTest
-    with SharedSparkSession
+  extends QueryTest
+    with DeltaSQLCommandTest
     with BeforeAndAfter
     with DeltaTableProvider {
 
-  import testImplicits._
+  import deltaImplicits._
 
   before {
     val df = spark.createDataFrame(Seq((1L, "a"), (2L, "b"), (3L, "c"))).toDF("id", "data")
@@ -72,6 +70,14 @@ trait OpenSourceDataFrameWriterV2Tests
       .filterKeys(!CatalogV2Util.TABLE_RESERVED_PROPERTIES.contains(_))
       .filterKeys(!TableFeatureProtocolUtils.isTableProtocolProperty(_))
       .toMap
+  }
+
+  protected def assertPartitionedById(table: Table): Unit = {
+    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+  }
+
+  protected def assertUnpartitioned(table: Table): Unit = {
+    assert(table.partitioning.isEmpty)
   }
 
   test("Append: basic append") {
@@ -309,7 +315,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
   }
 
@@ -328,7 +334,7 @@ trait OpenSourceDataFrameWriterV2Tests
     // table should not have been changed
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
   }
 
@@ -346,7 +352,7 @@ trait OpenSourceDataFrameWriterV2Tests
     // validate the initial table
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
 
     spark.table("source2")
@@ -366,7 +372,7 @@ trait OpenSourceDataFrameWriterV2Tests
       .add("id", LongType)
       .add("data", StringType)
       .add("even_or_odd", StringType))
-    assert(replaced.partitioning.isEmpty)
+    assertUnpartitioned(replaced)
     assert(getProperties(replaced) === Map("delta.appendOnly" -> "true"))
   }
 
@@ -404,7 +410,7 @@ trait OpenSourceDataFrameWriterV2Tests
       .add("id", LongType)
       .add("data", StringType)
       .add("even_or_odd", StringType))
-    assert(replaced.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(replaced)
     assert(getProperties(replaced).isEmpty)
   }
 
@@ -447,7 +453,7 @@ trait OpenSourceDataFrameWriterV2Tests
     // validate the initial table
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
 
     spark.table("source2")
@@ -466,7 +472,7 @@ trait OpenSourceDataFrameWriterV2Tests
       .add("id", LongType)
       .add("data", StringType)
       .add("even_or_odd", StringType))
-    assert(replaced.partitioning.isEmpty)
+    assertUnpartitioned(replaced)
     assert(getProperties(replaced).isEmpty)
   }
 
@@ -534,7 +540,7 @@ class DeltaDataFrameWriterV2Suite
   extends OpenSourceDataFrameWriterV2Tests
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   import org.apache.spark.sql.delta.sources.DeltaSQLConf.{
     REPLACEWHERE_CONSTRAINT_CHECK_ENABLED,
@@ -559,7 +565,7 @@ class DeltaDataFrameWriterV2Suite
       case OverwriteApi.DATAFRAME_WRITER_V2 =>
         replacement.writeTo("table_name").overwrite(expr(predicate))
       case OverwriteApi.REPLACE_WHERE_OPTION =>
-        replacement.write.format("delta").mode("overwrite")
+        replacement.write.format(writeFormat).mode("overwrite")
           .option("replaceWhere", predicate).saveAsTable("table_name")
     }
   }
@@ -582,7 +588,7 @@ class DeltaDataFrameWriterV2Suite
     test(s"Overwrite: literal string predicates: startsWith percent ($api, enabled=$enabled)") {
       withLiteralStringPredicateConf(enabled) {
         withTable("table_name") {
-          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          spark.sql(createTableSQL("table_name", "id int, value string"))
           Seq((1, "%first"), (2, "%second"), (3, "plain"), (4, null))
             .toDF("id", "value").writeTo("table_name").append()
           val replacement = Seq((10, "%first")).toDF("id", "value")
@@ -603,7 +609,7 @@ class DeltaDataFrameWriterV2Suite
     test(s"Overwrite: literal string predicates: endsWith underscore ($api, enabled=$enabled)") {
       withLiteralStringPredicateConf(enabled) {
         withTable("table_name") {
-          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          spark.sql(createTableSQL("table_name", "id int, value string"))
           Seq((1, "first_"), (2, "second_"), (3, "plain"), (4, null))
             .toDF("id", "value").writeTo("table_name").append()
           val replacement = Seq((10, "first_")).toDF("id", "value")
@@ -624,7 +630,7 @@ class DeltaDataFrameWriterV2Suite
     test(s"Overwrite: literal string predicates: contains backslash ($api, enabled=$enabled)") {
       withLiteralStringPredicateConf(enabled) {
         withTable("table_name") {
-          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          spark.sql(createTableSQL("table_name", "id int, value string"))
           Seq((1, "a\\b"), (2, "c\\d"), (3, "plain"), (4, null))
             .toDF("id", "value").writeTo("table_name").append()
           val replacement = Seq((10, "a\\b")).toDF("id", "value")
@@ -653,7 +659,7 @@ class DeltaDataFrameWriterV2Suite
     test(s"Overwrite: literal string predicates: contains percent ($api, enabled=$enabled)") {
       withLiteralStringPredicateConf(enabled) {
         withTable("table_name") {
-          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          spark.sql(createTableSQL("table_name", "id int, value string"))
           Seq((1, "%first"), (2, "second%"), (3, "plain"), (4, ""), (5, null))
             .toDF("id", "value").writeTo("table_name").append()
           val replacement = Seq((10, "%new")).toDF("id", "value")
@@ -674,7 +680,7 @@ class DeltaDataFrameWriterV2Suite
     test(s"Overwrite: literal string predicates: mixed incoming rows ($api, enabled=$enabled)") {
       withLiteralStringPredicateConf(enabled) {
         withTable("table_name") {
-          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          spark.sql(createTableSQL("table_name", "id int, value string"))
           Seq((1, "%old"), (2, "plain"), (3, null))
             .toDF("id", "value").writeTo("table_name").append()
           val replacement = Seq((10, "%new"), (11, "plain")).toDF("id", "value")
@@ -705,7 +711,7 @@ class DeltaDataFrameWriterV2Suite
     test(s"Overwrite: literal string predicates: brackets and braces ($api, enabled=$enabled)") {
       withLiteralStringPredicateConf(enabled) {
         withTable("table_name") {
-          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          spark.sql(createTableSQL("table_name", "id int, value string"))
           Seq((1, "[a]"), (2, "a{2}"), (3, "[a-c]"), (4, "[^a]"), (5, "^"), (6, "-"),
             (20, "a"), (21, "aa"), (22, "b"), (23, "c"), (24, "plain"))
             .toDF("id", "value").writeTo("table_name").append()
@@ -729,7 +735,7 @@ class DeltaDataFrameWriterV2Suite
     test(s"Overwrite: literal string predicates: LIKE prefix wildcard ($api, enabled=$enabled)") {
       withLiteralStringPredicateConf(enabled) {
         withTable("table_name") {
-          spark.sql("CREATE TABLE table_name (id int, value string) USING delta")
+          spark.sql(createTableSQL("table_name", "id int, value string"))
           Seq((1, "alice"), (2, "a%b"), (3, "a_b"), (4, "a"), (5, "plain"), (6, null))
             .toDF("id", "value").writeTo("table_name").append()
           val replacement = Seq((10, "anna")).toDF("id", "value")
@@ -793,7 +799,7 @@ class DeltaDataFrameWriterV2Suite
 
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table) === Map("delta.appendOnly" -> "true"))
   }
 
@@ -811,7 +817,7 @@ class DeltaDataFrameWriterV2Suite
     // validate the initial table
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
 
     spark.table("source2").where("false")
@@ -831,7 +837,7 @@ class DeltaDataFrameWriterV2Suite
         .add("id", LongType)
         .add("data", StringType)
         .add("even_or_odd", StringType))
-    assert(replaced.partitioning.isEmpty)
+    assertUnpartitioned(replaced)
     assert(getProperties(replaced) === Map("delta.appendOnly" -> "true"))
   }
 

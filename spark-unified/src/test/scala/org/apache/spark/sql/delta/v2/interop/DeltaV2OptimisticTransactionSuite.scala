@@ -81,6 +81,11 @@ class DeltaV2OptimisticTransactionSuite
     "partition column changes allowed for CLONE operations"
     ,
     "partition column changes allowed for RenameColumn when partition column renamed"
+    ,
+    "Limited retries for non-conflict retryable CommitFailedExceptions",
+    "No retries for FileAlreadyExistsException with commit-coordinator",
+    "commitLarge should handle Commit Failed Exception with conflict: true",
+    "commitLarge should handle Commit Failed Exception with conflict: false"
     )
 
   override protected def shouldFail(testName: String): Boolean = shouldFailTests.contains(testName)

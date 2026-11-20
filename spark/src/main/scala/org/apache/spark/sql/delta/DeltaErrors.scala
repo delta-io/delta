@@ -51,7 +51,24 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{DataType, StructField, StructType}
+import org.apache.spark.sql.types.{
+  BinaryType,
+  BooleanType,
+  ByteType,
+  DataType,
+  DateType,
+  DecimalType,
+  DoubleType,
+  FloatType,
+  IntegerType,
+  LongType,
+  ShortType,
+  StringType,
+  StructField,
+  StructType,
+  TimestampNTZType,
+  TimestampType
+}
 
 
 /**
@@ -4100,12 +4117,26 @@ trait DeltaErrorsBase
     )
   }
 
-  def icebergCompatUnsupportedFieldException(
-      version: Int, field: StructField, schema: StructType): Throwable = {
+  def icebergCompatUnsupportedColumnDefaultException(
+      version: Int, field: StructField): Throwable = {
+    // The cases match DeltaColumnDefaults.isLiteral, so each error gives only the forms that the
+    // check accepts for the column type. Date and time types need one exact format, and the
+    // types that isLiteral does not list accept no default.
+    val columnType = toSQLType(field.dataType)
+    val (subClass, typeParameter) = field.dataType match {
+      case DateType => ("UNSUPPORTED_DATE_COLUMN_DEFAULT", None)
+      case TimestampType => ("UNSUPPORTED_TIMESTAMP_LTZ_COLUMN_DEFAULT", None)
+      case TimestampNTZType => ("UNSUPPORTED_TIMESTAMP_NTZ_COLUMN_DEFAULT", None)
+      case StringType | LongType | IntegerType | ShortType | ByteType | FloatType | DoubleType |
+          _: DecimalType | BooleanType | BinaryType =>
+        ("UNSUPPORTED_COLUMN_DEFAULT", Some(columnType))
+      case _ => ("UNSUPPORTED_COLUMN_DEFAULT_TYPE", Some(columnType))
+    }
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
-      messageParameters = Array(version.toString, version.toString,
-        s"${field.dataType.typeName}:${field.name}", schema.treeString)
+      errorClass = s"DELTA_ICEBERG_COMPAT_VIOLATION.$subClass",
+      messageParameters = Array(version.toString,
+        field.getCurrentDefaultValue().getOrElse(""),
+        SchemaUtils.prettyFieldName(Seq(field.name))) ++ typeParameter
     )
   }
 
@@ -4395,7 +4426,7 @@ trait DeltaErrorsBase
       operation: String,
       snapshot: SnapshotDescriptor,
       catalogTableOpt: Option[CatalogTable]): Unit = {
-    if (snapshot.isCatalogOwned) {
+    if (snapshot.isCatalogManaged) {
       val allowedOperations = catalogTableOpt
         .flatMap(_.storage.properties.get(
           CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY))
