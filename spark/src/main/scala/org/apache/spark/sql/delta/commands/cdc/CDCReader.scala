@@ -217,8 +217,10 @@ trait CDCReaderImpl extends CDCReaderBase {
    * that the file stores as a data column.
    *
    * The partition columns of a file follow from the version of its spec (see
-   * [[CdfWrittenPartitioning]]), so grouping works on specs, not on files. When `written` is None,
-   * every file was written with the read schema's partitioning and the specs are not grouped.
+   * [[CdfWrittenPartitioning]]), so grouping works on specs, not on files. A written partition
+   * column that the read schema does not have is left out, since it is not read. When `written`
+   * is None, every file was written with the read schema's partitioning and the specs are not
+   * grouped.
    *
    * @param removed whether the specs hold the files that their versions remove.
    */
@@ -241,15 +243,18 @@ trait CDCReaderImpl extends CDCReaderBase {
         } else {
           written.ofAddedFiles(spec.version)
         }
-        groups.getOrElseUpdate(metadata.physicalPartitionColumns, ListBuffer()) += spec
+        // A written partition column that the read schema does not have is not read, and the
+        // other written partition columns still are.
+        val physicalColumns =
+          metadata.physicalPartitionColumns.filter(namesByPhysicalName.contains)
+        groups.getOrElseUpdate(physicalColumns, ListBuffer()) += spec
       }
       groups.toSeq.map { case (physicalColumns, groupSpecs) =>
-        val columns = physicalColumns.flatMap(namesByPhysicalName.get)
-        // A partition column that the read schema does not have is read as for the read schema.
-        if (physicalColumns == readPartitionColumns || columns.length != physicalColumns.length) {
+        if (physicalColumns == readPartitionColumns) {
           snapshot -> groupSpecs.toSeq
         } else {
-          new SnapshotDescriptorWithPartitionColumns(snapshot, columns) -> groupSpecs.toSeq
+          new SnapshotDescriptorWithPartitionColumns(
+            snapshot, physicalColumns.map(namesByPhysicalName)) -> groupSpecs.toSeq
         }
       }
   }
@@ -440,13 +445,20 @@ trait CDCReaderImpl extends CDCReaderBase {
             val addActions = actions.collect { case a: AddFile if changesDataFunc(a) => a }
             val removeActions = actions.collect { case r: RemoveFile if changesDataFunc(r) => r }
             if (v == start && removeActions.nonEmpty && actions.exists(_.isInstanceOf[Metadata])) {
+              // The schema check and the partitioning of the removed files both use the metadata
+              // of the version before the start version, so it is loaded once.
+              val previousMetadata =
+                if (checkSchemaToBlockRead || readFilesWithWrittenPartitioning) {
+                  loadMetadataBeforeStartVersion(readSchemaSnapshot, start, end, catalogTableOpt)
+                } else {
+                  None
+                }
               checkStartVersionRemovedFilesSchema(
-                readSchemaSnapshot, start, end, checkSchemaToBlockRead, catalogTableOpt,
+                readSchemaSnapshot, start, end, checkSchemaToBlockRead, previousMetadata,
                 operation = commitInfo.map(_.operation))
-              if (readFilesWithWrittenPartitioning && start > 0) {
+              if (readFilesWithWrittenPartitioning) {
                 // Without it, the removed files are read with the start version's partitioning.
-                metadataBeforeStart = Try(deltaLog.getSnapshotAt(
-                  start - 1, catalogTableOpt = catalogTableOpt).metadata).toOption
+                metadataBeforeStart = previousMetadata
               }
             }
             numAddFiles += addActions.size

@@ -691,39 +691,75 @@ trait CDCReaderBase extends DeltaLogging {
   }
 
   /**
+   * Returns the metadata of the version before the starting commit, which the files that the
+   * starting commit removes were written with. Returns None if the starting commit is the first
+   * version or if the version before it cannot be loaded.
+   */
+  protected def loadMetadataBeforeStartVersion(
+      readSchemaSnapshot: SnapshotDescriptor,
+      start: Long,
+      end: Long,
+      catalogTableOpt: Option[CatalogTable]): Option[Metadata] = {
+    if (start == 0) {
+      return None
+    }
+    try {
+      Some(readSchemaSnapshot.deltaLog
+        .getSnapshotAt(start - 1, catalogTableOpt = catalogTableOpt).metadata)
+    } catch {
+      case NonFatal(error) =>
+        // Unavailable history must not block the read.
+        recordStartVersionSchemaCheckError(readSchemaSnapshot, start, end, error)
+        None
+    }
+  }
+
+  private def recordStartVersionSchemaCheckError(
+      readSchemaSnapshot: SnapshotDescriptor,
+      start: Long,
+      end: Long,
+      error: Throwable): Unit = {
+    recordDeltaEvent(
+      readSchemaSnapshot.deltaLog,
+      "delta.changeDataFeed.startVersionSchemaCheckError",
+      data = Map(
+        "startVersion" -> start,
+        "endVersion" -> end,
+        "readVersion" -> readSchemaSnapshot.version,
+        "incompatibleVersion" -> (start - 1),
+        "schemaCheckEnabled" -> SQLConf.get.getConf(
+          DeltaSQLConf.DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED),
+        "errorClass" -> error.getClass.getName,
+        "errorMessage" -> error.getMessage))
+  }
+
+  /**
    * Validate the old data schema when the starting commit changes metadata and removes files.
    * Callers must check that those removed files are selected for the CDF scan.
+   *
+   * @param previousMetadata the metadata of the version before the starting commit, from
+   *                         [[loadMetadataBeforeStartVersion]]. None skips the check.
    */
   protected def checkStartVersionRemovedFilesSchema(
       readSchemaSnapshot: SnapshotDescriptor,
       start: Long,
       end: Long,
       checkSchemaToBlockRead: Boolean,
-      catalogTableOpt: Option[CatalogTable],
+      previousMetadata: Option[Metadata],
       operation: Option[String]): Unit = {
     if (start > 0 && checkSchemaToBlockRead) {
       val previousVersion = start - 1
       val schemaCheckEnabled = SQLConf.get.getConf(
         DeltaSQLConf.DELTA_CDF_START_VERSION_SCHEMA_CHECK_ENABLED)
       val schemaIncompatible = try {
-        val previousMetadata = readSchemaSnapshot.deltaLog
-          .getSnapshotAt(previousVersion, catalogTableOpt = catalogTableOpt).metadata
-        checkPreviousVersionSchemaIncompatibility(
-          readSchemaSnapshot, start, end, previousMetadata, previousVersion, schemaCheckEnabled)
+        previousMetadata.exists { metadata =>
+          checkPreviousVersionSchemaIncompatibility(
+            readSchemaSnapshot, start, end, metadata, previousVersion, schemaCheckEnabled)
+        }
       } catch {
         case NonFatal(error) =>
-          // Unavailable history or unexpected validation failures must not block the read.
-          recordDeltaEvent(
-            readSchemaSnapshot.deltaLog,
-            "delta.changeDataFeed.startVersionSchemaCheckError",
-            data = Map(
-              "startVersion" -> start,
-              "endVersion" -> end,
-              "readVersion" -> readSchemaSnapshot.version,
-              "incompatibleVersion" -> previousVersion,
-              "schemaCheckEnabled" -> schemaCheckEnabled,
-              "errorClass" -> error.getClass.getName,
-              "errorMessage" -> error.getMessage))
+          // Unexpected validation failures must not block the read.
+          recordStartVersionSchemaCheckError(readSchemaSnapshot, start, end, error)
           return
       }
       if (schemaIncompatible && schemaCheckEnabled) {

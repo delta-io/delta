@@ -796,6 +796,73 @@ class CDCReaderSuite
     }
   }
 
+  for (storePartitionColumns <- BOOLEAN_DOMAIN) {
+    test("CDF that starts at a commit that drops a partition column reads the other partition " +
+        s"columns of its removed files, storePartitionColumns=$storePartitionColumns") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        sql(
+          s"""
+             |CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA PARTITIONED BY (a, b)
+             |TBLPROPERTIES (
+             |  '${DeltaConfigs.WRITE_PARTITION_COLUMNS_TO_PARQUET.key}' = '$storePartitionColumns')
+             |""".stripMargin)
+        sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 2, 20)")
+        // Version 2 drops b and the partitioning, so a becomes a data column.
+        spark.read.format("delta").load(path).drop("b")
+          .write.format("delta")
+          .mode(SaveMode.Overwrite)
+          .option(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "true")
+          .partitionBy()
+          .save(path)
+
+        // Version 2 removes the files written with (a, b). The read schema has a but not b.
+        val changes = spark.read.format("delta")
+          .option(DeltaOptions.CDC_READ_OPTION, "true")
+          .option(DeltaOptions.CDC_START_VERSION, 2)
+          .option(DeltaOptions.CDC_END_VERSION, 2)
+          .load(path)
+          .select("id", "a", CDC_TYPE_COLUMN_NAME, CDC_COMMIT_VERSION)
+        checkAnswer(changes, Seq((1, 1), (2, 2)).flatMap { case (id, a) =>
+          Seq(Row(id, a, "delete", 2L), Row(id, a, "insert", 2L))
+        })
+      }
+    }
+  }
+
+  for (unsafeBatchRead <- BOOLEAN_DOMAIN) {
+    test("CDF that starts at a partition column change records an event when the version " +
+        s"before it is unavailable, unsafeBatchRead=$unsafeBatchRead") {
+      withSQLConf(DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key ->
+          unsafeBatchRead.toString) {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          sql(s"CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA " +
+            "PARTITIONED BY (a, b)")
+          sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 2, 20)")
+          overwriteWithPartitionColumns(path, "a") // version 2
+          val log = DeltaLog.forTable(spark, path)
+          log.checkpoint(log.update())
+          (0 to 1).foreach { v =>
+            assert(new File(FileNames.unsafeDeltaFile(log.logPath, v).toUri).delete())
+          }
+          DeltaLog.clearCache()
+
+          // The removed files of version 2 are read with its partitioning, since the version
+          // before it cannot be loaded.
+          val events = Log4jUsageLogger.track {
+            readChanges(path, 2, 2).collect()
+          }
+          val errorEvents = events.filter { event =>
+            event.metric == "tahoeEvent" && event.tags.get("opType")
+              .contains("delta.changeDataFeed.startVersionSchemaCheckError")
+          }
+          assert(errorEvents.size == 1, events.flatMap(_.tags.get("opType")).mkString(", "))
+        }
+      }
+    }
+  }
+
   test("CDF across a partition column change is blocked when files are read with the read " +
       "schema's partitioning") {
     withTempDir { dir =>
