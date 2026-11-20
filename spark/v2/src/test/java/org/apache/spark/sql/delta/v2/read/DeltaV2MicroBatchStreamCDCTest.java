@@ -42,6 +42,7 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
+import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
@@ -362,8 +363,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         Map$.MODULE$.<String, String>empty().updated("readChangeFeed", "true");
     DeltaOptions cdcOptions = new DeltaOptions(cdcOptionsMap, spark.sessionState().conf());
     DeltaSource deltaSource = createDeltaSource(deltaLog, tablePath, cdcOptions);
-    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files = new ArrayList<>();
-    try (ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
+    List<IndexedFile> dsv1Files = new ArrayList<>();
+    try (ClosableIterator<IndexedFile> iter =
         deltaSource.getFileChangesWithRateLimit(
             fromVersion,
             DeltaSourceOffset.BASE_INDEX(),
@@ -414,7 +415,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     deltaLog.update(false, Option.empty(), Option.empty());
 
     // Unlimited: DSv1/DSv2 parity, should see data files from both commits (v2 and v3)
-    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Unlimited =
+    List<IndexedFile> dsv1Unlimited =
         getDsv1FileChanges(
             deltaLog,
             tablePath,
@@ -435,14 +436,14 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Set<Long> unlimitedVersions = new HashSet<>();
     for (Tuple2<IndexedFile, CDCDataFile> f : dsv2Unlimited) {
-      if (f._1().hasFileAction()) unlimitedVersions.add(f._1().getVersion());
+      if (f._1().hasFileAction()) unlimitedVersions.add(f._1().version());
     }
     assertTrue(
         unlimitedVersions.size() >= 2,
         "Expected data files from at least 2 versions, got: " + unlimitedVersions);
 
     // Rate-limited (maxFiles=1): takeWhile(hasCapacity) should stop after first commit
-    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Limited =
+    List<IndexedFile> dsv1Limited =
         getDsv1FileChanges(
             deltaLog,
             tablePath,
@@ -463,7 +464,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Set<Long> limitedVersions = new HashSet<>();
     for (Tuple2<IndexedFile, CDCDataFile> f : dsv2Limited) {
-      if (f._1().hasFileAction()) limitedVersions.add(f._1().getVersion());
+      if (f._1().hasFileAction()) limitedVersions.add(f._1().version());
     }
     assertEquals(
         1,
@@ -505,7 +506,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertTrue(totalDataFiles > 1, "Partitioned insert should produce multiple files");
 
     // Read with maxFiles=1: should get partial results
-    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Call1 =
+    List<IndexedFile> dsv1Call1 =
         getDsv1FileChanges(
             deltaLog,
             tablePath,
@@ -527,7 +528,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     // Verify no END sentinel in partial result
     boolean dsv2HasEnd =
         dsv2Call1.stream()
-            .anyMatch(f -> f._1().getIndex() == DeltaSourceOffset.END_INDEX() && f._2() == null);
+            .anyMatch(f -> f._1().index() == DeltaSourceOffset.END_INDEX() && f._2() == null);
     assertFalse(dsv2HasEnd, "Partial admission should not produce END sentinel");
   }
 
@@ -562,15 +563,15 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     long v2Size = 0;
     long v3BatchSize = 0;
     for (Tuple2<IndexedFile, CDCDataFile> f : probeFiles) {
-      if (f._1().getVersion() == 2 && f._1().hasFileAction()) v2Size += f._1().getFileSize();
-      if (f._1().getVersion() == 3 && f._1().hasFileAction()) v3BatchSize += f._1().getFileSize();
+      if (f._1().version() == 2 && f._1().hasFileAction()) v2Size += f._1().getFileSize();
+      if (f._1().version() == 3 && f._1().hasFileAction()) v3BatchSize += f._1().getFileSize();
     }
     assertTrue(v3BatchSize > 0, "DELETE should produce data files");
 
     // Budget enough for v2 but 1 byte short for v3's batch.
     long maxBytes = v2Size + v3BatchSize - 1;
 
-    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files =
+    List<IndexedFile> dsv1Files =
         getDsv1FileChanges(
             deltaLog,
             tablePath,
@@ -590,15 +591,15 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     compareFileChanges(dsv1Files, dsv2Files);
 
     long v2DataFiles =
-        dsv2Files.stream().filter(f -> f._1().getVersion() == 2 && f._1().hasFileAction()).count();
+        dsv2Files.stream().filter(f -> f._1().version() == 2 && f._1().hasFileAction()).count();
     assertTrue(v2DataFiles > 0, "Version 2 should be admitted");
 
     long v3DataFiles =
-        dsv2Files.stream().filter(f -> f._1().getVersion() == 3 && f._1().hasFileAction()).count();
+        dsv2Files.stream().filter(f -> f._1().version() == 3 && f._1().hasFileAction()).count();
     assertEquals(0, v3DataFiles, "Version 3 should be batch-rejected");
 
     long v4DataFiles =
-        dsv2Files.stream().filter(f -> f._1().getVersion() == 4 && f._1().hasFileAction()).count();
+        dsv2Files.stream().filter(f -> f._1().version() == 4 && f._1().hasFileAction()).count();
     assertEquals(0, v4DataFiles, "Version 4 should not be admitted after batch-reject");
   }
 
@@ -711,8 +712,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertTrue(files.size() >= 2, "Expected at least data + END, got " + files.size());
 
     Tuple2<IndexedFile, CDCDataFile> end = files.get(files.size() - 1);
-    assertEquals(commitVersion, end._1().getVersion());
-    assertEquals(DeltaSourceOffset.END_INDEX(), end._1().getIndex());
+    assertEquals(commitVersion, end._1().version());
+    assertEquals(DeltaSourceOffset.END_INDEX(), end._1().index());
     assertNull(end._2());
 
     List<Tuple2<IndexedFile, CDCDataFile>> dataFiles = new ArrayList<>();
@@ -724,7 +725,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     for (Tuple2<IndexedFile, CDCDataFile> f : dataFiles) {
       assertEquals("insert", f._2().getChangeType(), "Change type should be 'insert'");
       assertTrue(f._2().getCommitTimestamp() > 0, "Commit timestamp should be positive");
-      assertEquals(commitVersion, f._1().getVersion());
+      assertEquals(commitVersion, f._1().version());
     }
   }
 
@@ -762,10 +763,10 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertFalse(dataFiles.isEmpty(), "Expected at least one data file from DELETE");
 
     for (Tuple2<IndexedFile, CDCDataFile> f : dataFiles) {
-      assertTrue(f._1().isAddCDCFile(), "Data file should be an explicit CDC file");
+      assertNotNull(f._1().cdc(), "Data file should be an explicit CDC file");
       assertNotNull(f._2(), "CDCDataFile should be present");
       assertTrue(f._2().isAddCDCFile(), "Should be an explicit CDC file");
-      assertEquals(commitVersion, f._1().getVersion());
+      assertEquals(commitVersion, f._1().version());
     }
   }
 
@@ -814,7 +815,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     // BEGIN sentinel filtered (at start boundary). Only END sentinel remains.
     assertEquals(1, files.size(), "Expected only END sentinel for no-op merge");
-    assertEquals(DeltaSourceOffset.END_INDEX(), files.get(0)._1().getIndex());
+    assertEquals(DeltaSourceOffset.END_INDEX(), files.get(0)._1().index());
     assertNull(files.get(0)._2());
   }
 
@@ -845,7 +846,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     deltaLog.update(false, Option.empty(), Option.empty());
 
     // DSv1/DSv2 parity: index assignment must match DSv1's zipWithIndex ordering
-    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files =
+    List<IndexedFile> dsv1Files =
         getDsv1FileChanges(
             deltaLog,
             tablePath,
@@ -912,8 +913,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     }
 
     assertEquals(2, files.size(), "Expected exactly BEGIN + END sentinels");
-    assertEquals(DeltaSourceOffset.BASE_INDEX(), files.get(0)._1().getIndex());
-    assertEquals(DeltaSourceOffset.END_INDEX(), files.get(1)._1().getIndex());
+    assertEquals(DeltaSourceOffset.BASE_INDEX(), files.get(0)._1().index());
+    assertEquals(DeltaSourceOffset.END_INDEX(), files.get(1)._1().index());
     assertNull(files.get(0)._2());
     assertNull(files.get(1)._2());
   }
@@ -939,7 +940,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     Optional<Integer> maxFiles = Optional.of(1);
 
     // Call 1: from BASE_INDEX, should get 1 file
-    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Call1 =
+    List<IndexedFile> dsv1Call1 =
         getDsv1FileChanges(
             deltaLog,
             tablePath,
@@ -964,12 +965,12 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     long lastIndex1 =
         dsv2Call1.stream()
             .filter(file -> file._1().hasFileAction())
-            .mapToLong(file -> file._1().getIndex())
+            .mapToLong(file -> file._1().index())
             .max()
             .orElse(DeltaSourceOffset.BASE_INDEX());
 
     // Call 2: resume from lastIndex1, should get the next file (not stall)
-    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Call2 =
+    List<IndexedFile> dsv1Call2 =
         getDsv1FileChanges(
             deltaLog,
             tablePath,
@@ -1030,15 +1031,15 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     // limits=empty branch appends an END sentinel after the barrier.
     assertEquals(2, files.size(), "Expected [barrier, END], got " + files.size());
     Tuple2<IndexedFile, CDCDataFile> barrier = files.get(0);
-    assertEquals(commitVersion, barrier._1().getVersion(), "Barrier must be at v3");
+    assertEquals(commitVersion, barrier._1().version(), "Barrier must be at v3");
     assertEquals(
         DeltaSourceOffset.METADATA_CHANGE_INDEX(),
-        barrier._1().getIndex(),
+        barrier._1().index(),
         "First entry must be the schema-change barrier sentinel");
     assertFalse(barrier._1().hasFileAction(), "Barrier must not carry a file action");
 
     Tuple2<IndexedFile, CDCDataFile> end = files.get(1);
-    assertEquals(DeltaSourceOffset.END_INDEX(), end._1().getIndex(), "Second entry must be END");
+    assertEquals(DeltaSourceOffset.END_INDEX(), end._1().index(), "Second entry must be END");
   }
 
   /**
@@ -1089,13 +1090,13 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     Tuple2<IndexedFile, CDCDataFile> last = result.get(result.size() - 1);
     assertEquals(
         DeltaSourceOffset.METADATA_CHANGE_INDEX(),
-        last._1().getIndex(),
+        last._1().index(),
         "Last entry must be the schema-change barrier sentinel");
-    assertEquals(3L, last._1().getVersion(), "Barrier must be at v3 (the ALTER commit)");
+    assertEquals(3L, last._1().version(), "Barrier must be at v3 (the ALTER commit)");
 
     for (Tuple2<IndexedFile, CDCDataFile> f : result) {
       assertNotEquals(
-          4L, f._1().getVersion(), "v4 must not appear — stopIterator truncates at the barrier");
+          4L, f._1().version(), "v4 must not appear - stopIterator truncates at the barrier");
     }
   }
 
@@ -1139,10 +1140,10 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     assertEquals(2, files.size(), "Expected [barrier, END], got " + files.size());
     Tuple2<IndexedFile, CDCDataFile> barrier = files.get(0);
-    assertEquals(commitVersion, barrier._1().getVersion());
+    assertEquals(commitVersion, barrier._1().version());
     assertEquals(
         DeltaSourceOffset.METADATA_CHANGE_INDEX(),
-        barrier._1().getIndex(),
+        barrier._1().index(),
         "First entry must be the schema-change barrier sentinel (fired by protocol change)");
   }
 
@@ -1188,10 +1189,10 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertEquals(
         1, files.size(), "Barrier must pass through admission unchanged (1 entry expected)");
     Tuple2<IndexedFile, CDCDataFile> barrier = files.get(0);
-    assertEquals(commitVersion, barrier._1().getVersion());
+    assertEquals(commitVersion, barrier._1().version());
     assertEquals(
         DeltaSourceOffset.METADATA_CHANGE_INDEX(),
-        barrier._1().getIndex(),
+        barrier._1().index(),
         "Barrier sentinel must survive admission");
   }
 
@@ -1341,7 +1342,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
    * Helper: get DSv1 CDC file changes for given offset. Creates a fresh {@link
    * DeltaSource.AdmissionLimits} internally so the stateful budget is not shared across calls.
    */
-  private List<org.apache.spark.sql.delta.sources.IndexedFile> getDsv1FileChanges(
+  private List<IndexedFile> getDsv1FileChanges(
       DeltaLog deltaLog,
       String tablePath,
       long fromVersion,
@@ -1354,8 +1355,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
         Map$.MODULE$.<String, String>empty().updated("readChangeFeed", "true");
     DeltaOptions cdcOptions = new DeltaOptions(cdcOptionsMap, spark.sessionState().conf());
     DeltaSource deltaSource = createDeltaSource(deltaLog, tablePath, cdcOptions);
-    List<org.apache.spark.sql.delta.sources.IndexedFile> files = new ArrayList<>();
-    try (ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
+    List<IndexedFile> files = new ArrayList<>();
+    try (ClosableIterator<IndexedFile> iter =
         deltaSource.getFileChangesWithRateLimit(
             fromVersion,
             fromIndex,
@@ -1795,7 +1796,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     long version = 2;
     List<Tuple2<IndexedFile, CDCDataFile>> commitFiles = new ArrayList<>();
     commitFiles.add(
-        new Tuple2<>(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()), null));
+        new Tuple2<>(
+            DeltaV2MicroBatchStreamUtils.sentinel(version, DeltaSourceOffset.BASE_INDEX()), null));
     commitFiles.add(DeltaV2MicroBatchStreamUtils.indexCDCFile(version, 0, dvDiffFile));
     commitFiles.add(DeltaV2MicroBatchStreamUtils.indexCDCFile(version, 1, plainInsert));
 
@@ -1817,15 +1819,13 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
   }
 
   private static void compareFileChanges(
-      List<org.apache.spark.sql.delta.sources.IndexedFile> expected,
-      List<Tuple2<IndexedFile, CDCDataFile>> actual) {
+      List<IndexedFile> expected, List<Tuple2<IndexedFile, CDCDataFile>> actual) {
     DeltaV2MicroBatchStreamTest.compareFileChanges(
         expected, actual.stream().map(Tuple2::_1).collect(Collectors.toList()));
   }
 
   private void assertCDCFileChangesMatch(
-      List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files,
-      List<Tuple2<IndexedFile, CDCDataFile>> dsv2Files) {
+      List<IndexedFile> dsv1Files, List<Tuple2<IndexedFile, CDCDataFile>> dsv2Files) {
     compareFileChanges(dsv1Files, dsv2Files);
 
     // CDC metadata (only on DSv2 data files, not sentinels)
