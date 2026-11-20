@@ -49,7 +49,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
   with DeletionVectorsTestUtils
   with DeltaColumnMappingTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   def executeOptimizeTable(table: String, condition: Option[String] = None)
   def executeOptimizePath(path: String, condition: Option[String] = None)
@@ -724,7 +724,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
  */
 class OptimizeCompactionSQLSuite extends OptimizeCompactionSuiteBase
     with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   def executeOptimizeTable(table: String, condition: Option[String] = None): Unit = {
     val conditionClause = condition.map(c => s"WHERE $c").getOrElse("")

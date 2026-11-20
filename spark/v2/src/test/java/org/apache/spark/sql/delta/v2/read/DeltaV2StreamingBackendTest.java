@@ -25,6 +25,7 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
 import org.apache.spark.sql.delta.VersionNotFoundException;
@@ -34,7 +35,6 @@ import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -69,9 +69,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
     try (commits) {
       List<Long> versions = new ArrayList<>();
       while (commits.hasNext()) {
-        try (DeltaV2SingleCommit commit = (DeltaV2SingleCommit) commits.next()) {
-          versions.add(commit.version());
-        }
+        versions.add(commits.next().version());
       }
       return versions;
     }
@@ -217,6 +215,21 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
 
     assertEquals(1L, commitVersion);
     assertEquals(1L, backend.unsafeVolatileSnapshot().version());
+  }
+
+  @Test
+  public void unsafeVolatileTableIdMatchesDeltaLog(@TempDir File tempDir) {
+    String path = createTable(tempDir, /* commits= */ 2);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 1L);
+
+    // The V1 backend returns DeltaLog.unsafeVolatileTableId.
+    assertEquals(
+        DeltaLog.forTable(spark, path).unsafeVolatileTableId(), backend.unsafeVolatileTableId());
   }
 
   @Test

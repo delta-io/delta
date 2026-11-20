@@ -21,23 +21,21 @@ import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import java.io.IOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.util.*;
-import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
-import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
+import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import scala.Function2;
+import scala.Tuple2;
 import scala.collection.Iterator;
-import scala.collection.immutable.Seq;
-import scala.jdk.javaapi.CollectionConverters;
 import scala.runtime.AbstractFunction2;
 
 /** Static helpers and constants of {@link DeltaV2MicroBatchStream}. */
@@ -56,15 +54,6 @@ final class DeltaV2MicroBatchStreamUtils {
   /** Action set for CDC reads: {@link #ACTION_SET} plus {@link DeltaAction#CDC}. */
   public static final Set<DeltaAction> CDC_ACTION_SET =
       ImmutableSet.<DeltaAction>builder().addAll(ACTION_SET).add(DeltaAction.CDC).build();
-
-  /**
-   * Max attempts to resolve the start version when failOnDataLoss=false. Attempt 1 is the initial
-   * try with the user's startVersion (surfaces the StartVersionNotFoundException that triggers the
-   * failOnDataLoss check). Attempt 2 retries with the earliest available version to recover when
-   * failOnDataLoss=false. Attempt 3 guards against a concurrent log-retention prune in the tiny
-   * window between attempt 2's exception and its retry.
-   */
-  static final int FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS = 3;
 
   /**
    * If the given exception wraps a {@link ClosedByInterruptException} as its direct cause, returns
@@ -101,8 +90,8 @@ final class DeltaV2MicroBatchStreamUtils {
    * fromIndex).
    */
   static boolean isAfterStartBoundary(IndexedFile file, long fromVersion, long fromIndex) {
-    return file.getVersion() > fromVersion
-        || (file.getVersion() == fromVersion && file.getIndex() > fromIndex);
+    return file.version() > fromVersion
+        || (file.version() == fromVersion && file.index() > fromIndex);
   }
 
   /** Result of commit validation, including skip decision and detected metadata/protocol. */
@@ -230,6 +219,20 @@ final class DeltaV2MicroBatchStreamUtils {
   }
 
   /**
+   * Creates an IndexedFile with no file action for offset tracking, including metadata change
+   * barriers.
+   */
+  static IndexedFile sentinel(long version, long index) {
+    return new IndexedFile(
+        version,
+        index,
+        /* add= */ null,
+        /* remove= */ null,
+        /* cdc= */ null,
+        /* shouldSkip= */ false);
+  }
+
+  /**
    * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for {@code version} before and after the
    * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
    * to this version.
@@ -239,19 +242,24 @@ final class DeltaV2MicroBatchStreamUtils {
     return new IteratorCloseOps<>(files)
         .withClose(
             iterator ->
-                Iterator.single(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
+                Iterator.single(sentinel(version, DeltaSourceOffset.BASE_INDEX()))
                     .$plus$plus(() -> iterator)
                     .$plus$plus(
-                        () ->
-                            Iterator.single(
-                                IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()))));
+                        () -> Iterator.single(sentinel(version, DeltaSourceOffset.END_INDEX()))));
   }
 
-  /** Converts a list of IndexedFiles to a Scala Seq of AdmittableFile for batch admission. */
-  static Seq<AdmittableFile> toScalaAdmittableSeq(List<IndexedFile> files) {
-    return CollectionConverters.asScala(
-            files.stream().map(f -> (AdmittableFile) f).collect(Collectors.toList()))
-        .toSeq();
+  /** Pairs a CDC payload with its index. */
+  static Tuple2<IndexedFile, CDCDataFile> indexCDCFile(
+      long version, long index, CDCDataFile cdcFile) {
+    IndexedFile file =
+        new IndexedFile(
+            version,
+            index,
+            cdcFile.getAddFile(),
+            cdcFile.getRemoveFile(),
+            cdcFile.getAddCDCFile(),
+            /* shouldSkip= */ false);
+    return new Tuple2<>(file, cdcFile);
   }
 
   /** Checks if the endOffset is at BASE_INDEX for the given version (early exit condition). */

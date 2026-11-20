@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperti
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -131,8 +131,8 @@ case class CreateDeltaTableCommand(
     val tableFeatures = TableFeatureProtocolUtils.
       getSupportedFeaturesFromTableConfigs(table.properties)
     if (!Utils.isTesting && !allowCatalogManaged &&
-      (tableFeatures.contains(CatalogOwnedTableFeature) ||
-      CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
+      (tableFeatures.contains(CatalogManagedTableFeature) ||
+      CatalogManagedTableUtils.defaultCatalogManagedEnabled(spark = sparkSession))) {
       throw DeltaErrors.deltaCannotCreateCatalogManagedTable()
     }
 
@@ -146,7 +146,7 @@ case class CreateDeltaTableCommand(
     }
     val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
       sparkSession, existingTableOpt, tableLocation, fileSystemOptions)
-    CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
+    CatalogManagedTableUtils.validatePropertiesForCreateDeltaTableCommand(
       spark = sparkSession,
       tableExists = deltaLog.tableExists,
       query = query,
@@ -455,15 +455,15 @@ case class CreateDeltaTableCommand(
           // For commands like CREATE LIKE, the `protocol` here may contain table features
           // from source table. It will override the `newProtocol` being created in the above
           // `txn.updateMetadataForNewTable`.
-          // In order to enable [[CatalogOwnedTableFeature]] for target table w/ default
-          // spark configuration of CatalogOwned enabled, we need to manually append
-          // [[CatalogOwnedTableFeature]] here to the existing source table protocol.
-          val finalizedProtocol = if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(
+          // In order to enable [[CatalogManagedTableFeature]] for target table w/ default
+          // spark configuration of CatalogManaged enabled, we need to manually append
+          // [[CatalogManagedTableFeature]] here to the existing source table protocol.
+          val finalizedProtocol = if (CatalogManagedTableUtils.defaultCatalogManagedEnabled(
               spark = sparkSession)) {
-            val minCatalogOwnedProtocol = Protocol(
-              CatalogOwnedTableFeature.minReaderVersion,
-              CatalogOwnedTableFeature.minWriterVersion).withFeature(CatalogOwnedTableFeature)
-            protocol.merge(minCatalogOwnedProtocol)
+            val minCatalogManagedProtocol = Protocol(
+              CatalogManagedTableFeature.minReaderVersion,
+              CatalogManagedTableFeature.minWriterVersion).withFeature(CatalogManagedTableFeature)
+            protocol.merge(minCatalogManagedProtocol)
           } else {
             protocol
           }
@@ -871,7 +871,7 @@ case class CreateDeltaTableCommand(
         newMetadata.configuration,
         txn.snapshot)
       newMetadata = newMetadata.copy(configuration = updatedConfig)
-      if (allowCatalogManaged && txn.snapshot.isCatalogOwned) {
+      if (allowCatalogManaged && txn.snapshot.isCatalogManaged) {
         // Preserve the existing Delta metadata id across REPLACE. This is distinct from the
         // Unity Catalog table id stored in `io.unitycatalog.tableId`.
         newMetadata = newMetadata.copy(id = txn.snapshot.metadata.id)

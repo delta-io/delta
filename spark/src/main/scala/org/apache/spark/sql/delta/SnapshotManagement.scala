@@ -31,7 +31,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.{Checkpoint, Metadata}
 import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTUtils}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1300,12 +1300,12 @@ trait SnapshotManagement { self: DeltaLog =>
       newSnapshot.tableCommitCoordinatorClientOpt.exists { newStore =>
         initialTableCommitCoordinatorClient.forall(!_.semanticsEquals(newStore))
       }
-    // If the snapshot is catalog owned and if this call site is invoked from initial snapshot
-    // creation, we can only identify that this is CatalogOwned table after reading it from
-    // filesystem. In this case, now we know that this is CatalogOwned table, do another read to get
-    // the commits from the catalog's commit-coordinator.
+    // If the snapshot is catalog managed and if this call site is invoked from initial snapshot
+    // creation, we can only identify that this is CatalogManaged table after reading it from
+    // filesystem. In this case, now we know that this is CatalogManaged table, do another read to
+    // get the commits from the catalog's commit-coordinator.
     val needToReadSnapshotUsingCatalogCommitCoordinator =
-      newSnapshot.isCatalogOwned && initialTableCommitCoordinatorClient.isEmpty
+      newSnapshot.isCatalogManaged && initialTableCommitCoordinatorClient.isEmpty
     if (usedStaleCommitCoordinator || needToReadSnapshotUsingCatalogCommitCoordinator) {
       val commitCoordinatorOpt =
         populateCommitCoordinator(spark, catalogTableOpt, newSnapshot)
@@ -1552,7 +1552,8 @@ trait SnapshotManagement { self: DeltaLog =>
       preCommitLogSegment: LogSegment,
       catalogTableOpt: Option[CatalogTable],
       amtCheckpointProviderForPostCommitSnapshot: Option[AMTCheckpointProvider] = None,
-      isIdempotentRetry: Boolean = false): Snapshot = {
+      isIdempotentRetry: Boolean = false
+  ): Snapshot = {
     var previousSnapshot: Snapshot = null
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
       val updatedSnapshot = withSnapshotLockInterruptibly {
@@ -1618,7 +1619,7 @@ trait SnapshotManagement { self: DeltaLog =>
 
         // The supplied provider is the latest checkpoint through committedVersion.
         val shouldReconcileAMTCheckpointProvider =
-          AMTUtils.amtSupported(previousSnapshot.protocol) &&
+          AMTUtils.amtSupported(previousSnapshot.protocol, isPreviewCompatible = true) &&
           amtCheckpointProviderForPostCommitSnapshot.isEmpty
         val newSnapshot = createSnapshotAfterCommit(
           segment,
@@ -1702,7 +1703,7 @@ trait SnapshotManagement { self: DeltaLog =>
       // because we have the precise pointer to the last manifest commit as of the target version.
       // We assume that there is no AMT upgrade/downgrade for now, and if the upper-bound snapshot
       // is AMT-enabled, then the target version is also AMT-enabled.
-      case _ if AMTUtils.amtEnabled(upperBoundSnapshot) =>
+      case _ if AMTUtils.amtEnabled(upperBoundSnapshot, isPreviewCompatible = true) =>
         computeLastCheckpointHintsForAMT(version, upperBoundSnapshot)
       case _ =>
         val lastCheckpointInfoForListing = lastCheckpointHint
@@ -1773,12 +1774,14 @@ trait SnapshotManagement { self: DeltaLog =>
     }
   }
 
-  // Populate commit coordinator using catalogOpt if the snapshot is catalog owned.
+  // Populate commit coordinator using catalogOpt if the snapshot is catalog managed.
   protected def populateCommitCoordinator(
-    spark: SparkSession, catalogTableOpt: Option[CatalogTable], snapshot: Snapshot)
-  : Option[TableCommitCoordinatorClient] = {
-    if (snapshot.isCatalogOwned) {
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+      spark: SparkSession,
+      catalogTableOpt: Option[CatalogTable],
+      snapshot: Snapshot
+  ): Option[TableCommitCoordinatorClient] = {
+    if (snapshot.isCatalogManaged) {
+      CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark,
         catalogTableOpt,
         snapshot

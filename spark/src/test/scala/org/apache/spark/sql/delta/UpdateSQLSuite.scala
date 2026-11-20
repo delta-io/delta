@@ -42,7 +42,7 @@ trait UpdateSQLMixin extends UpdateBaseMixin
 }
 
 trait UpdateSQLTests extends UpdateSQLMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   test("explain") {
     append(Seq((2, 2)).toDF("key", "value"))

@@ -39,7 +39,7 @@ trait RowTrackingDeleteTestDimension
       isPartitioned: Boolean,
       multipleFilesPerPartition: Boolean): Unit = {
     // We disable Optimize Write to ensure the right number of files are created.
-    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
+    withConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false") {
       val numFilesPerPartition = if (isPartitioned && multipleFilesPerPartition) 2 else 1
       val numRowsPerPartition = 100
       val expectedNumFiles = if (isPartitioned) {
@@ -50,7 +50,7 @@ trait RowTrackingDeleteTestDimension
       val partitionColumnValue = (col("id") / numRowsPerPartition).cast("int")
 
       val voidCol =
-        if (DeltaTestUtilsBase.nullTypeColumnsSupported) lit(null) else lit(null).cast("int")
+        lit(null)
       val df = spark.range(0, initialNumRows, 1, expectedNumFiles)
         .withColumn("void_col", voidCol)
         .withColumn("struct_col", struct(col("void_col"), col("id")))
@@ -137,7 +137,7 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
   }
 
   test("Preserving Row Tracking - DELETE with EXISTS subquery") {
-    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+    withConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
       withRowIdTestTable(isPartitioned = false) {
         // Use a different column name to avoid ambiguous resolution inside EXISTS.
         sql(
@@ -208,10 +208,8 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
             }
 
             // The optimized-write file count is tuned to the exact (VOID) schema row size.
-            if (DeltaTestUtilsBase.nullTypeColumnsSupported) {
-              assert(currentNumFiles === expectedNumFiles,
-                s"The current num files $currentNumFiles is unexpected for optimized writes")
-            }
+            assert(currentNumFiles === expectedNumFiles,
+              s"The current num files $currentNumFiles is unexpected for optimized writes")
           }
         }
       }
@@ -235,7 +233,7 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
   } {
     test("DELETE preserves Row ID on tables with row IDs enabled using backfill,"
       + s"isPartitioned=$isPartitioned") {
-      withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
+      withConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
         withRowTrackingEnabled(enabled = false) {
           withTable(testTableName) {
             createTestTable(testTableName, isPartitioned, multipleFilesPerPartition = false)

@@ -66,7 +66,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS.key, "false")
 
-  import testImplicits._
+  import deltaImplicits._
 
   def testNullTypeColumn(shouldDropNullTypeColumns: Boolean): Unit = {
     withTempPaths(3) { case Seq(sourcePath, sinkPath, checkpointPath) =>

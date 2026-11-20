@@ -34,7 +34,7 @@ class PreparedDeltaFileIndexRowCountSuite
     extends QueryTest
     with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   private def getDeltaScan(df: DataFrame): DeltaScan = {
     val scans = df.queryExecution.optimizedPlan.collect {

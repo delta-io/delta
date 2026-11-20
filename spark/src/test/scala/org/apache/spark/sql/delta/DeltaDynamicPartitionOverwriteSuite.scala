@@ -40,7 +40,7 @@ class DeltaDynamicPartitionOverwriteSuite
     extends QueryTest
     with DeltaDMLTestUtilsPathBased
     with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   // Initial data to be inserted on the target data before the DPO operation.
   lazy private val targetData: DataFrame =

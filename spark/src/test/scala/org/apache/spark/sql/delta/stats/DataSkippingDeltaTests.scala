@@ -54,7 +54,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   val defaultNumIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
     DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def checkpointAndCreateNewLogIfNecessary(log: DeltaLog): DeltaLog = log
 
@@ -246,7 +246,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
 trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 {
-  import testImplicits._
+  import deltaImplicits._
 
   testSkipping(
     "top level, single 1",
@@ -2376,7 +2376,7 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 trait DataSkippingDeltaV1Tests
   extends DataSkippingDeltaTests
 {
-  import testImplicits._
+  import deltaImplicits._
 
   test("data skipping flags") {
     val t = "ds_flags"

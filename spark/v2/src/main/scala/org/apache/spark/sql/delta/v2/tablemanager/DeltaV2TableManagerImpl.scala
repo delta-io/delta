@@ -66,7 +66,8 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   /** Used to read and write physical log files and checkpoints. */
   override private[v2] val logStore = createLogStore(SparkSession.active)
 
-  override private[v2] val kernelContext = KernelContext(sessionInvariantFsOptions, logStore)
+  override private[v2] val kernelContext =
+    KernelContext(sessionInvariantFsOptions, logStore)
 
   private val latestCatalogTable =
     new AtomicReference[CatalogTable](initialCatalogTableOpt.orNull)

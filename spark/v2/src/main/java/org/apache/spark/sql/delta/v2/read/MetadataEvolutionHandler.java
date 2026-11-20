@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
@@ -46,6 +47,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend;
+import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper;
@@ -103,6 +105,7 @@ public class MetadataEvolutionHandler {
   private final Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog;
 
   // Read-time state captured at source initialization
+  private final SnapshotDescriptor readSnapshotAtSourceInit;
   private final Metadata readMetadataAtSourceInit;
   private final Protocol readProtocolAtSourceInit;
   private final String metadataPath;
@@ -119,8 +122,7 @@ public class MetadataEvolutionHandler {
       DeltaOptions options,
       DeltaStreamUtils.SchemaReadOptions schemaReadOptions,
       Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog,
-      Metadata readMetadataAtSourceInit,
-      Protocol readProtocolAtSourceInit,
+      SnapshotDescriptor readSnapshotAtSourceInit,
       String metadataPath) {
     this.spark = Objects.requireNonNull(spark);
     this.tableId = Objects.requireNonNull(tableId);
@@ -130,8 +132,9 @@ public class MetadataEvolutionHandler {
     this.options = Objects.requireNonNull(options);
     this.schemaReadOptions = Objects.requireNonNull(schemaReadOptions);
     this.metadataTrackingLog = Objects.requireNonNull(metadataTrackingLog);
-    this.readMetadataAtSourceInit = Objects.requireNonNull(readMetadataAtSourceInit);
-    this.readProtocolAtSourceInit = Objects.requireNonNull(readProtocolAtSourceInit);
+    this.readSnapshotAtSourceInit = Objects.requireNonNull(readSnapshotAtSourceInit);
+    this.readMetadataAtSourceInit = Objects.requireNonNull(readSnapshotAtSourceInit.metadata());
+    this.readProtocolAtSourceInit = Objects.requireNonNull(readSnapshotAtSourceInit.protocol());
     this.metadataPath = Objects.requireNonNull(metadataPath);
     this.persistedMetadataAtSourceInit =
         metadataTrackingLog.isDefined()
@@ -175,6 +178,11 @@ public class MetadataEvolutionHandler {
    */
   public ClosableIterator<IndexedFile> stopIndexedFileIteratorAtSchemaChangeBarrier(
       ClosableIterator<IndexedFile> fileActions) {
+    return stopIndexedFileIteratorAtSchemaChangeBarrier(fileActions, Function.identity());
+  }
+
+  <T> ClosableIterator<T> stopIndexedFileIteratorAtSchemaChangeBarrier(
+      ClosableIterator<T> fileActions, Function<T, IndexedFile> indexedFile) {
     // Lazily include files up to and including the barrier, then break.
     boolean[] sawBarrier = {false};
     return new IteratorCloseOps<>(fileActions)
@@ -185,7 +193,8 @@ public class MetadataEvolutionHandler {
                       if (sawBarrier[0]) {
                         return false;
                       }
-                      if (file.getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
+                      if (indexedFile.apply(file).index()
+                          == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
                         sawBarrier[0] = true;
                       }
                       return true;
@@ -205,7 +214,8 @@ public class MetadataEvolutionHandler {
         && hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)) {
       return new ClosableWrapper<>(
               Iterator.single(
-                  IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX())))
+                  DeltaV2MicroBatchStreamUtils.sentinel(
+                      version, DeltaSourceOffset.METADATA_CHANGE_INDEX())))
           .toClosable();
     }
     return new ClosableWrapper<>(List$.MODULE$.<IndexedFile>empty().iterator()).toClosable();
@@ -391,7 +401,9 @@ public class MetadataEvolutionHandler {
         Optional.of(endVersion),
         tableManager,
         originalStreamingQueryContext,
-        options.failOnDataLoss());
+        options.failOnDataLoss(),
+        spark,
+        readSnapshotAtSourceInit);
   }
 
   /** Collect the protocol action at a specific version. Returns null if none. */
@@ -406,7 +418,9 @@ public class MetadataEvolutionHandler {
         Optional.of(endVersion),
         tableManager,
         originalStreamingQueryContext,
-        options.failOnDataLoss());
+        options.failOnDataLoss(),
+        spark,
+        readSnapshotAtSourceInit);
   }
 
   /**

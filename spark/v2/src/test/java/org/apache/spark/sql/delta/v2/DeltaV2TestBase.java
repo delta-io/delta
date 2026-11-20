@@ -21,13 +21,21 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.AttributeReference;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.Literal;
+import org.apache.spark.sql.connector.read.Scan;
+import org.apache.spark.sql.delta.actions.Action;
+import org.apache.spark.sql.delta.actions.AddCDCFile;
+import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor;
+import org.apache.spark.sql.delta.actions.RemoveFile;
 import org.apache.spark.sql.delta.storage.LogStore;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
+import org.apache.spark.sql.delta.v2.read.DeltaV2Scan;
 import org.apache.spark.sql.delta.v2.read.DeltaV2ScanBuilder;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.sources.And;
@@ -137,6 +145,63 @@ public abstract class DeltaV2TestBase {
             tableName));
   }
 
+  // V1 action fixtures. These helpers do not require a Spark session.
+
+  public static AddFile createTestAddFile(String path, long size, long modificationTime) {
+    return createTestAddFile(path, size, modificationTime, /* deletionVector= */ Optional.empty());
+  }
+
+  public static AddFile createTestAddFile(
+      String path,
+      long size,
+      long modificationTime,
+      Optional<DeletionVectorDescriptor> deletionVector) {
+    return (AddFile)
+        Action.fromJson(
+            String.format(
+                "{\"add\":{\"path\":\"%s\",\"partitionValues\":{},\"size\":%d,"
+                    + "\"modificationTime\":%d,\"dataChange\":true%s}}",
+                path, size, modificationTime, deletionVectorJson(deletionVector)));
+  }
+
+  public static RemoveFile createTestRemoveFile(String path, long size) {
+    return createTestRemoveFile(path, size, /* deletionVector= */ Optional.empty());
+  }
+
+  public static RemoveFile createTestRemoveFile(
+      String path, long size, Optional<DeletionVectorDescriptor> deletionVector) {
+    return (RemoveFile)
+        Action.fromJson(
+            String.format(
+                "{\"remove\":{\"path\":\"%s\",\"deletionTimestamp\":100,\"dataChange\":true,"
+                    + "\"extendedFileMetadata\":true,\"partitionValues\":{},\"size\":%d%s}}",
+                path, size, deletionVectorJson(deletionVector)));
+  }
+
+  private static String deletionVectorJson(Optional<DeletionVectorDescriptor> deletionVector) {
+    return deletionVector
+        .map(
+            dv ->
+                String.format(
+                    ",\"deletionVector\":{\"storageType\":\"%s\",\"pathOrInlineDv\":\"%s\","
+                        + "\"offset\":%s,\"sizeInBytes\":%d,\"cardinality\":%d}",
+                    dv.storageType(),
+                    dv.pathOrInlineDv(),
+                    dv.offset().isDefined() ? dv.offset().get() : "null",
+                    dv.sizeInBytes(),
+                    dv.cardinality()))
+        .orElse("");
+  }
+
+  public static AddCDCFile createTestCDCFile(String path, long size) {
+    return createTestCDCFile(path, size, Collections.emptyMap());
+  }
+
+  public static AddCDCFile createTestCDCFile(
+      String path, long size, Map<String, String> partitionValues) {
+    return new AddCDCFile(path, ScalaUtils.toScalaMap(partitionValues), size, null, null);
+  }
+
   /** A runnable that can throw checked exceptions, for use with {@link #withSQLConf}. */
   @FunctionalInterface
   protected interface ThrowingRunnable {
@@ -191,7 +256,8 @@ public abstract class DeltaV2TestBase {
   protected static void createPartitionedTable(String tableName, String path) {
     spark.sql(
         String.format(
-            "CREATE TABLE `%s` (part INT, date STRING, city STRING, name STRING, cnt INT) USING delta LOCATION '%s' PARTITIONED BY (date, city, part)",
+            "CREATE TABLE `%s` (part INT, date STRING, city STRING, name STRING, cnt INT) USING"
+                + " delta LOCATION '%s' PARTITIONED BY (date, city, part)",
             tableName, path));
     spark.sql(
         String.format(
@@ -213,6 +279,20 @@ public abstract class DeltaV2TestBase {
     scala.collection.immutable.Seq<Expression> expressionSeq =
         scala.jdk.javaapi.CollectionConverters.asScala(Arrays.asList(expressions)).toList();
     builder.pushFilters(expressionSeq);
+  }
+
+  /**
+   * Returns the Delta V2 scan that a scan builder built. Example: {@code
+   * asDeltaV2Scan(builder.build()).getPushedLimit()}.
+   *
+   * @param scan the scan that a Delta V2 scan builder built
+   * @return the {@link DeltaV2Scan} that selects the files of the read
+   */
+  protected static DeltaV2Scan asDeltaV2Scan(Scan scan) {
+    if (!(scan instanceof DeltaV2Scan)) {
+      throw new AssertionError("expected a DeltaV2Scan, got " + scan.getClass().getName());
+    }
+    return (DeltaV2Scan) scan;
   }
 
   protected static Expression toCatalystFilter(DeltaV2ScanBuilder builder, Filter filter) {

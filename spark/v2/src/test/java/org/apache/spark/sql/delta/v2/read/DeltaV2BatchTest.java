@@ -22,14 +22,10 @@ import java.io.File;
 import java.util.List;
 import java.util.stream.Stream;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.read.Batch;
-import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
-import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.sources.GreaterThan;
-import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -37,23 +33,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class DeltaV2BatchTest extends DeltaV2TestBase {
-
-  private static String tablePath;
-  private static final String tableName = "deltatbl_partitioned_batch";
+public class DeltaV2BatchTest extends DeltaV2PartitionedTableTestBase {
 
   @BeforeAll
   public static void setupPartitionedTable(@TempDir File tempDir) {
-    createPartitionedTable(tableName, tempDir.getAbsolutePath());
-    tablePath = tempDir.getAbsolutePath();
+    setUpSharedPartitionedTable("deltatbl_partitioned_batch", tempDir);
   }
-
-  private final CaseInsensitiveStringMap options =
-      new CaseInsensitiveStringMap(new java.util.HashMap<>());
-
-  private final DeltaV2Table table =
-      new DeltaV2Table(
-          Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
 
   // Cases where two batches built from the same table must be equal. city/date are partition
   // columns; name/cnt are data columns. Both kinds flow into DeltaV2Batch.filterSet for
@@ -83,13 +68,13 @@ public class DeltaV2BatchTest extends DeltaV2TestBase {
     if (filters1.length > 0) {
       pushFilters(builder1, filters1);
     }
-    Batch batch1 = ((DeltaV2Scan) builder1.build()).toBatch();
+    Batch batch1 = asDeltaV2Scan(builder1.build()).toBatch();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     if (filters2.length > 0) {
       pushFilters(builder2, filters2);
     }
-    Batch batch2 = ((DeltaV2Scan) builder2.build()).toBatch();
+    Batch batch2 = asDeltaV2Scan(builder2.build()).toBatch();
 
     assertEquals(batch1, batch2);
     assertEquals(batch1.hashCode(), batch2.hashCode());
@@ -98,11 +83,11 @@ public class DeltaV2BatchTest extends DeltaV2TestBase {
   @Test
   public void testEqualsWithDifferentPushedFilters() {
     DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
-    Batch batch1 = ((DeltaV2Scan) builder1.build()).toBatch();
+    Batch batch1 = asDeltaV2Scan(builder1.build()).toBatch();
 
     DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     pushFilters(builder2, new EqualTo("city", "hz"));
-    Batch batch2 = ((DeltaV2Scan) builder2.build()).toBatch();
+    Batch batch2 = asDeltaV2Scan(builder2.build()).toBatch();
 
     assertNotEquals(batch1, batch2);
     assertNotEquals(batch1.hashCode(), batch2.hashCode());

@@ -17,6 +17,7 @@ package org.apache.spark.sql.delta.v2.utils;
 
 import static io.delta.kernel.internal.actions.AddFile.SCHEMA_WITHOUT_STATS;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -39,6 +40,7 @@ import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
@@ -50,10 +52,15 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
+import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
+import org.apache.spark.sql.delta.InvalidProtocolVersionException;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.SnapshotDescriptor;
+import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.storage.LogStore;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
@@ -67,15 +74,18 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
 public class StreamingHelperTest extends DeltaV2TestBase {
 
   private PathBasedSnapshotManager snapshotManager;
+  private final SnapshotDescriptor mockReadSnapshot = mock(SnapshotDescriptor.class);
   private final DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.empty();
 
   @AfterEach
@@ -243,7 +253,13 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     assertTrue(
         StreamingHelper.collectProtocolActions(
-                7L, Optional.of(7L), mockTableManager(commits, true), queryContext, true)
+                7L,
+                Optional.of(7L),
+                mockTableManager(commits, true),
+                queryContext,
+                true,
+                spark,
+                mockReadSnapshot)
             .isEmpty());
 
     verify(commits).close();
@@ -267,7 +283,13 @@ public class StreamingHelperTest extends DeltaV2TestBase {
             RuntimeException.class,
             () ->
                 StreamingHelper.collectProtocolActions(
-                    7L, Optional.of(7L), mockTableManager(commits, true), queryContext, true));
+                    7L,
+                    Optional.of(7L),
+                    mockTableManager(commits, true),
+                    queryContext,
+                    true,
+                    spark,
+                    mockReadSnapshot));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
@@ -302,11 +324,77 @@ public class StreamingHelperTest extends DeltaV2TestBase {
                     Optional.of(7L),
                     mockTableManager(commits, true, store, conf),
                     queryContext,
-                    true));
+                    true,
+                    spark,
+                    mockReadSnapshot));
 
     assertEquals("Failed to process commits", error.getMessage());
     assertSame(readFailure, error.getCause());
     verify(commits).close();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "metadata, unsupportedVersion",
+    "protocol, unsupportedVersion",
+    "metadata, unsupportedReaderFeature",
+    "protocol, unsupportedReaderFeature",
+    "metadata, writerOnlyFeature",
+    "protocol, writerOnlyFeature"
+  })
+  void collectorsValidateHistoricalProtocols(
+      String actionType, String scenario, @TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    createEmptyTestTable(tablePath, "collector_protocol_" + System.nanoTime());
+    DeltaV2TableManager manager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(
+            spark, tablePath, Collections.emptyMap(), Option.empty());
+    Snapshot snapshot = manager.loadLatestSnapshot(queryContext);
+    Protocol protocol;
+    if (scenario.equals("unsupportedVersion")) {
+      protocol = Protocol$.MODULE$.apply(99, 7);
+    } else {
+      String readerFeatures =
+          scenario.equals("unsupportedReaderFeature") ? "[\"unknownFeature\"]" : "[]";
+      protocol =
+          (Protocol)
+              Action.fromJson(
+                  "{\"protocol\":{\"minReaderVersion\":3,\"minWriterVersion\":7,\"readerFeatures\":"
+                      + readerFeatures
+                      + ",\"writerFeatures\":[\"unknownFeature\"]}}");
+    }
+    Files.writeString(
+        new File(tempDir, "_delta_log/00000000000000000001.json").toPath(), protocol.json() + "\n");
+    // Keep the latest snapshot readable: validation must inspect the historical commit.
+    Files.writeString(
+        new File(tempDir, "_delta_log/00000000000000000002.json").toPath(),
+        snapshot.protocol().json() + "\n");
+
+    Executable collect =
+        () -> {
+          if (actionType.equals("metadata")) {
+            Map<Long, Metadata> result =
+                StreamingHelper.collectMetadataActions(
+                    1L, Optional.of(1L), manager, queryContext, true, spark, snapshot);
+            assertTrue(result.isEmpty());
+          } else {
+            Map<Long, Protocol> result =
+                StreamingHelper.collectProtocolActions(
+                    1L, Optional.of(1L), manager, queryContext, true, spark, snapshot);
+            assertEquals(protocol, result.get(1L));
+          }
+        };
+    if (scenario.equals("unsupportedVersion")) {
+      InvalidProtocolVersionException error =
+          assertThrows(InvalidProtocolVersionException.class, collect);
+      assertEquals(snapshot.dataPath().toString(), error.tableNameOrPath());
+    } else if (scenario.equals("unsupportedReaderFeature")) {
+      DeltaUnsupportedTableFeatureException error =
+          assertThrows(DeltaUnsupportedTableFeatureException.class, collect);
+      assertEquals("DELTA_UNSUPPORTED_FEATURES_FOR_READ", error.getErrorClass());
+    } else {
+      assertDoesNotThrow(collect);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -351,7 +439,13 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActions(
-            startVersion, endVersionOpt, tableManager, queryContext, true);
+            startVersion,
+            endVersionOpt,
+            tableManager,
+            queryContext,
+            true,
+            spark,
+            tableManager.loadLatestSnapshot(queryContext));
 
     assertArrayEquals(expectedVersions.stream().sorted().toArray(), result.keySet().toArray());
   }
@@ -368,7 +462,13 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Metadata> result =
         StreamingHelper.collectMetadataActions(
-            0L, Optional.of(2L), tableManager, queryContext, true);
+            0L,
+            Optional.of(2L),
+            tableManager,
+            queryContext,
+            true,
+            spark,
+            tableManager.loadLatestSnapshot(queryContext));
 
     StructType expectedV0Schema =
         new StructType().add("id", DataTypes.IntegerType).add("name", DataTypes.StringType);
@@ -425,7 +525,13 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActions(
-            startVersion, endVersionOpt, tableManager, queryContext, true);
+            startVersion,
+            endVersionOpt,
+            tableManager,
+            queryContext,
+            true,
+            spark,
+            tableManager.loadLatestSnapshot(queryContext));
 
     assertArrayEquals(expectedVersions.stream().sorted().toArray(), result.keySet().toArray());
   }
@@ -442,7 +548,13 @@ public class StreamingHelperTest extends DeltaV2TestBase {
 
     Map<Long, Protocol> result =
         StreamingHelper.collectProtocolActions(
-            0L, Optional.of(2L), tableManager, queryContext, true);
+            0L,
+            Optional.of(2L),
+            tableManager,
+            queryContext,
+            true,
+            spark,
+            tableManager.loadLatestSnapshot(queryContext));
 
     // v0 default: reader=1, writer=2; v2 upgraded: reader=3, writer=7
     assertEquals(1, result.get(0L).minReaderVersion());

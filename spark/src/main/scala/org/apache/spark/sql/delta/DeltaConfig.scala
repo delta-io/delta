@@ -629,7 +629,8 @@ trait DeltaConfigsBase extends DeltaLogging {
 
   /**
    * Whether writers write AMT state and new checkpoints are AMT trees, on a table that has the
-   * `adaptiveMetadata-dev` feature in its protocol. CREATE of such a table sets it to true.
+   * `adaptiveMetadata-dev` feature in its protocol. CREATE of such a table sets it to true. Setting
+   * it to true on an existing table upgrades it to AMT. Only DROP FEATURE sets it to false.
    */
   val ADAPTIVE_METADATA_ENABLED = buildConfig[Boolean](
     key = "enableAdaptiveMetadata",

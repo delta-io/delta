@@ -742,7 +742,7 @@ object CheckColumnDefaultIsLiteral extends IcebergCompatCheck {
         DeltaColumnDefaults.hasWriteDefault(field) &&
           !DeltaColumnDefaults.hasLiteralDefault(field))
       .foreach(field =>
-        throw DeltaErrors.icebergCompatUnsupportedFieldException(context.version, field, schema)
+        throw DeltaErrors.icebergCompatUnsupportedColumnDefaultException(context.version, field)
       )
     }
 }

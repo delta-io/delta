@@ -32,7 +32,7 @@ class ClusteredTableClusteringSuite extends SparkFunSuite
   with SharedSparkSession
   with ClusteredTableTestUtils
   with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   private val table: String = "test_table"
 
