@@ -59,6 +59,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, SamePathFileActionMetrics, TransactionHelper}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
@@ -211,14 +212,19 @@ case class CommitStats(
   /** The operation class derived from this commit's AddFile and RemoveFile actions. */
   fileActionOperationClass: Option[String] = None,
   /** Bytes in removed physical data files, excluding same-path AddFile/RemoveFile pairs. */
+  @JsonDeserialize(contentAs = classOf[java.lang.Long])
   bytesRemoved: Option[Long] = None,
   /** Gross number of AddFile actions carrying a deletion vector. */
+  @JsonDeserialize(contentAs = classOf[java.lang.Long])
   numDeletionVectorsAdded: Option[Long] = None,
   /** Gross number of RemoveFile actions carrying a deletion vector. */
+  @JsonDeserialize(contentAs = classOf[java.lang.Long])
   numDeletionVectorsRemoved: Option[Long] = None,
   /** Gross bytes of deletion vectors referenced by AddFile actions. */
+  @JsonDeserialize(contentAs = classOf[java.lang.Long])
   numDeletionVectorsBytesAdded: Option[Long] = None,
   /** Gross bytes of deletion vectors referenced by RemoveFile actions. */
+  @JsonDeserialize(contentAs = classOf[java.lang.Long])
   numDeletionVectorsBytesRemoved: Option[Long] = None
 )
 

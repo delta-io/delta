@@ -92,7 +92,7 @@ class DeltaLogSuite extends QueryTest
           assert(stats.numAdd === 2 && stats.numRemove === 2)
           assert(stats.bytesNew === 12300L && stats.bytesRemoved.contains(14100L))
           assert(stats.numDeletionVectorsAdded.contains(1L))
-          assert(stats.numDeletionVectorsBytesAdded.contains(dv.sizeInBytes.toLong))
+          assert(stats.numDeletionVectorsBytesAdded.exists(_ == dv.sizeInBytes.toLong))
           assert(stats.numDeletionVectorsRemoved.contains(0L))
           assert(stats.numDeletionVectorsBytesRemoved.contains(0L))
           if (histogramsEnabled) {
