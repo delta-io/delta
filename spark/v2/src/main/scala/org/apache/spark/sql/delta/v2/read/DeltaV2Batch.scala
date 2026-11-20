@@ -19,10 +19,7 @@ package org.apache.spark.sql.delta.v2.read
 import java.time.ZoneId
 import java.util.Objects
 
-import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.Snapshot
-import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.stats.DeltaScan
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.DeltaV2Snapshot
@@ -31,7 +28,6 @@ import org.apache.hadoop.conf.Configuration
 import io.delta.kernel.expressions.{Predicate => KernelPredicate}
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
-import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.read.{Batch, InputPartition, PartitionReaderFactory}
 import org.apache.spark.sql.internal.SQLConf
@@ -88,41 +84,22 @@ private[read] final class DeltaV2Batch(
   private val kernelPushedFilterSet = kernelPushedFilters.toSet
   private val filterSet = allFilters.toSet
   private[this] val sqlConf: SQLConf = SQLConf.get
-  private lazy val redactedTablePathForLogging = redactPath(initialSnapshot.dataPath, sqlConf)
 
   private def kernelSnapshot: KernelSnapshot =
     DeltaV2Snapshot.getKernelSnapshot(initialSnapshot)
 
   override def planInputPartitions(): Array[InputPartition] = {
-    val startedAtNs = System.nanoTime()
-    try {
-      val partitions = recordDeltaOperationForTablePath(tablePath, "scan.planPartitions") {
-        recordFrameProfile("batchScan.planInputPartitions") {
-          PartitionUtils.planInputPartitions(
-            SparkSession.active,
-            deltaScan,
-            partitionSchema,
-            tablePath,
-            zoneId,
-            hadoopConf,
-            sqlConf)
-        }
+    recordDeltaOperationForTablePath(tablePath, "scan.planPartitions") {
+      recordFrameProfile("batchScan.planInputPartitions") {
+        PartitionUtils.planInputPartitions(
+          SparkSession.active,
+          deltaScan,
+          partitionSchema,
+          tablePath,
+          zoneId,
+          hadoopConf,
+          sqlConf)
       }
-      logDebug(log"Planned Delta V2 input partitions for " +
-        log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)}: " +
-        log"${MDC(DeltaLogKeys.NUM_PARTITIONS, partitions.length.toLong)} partitions, " +
-        log"${MDC(DeltaLogKeys.NUM_FILES, deltaScan.files.size.toLong)} files, " +
-        log"${MDC(DeltaLogKeys.NUM_BYTES, DeltaV2Scan.selectedFileBytes(deltaScan))} bytes in " +
-        log"${MDC(DeltaLogKeys.TIME_MS, elapsedTimeMs(startedAtNs))} ms")
-      partitions
-    } catch {
-      case NonFatal(error) =>
-        val elapsedMs = elapsedTimeMs(startedAtNs)
-        logWarning(log"Delta V2 input-partition planning failed for " +
-          log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)} after " +
-          log"${MDC(DeltaLogKeys.TIME_MS, elapsedMs)} ms: " +
-          log"${MDC(DeltaLogKeys.EXCEPTION, error.getClass.getName)}")
-        throw error
     }
   }
 

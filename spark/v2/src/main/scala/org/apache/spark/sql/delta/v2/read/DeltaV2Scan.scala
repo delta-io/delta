@@ -329,7 +329,8 @@ private[read] class DeltaV2Scan(
     }
 
     val deltaScan = preparedScan()
-    val totalBytes = selectedFileBytes(deltaScan)
+    val totalBytes = deltaScan.scanned.bytesCompressed
+      .getOrElse(selectedFileSizeInBytes(deltaScan))
     // Do not scale the selected-file bytes by readSchema. Delta returns false from
     // reflectsFullyPushedDownFilters(), so Spark re-adds fully pushed filters when adjusting
     // statistics. Delta's scan builder retains filter-only columns in readSchema; when that makes
@@ -567,10 +568,6 @@ private[read] class DeltaV2Scan(
 }
 
 private[read] object DeltaV2Scan {
-  /** Selected on-disk bytes, preserving V1's aggregate when it is available. */
-  private[read] def selectedFileBytes(deltaScan: DeltaScan): Long =
-    deltaScan.scanned.bytesCompressed.getOrElse(selectedFileSizeInBytes(deltaScan))
-
   /**
    * Sum of the selected files' on-disk sizes. Used as the scanned-bytes fallback when the DeltaScan
    * carries no `scanned.bytesCompressed` aggregate (for example, a table without file

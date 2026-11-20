@@ -17,26 +17,12 @@ package org.apache.spark.sql.delta.v2.read;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
-import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Stream;
-import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.core.LogEvent;
-import org.apache.logging.log4j.core.Logger;
-import org.apache.logging.log4j.core.appender.AbstractAppender;
-import org.apache.logging.log4j.core.config.Property;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.read.Batch;
-import org.apache.spark.sql.delta.actions.AddFile;
-import org.apache.spark.sql.delta.stats.DataSize;
-import org.apache.spark.sql.delta.stats.DeltaScan;
-import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.sources.GreaterThan;
@@ -46,110 +32,12 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.junit.jupiter.params.provider.ValueSource;
-import scala.Option;
 
 public class DeltaV2BatchTest extends DeltaV2PartitionedTableTestBase {
 
   @BeforeAll
   public static void setupPartitionedTable(@TempDir File tempDir) {
     setUpSharedPartitionedTable("deltatbl_partitioned_batch", tempDir);
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"table with space", "literal%20table", "space and %25literal"})
-  public void testBatchDiagnosticsUseCanonicalTablePath(String directory, @TempDir File tempDir)
-      throws Exception {
-    String path = new File(tempDir, directory).getAbsolutePath();
-    spark.range(3).write().format("delta").save(path);
-    DeltaV2Table pathTable =
-        new DeltaV2Table(
-            Identifier.of(new String[] {"default"}, "batch_diagnostic_path"),
-            path,
-            Collections.emptyMap());
-    DeltaV2Scan scan =
-        asDeltaV2Scan(((DeltaV2ScanBuilder) pathTable.newScanBuilder(options)).build());
-    String canonicalPath = scan.preparedScan().scannedSnapshot().dataPath().toUri().toString();
-    Batch batch = scan.toBatch();
-
-    List<LogEvent> events =
-        captureBatchLogs(() -> assertTrue(batch.planInputPartitions().length > 0));
-
-    assertEquals(1, events.size());
-    LogEvent summary = events.get(0);
-    assertEquals(Level.DEBUG, summary.getLevel());
-    String message = summary.getMessage().getFormattedMessage();
-    assertTrue(message.startsWith("Planned Delta V2 input partitions for "));
-    assertTrue(message.contains(canonicalPath), "diagnostics should retain canonical URI encoding");
-    assertEquals(3L, spark.sql(String.format("SELECT * FROM dsv2.delta.`%s`", path)).count());
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"aggregate", "files", "empty"})
-  public void testSelectedFileBytesPreservesAggregateOrUsesActualFiles(String accounting) {
-    DeltaV2Scan scan = asDeltaV2Scan(((DeltaV2ScanBuilder) table.newScanBuilder(options)).build());
-    DeltaScan original = scan.preparedScan();
-    scala.collection.immutable.Seq<AddFile> files =
-        accounting.equals("empty")
-            ? scala.jdk.javaapi.CollectionConverters.asScala(Collections.<AddFile>emptyList())
-                .toList()
-            : original.files();
-    long fileBytes =
-        scala.jdk.javaapi.CollectionConverters.asJava(files).stream()
-            .mapToLong(AddFile::size)
-            .sum();
-    Option<Object> aggregate =
-        accounting.equals("aggregate") ? Option.apply(fileBytes + 17L) : Option.empty();
-    DataSize scanned =
-        new DataSize(
-            aggregate,
-            original.scanned().rows(),
-            original.scanned().files(),
-            original.scanned().logicalRows());
-    DeltaScan selected =
-        original.copy(
-            original.version(),
-            files,
-            original.total(),
-            original.partition(),
-            scanned,
-            original.scannedSnapshot(),
-            original.partitionFilters(),
-            original.dataFilters(),
-            original.partitionLikeDataFilters(),
-            original.rewrittenPartitionLikeDataFilters(),
-            original.unusedFilters(),
-            original.scanDurationMs(),
-            original.scanDurationNs(),
-            original.dataSkippingType());
-
-    assertEquals(
-        accounting.equals("aggregate") ? fileBytes + 17L : fileBytes,
-        DeltaV2Scan$.MODULE$.selectedFileBytes(selected));
-  }
-
-  private List<LogEvent> captureBatchLogs(ThrowingRunnable action) throws Exception {
-    Logger logger = (Logger) LogManager.getLogger(DeltaV2Batch.class);
-    List<LogEvent> events = new CopyOnWriteArrayList<>();
-    AbstractAppender appender =
-        new AbstractAppender("batch-diagnostics", null, null, true, Property.EMPTY_ARRAY) {
-          @Override
-          public void append(LogEvent event) {
-            events.add(event.toImmutable());
-          }
-        };
-    Level previousLevel = logger.getLevel();
-    appender.start();
-    logger.addAppender(appender);
-    logger.setLevel(Level.DEBUG);
-    try {
-      action.run();
-      return events;
-    } finally {
-      logger.setLevel(previousLevel);
-      logger.removeAppender(appender);
-      appender.stop();
-    }
   }
 
   // Cases where two batches built from the same table must be equal. city/date are partition
