@@ -282,7 +282,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         }
       // Catalog-Managed: Do not copy over [[CatalogManagedTableFeature]] from source table
       //                except the certain case.
-      val protocolAfterFilteringCatalogOwnedFromSource = protocol match {
+      val protocolAfterFilteringCatalogManagedFromSource = protocol match {
         case Some(p) if !isEnablingCatalogOwnedViaExplicitPropertyOverrides =>
           // Only filter out [[CatalogManagedTableFeature]] when target table is not enabling
           // CatalogManaged.
@@ -315,7 +315,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         mode = saveMode,
         query = None,
         output = ctl.output,
-        protocol = protocolAfterFilteringCatalogOwnedFromSource,
+        protocol = protocolAfterFilteringCatalogManagedFromSource,
         tableByPath = isTableByPath)
 
     // Handling df.insertInto() with `replaceOn`/`replaceUsing`.
