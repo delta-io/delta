@@ -159,15 +159,37 @@ public class ParquetFilterUtils {
     }
   }
 
+  /** Returns the comparator to use when the operands of a binary comparison are swapped. */
+  private static String reverseComparator(String comparator) {
+    switch (comparator) {
+      case "=":
+        return "=";
+      case "<":
+        return ">";
+      case "<=":
+        return ">=";
+      case ">":
+        return "<";
+      case ">=":
+        return "<=";
+      default:
+        throw new IllegalArgumentException("Unsupported comparator: " + comparator);
+    }
+  }
+
   private static Optional<FilterPredicate> convertComparatorToParquetFilter(
       Map<Column, ParquetField> parquetFieldMap, Predicate deltaPredicate) {
     Expression child0 = getLeft(deltaPredicate);
     Expression child1 = getRight(deltaPredicate);
+    String comparator = deltaPredicate.getName();
 
     if (child0 instanceof Literal && child1 instanceof Column) {
+      // Put the column on the left. The comparator must be reversed too, otherwise
+      // `literal < column` would be applied as `column < literal`.
       Expression temp = child0;
       child0 = child1;
       child1 = temp;
+      comparator = reverseComparator(comparator);
     }
 
     if (!(child0 instanceof Column) || !(child1 instanceof Literal)) {
@@ -199,7 +221,6 @@ public class ParquetFilterUtils {
 
     PrimitiveType parquetType = parquetField.primitiveType;
     String columnPath = ColumnPath.get(column.getNames()).toDotString();
-    String comparator = deltaPredicate.getName();
 
     switch (parquetType.getPrimitiveTypeName()) {
       case BOOLEAN:

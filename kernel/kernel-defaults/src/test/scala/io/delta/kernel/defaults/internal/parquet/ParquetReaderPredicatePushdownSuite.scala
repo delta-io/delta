@@ -341,6 +341,34 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
     checkAnswer(actData, generateExpData(Seq(0)))
   }
 
+  test("literal and column are swapped for inequality comparators") {
+    // longCol is null in row group 3, and in row group k (k != 3) ranges over
+    // [k * 100 + 1, k * 100 + 100], with some nulls.
+    // `1600 > longCol` is `longCol < 1600`: row groups 0-15 except the all-null row group 3.
+    checkAnswer(
+      readUsingKernel(testParquetTable, predicate(">", ofLong(1600), col("longCol"))),
+      generateExpData(Seq(0, 1, 2) ++ Seq.range(4, 16)))
+    // `1600 < longCol` is `longCol > 1600`: row groups 16-19.
+    checkAnswer(
+      readUsingKernel(testParquetTable, predicate("<", ofLong(1600), col("longCol"))),
+      generateExpData(Seq(16, 17, 18, 19)))
+
+    // Each literal-left comparator prunes the same row groups as its column-left equivalent.
+    Seq("<" -> ">", "<=" -> ">=", ">" -> "<", ">=" -> "<=").foreach {
+      case (comparator, reversed) =>
+        Seq(
+          (ofInt(950), col("intCol")),
+          (ofLong(1600), col("longCol")),
+          (ofDouble(1000.0), col("doubleCol")),
+          (ofInt(950), col("nested", "intCol"))).foreach {
+          case (literal, column) =>
+            checkAnswer(
+              readUsingKernel(testParquetTable, predicate(comparator, literal, column)),
+              readUsingKernel(testParquetTable, predicate(reversed, column, literal)))
+        }
+    }
+  }
+
   test("comparator literal value is null") {
     val testPredicate = predicate("=", col("intCol"), ofNull(IntegerType.INTEGER))
     assertConvertedFilterIsEmpty(testPredicate, testParquetTable)
