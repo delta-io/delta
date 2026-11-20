@@ -1,8 +1,7 @@
 # Row Commit Timestamps
 
 - [Motivation](#motivation)
-- [Compatibility](#compatibility)
-- [Interactions with other features](#interactions-with-other-features)
+- [Compatibility & Interaction with other features](#compatibility--interaction-with-other-features)
 - [Concurrency](#concurrency)
 - [Alternatives considered](#alternatives-considered)
 - [Open questions](#open-questions)
@@ -15,7 +14,7 @@
 
 ## Motivation
 
-Row Tracking assigns a Row Commit Version to each row in the table, corresponding to latest version in which the row was modified. Getting the timestamp requires a potentially costly lookup over all commit files as this is the only place where timestamps are currently stored or it is impossible due to an exceeded log retention.
+Row Tracking assigns a Row Commit Version to each row in the table, corresponding to the latest version in which the row was modified. Getting the timestamp requires a potentially costly lookup over all commit files as this is the only place where timestamps are currently stored or it is impossible due to an exceeded log retention.
 Row Commit Timestamps provide timestamps of the last insert or update operation of a row. This proposal defines row commit timestamps for Delta. A similar extension is currently being developed for [Iceberg](https://github.com/apache/iceberg/pull/18526) as well.
 
 ## Feature summary
@@ -30,7 +29,7 @@ An update that writes a new row version assigns a new Row Commit Timestamp. A pl
 * Clients that do not support the new reader-writer table feature must reject tables using it.
 * Tables without the feature remain unaffected.
 * Row Tracking must be enabled.
-* The values from In-Commit Timestamps are used.
+* In-Commit Timestamps must be enabled. Their values are used as Row Commit Timestamps.
 * Checkpoints and log cleanup operations must retain the existing values.
 
 ## Concurrency
@@ -39,7 +38,7 @@ The timestamp is the final `inCommitTimestamp` of a successful commit.
 
 ## Alternatives considered
 
-Current way: Use only row commit versions and extract timestamps from the commit files. Reading the commit history may involve scanning every commit files in the case of rows spanning a wide range of versions. Furthermore, the timestamp lookup is impossible if the relevant commit files have been removed by log cleanup.
+Current way: Use only row commit versions and extract timestamps from the commit files. Reading the commit history may involve scanning many commit files in the case of rows spanning a wide range of versions. Furthermore, the timestamp lookup is impossible if the relevant commit files have been removed by log cleanup.
 
 ## Open questions
 
@@ -138,8 +137,6 @@ Readers must convert `defaultRowCommitTimestamp` from epoch milliseconds into th
 > Append the following requirements to Reader Requirements for Row Tracking.
 
 ## Reader Requirements for Row Commit Timestamps
-
-A reader must use the materialized Row Commit Timestamp. If the materialized timestamp is null or the materialized Row Commit Timestamp column is absent, the file default Row Commit Timestamp must be used. 
 
 When Row Commit Timestamps are enabled and requested, readers must reconstruct them as follows:
 
