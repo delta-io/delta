@@ -15,14 +15,19 @@
  */
 package io.delta.kernel.internal
 
-import java.util.Optional
+import java.util.{Collections, Optional}
+
+import scala.collection.JavaConverters._
 
 import io.delta.kernel.Meta
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.replay.{PageToken, PaginationContext}
+import io.delta.kernel.internal.snapshot.LogSegment
+import io.delta.kernel.test.MockFileSystemClientUtils
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class PaginationContextSuite extends AnyFunSuite {
+class PaginationContextSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   private val TEST_FILE_NAME = "test_file.json"
   private val TEST_ROW_INDEX = 42L
@@ -217,5 +222,139 @@ class PaginationContextSuite extends AnyFunSuite {
         validPageToken)
     }
     assert(e.getMessage.contains("Invalid page token: token log segment"))
+  }
+
+  test("pagination should work when staged commit becomes published - #4927") {
+    // This test verifies the fix for issue #4927 where pagination fails when
+    // a staged commit (9.uuid.json) is renamed to a published commit (9.json)
+    // between pagination requests
+
+    val pageSize = 100L
+    val version = 9L
+
+    // First page request: LogSegment contains staged commit
+    val stagedCommit = stagedCommitFile(9)
+    val logSegmentStaged = new LogSegment(
+      logPath,
+      version,
+      Collections.singletonList(stagedCommit),
+      Collections.emptyList(),
+      Collections.emptyList(),
+      stagedCommit,
+      Optional.empty(),
+      Optional.empty())
+
+    val stagedHash = logSegmentStaged.hashCode()
+
+    // Create page token from first page with staged commit hash
+    val pageToken = new PageToken(
+      "00000000000000000009.dc0f9f58-a1a0-46fd-971a-bd8b2e9dbb81.json",
+      TEST_ROW_INDEX,
+      TEST_SIDECAR_INDEX,
+      TEST_VALID_KERNEL_VERSION,
+      TEST_TABLE_PATH,
+      version,
+      TEST_PREDICATE_HASH,
+      stagedHash)
+
+    // Second page request: Same version but now with published commit
+    val publishedCommit = deltaFileStatus(9)
+    val logSegmentPublished = new LogSegment(
+      logPath,
+      version,
+      Collections.singletonList(publishedCommit),
+      Collections.emptyList(),
+      Collections.emptyList(),
+      publishedCommit,
+      Optional.empty(),
+      Optional.empty())
+
+    val publishedHash = logSegmentPublished.hashCode()
+
+    // The hashes should be equal because they represent the same logical version
+    assert(
+      stagedHash == publishedHash,
+      "LogSegment hashes should be equal for staged and published commits of same version")
+
+    // This should NOT throw an exception - the fix allows pagination to continue
+    val secondPageContext = PaginationContext.forPageWithPageToken(
+      TEST_TABLE_PATH,
+      version,
+      publishedHash,
+      TEST_PREDICATE_HASH,
+      pageSize,
+      pageToken)
+
+    assert(secondPageContext.getLastReturnedRowIndex() === Optional.of(TEST_ROW_INDEX))
+  }
+
+  test("pagination across multiple versions with mixed staged and published commits") {
+    // Test pagination with a more complex scenario: multiple versions with
+    // some staged and some published commits
+
+    val pageSize = 100L
+    val version = 9L
+
+    // First page: Mix of published and staged commits (versions 7, 8, 9)
+    val deltasPage1 = Seq(
+      deltaFileStatus(7), // published
+      stagedCommitFile(8), // staged
+      deltaFileStatus(9) // published
+    ).asJava
+
+    val logSegment1 = new LogSegment(
+      logPath,
+      version,
+      deltasPage1,
+      Collections.emptyList(),
+      Collections.emptyList(),
+      deltaFileStatus(9),
+      Optional.empty(),
+      Optional.empty())
+
+    val hash1 = logSegment1.hashCode()
+
+    val pageToken = new PageToken(
+      "00000000000000000009.json",
+      TEST_ROW_INDEX,
+      TEST_SIDECAR_INDEX,
+      TEST_VALID_KERNEL_VERSION,
+      TEST_TABLE_PATH,
+      version,
+      TEST_PREDICATE_HASH,
+      hash1)
+
+    // Second page: Same versions but version 8 is now published
+    val deltasPage2 = Seq(
+      deltaFileStatus(7), // published (same)
+      deltaFileStatus(8), // NOW published (was staged)
+      deltaFileStatus(9) // published (same)
+    ).asJava
+
+    val logSegment2 = new LogSegment(
+      logPath,
+      version,
+      deltasPage2,
+      Collections.emptyList(),
+      Collections.emptyList(),
+      deltaFileStatus(9),
+      Optional.empty(),
+      Optional.empty())
+
+    val hash2 = logSegment2.hashCode()
+
+    // Hashes should match despite file name changes
+    assert(hash1 == hash2, "Hashes should be equal when logical versions are the same")
+
+    // Pagination should continue without error
+    val secondPageContext = PaginationContext.forPageWithPageToken(
+      TEST_TABLE_PATH,
+      version,
+      hash2,
+      TEST_PREDICATE_HASH,
+      pageSize,
+      pageToken)
+
+    assert(secondPageContext.getLastReturnedRowIndex() == Optional.of(TEST_ROW_INDEX))
   }
 }
