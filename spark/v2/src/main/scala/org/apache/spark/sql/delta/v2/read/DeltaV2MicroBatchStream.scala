@@ -51,6 +51,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffsetLogic
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils
+import org.apache.spark.sql.delta.sources.IndexedFile
 import org.apache.spark.sql.delta.sources.PersistedMetadata
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
@@ -478,8 +479,8 @@ private[read] class DeltaV2MicroBatchStream(
     Some(
         DeltaSource.buildOffsetFromIndexedFile(
             tableId,
-            lastFile.getVersion(),
-            lastFile.getIndex(),
+            lastFile.version,
+            lastFile.index,
             previousOffset.reservoirVersion,
             previousOffset.isInitialSnapshot))
   }
@@ -564,9 +565,9 @@ private[read] class DeltaV2MicroBatchStream(
     if (cdcFile != null) {
       needsDeletionVectors = cdcFile.hasDeletionVector()
       path = cdcFile.getPath()
-    } else if (file.getAddFile() != null) {
-      needsDeletionVectors = file.getAddFile().deletionVector != null
-      path = file.getAddFile().path
+    } else if (file.add != null) {
+      needsDeletionVectors = file.add.deletionVector != null
+      path = file.add.path
     } else {
       return
     }
@@ -576,11 +577,11 @@ private[read] class DeltaV2MicroBatchStream(
           "Cannot read deletion vectors for table {} at version {} with source-init snapshot "
               + "version {} (readMode={})",
           tableId,
-          Long.box(file.getVersion()),
+          Long.box(file.version),
           Long.box(snapshotAtSourceInit.version),
           if (options.readChangeFeed) "CDC" else "table")
       throw DeltaErrors.streamingDeletionVectorsNotReadableException(
-          file.getVersion(), snapshotAtSourceInit.version)
+          file.version, snapshotAtSourceInit.version)
     }
   }
 
@@ -601,10 +602,10 @@ private[read] class DeltaV2MicroBatchStream(
       if (isExcludedPath(cdcFile.getPath())) return None
       return Some(
           PartitionUtils.buildCDCPartitionedFile(
-              cdcFile, indexedFile.getVersion(), caster, tablePath))
+              cdcFile, indexedFile.version, caster, tablePath))
     }
-    if (indexedFile.getAddFile() != null) {
-      val addFile: AddFile = indexedFile.getAddFile()
+    if (indexedFile.add != null) {
+      val addFile: AddFile = indexedFile.add
       if (isExcludedPath(addFile.path)) return None
       return Some(PartitionUtils.buildPartitionedFile(addFile, caster, tablePath))
     }
@@ -788,8 +789,8 @@ private[read] class DeltaV2MicroBatchStream(
                       val files = getSnapshotAt(fromVersion)
                       val commitTimestamp = initialSnapshot.snapshot.timestamp
                       var snapshotFiles = files.withClose(_.map { file =>
-                        val cdcFile = if (file.getAddFile() != null) {
-                          CDCDataFile.fromAddFile(file.getAddFile(), commitTimestamp)
+                        val cdcFile = if (file.add != null) {
+                          CDCDataFile.fromAddFile(file.add, commitTimestamp)
                         } else null
                         (file, cdcFile)
                       })
@@ -882,8 +883,8 @@ private[read] class DeltaV2MicroBatchStream(
       val bound: DeltaSourceOffset = lastOffsetForThisScan.get
       return result.withClose(_.takeWhile { entry =>
         val file = indexedFile(entry)
-        file.getVersion() < bound.reservoirVersion ||
-          (file.getVersion() == bound.reservoirVersion && file.getIndex() <= bound.index)
+        file.version < bound.reservoirVersion ||
+          (file.version == bound.reservoirVersion && file.index <= bound.index)
       })
     }
 
@@ -1033,13 +1034,13 @@ private[read] class DeltaV2MicroBatchStream(
           new IteratorCloseOps(fileActions)
               .withClose(
                   files =>
-                      Iterator.single(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX))
+                      Iterator.single(
+                          sentinel(version, DeltaSourceOffset.BASE_INDEX))
                           .++(metadataBarrier)
                           .++(files)
                           .++(
                               Iterator.single(
-                                  IndexedFile.sentinel(
-                                      version, DeltaSourceOffset.END_INDEX))))
+                                  sentinel(version, DeltaSourceOffset.END_INDEX))))
 
       inner
     } catch { case e: Exception =>
@@ -1067,7 +1068,7 @@ private[read] class DeltaV2MicroBatchStream(
                     .map(action => {
                       val index: Long = fileIndex(0)
                       fileIndex(0) += 1
-                      IndexedFile.addFile(version, index, action.asInstanceOf[AddFile])
+                      IndexedFile(version, index, action.asInstanceOf[AddFile])
                     }))
   }
 
@@ -1330,11 +1331,7 @@ private[read] class DeltaV2MicroBatchStream(
     // TODO: Add range-aware iteration to DeltaSourceSnapshot so V1 and V2 can filter the
     // already-processed prefix before decoding files.
     val snapshotFiles: ClosableIterator[IndexedFile] =
-        new ClosableWrapper(
-                initialSnapshot
-                    .iterator()
-                    .map(file => IndexedFile.addFile(file.version, file.index, file.add)))
-            .toClosable
+        new ClosableWrapper(initialSnapshot.iterator()).toClosable
     addBeginAndEndIndexOffsetsForVersion(version, snapshotFiles)
   }
 
@@ -1359,8 +1356,8 @@ private[read] class DeltaV2MicroBatchStream(
         return new ClosableWrapper(
                 CollectionConverters.asScala(
                         Arrays.asList[(IndexedFile, CDCDataFile)](
-                            (IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX), null),
-                            (IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX), null)))
+                            (sentinel(version, DeltaSourceOffset.BASE_INDEX), null),
+                            (sentinel(version, DeltaSourceOffset.END_INDEX), null)))
                     .iterator)
             .toClosable
       }
@@ -1380,7 +1377,7 @@ private[read] class DeltaV2MicroBatchStream(
           return new ClosableWrapper[(IndexedFile, CDCDataFile)](Iterator.empty).toClosable
         }
       } else {
-        result.add((IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX), null))
+        result.add((sentinel(version, DeltaSourceOffset.END_INDEX), null))
       }
       new ClosableWrapper(CollectionConverters.asScala(result).iterator).toClosable
     } catch { case e: IOException =>
@@ -1482,7 +1479,7 @@ private[read] class DeltaV2MicroBatchStream(
 
     // Phase 2: build IndexedFiles from collected actions.
     val result: List[(IndexedFile, CDCDataFile)] = new ArrayList[(IndexedFile, CDCDataFile)]()
-    result.add((IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX), null))
+    result.add((sentinel(version, DeltaSourceOffset.BASE_INDEX), null))
     var fileIndex: Long = 0
 
     // Explicit CDC files and inferred files are mutually exclusive: if a commit contains any
@@ -1581,7 +1578,7 @@ private[read] class DeltaV2MicroBatchStream(
     // Schema-change barrier: pass through. collectAndBuildCDCIndexedFiles returns the barrier as a
     // singleton, so it can only appear as element 0.
     if (!commitFiles.isEmpty()
-        && commitFiles.get(0)._1.getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX) {
+        && commitFiles.get(0)._1.index == DeltaSourceOffset.METADATA_CHANGE_INDEX) {
       return new ArrayList[(IndexedFile, CDCDataFile)](commitFiles)
     }
 
@@ -1635,7 +1632,7 @@ private[read] class DeltaV2MicroBatchStream(
     // Append END only if the entire commit was admitted. Partial admission leaves the offset
     // on the last admitted file so the next batch resumes from there.
     if (admittedData.size() >= dataFiles.size()) {
-      result.add((IndexedFile.sentinel(commitVersion, DeltaSourceOffset.END_INDEX), null))
+      result.add((sentinel(commitVersion, DeltaSourceOffset.END_INDEX), null))
     }
     result
   }

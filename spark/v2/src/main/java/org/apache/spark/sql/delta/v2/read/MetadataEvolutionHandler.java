@@ -47,6 +47,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend;
+import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper;
@@ -192,7 +193,7 @@ public class MetadataEvolutionHandler {
                       if (sawBarrier[0]) {
                         return false;
                       }
-                      if (indexedFile.apply(file).getIndex()
+                      if (indexedFile.apply(file).index()
                           == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
                         sawBarrier[0] = true;
                       }
@@ -213,7 +214,8 @@ public class MetadataEvolutionHandler {
         && hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)) {
       return new ClosableWrapper<>(
               Iterator.single(
-                  IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX())))
+                  DeltaV2MicroBatchStreamUtils.sentinel(
+                      version, DeltaSourceOffset.METADATA_CHANGE_INDEX())))
           .toClosable();
     }
     return new ClosableWrapper<>(List$.MODULE$.<IndexedFile>empty().iterator()).toClosable();
