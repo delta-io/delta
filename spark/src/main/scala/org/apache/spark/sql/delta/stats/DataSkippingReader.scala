@@ -289,7 +289,7 @@ trait DataSkippingReaderBase
   private[delta] def numOfFilesIfKnown: Option[Long]
   def redactedPath: String
 
-  protected def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
+  private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
   private lazy val limitPartitionLikeFiltersToClusteringColumns = spark.sessionState.conf.getConf(
     DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY)
@@ -297,6 +297,11 @@ trait DataSkippingReaderBase
     spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
       .toSet.flatMap((exprs: String) => exprs.split(","))
+
+  /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
+  private def withStatsInternal0: DataFrame = {
+    allFiles.withColumn("stats", parseStats(col("stats")))
+  }
 
   /** Parses the JSON stats in `statsCol` into the `statsSchema` struct. */
   protected def parseStats(statsCol: Column): Column = {
@@ -312,9 +317,6 @@ trait DataSkippingReaderBase
       parsedStats
     }
   }
-
-  /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
-  private def withStatsInternal0: DataFrame = allFiles.withColumn("stats", parseStats(col("stats")))
 
   private lazy val withStatsCache =
     cacheDS(withStatsInternal0, s"Delta Table State with Stats #$version - $redactedPath")

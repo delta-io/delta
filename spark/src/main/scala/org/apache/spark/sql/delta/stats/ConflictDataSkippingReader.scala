@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.stats
 
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions._
@@ -46,7 +47,9 @@ trait ConflictDataSkippingReader extends DeltaLogging { self: DataSkippingReader
    */
   private[delta] def buildDataSkippingPredicate(
       dataFilters: Seq[Expression]): Option[DataSkippingPredicate] = {
-    if (!useStats) return None
+    // Stats-skipping conf, inlined from DataSkippingReaderBase.useStats (file-private, so not
+    // visible here). Reading it inline avoids widening that member's visibility.
+    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)) return None
     // Same eligibility as filesForScan: drop subquery / non-deterministic / metadata filters, so we
     // never build a skipping predicate that could wrongly exclude a matching file. Dropping a
     // conjunct only widens the predicate.
