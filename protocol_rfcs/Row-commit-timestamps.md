@@ -15,22 +15,23 @@
 
 ## Motivation
 
-Row Commit Timestamps provide timestamps of the last insert or update operation of a row. Currently, getting the timestamp of a row write can be impossible once the log retention period has expired or may require a costly lookup across commit versions. This proposal defines row commit timestamps for Delta. A similar extension is currently being developed for [Iceberg](https://github.com/apache/iceberg/pull/18526) as well.
+Row Tracking assigns a Row Commit Version to each row in the table, corresponding to latest version in which the row was modified. Getting the timestamp requires a potentially costly lookup over all commit files as this is the only place where timestamps are currently stored or it is impossible due to an exceeded log retention.
+Row Commit Timestamps provide timestamps of the last insert or update operation of a row. This proposal defines row commit timestamps for Delta. A similar extension is currently being developed for [Iceberg](https://github.com/apache/iceberg/pull/18526) as well.
 
 ## Feature summary
 
 A row commit timestamp shows the time, in milliseconds since the Unix epoch, of the last insert or update operation for each row. It has a similar lifecycle as a row commit version: New or updated rows inherit the file's default timestamp, while rows copied over into a new file without changes retain their previous timestamp through a materialized value that takes precedence over the new file's default.  
-An update that writes a new row version assigns a new Row Commit Timestamp, even if the user-visible values remain unchanged. A plain copy of a row does not change its row commit timestamp.
+An update that writes a new row version assigns a new Row Commit Timestamp. A plain copy of a row does not change its row commit timestamp.
 
-## Compatibility
+## Compatibility & Interaction with other features
 
-It requires writer version 7 and reader version 3.  
-Writers may enable Row Commit Timestamps on an existing table after completing the required backfill and satisfying the enablement invariants for all existing rows. Clients that do not support the new reader-writer table feature must reject tables using it. Tables without the feature remain unaffected.
-
-## Interactions with other features
-
-It requires Row Tracking to be enabled. The values from In-Commit Timestamps are used.
-Furthermore, checkpoints and log cleanup operations must retain the existing values.
+* It requires writer version 7 and reader version 3.  
+* Writers may enable Row Commit Timestamps on an existing table after completing the required backfill and satisfying the enablement invariants for all existing rows.
+* Clients that do not support the new reader-writer table feature must reject tables using it.
+* Tables without the feature remain unaffected.
+* Row Tracking must be enabled.
+* The values from In-Commit Timestamps are used.
+* Checkpoints and log cleanup operations must retain the existing values.
 
 ## Concurrency
 
@@ -38,11 +39,10 @@ The timestamp is the final `inCommitTimestamp` of a successful commit.
 
 ## Alternatives considered
 
-Current way: Save row commit versions only and extract timestamps from there.
+Current way: Use only row commit versions and extract timestamps from the commit files. Reading the commit history may involve scanning every commit files in the case of rows spanning a wide range of versions. Furthermore, the timestamp lookup is impossible if the relevant commit files have been removed by log cleanup.
 
 ## Open questions
 
-- Is millisecond precision sufficient?
 - What value should be backfilled for rows whose Row Commit Version cannot be resolved to a timestamp (e.g., because the log retention period has expired)?
 - How should the feature be disabled, and what are the consequences?
 
@@ -85,9 +85,9 @@ After checkpointing, removing the original JSON commit files must not change the
 
 ## Row Commit Timestamps
 
-Row Commit Timestamps provide timestamps of the last write operation of a row. More precisely, a Row Commit Timestamp is the final `inCommitTimestamp` of the successful commit that inserted or updated the row. This helps retain the precise timestamps for write operations, as reading a Row Commit Timestamp must not require the originating `commitInfo` to remain available. 
+Row Commit Timestamps record the timestamp at which a row was last modified. More precisely, a Row Commit Timestamp is the final `inCommitTimestamp` of the successful commit that inserted or updated the row. This helps retain the precise timestamps for write operations, as reading a Row Commit Timestamp must not require the originating `commitInfo` to remain available. 
 
-This is an extension to Row Tracking in which the `row_commit_timestamp` metadata field corresponds to each row's stable `row_commit_version`. Therefore, both Row Tracking and In-Commit Timestamps have to be enabled.
+Row Commit Timestamps introduce `rowCommitTimestamp`, a writer table feature that extends Row Tracking with another row tracking metadata field `row_commit_timestamp`. It is directly equivalent to each row's stable `row_commit_version`. Therefore, both Row Tracking and In-Commit Timestamps have to be enabled and the requirements are same as for row commit versions:
 
 When a row is inserted or updated, it is assigned the commit timestamp of the log entry containing the `add` entry with the new row.
   When a row is updated so that a new stable row commit version is set, the Row Commit Timestamp for this row is updated as well.
@@ -163,10 +163,6 @@ When Row Commit Timestamps are enabled, writers must satisfy the following addit
     For newly inserted or updated rows, the materialized column must be absent or set to `NULL`, making these rows inherit the file default.
   - Writers must preserve the stable Row Commit Version together with the Row Commit Timestamp for rows copied without an update.
   - Writers performing RESTORE must restore the historical file defaults and materialized Row Commit Timestamps rather than assign the restore commit's timestamp.
-
-## Removing the feature
-
-TBD
 
 ## Changes to existing sections
 
