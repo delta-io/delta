@@ -119,11 +119,11 @@ This design enables:
 | <ins>`p`</ins> | <ins>absolute URI</ins> | <ins>[URI-encoded](https://www.rfc-editor.org/rfc/rfc2396.txt)</ins> | <ins>Either</ins> |
 | <ins>`r`</ins> | <ins>raw path relative to the table root</ins> | <ins>none</ins> | <ins>Yes</ins> |
 
-<ins>In the adaptive metadata tree, a content entry stores its DV as a `deletion_vector` struct (`location`, `offset`, `size_in_bytes`, `cardinality`). `location` is a bare path relative to the table root when possible, otherwise an absolute path.</ins>
+<ins>In the adaptive metadata tree, a content entry stores its DV as a `deletion_vector` struct (`location`, `offset`, `size_in_bytes`, `cardinality`). `location` is a bare path relative to the table root when possible, otherwise an absolute path. `offset` and `cardinality` are copied from the descriptor unchanged. The content entry's `size_in_bytes` is not the same as the descriptor's `sizeInBytes`. The descriptor's `sizeInBytes` counts only `bitmapData`, excluding the 4-byte `dataSize` before it and the 4-byte checksum after it (see [Deletion Vector File Storage Format](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vector-file-storage-format)), while content entry's `size_in_bytes` includes both.</ins>
 
 <ins>When writing a content entry's `deletion_vector.location`, writers convert the `Deletion Vector Descriptor` to a path. A `u` descriptor becomes its decoded table-relative path `<prefix>/deletion_vector_<uuid>.bin`, a `r` path is used as-is, and a `p` path is URI-decoded, then stored relative to the table root if it resolves under the table root, otherwise as an absolute path. When converting `deletion_vector.location` back to a `Deletion Vector Descriptor`, a relative `location` becomes an `r` descriptor with the path unchanged, and an absolute `location` becomes a `p` descriptor, URI-encoded. The conversion back never produces `u`, so a DV written as `u` or as an in-table `p` reads back as `r`. The normalized `uniqueId` in [Derived Fields](#derived-fields) still identifies them as the same DV.</ins>
 
-<ins>Examples, for a table rooted at `s3://bucket/my table` (URI-encoded: `s3://bucket/my%20table`), where `<file>` stands for `deletion_vector_d2c639aa-8816-431a-aaf6-d3fe2512ff61.bin`:</ins>
+<ins>For example, consider a table rooted at `s3://bucket/my table` (URI-encoded: `s3://bucket/my%20table`), where `<file>` stands for `deletion_vector_d2c639aa-8816-431a-aaf6-d3fe2512ff61.bin`:</ins>
 
 | <ins>Descriptor `storageType`</ins> | <ins>Descriptor `pathOrInlineDv`</ins> | <ins>`deletion_vector.location`</ins> | <ins>Read-back `storageType`</ins> | <ins>Read-back `pathOrInlineDv`</ins> |
 | - | - | - | - | - |
