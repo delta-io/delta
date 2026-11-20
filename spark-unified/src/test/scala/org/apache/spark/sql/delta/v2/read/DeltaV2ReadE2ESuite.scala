@@ -515,25 +515,22 @@ private[read] trait DeltaV2ReadE2ETests {
         DeltaLog.clearCache()
       }
 
-      val partitionFilterQueries = Seq(
-        s"SELECT id, p_int FROM $table WHERE p_int IS NULL",
-        s"SELECT id FROM $table WHERE p_int = 2",
-        s"SELECT id, p_dec FROM $table WHERE p_bool")
+      val queries = Seq(
+        s"SELECT * FROM $table" -> Seq(
+          Row(1, null, null, true, null, new java.math.BigDecimal("1.6")),
+          Row(2, 2, 2.toByte, false, Date.valueOf("2024-01-02"), new java.math.BigDecimal("2.0"))),
+        s"SELECT id, p_int FROM $table WHERE p_int IS NULL" -> Seq(Row(1, null)),
+        s"SELECT id FROM $table WHERE p_int = 2" -> Seq(Row(2)),
+        s"SELECT id, p_dec FROM $table WHERE p_bool" -> Seq(
+          Row(1, new java.math.BigDecimal("1.6"))))
       for (ansiEnabled <- Seq("true", "false")) {
-        // TODO(#7930): partition filters are still evaluated on the raw strings with the
-        // session's cast, so with ANSI on they fail in both V1 and V2. Compare them with ANSI off.
-        val queries = s"SELECT * FROM $table" +:
-          (if (ansiEnabled == "false") partitionFilterQueries else Nil)
         withSQLConf(SQLConf.ANSI_ENABLED.key -> ansiEnabled) {
-          val expected = withV1Mode {
-            queries.map(query => sql(query).collect().toSeq)
-          }
-          assert(expected.head.toSet === Set(
-            Row(1, null, null, true, null, new java.math.BigDecimal("1.6")),
-            Row(2, 2, 2, false, Date.valueOf("2024-01-02"), new java.math.BigDecimal("2.0"))))
-          DeltaLog.clearCache()
-          queries.zip(expected).foreach { case (query, rows) =>
+          queries.foreach { case (query, rows) =>
             withClue(s"ansi=$ansiEnabled, query=$query: ") {
+              withV1Mode {
+                checkAnswer(sql(query), rows)
+              }
+              DeltaLog.clearCache()
               checkRead("malformed partition values read")(sql(query)) { df =>
                 checkAnswer(df, rows)
               }
