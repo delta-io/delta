@@ -242,6 +242,8 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
   private val LEGACY_BLOCK_ID_PREFIX = "test_"
 
+  val FLAT_LOG_BLOCK_IDS_ENABLED_CONF = "spark.delta.sharing.flatLogBlockIds.enabled"
+
   // It starts with test_ to match the prefix of TestBlockId.
   // In the meantime, we'll investigate in an option to add a general purposed BlockId subclass
   // and use it in delta sharing.
@@ -263,6 +265,12 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
   }
 
   def getDeltaSharingLogBlockId(path: String): BlockId = {
+    // Set at startup so block writers and readers use the same ID format throughout a query.
+    val flatBlockIdsEnabled = SparkEnv.get.conf.getBoolean(
+      FLAT_LOG_BLOCK_IDS_ENABLED_CONF, defaultValue = true)
+    if (!flatBlockIdsEnabled) {
+      return BlockId(LEGACY_BLOCK_ID_PREFIX + path)
+    }
     // DiskBlockManager uses the block name as a local filename. A log URI contains slashes,
     // so it cannot be used directly when the block is written to disk.
     val scope = deltaLogScope(path)
