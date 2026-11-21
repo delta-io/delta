@@ -576,7 +576,7 @@ A field ID must be assigned no later than the commit that first writes a manifes
 
 - Readers must obtain the field ID mapping from the `delta.adaptiveMetadata` domain at the snapshot version, from the `checkpoint` action, log replay, or the [Version Checksum File](#version-checksum-file).
 - When reconstructing an `add` action from a `DATA` entry, readers must set each file metadata field from `lower_bound` (field ID `10_000 + 200 × id + 1`) of the stats struct for its field ID `id`. A null `lower_bound` or missing stats struct means the field is absent on the `add`.
-- Readers must ignore keys in the mapping that they do not recognize.
+- Readers must ignore keys in the mapping that they do not recognize. Such a key maps to an `add` field that the reader does not know, and the reader also ignores that field on an `add` read from the log. A new field that readers must understand is added with its own reader feature.
 
 #### Writer Requirements for File Metadata Fields
 
