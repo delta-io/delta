@@ -573,7 +573,7 @@ case class DeltaSource(
     override val options: DeltaOptions,
     override val snapshotAtSourceInit: SnapshotDescriptor,
     metadataPath: String,
-    metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog] = None,
+    override val metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog] = None,
     filters: Seq[Expression] = Nil)
   extends DeltaSourceBase
   with DeltaSourceCDCSupport

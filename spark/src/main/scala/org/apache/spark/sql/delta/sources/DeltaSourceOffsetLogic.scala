@@ -53,9 +53,26 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
   /** Options that control how the source handles schema changes. */
   protected def schemaReadOptions: DeltaStreamUtils.SchemaReadOptions
 
-  /** Whether the source reads with a schema from the metadata tracking log. */
-  protected def trackingMetadataChange: Boolean
+  /** The metadata tracking log (schema tracking log) of the stream, if it has one. */
+  protected def metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog]
 
+
+  // ---------------------------------------------------------------------------------------------
+  // Metadata tracking
+  // ---------------------------------------------------------------------------------------------
+
+  /** Whether the source reads with a schema from the metadata tracking log. */
+  protected def trackingMetadataChange: Boolean =
+    DeltaSourceMetadataEvolutionSupport.shouldTrackMetadataChange(
+      schemaReadOptions, metadataTrackingLog)
+
+  /**
+   * Whether the tracking log is provided but still empty, so the source initializes it now.
+   * Only consult it before the first write to the log.
+   */
+  protected def readyToInitializeMetadataTrackingEagerly: Boolean =
+    DeltaSourceMetadataEvolutionSupport.shouldInitializeMetadataTrackingEagerly(
+      schemaReadOptions, metadataTrackingLog)
 
   // ---------------------------------------------------------------------------------------------
   // Schema checks

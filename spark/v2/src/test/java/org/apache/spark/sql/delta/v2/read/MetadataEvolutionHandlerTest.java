@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport$;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
@@ -277,30 +278,45 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   }
 
   // ---------------------------------------------------------------------------
-  // shouldTrackMetadataChange / shouldInitializeMetadataTrackingEagerly
+  // shouldTrackMetadataChange, with the V1 eager-initialization check
   //
-  // These two methods share the same preconditions (tracking log state + unsafe
-  // read flag), so we test them together for each configuration.
+  // The handler's check and the V1 eager-initialization check that the stream shares through
+  // DeltaSourceOffsetLogic have the same preconditions (tracking log state + unsafe read flag),
+  // so we test them together for each configuration.
   // ---------------------------------------------------------------------------
+
+  private void assertTrackingState(
+      Option<DeltaSourceMetadataTrackingLog> trackingLog,
+      boolean allowUnsafeColumnMappingRead,
+      boolean expectTracking,
+      boolean expectEagerInit) {
+    DeltaStreamUtils.SchemaReadOptions options = schemaReadOptions(allowUnsafeColumnMappingRead);
+    assertEquals(
+        expectTracking, buildLightweightHandler(trackingLog, options).shouldTrackMetadataChange());
+    assertEquals(
+        expectEagerInit,
+        DeltaSourceMetadataEvolutionSupport$.MODULE$.shouldInitializeMetadataTrackingEagerly(
+            options, trackingLog));
+  }
 
   /** Both should be false when unsafe column mapping reads bypass tracking entirely. */
   @Test
   public void testTrackingState_disabledWhenUnsafeColumnMappingReadAllowed() {
-    MetadataEvolutionHandler handler =
-        buildLightweightHandler(
-            Option.empty(), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ true));
-    assertFalse(handler.shouldTrackMetadataChange());
-    assertFalse(handler.shouldInitializeMetadataTrackingEagerly());
+    assertTrackingState(
+        Option.empty(),
+        /* allowUnsafeColumnMappingRead= */ true,
+        /* expectTracking= */ false,
+        /* expectEagerInit= */ false);
   }
 
   /** Both should be false when no tracking log is provided (Option.empty). */
   @Test
   public void testTrackingState_disabledWhenNoTrackingLog() {
-    MetadataEvolutionHandler handler =
-        buildLightweightHandler(
-            Option.empty(), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
-    assertFalse(handler.shouldTrackMetadataChange());
-    assertFalse(handler.shouldInitializeMetadataTrackingEagerly());
+    assertTrackingState(
+        Option.empty(),
+        /* allowUnsafeColumnMappingRead= */ false,
+        /* expectTracking= */ false,
+        /* expectEagerInit= */ false);
   }
 
   /**
@@ -309,13 +325,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
    */
   @Test
   public void testTrackingState_emptyLog_notTrackingButReadyToInitialize(@TempDir File tempDir) {
-    DeltaSourceMetadataTrackingLog emptyLog =
-        createStandaloneTrackingLog(tempDir, /* seedWithDefaultEntry= */ false);
-    MetadataEvolutionHandler handler =
-        buildLightweightHandler(
-            Option.apply(emptyLog), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
-    assertFalse(handler.shouldTrackMetadataChange());
-    assertTrue(handler.shouldInitializeMetadataTrackingEagerly());
+    assertTrackingState(
+        Option.apply(createStandaloneTrackingLog(tempDir, /* seedWithDefaultEntry= */ false)),
+        /* allowUnsafeColumnMappingRead= */ false,
+        /* expectTracking= */ false,
+        /* expectEagerInit= */ true);
   }
 
   /**
@@ -324,13 +338,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
    */
   @Test
   public void testTrackingState_seededLog_trackingActiveAndInitComplete(@TempDir File tempDir) {
-    DeltaSourceMetadataTrackingLog seededLog =
-        createStandaloneTrackingLog(tempDir, /* seedWithDefaultEntry= */ true);
-    MetadataEvolutionHandler handler =
-        buildLightweightHandler(
-            Option.apply(seededLog), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
-    assertTrue(handler.shouldTrackMetadataChange());
-    assertFalse(handler.shouldInitializeMetadataTrackingEagerly());
+    assertTrackingState(
+        Option.apply(createStandaloneTrackingLog(tempDir, /* seedWithDefaultEntry= */ true)),
+        /* allowUnsafeColumnMappingRead= */ false,
+        /* expectTracking= */ true,
+        /* expectEagerInit= */ false);
   }
 
   // ---------------------------------------------------------------------------

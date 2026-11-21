@@ -92,14 +92,6 @@ import org.apache.spark.sql.types.StructType
  */
 trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaSource =>
 
-  override protected def trackingMetadataChange: Boolean =
-    DeltaSourceMetadataEvolutionSupport.shouldTrackMetadataChange(
-      schemaReadOptions, metadataTrackingLog)
-
-  protected def readyToInitializeMetadataTrackingEagerly: Boolean =
-    DeltaSourceMetadataEvolutionSupport.shouldInitializeMetadataTrackingEagerly(
-      schemaReadOptions, metadataTrackingLog)
-
 
   /**
    * This is called from getFileChangesWithRateLimit() during latestOffset().
