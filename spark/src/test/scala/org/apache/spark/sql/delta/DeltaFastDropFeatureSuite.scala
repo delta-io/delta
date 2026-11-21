@@ -35,6 +35,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkException
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.functions.{col, not}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -552,6 +553,27 @@ class DeltaFastDropFeatureSuite
           }
         }
         assert(e.getErrorClass === "DELTA_UNSUPPORTED_FEATURES_FOR_READ")
+      }
+    }
+  }
+
+  test("CREATE TABLE LIKE does not copy requireCheckpointProtectionBeforeVersion") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_CREATE_TABLE_LIKE_STRIP_SOURCE_CHECKPOINT_PROTECTION_VERSION.key ->
+          "true") {
+      withTempDir { dir =>
+        val sourceLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        createTableWithFeature(sourceLog, TestRemovableReaderWriterFeature)
+        // Adds the CheckpointProtectionTableFeature.
+        dropTableFeature(sourceLog, TestRemovableReaderWriterFeature)
+        assert(sourceLog.update().metadata.configuration.contains(barrierVersionPropKey))
+
+        withTable("source", "target") {
+          sql(s"CREATE TABLE source USING delta LOCATION '${dir.getCanonicalPath}'")
+          sql("CREATE TABLE target LIKE source")
+          val targetLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+          assert(targetLog.update().metadata.configuration.get(barrierVersionPropKey).isEmpty)
+        }
       }
     }
   }
