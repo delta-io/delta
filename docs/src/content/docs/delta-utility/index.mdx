@@ -20,7 +20,10 @@ You can remove files no longer referenced by a Delta table and are older than th
   - `vacuum` removes all files from directories not managed by Delta Lake,
   ignoring directories beginning with `_`. If you are storing additional
   metadata like Structured Streaming checkpoints within a Delta table directory,
-  use a directory name such as `_checkpoints`.
+  use a directory name such as `_checkpoints`. Directories named
+  `<column>=<value>`, where `<column>` is a column of the table, are partition
+  directories: `vacuum` looks into them even when the column name begins with
+  `_`, including the directories of an earlier partitioning of the table.
   - `vacuum` deletes only data files, not log files. Log files are deleted automatically and asynchronously
   after checkpoint operations. The default retention period of log files is 30
   days, configurable through the `delta.logRetentionDuration` property which you

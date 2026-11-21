@@ -631,6 +631,133 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
     }
   }
 
+  /**
+   * Creates a table that is not partitioned and has two files in `_underscore_col_=10/`: the
+   * state a table partitioned by `_underscore_col_` is in after a conversion that stops
+   * partitioning by the column and keeps the files where they are, such as a metadata-only
+   * conversion to clustering.
+   */
+  private def createTableWithFilesInFormerPartitionDirectory(
+      table: DeltaTableV2,
+      clock: ManualClock): Unit = {
+    val schema = new StructType().add("_underscore_col_", IntegerType).add("n", IntegerType)
+    val metadata = Metadata(schemaString = schema.json)
+    val version = table.startTransaction().commitActions(
+      DeltaOperations.CreateTable(metadata, isManaged = true), metadata)
+    setCommitClock(table, version, clock)
+    gcTest(table, clock)(
+      CreateFile("_underscore_col_=10/live.txt", commitToActionLog = true),
+      CreateFile("_underscore_col_=10/removed.txt", commitToActionLog = true))
+    assert(table.update().metadata.partitionColumns.isEmpty)
+  }
+
+  testFullVacuumOnly("partition directories of a column that is no longer a partition column") {
+    // The files written under the old partitioning stay in `_underscore_col_=10/`. VACUUM must
+    // look inside it although its name starts with `_`, and must still leave alone a `_`
+    // directory that does not belong to a column of the table.
+    withEnvironment { (tempDir, clock) =>
+      val table = DeltaTableV2(spark, tempDir, clock)
+      createTableWithFilesInFormerPartitionDirectory(table, clock)
+      gcTest(table, clock)(
+        CreateFile("_underscore_col_=10/untracked.txt", commitToActionLog = false),
+        CreateFile("_not_a_column_=10/untracked.txt", commitToActionLog = false),
+        LogicallyDeleteFile("_underscore_col_=10/removed.txt"),
+        AdvanceClock(defaultTombstoneInterval + 1000),
+        GC(dryRun = true, Seq(
+          s"$tempDir/_underscore_col_=10/removed.txt",
+          s"$tempDir/_underscore_col_=10/untracked.txt")),
+        GC(dryRun = false, Seq(tempDir)),
+        CheckFiles(Seq("_underscore_col_=10/live.txt", "_not_a_column_=10/untracked.txt")),
+        CheckFiles(
+          Seq("_underscore_col_=10/removed.txt", "_underscore_col_=10/untracked.txt"),
+          exist = false)
+      )
+    }
+  }
+
+  test("vacuum using inventory: partition directories of a former partition column") {
+    withEnvironment { (tempDir, clock) =>
+      val table = DeltaTableV2(spark, tempDir, clock)
+      createTableWithFilesInFormerPartitionDirectory(table, clock)
+      val dataPath = table.deltaLog.dataPath
+      val inventory = spark.createDataFrame(
+        spark.sparkContext.parallelize(Seq(
+          Row(s"$dataPath/_underscore_col_=10/live.txt", 300000L, false, 0L),
+          Row(s"$dataPath/_underscore_col_=10/removed.txt", 300000L, false, 0L),
+          Row(s"$dataPath/_underscore_col_=10/untracked.txt", 300000L, false, 0L),
+          Row(s"$dataPath/_not_a_column_=10/untracked.txt", 300000L, false, 0L))),
+        VacuumCommand.INVENTORY_SCHEMA)
+      gcTest(table, clock)(
+        CreateFile("_underscore_col_=10/untracked.txt", commitToActionLog = false),
+        CreateFile("_not_a_column_=10/untracked.txt", commitToActionLog = false),
+        LogicallyDeleteFile("_underscore_col_=10/removed.txt"),
+        AdvanceClock(defaultTombstoneInterval + 1000),
+        GCByInventory(dryRun = true, expectedDf = Seq(
+          s"$dataPath/_underscore_col_=10/removed.txt",
+          s"$dataPath/_underscore_col_=10/untracked.txt"
+        ), inventory = Some(inventory)),
+        GCByInventory(dryRun = false, expectedDf = Seq(tempDir), inventory = Some(inventory)),
+        CheckFiles(Seq("_underscore_col_=10/live.txt", "_not_a_column_=10/untracked.txt")),
+        CheckFiles(
+          Seq("_underscore_col_=10/removed.txt", "_underscore_col_=10/untracked.txt"),
+          exist = false)
+      )
+    }
+  }
+
+  test("files of an earlier partitioning by columns starting with underscore") {
+    withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      // Drop one of two partition columns (the files of the old partitioning sit in
+      // `_a=*/_b=*/`), or all of them.
+      Seq(Seq("_a"), Seq.empty[String]).foreach { newPartitionColumns =>
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          val data = spark.range(12).selectExpr("id", "id % 2 AS _a", "id % 3 AS _b")
+          data.write.format("delta").partitionBy("_a", "_b").save(path)
+          data.write.format("delta").mode("overwrite").option("overwriteSchema", "true")
+            .partitionBy(newPartitionColumns: _*).save(path)
+          val deltaLog = DeltaLog.forTable(spark, path)
+          assert(deltaLog.update().metadata.partitionColumns === newPartitionColumns)
+          val numLiveFiles = deltaLog.update().allFiles.count()
+          assert(listDataFiles(spark, path).size > numLiveFiles)
+
+          sql(s"VACUUM delta.`$path` RETAIN 0 HOURS")
+          assert(listDataFiles(spark, path).size === numLiveFiles,
+            s"files left after VACUUM with partition columns $newPartitionColumns")
+          checkAnswer(spark.read.format("delta").load(path), data)
+        }
+      }
+    }
+  }
+
+  test("partition directories of a renamed partition column starting with underscore") {
+    withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        spark.range(10).selectExpr("id", "id % 2 AS _p")
+          .write.format("delta").partitionBy("_p").save(path)
+        sql(
+          s"""ALTER TABLE delta.`$path` SET TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.minReaderVersion' = '2',
+             |  'delta.minWriterVersion' = '5')""".stripMargin)
+        // The files stay in `_p=0/` and `_p=1/`; `_p` is now the physical name of `_q`.
+        sql(s"ALTER TABLE delta.`$path` RENAME COLUMN _p TO _q")
+        sql(s"DELETE FROM delta.`$path` WHERE _q = 1")
+        val deltaLog = DeltaLog.forTable(spark, path)
+        assert(deltaLog.update().metadata.partitionColumns === Seq("_q"))
+        val numLiveFiles = deltaLog.update().allFiles.count()
+        assert(listDataFiles(spark, path).size > numLiveFiles)
+
+        sql(s"VACUUM delta.`$path` RETAIN 0 HOURS")
+        assert(listDataFiles(spark, path).size === numLiveFiles)
+        checkAnswer(
+          spark.read.format("delta").load(path),
+          spark.range(10).selectExpr("id", "id % 2 AS _q").where("_q = 0"))
+      }
+    }
+  }
+
   test("schema validation for vacuum by using inventory dataframe") {
     withEnvironment { (tempDir, clock) =>
       val table = DeltaTableV2(spark, tempDir, clock)
