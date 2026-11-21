@@ -94,23 +94,27 @@ case class DeltaSharingFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression],
       overrideLimit: Option[Long]): DeltaLog = {
+    val useResponseVersion = true
     val jsonPredicateHints = DeltaSharingJsonPredicates.convert(
       partitionFilters, dataFilters, params.spark.sessionState.conf)
-    val queryParamsHashId = DeltaSharingUtils.getQueryParamsHashId(
-      params.options,
-      // Using .sql instead of toString because it doesn't include class pointer, which
-      // keeps the string the same for the same filters.
-      partitionFilters.map(_.sql).mkString(";"),
-      dataFilters.map(_.sql).mkString(";"),
-      jsonPredicateHints.getOrElse(""),
-      overrideLimit.map(_.toString).getOrElse(""),
-      params.deltaSharingTableMetadata.version
-    )
+    def queryParamsHash(version: Long, limit: Option[Long]): String =
+      DeltaSharingUtils.getQueryParamsHashId(
+        params.options,
+        // Using .sql instead of toString because it doesn't include class pointer, which
+        // keeps the string the same for the same filters.
+        partitionFilters.map(_.sql).mkString(";"),
+        dataFilters.map(_.sql).mkString(";"),
+        jsonPredicateHints.getOrElse(""),
+        limit.map(_.toString).getOrElse(""),
+        version
+      )
+    val queryParamsHashId = queryParamsHash(params.deltaSharingTableMetadata.version, overrideLimit)
+    val effectiveLimit = overrideLimit.orElse(limitHint)
     // listFiles will be called twice or more in a spark query, with this check we can avoid
     // duplicated work of making expensive rpc and constructing the delta log.
     val tableKey = DeltaSharingUtils.getTablePathWithIdSuffix(
       fileIndexId + "." + params.path.toString,
-      queryParamsHashId
+      s"$queryParamsHashId.$useResponseVersion"
     )
     queriedTableQueryIdToDeltaLog.get(tableKey) match {
       case Some(deltaLog) =>
@@ -121,6 +125,7 @@ case class DeltaSharingFileIndex(
         val newDeltaLog = createDeltaLog(
           jsonPredicateHints,
           queryParamsHashId,
+          version => queryParamsHash(version, effectiveLimit),
           overrideLimit
         )
         // In theory there should only be one entry in this set since each query creates its own
@@ -136,17 +141,20 @@ case class DeltaSharingFileIndex(
   private def createDeltaLog(
       jsonPredicateHints: Option[String],
       queryParamsHashId: String,
+      queryParamsHashIdForVersion: Long => String,
       overrideLimit: Option[Long]): DeltaLog = {
     // The getFiles RPC, synthetic delta-log construction, and CachedTableManager registration now
     // live in the shared DeltaSharingDeltaLogBuilder so the DSV2 scan path can build a snapshot the
     // same way. This path then opens the synthetic log as a classic DeltaLog (unchanged behavior).
     // The CachedTableManager WeakReference is anchored to this FileIndex, which is per-query.
     val encodedPath = DeltaSharingDeltaLogBuilder.buildSnapshotDeltaLogPath(
+      spark = params.spark,
       client = client,
       table = table,
       options = params.options,
       tablePath = params.path.toString,
       queryParamsHashId = queryParamsHashId,
+      queryParamsHashIdForVersion = queryParamsHashIdForVersion,
       jsonPredicateHints = jsonPredicateHints,
       limit = overrideLimit.orElse(limitHint),
       anchor = this,
