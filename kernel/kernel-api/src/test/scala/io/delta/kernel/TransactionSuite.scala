@@ -156,6 +156,11 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
       val partitionKeys =
         ctx.asInstanceOf[DataWriteContextImpl].getPartitionValues.keySet().asScala
       assert(partitionKeys === Set("col-state", "col-country"))
+
+      assert(ctx.getStatisticsColumns.asScala.toSet === Set(
+        new Column("col-name"),
+        new Column("col-id"),
+        new Column("col-city")))
     }
   }
 
@@ -335,20 +340,37 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
   }
 
   Seq("name", "id").foreach { cmMode =>
-    test(s"transformLogicalData: CM tables are blocked: cmMode=$cmMode") {
-      val txnState = testTxnState(new StructType(), cmMode = cmMode)
-      val engine = mockEngine()
+    Seq(false, true).foreach { partitioned =>
+      test(s"transformLogicalData: column-mapped table: " +
+        s"cmMode=$cmMode, partitioned=$partitioned") {
+        val logicalSchema = if (partitioned) {
+          columnMappedPartitionSchema
+        } else {
+          columnMappedSchema
+        }
+        val partitionColumns = if (partitioned) testPartitionColNames else Seq.empty
+        val partitionValues = if (partitioned) {
+          Map("state" -> Literal.ofString("CA"), "country" -> Literal.ofString("USA"))
+        } else {
+          Map.empty[String, Literal]
+        }
+        val txnState = testTxnState(logicalSchema, partitionColumns, cmMode = cmMode)
+        val logicalData = testData(includePartitionCols = partitioned).map { batch =>
+          new FilteredColumnarBatch(
+            batch.getData.withNewSchema(logicalSchema),
+            batch.getSelectionVector)
+        }
 
-      val ex = intercept[UnsupportedOperationException] {
         transformLogicalData(
-          engine,
+          mockEngine(),
           txnState,
-          testData(includePartitionCols = false),
-          Map.empty[String, Literal].asJava /* partition values */ )
-          .forEachRemaining(_ => ()) // consume the iterator
+          logicalData,
+          partitionValues.asJava)
+          .map(_.getData)
+          .forEachRemaining { batch =>
+            assert(batch.getSchema === expectedColumnMappedDataSchema(cmMode))
+          }
       }
-      assert(ex.getMessage.contains(
-        "Writing into column mapping enabled table is not supported yet."))
     }
   }
 
@@ -441,6 +463,14 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
     .add("state", StringType.STRING, true, columnMappingMetadata("col-state", 4))
     .add("country", StringType.STRING, true, columnMappingMetadata("col-country", 5))
 
+  val columnMappedSchema: StructType =
+    new StructType(columnMappedPartitionSchema.fields().subList(0, 3))
+
+  def expectedColumnMappedDataSchema(cmMode: String): StructType = {
+    val txnState = testTxnState(columnMappedSchema, cmMode = cmMode)
+    TransactionStateRow.getPhysicalSchema(txnState)
+  }
+
   def columnarBatch(schema: StructType, vectors: Seq[ColumnVector]): ColumnarBatch = {
     new ColumnarBatch {
       override def getSchema: StructType = schema
@@ -457,6 +487,11 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
         val newColumnVectors = vectors.toBuffer
         newColumnVectors.remove(ordinal)
         columnarBatch(newSchema, newColumnVectors.toSeq)
+      }
+
+      override def withNewSchema(newSchema: StructType): ColumnarBatch = {
+        require(schema.equivalent(newSchema))
+        columnarBatch(newSchema, vectors)
       }
 
       override def withNewColumn(
