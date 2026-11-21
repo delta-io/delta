@@ -485,6 +485,21 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a positive integer.")
 
   /**
+   * The commit interval at which the log-compaction post-commit hook produces a log compaction
+   * file (`<x>.<y>.compacted.json`), when log compaction is enabled
+   * (`deltaLog.minorCompaction.useForWrites`). A compaction is attempted after a commit whose
+   * version is a multiple of this interval. For the produced files to be non-overlapping and usable
+   * by readers, the checkpoint interval ([[CHECKPOINT_INTERVAL]]) should be a multiple of (and
+   * larger than) this value (e.g. the defaults: checkpoint every 10 commits, compaction every 5).
+   */
+  val LOG_COMPACTION_INTERVAL = buildConfig[Int](
+    "logCompactionInterval",
+    "5",
+    _.toInt,
+    _ >= 2,
+    "needs to be an integer >= 2.")
+
+  /**
    * This is the property that describes the table redirection detail. It is a JSON string format
    * of the `TableRedirectConfiguration` class, which includes following attributes:
    * - type(String): The type of redirection.
