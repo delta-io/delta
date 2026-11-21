@@ -52,9 +52,11 @@ class DeltaTaskStatisticsTracker(
     dataCols: Seq[Attribute],
     statsColExpr: Expression,
     rootPath: Path,
-    hadoopConf: Configuration) extends WriteTaskStatsTracker {
+    hadoopConf: Configuration) extends WriteTaskStatsTracker with EvalHelper {
 
   protected[this] val submittedFiles = mutable.HashMap[String, InternalRow]()
+
+  protected val statsColExprForEval: Expression = prepareForEval(statsColExpr)
 
   // For example, when strings are involved, statsColExpr might look like
   // struct(
@@ -72,7 +74,7 @@ class DeltaTaskStatisticsTracker(
   // query execution.
 
   // Given the example above, aggregates would hold: Seq(count, min, max)
-  private val aggregates: Seq[DeclarativeAggregate] = statsColExpr.collect {
+  private val aggregates: Seq[DeclarativeAggregate] = statsColExprForEval.collect {
     case ae: AggregateExpression if ae.aggregateFunction.isInstanceOf[DeclarativeAggregate] =>
       ae.aggregateFunction.asInstanceOf[DeclarativeAggregate]
   }
@@ -110,7 +112,7 @@ class DeltaTaskStatisticsTracker(
   // This executes the whole statsColExpr in order to compute the final stats value for the file.
   // In order to evaluate it, we have to replace its aggregate functions with the corresponding
   // aggregates' evaluateExpressions that basically just return the results stored in aggBuffer.
-  private val resultExpr: Expression = statsColExpr.transform {
+  private val resultExpr: Expression = statsColExprForEval.transform {
     case ae: AggregateExpression if ae.aggregateFunction.isInstanceOf[DeclarativeAggregate] =>
       ae.aggregateFunction.asInstanceOf[DeclarativeAggregate].evaluateExpression
   }
@@ -201,7 +203,7 @@ class DeltaJobStatisticsTracker(
   override def newTaskInstance(): WriteTaskStatsTracker = {
     val rootPath = new Path(rootUri)
     val hadoopConf = srlHadoopConf.value
-    new DeltaTaskStatisticsTracker(dataCols, prepareForEval(statsColExpr), rootPath, hadoopConf)
+    new DeltaTaskStatisticsTracker(dataCols, statsColExpr, rootPath, hadoopConf)
   }
 
   override def processStats(stats: Seq[WriteTaskStats], jobCommitTime: Long): Unit = {
