@@ -133,6 +133,14 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
       assert(columnVector.isNullAt(3))
     })
 
+  test("getValueAsObject on timestamp_ntz returns the epoch micros") {
+    val dataType = TimestampNTZType.TIMESTAMP_NTZ
+    val columnVector =
+      VectorUtils.buildColumnVector(List[LongJ](1637202600123456L, null).asJava, dataType)
+    assert(VectorUtils.getValueAsObject(columnVector, dataType, 0) == 1637202600123456L)
+    assert(VectorUtils.getValueAsObject(columnVector, dataType, 1) == null)
+  }
+
   test(s"handle array of struct correctly") {
     val structType =
       new StructType().add("name", StringType.STRING).add("value", IntegerType.INTEGER)

@@ -19,7 +19,7 @@ import java.math.{BigDecimal => BigDecimalJ}
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
-import io.delta.kernel.expressions.{Column, Literal, Predicate}
+import io.delta.kernel.expressions.{Column, In, Literal, Predicate}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types._
 import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
@@ -225,6 +225,13 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTe
       (
         predicate("IS_NULL", col("tsNtzPartition")),
         "tsNtzPartition IS NULL",
+        3, // expected row count
+        null.asInstanceOf[Predicate] // expected remaining filter
+      ),
+      (
+        // 1637202600123456L in epoch micros for '2021-11-18 02:30:00.123456'
+        new In(col("tsNtzPartition"), java.util.Arrays.asList(ofTimestampNtz(1637202600123456L))),
+        "tsNtzPartition IN ('2021-11-18 02:30:00.123456')",
         3, // expected row count
         null.asInstanceOf[Predicate] // expected remaining filter
       ),
