@@ -86,7 +86,12 @@ public class DeltaWriterTask {
     this.partitionValues = partitionValues;
     this.deltaTable = deltaTable;
     this.conf = conf;
-    this.writeSchema = conf.getSinkSchema();
+    StructType tableSchema = deltaTable.getSchema();
+    if (!conf.getSchemaEvolutionPolicy().allowEvolve(tableSchema, conf.getSinkSchema())) {
+      throw new IllegalStateException("Invalid schema evolution observed");
+    }
+    this.writeSchema =
+        tableSchema.length() > conf.getSinkSchema().length() ? tableSchema : conf.getSinkSchema();
 
     this.fileRollingStrategy = conf.createFileRollingStrategy();
   }
@@ -143,7 +148,10 @@ public class DeltaWriterTask {
     RowAccess rowAccess = new RowDataListAccess(buffer);
     for (int colIdx = 0; colIdx < numColumns; colIdx++) {
       final DataType colDataType = writeSchema.at(colIdx).getDataType();
-      columnVectors[colIdx] = new RowDataColumnVectorView(rowAccess, colIdx, colDataType);
+      columnVectors[colIdx] =
+          colIdx < conf.getSinkSchema().length()
+              ? new RowDataColumnVectorView(rowAccess, colIdx, colDataType)
+              : new NullColumnVectorView(rowAccess.size(), colDataType);
     }
     return Utils.singletonCloseableIterator(
         new FilteredColumnarBatch(
@@ -214,6 +222,40 @@ public class DeltaWriterTask {
           return valueView;
         }
       };
+    }
+  }
+
+  static class NullColumnVectorView extends AbstractColumnVectorView {
+    private final int size;
+
+    NullColumnVectorView(int size, DataType dataType) {
+      super(dataType);
+      this.size = size;
+    }
+
+    @Override
+    public DataType getDataType() {
+      return dataType;
+    }
+
+    @Override
+    public int getSize() {
+      return size;
+    }
+
+    @Override
+    public void close() {}
+
+    @Override
+    public boolean isNullAt(int rowId) {
+      checkValidRowId(rowId);
+      return true;
+    }
+
+    @Override
+    public ColumnVector getChild(int ordinal) {
+      StructType structType = (StructType) dataType;
+      return new NullColumnVectorView(size, structType.at(ordinal).getDataType());
     }
   }
 
