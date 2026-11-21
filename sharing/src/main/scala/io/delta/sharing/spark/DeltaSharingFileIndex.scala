@@ -123,7 +123,6 @@ case class DeltaSharingFileIndex(
       case None =>
         val newDeltaLog = createDeltaLog(
           jsonPredicateHints,
-          queryParamsHashId,
           queryParamsHashIdForVersion,
           overrideLimit
         )
@@ -139,7 +138,6 @@ case class DeltaSharingFileIndex(
 
   private def createDeltaLog(
       jsonPredicateHints: Option[String],
-      queryParamsHashId: String,
       queryParamsHashIdForVersion: Long => String,
       overrideLimit: Option[Long]): DeltaLog = {
     // The getFiles RPC, synthetic delta-log construction, and CachedTableManager registration now
@@ -152,7 +150,7 @@ case class DeltaSharingFileIndex(
       table = table,
       options = params.options,
       tablePath = params.path.toString,
-      queryParamsHashId = queryParamsHashId,
+      metadataVersion = params.deltaSharingTableMetadata.version,
       queryParamsHashIdForVersion = queryParamsHashIdForVersion,
       jsonPredicateHints = jsonPredicateHints,
       limit = overrideLimit.orElse(limitHint),
