@@ -96,6 +96,13 @@ case class DeltaSharingFileIndex(
       overrideLimit: Option[Long]): DeltaLog = {
     val jsonPredicateHints = DeltaSharingJsonPredicates.convert(
       partitionFilters, dataFilters, params.spark.sessionState.conf)
+    // Include the Delta table id (Metadata.id) in the query-params hash. Without it, dropping and
+    // recreating a shared table (same name, version rolls back to 0) produces the same hash, so
+    // the second query hits `DeltaLog.forTable`'s cache.
+    val metadataId = Option(params.deltaSharingTableMetadata.metadata)
+      .flatMap(m => Option(m.deltaMetadata))
+      .map(_.id)
+      .getOrElse("")
     val queryParamsHashId = DeltaSharingUtils.getQueryParamsHashId(
       params.options,
       // Using .sql instead of toString because it doesn't include class pointer, which
@@ -104,7 +111,8 @@ case class DeltaSharingFileIndex(
       dataFilters.map(_.sql).mkString(";"),
       jsonPredicateHints.getOrElse(""),
       overrideLimit.map(_.toString).getOrElse(""),
-      params.deltaSharingTableMetadata.version
+      params.deltaSharingTableMetadata.version,
+      metadataId
     )
     // listFiles will be called twice or more in a spark query, with this check we can avoid
     // duplicated work of making expensive rpc and constructing the delta log.
