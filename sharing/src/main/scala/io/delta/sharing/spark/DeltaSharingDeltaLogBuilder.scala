@@ -72,10 +72,10 @@ object DeltaSharingDeltaLogBuilder extends Logging {
    * @param options read options; supplies versionAsOf / timestampAsOf for the snapshot.
    * @param tablePath the shared table path; base of both the synthetic log path and the
    *   [[CachedTableManager]] key.
-   * @param queryParamsHashId legacy hash using the metadata response version.
-   * @param queryParamsHashIdForVersion hashes the same query parameters with the supplied
-   *   snapshot version. The response-version flag uses this after getFiles returns, so the log
-   *   and URL cache key describe the snapshot whose actions are being stored.
+   * @param metadataVersion getMetadata response version, used when the flag is disabled.
+   * @param queryParamsHashIdForVersion hashes the query parameters with the selected version.
+   *   The hash suffixes both the synthetic log path and URL registration key so different
+   *   query shapes on the same table stay distinct.
    * @param jsonPredicateHints optional server-side filter hints forwarded to getFiles.
    * @param limit optional row limit forwarded to getFiles.
    * @param logPrefix caller tag for the fetch log line, so the shared loader does not hard-code a
@@ -87,7 +87,7 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       table: DeltaSharingTable,
       options: DeltaSharingOptions,
       tablePath: String,
-      queryParamsHashId: String,
+      metadataVersion: Long,
       queryParamsHashIdForVersion: Long => String,
       jsonPredicateHints: Option[String],
       limit: Option[Long],
@@ -125,11 +125,8 @@ object DeltaSharingDeltaLogBuilder extends Logging {
 
     // 2. Prepare a DeltaLog. When enabled, use the getFiles version because a latest read can
     // advance after getMetadata.
-    val snapshotQueryParamsHashId = if (useResponseVersion) {
-      queryParamsHashIdForVersion(deltaTableFiles.version)
-    } else {
-      queryParamsHashId
-    }
+    val snapshotVersion = if (useResponseVersion) deltaTableFiles.version else metadataVersion
+    val snapshotQueryParamsHashId = queryParamsHashIdForVersion(snapshotVersion)
     val tablePathWithHashIdSuffix = DeltaSharingUtils.getTablePathWithIdSuffix(
       client.getProfileProvider.getCustomTablePath(tablePath),
       snapshotQueryParamsHashId
@@ -192,7 +189,7 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       table: DeltaSharingTable,
       options: DeltaSharingOptions,
       tablePath: String,
-      queryParamsHashId: String,
+      metadataVersion: Long,
       queryParamsHashIdForVersion: Long => String,
       jsonPredicateHints: Option[String],
       limit: Option[Long],
@@ -204,7 +201,7 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       table = table,
       options = options,
       tablePath = tablePath,
-      queryParamsHashId = queryParamsHashId,
+      metadataVersion = metadataVersion,
       queryParamsHashIdForVersion = queryParamsHashIdForVersion,
       jsonPredicateHints = jsonPredicateHints,
       limit = limit,
