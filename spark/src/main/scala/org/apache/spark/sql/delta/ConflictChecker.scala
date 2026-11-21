@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
@@ -331,11 +332,7 @@ private[delta] class ConflictChecker(
     // Check early the protocol and metadata compatibility that is required for subsequent
     // file-level checks.
     checkProtocolCompatibility()
-    if (spark.conf.get(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED)) {
-      attemptToResolveMetadataConflicts()
-    } else {
-      checkNoMetadataUpdates()
-    }
+    checkMetadataConflicts()
     checkIfDomainMetadataConflict()
 
     // Perform cheap check for transaction dependencies before we start checks files.
@@ -631,6 +628,80 @@ private[delta] class ConflictChecker(
       a => pathsToRemoveFromUnBackfillSet.contains(a.path))
 
     currentTransactionInfo.copy(actions = newActions, readFiles = newReadFiles)
+  }
+
+  /**
+   * Checks the metadata update of the winning commit. A comment-only update resolves even with
+   * feature enablement conflict resolution disabled.
+   */
+  private def checkMetadataConflicts(): Unit = {
+    if (tryResolveCommentOnlyMetadataUpdateConflict()) {
+      return
+    }
+    if (tryResolveIdentityOnlyMetadataUpdateConflict()) {
+      return
+    }
+    if (spark.conf.get(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED)) {
+      attemptToResolveMetadataConflicts()
+    } else {
+      checkNoMetadataUpdates()
+    }
+  }
+
+  /**
+   * Takes the winning metadata if it differs only in column or table comments and the current
+   * transaction doesn't update metadata. Comments don't affect how Delta writes or reads data.
+   * Doesn't attempt to resolve a conflict by merging metadata changes.
+   * Leaves to the other checks a winning commit that also changes the protocol, an IDENTITY-only
+   * update, or unchanged metadata. Unchanged metadata must still conflict when feature enablement
+   * conflict resolution is disabled.
+   */
+  private def tryResolveCommentOnlyMetadataUpdateConflict(): Boolean = {
+    if (currentTransactionInfo.metadataChanged ||
+        winningCommitSummary.protocol.nonEmpty ||
+        winningCommitSummary.identityOnlyMetadataUpdate) {
+      return false
+    }
+    val currentMetadata = currentTransactionInfo.metadata
+    winningCommitSummary.metadataUpdates.headOption match {
+      case Some(winning)
+          if winning != currentMetadata && equalsIgnoreComments(currentMetadata, winning) =>
+        currentTransactionInfo = currentTransactionInfo.copy(metadata = winning)
+        true
+      case _ => false
+    }
+  }
+
+  private def equalsIgnoreComments(current: Metadata, winning: Metadata): Boolean =
+    current.diffFieldNames(winning).subsetOf(Set("description", "schemaString")) &&
+      (current.schemaString == winning.schemaString ||
+        dropComments(current.schema) == dropComments(winning.schema))
+
+  private def dropComments(schema: StructType): StructType =
+    SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
+      val fieldMetadata =
+        new MetadataBuilder().withMetadata(field.metadata).remove("comment").build()
+      field.copy(metadata = fieldMetadata)
+    }
+
+  /**
+   * Takes the metadata of an IDENTITY-only update if the current transaction doesn't update
+   * metadata and already took the metadata of an earlier winning commit. The IDENTITY-only update
+   * builds on that metadata, so taking it keeps the new high water marks, for example in the
+   * metadata that a catalog-managed commit publishes.
+   */
+  private def tryResolveIdentityOnlyMetadataUpdateConflict(): Boolean = {
+    if (!winningCommitSummary.identityOnlyMetadataUpdate ||
+        currentTransactionInfo.metadataChanged ||
+        currentTransactionInfo.metadata == currentTransactionInfo.readSnapshot.metadata) {
+      return false
+    }
+    winningCommitSummary.metadataUpdates.headOption match {
+      case Some(winning) =>
+        currentTransactionInfo = currentTransactionInfo.copy(metadata = winning)
+        true
+      case None => false
+    }
   }
 
   /**
