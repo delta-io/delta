@@ -229,7 +229,9 @@ class DeltaSharingDeltaLogBuilderSuite
           client.getProfileProvider.getCustomTablePath(tablePath.toString))
       }
 
-      assert(anchorA != null && anchorB != null)
+      // Keep both anchors alive through the cache assertions above.
+      Reference.reachabilityFence(anchorA)
+      Reference.reachabilityFence(anchorB)
     }
   }
 
