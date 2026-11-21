@@ -82,10 +82,12 @@ IcebergCompatV2 target Iceberg V2, IcebergCompatV3 targets Iceberg V3, and `iceb
 Iceberg V4. At most one may be active at a time. The others may stay in the protocol while they are
 inactive.
 
-Writers must ensure that IcebergCompatV1, IcebergCompatV2, and IcebergCompatV3 are not active: for
-each of `icebergCompatV1`, `icebergCompatV2`, and `icebergCompatV3`, either the table feature is
+Writers must ensure that IcebergCompatV1, IcebergCompatV2, IcebergCompatV3, IcebergWriterCompatV1,
+and IcebergWriterCompatV3 are not active: for each of `icebergCompatV1`, `icebergCompatV2`,
+`icebergCompatV3`, `icebergWriterCompatV1`, and `icebergWriterCompatV3`, either the table feature is
 absent from the protocol or its table property (`delta.enableIcebergCompatV1`,
-`delta.enableIcebergCompatV2`, `delta.enableIcebergCompatV3`) is not set to `true`.
+`delta.enableIcebergCompatV2`, `delta.enableIcebergCompatV3`, `delta.enableIcebergWriterCompatV1`,
+`delta.enableIcebergWriterCompatV3`) is not set to `true`.
 
 Since IcebergCompatV3 must be inactive, its rules are instead **incorporated by reference**: every
 requirement in
@@ -94,7 +96,7 @@ applies as though restated here, with modifications. IcebergCompatV3 governs onl
 conversion; because the tree here may also be written by an external Iceberg engine, a few
 constraints beyond IcebergCompatV3 are added:
 
-- The requirement that IcebergCompatV1 and IcebergCompatV2 be inactive is broadened to include IcebergCompatV3, as stated above.
+- The requirement that IcebergCompatV1 and IcebergCompatV2 be inactive is broadened to include IcebergCompatV3, IcebergWriterCompatV1, and IcebergWriterCompatV3, as stated above.
 - IcebergCompatV3 permits Column Mapping in `name` or `id` mode; here only `id` mode is permitted, because an external Iceberg writer resolves columns by field ID and does not honor Delta's physical column names.
 - The type allow-list carries over **except `byte` and `short`, which are removed**: Iceberg has no 8- or 16-bit integer type, so an external Iceberg writer would store such a column as a 32-bit integer, and reading those values back as `byte` or `short` could overflow. The allowed types are therefore: [`integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`, `variant`, `geometry`, `geography`, `file`].
 - The `file` type is added. IcebergCompatV3 does not allow it, because Iceberg V3 has no equivalent type. Iceberg V4 has the [`FILE` type](https://github.com/apache/iceberg/blob/main/format/spec.md#file-type), and the Delta [`file` type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/file-type.md) maps to it.
@@ -111,12 +113,16 @@ unreachable once those types are disallowed), and literal-only column write defa
 Because the tree is the complete, authoritative record of table content and may be written by an
 external Iceberg engine that does not honor Delta write-time semantics, any feature whose guarantee
 depends on the Delta writer validating or deriving content at write time cannot be upheld. Writers
-must ensure that each of the following is not active — for each feature, either its name is absent
-from `writerFeatures` or its enabling table property is not set to `true`:
+must ensure that none of the following features is active. Each feature may be present in
+`writerFeatures` only while its "Not Active Check" holds:
 
-- `invariants` and `checkConstraints` — write-time validation of column values that an external Iceberg writer does not perform.
-- `generatedColumns` and `identityColumns` — column values the Delta writer derives at write time (identity columns also maintain `delta.identity.highWaterMark`); an external Iceberg writer does not.
-- `changeDataFeed` — requires emitting `cdc` files for row-level changes, which an externally produced manifest commit does not, so the change feed would be incomplete. (`cdc` actions are never represented in the tree; see [Add CDC File](#add-cdc-file).)
+| Feature | Why it is incompatible | Not Active Check |
+|-|-|-|
+| `invariants` | Write-time validation of column values that an external Iceberg writer does not perform. | No column includes `delta.invariants` in its metadata |
+| `checkConstraints` | Write-time validation of column values that an external Iceberg writer does not perform. | No key in the `configuration` field of `metaData` starts with `delta.constraints.` |
+| `generatedColumns` | Column values the Delta writer derives at write time; an external Iceberg writer does not. | No column metadata contains the key `delta.generationExpression` |
+| `identityColumns` | Column values the Delta writer derives at write time, and `delta.identity.highWaterMark` maintenance; an external Iceberg writer does neither. | No column metadata contains any of the keys `delta.identity.start`, `delta.identity.step`, `delta.identity.highWaterMark`, `delta.identity.allowExplicitInsert` |
+| `changeDataFeed` | Requires `cdc` files for row-level changes, which an externally produced manifest commit does not emit, so the change feed would be incomplete. (`cdc` actions are never represented in the tree; see [Add CDC File](#add-cdc-file).) | The table property `delta.enableChangeDataFeed` does not exist or is not `true` |
 
 `clustering` may remain enabled: it only influences physical layout, so an external writer that does
 not maintain it still produces a correct tree. `appendOnly` may also remain enabled. As with
@@ -138,13 +144,13 @@ updated.
 The allowed features are:
 
 - `icebergNativeV4`, `adaptiveMetadata`, and every feature `adaptiveMetadata` transitively requires (including `columnMapping`, `deletionVectors`, and `rowTracking`).
-- `appendOnly`, `domainMetadata`, `vacuumProtocolCheck`, `inCommitTimestamp`, `clustering`, `timestampNtz`, `typeWidening`, `variantType`, `variantShredding`, `geometry`, `geography`, `fileType`, `catalogManaged`, `checkpointProtection`. `catalogManaged` only coordinates how commits are published, and `checkpointProtection` only constrains checkpoint removal during history cleanup; neither affects the content tree.
-
-> **NOTE:** `adaptiveMetadata` keeps files based on whether live table state can reach them. Bytes that a `file` value references are not reachable this way, so Delta does not protect them, including bytes under the default `_files` location. The system that owns their storage must retain them. See [File Data Type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/file-type.md).
+- `appendOnly`, `domainMetadata`, `vacuumProtocolCheck`, `inCommitTimestamp`, `clustering`, `timestampNtz`, `typeWidening`, `variantType`, `variantShredding`, `geospatial`, `fileType`, `materializePartitionColumns`, `allowColumnDefaults`, `catalogManaged`, `checkpointProtection`. `catalogManaged` only coordinates how commits are published, and `checkpointProtection` only constrains checkpoint removal during history cleanup; neither affects the content tree.
 - The features named under [Incompatible Table Features](#incompatible-table-features), which may be present only as inactive legacy carry-overs and only while the not-active checks in that section hold.
-- The Iceberg compatibility features `icebergCompatV1`, `icebergCompatV2`, `icebergCompatV3`, and `icebergWriterCompatV1` (which itself requires `icebergCompatV2` be present), which — per [Relationship to Iceberg Compatibility V1, V2, and V3](#relationship-to-iceberg-compatibility-v1-v2-and-v3) — may be present only while inactive.
+- The Iceberg compatibility features `icebergCompatV1`, `icebergCompatV2`, `icebergCompatV3`, `icebergWriterCompatV1` (which itself requires `icebergCompatV2` be present), and `icebergWriterCompatV3` (which itself requires `icebergCompatV3` be present), which — per [Relationship to Iceberg Compatibility V1, V2, and V3](#relationship-to-iceberg-compatibility-v1-v2-and-v3) — may be present only while inactive.
 
 Because `icebergNativeV4` is a writer feature, this allow-list governs `writerFeatures`; a reader-only feature (one absent from `writerFeatures`) is out of its scope.
+
+> **NOTE:** `adaptiveMetadata` keeps files based on whether live table state can reach them. Bytes that a `file` value references are not reachable this way, so Delta does not protect them, including bytes under the default `_files` location. The system that owns their storage must retain them. See [File Data Type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/file-type.md).
 
 ## Writer Requirements for IcebergNativeV4
 
