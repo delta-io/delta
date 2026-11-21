@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
-import java.util.Objects
+import java.lang.{Long => JLong}
+import java.util.{List => JList, Objects, Optional}
 
 import scala.util.control.NonFatal
 
@@ -24,6 +25,7 @@ import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.DeltaHistoryManager
 import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.files.ParsedCatalogCommitData
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
@@ -149,6 +151,97 @@ trait DeltaV2SnapshotManager {
       queryContext: DeltaV2QueryContext): CommitRange = {
     Objects.requireNonNull(queryContext, "queryContext is null")
     getTableChanges(kernelEngine, params)
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Shared time-travel implementation for managers backed by a loaded Kernel snapshot
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Resolves the commit active at a timestamp using a loaded Kernel snapshot and any catalog
+   * commits. Catalog commits participate in history resolution alongside commits available from
+   * the log. Implementation helper for `getActiveCommitAtTime`.
+   *
+   * @param kernelEngine engine used to read the transaction log
+   * @param snapshot loaded snapshot whose log and version bound the lookup
+   * @param catalogCommits catalog-managed commits visible to the loaded snapshot; empty for a
+   *   path-based table
+   * @param timestampMillis timestamp to resolve, in milliseconds since the epoch
+   * @param canReturnLastCommit whether a timestamp after the latest commit may return that commit
+   * @param mustBeRecreatable whether the returned commit must be recreatable from available files
+   * @param canReturnEarliestCommit whether a timestamp before history may return the earliest
+   *   commit
+   * @return the commit active at `timestampMillis`
+   */
+  protected def getActiveCommitAtTimeInSnapshot(
+      kernelEngine: Engine,
+      snapshot: SnapshotImpl,
+      catalogCommits: JList[ParsedCatalogCommitData],
+      timestampMillis: Long,
+      canReturnLastCommit: Boolean,
+      mustBeRecreatable: Boolean,
+      canReturnEarliestCommit: Boolean): DeltaHistoryManager.Commit = {
+    DeltaHistoryManager.getActiveCommitAtTimestamp(
+      kernelEngine,
+      snapshot,
+      snapshot.getLogPath,
+      timestampMillis,
+      mustBeRecreatable,
+      canReturnLastCommit,
+      canReturnEarliestCommit,
+      catalogCommits)
+  }
+
+  /**
+   * Validates a version against a loaded Kernel snapshot and the earliest available history. The
+   * minimum catalog-commit version bounds the filesystem search for the earliest version; an empty
+   * list performs the search without a catalog bound. Implementation helper for
+   * `checkVersionExists`.
+   *
+   * When `checkUpperBoundFirst` is true, an invalid upper bound is rejected before the filesystem
+   * lookup and reports zero as the earliest version. When false, the filesystem lookup happens
+   * first and an upper-bound error reports the actual earliest available version.
+   *
+   * @param kernelEngine engine used to read the transaction log
+   * @param snapshot loaded snapshot whose log and latest version bound the validation
+   * @param catalogCommits catalog-managed commits visible to the loaded snapshot; empty for a
+   *   path-based table
+   * @param version version to validate
+   * @param mustBeRecreatable whether the version must be recreatable from available files
+   * @param allowOutOfRange whether versions above the loaded snapshot are allowed
+   * @param checkUpperBoundFirst whether to reject an invalid upper bound before filesystem access
+   * @throws VersionNotFoundException if the requested version is unavailable
+   */
+  @throws[VersionNotFoundException]
+  protected def checkVersionExistsInSnapshot(
+      kernelEngine: Engine,
+      snapshot: SnapshotImpl,
+      catalogCommits: JList[ParsedCatalogCommitData],
+      version: Long,
+      mustBeRecreatable: Boolean,
+      allowOutOfRange: Boolean,
+      checkUpperBoundFirst: Boolean): Unit = {
+    val latest = snapshot.getVersion
+    if (checkUpperBoundFirst && version > latest && !allowOutOfRange) {
+      // The fast path skips the filesystem lookup, so it reports zero as the earliest version.
+      throw new VersionNotFoundException(version, 0L, latest)
+    }
+
+    val earliestCatalogCommitVersion: Optional[JLong] = {
+      val minVersion = catalogCommits.stream().mapToLong(_.getVersion).min()
+      if (minVersion.isPresent) Optional.of[JLong](minVersion.getAsLong) else Optional.empty()
+    }
+    val earliest = if (mustBeRecreatable) {
+      DeltaHistoryManager.getEarliestRecreatableCommit(
+        kernelEngine, snapshot.getLogPath, earliestCatalogCommitVersion)
+    } else {
+      DeltaHistoryManager.getEarliestDeltaFile(
+        kernelEngine, snapshot.getLogPath, earliestCatalogCommitVersion)
+    }
+
+    if (version < earliest || (!checkUpperBoundFirst && version > latest && !allowOutOfRange)) {
+      throw new VersionNotFoundException(version, earliest, latest)
+    }
   }
 }
 
