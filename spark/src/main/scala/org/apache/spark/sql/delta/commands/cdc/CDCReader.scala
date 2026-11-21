@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands.cdc
 
 import java.sql.Timestamp
 
-import scala.collection.mutable.{ListBuffer, Map => MutableMap}
+import scala.collection.mutable.{LinkedHashMap => MutableLinkedHashMap, ListBuffer, Map => MutableMap}
 import scala.util.Try
 
 import org.apache.spark.sql.delta._
@@ -161,6 +161,23 @@ object CDCReader extends CDCReaderImpl
       commitInfo: Option[CommitInfo],
       version: Long,
       timestamp: Timestamp)
+
+  /**
+   * A [[SnapshotDescriptor]] that is `snapshot` with other partition columns. It is used to read
+   * files that were written with those partition columns.
+   */
+  private[cdc] class SnapshotDescriptorWithPartitionColumns(
+      snapshot: SnapshotDescriptor,
+      partitionColumns: Seq[String]) extends SnapshotDescriptor {
+    override val deltaLog: DeltaLog = snapshot.deltaLog
+    override val version: Long = snapshot.version
+    override val metadata: Metadata = snapshot.metadata.copy(partitionColumns = partitionColumns)
+    override val protocol: Protocol = snapshot.protocol
+    override def dataPath: Path = snapshot.dataPath
+    override def logPath: Path = snapshot.logPath
+    override protected[delta] def numOfFilesIfKnown: Option[Long] = None
+    override protected[delta] def sizeInBytesIfKnown: Option[Long] = None
+  }
 }
 
 trait CDCReaderImpl extends CDCReaderBase {
@@ -190,6 +207,57 @@ trait CDCReaderImpl extends CDCReaderBase {
     isMerge && knownToHaveNoChangedRows
   }
 
+  /**
+   * Groups change data specs by the partition columns that their files were written with, so that
+   * each group can be read with its own partitioning.
+   *
+   * After a partition schema change, the files written before the change have other partition
+   * columns than the read schema. Reading them with the read schema's partitioning returns NULL for
+   * a former partition column that the file does not store, and NULL for a new partition column
+   * that the file stores as a data column.
+   *
+   * The partition columns of a file follow from the version of its spec (see
+   * [[CdfWrittenPartitioning]]), so grouping works on specs, not on files. A written partition
+   * column that the read schema does not have is left out, since it is not read. When `written`
+   * is None, every file was written with the read schema's partitioning and the specs are not
+   * grouped.
+   *
+   * @param removed whether the specs hold the files that their versions remove.
+   */
+  protected def groupByWrittenPartitioning[T <: FileAction](
+      specs: Seq[CDCDataSpec[T]],
+      snapshot: SnapshotDescriptor,
+      written: Option[CdfWrittenPartitioning],
+      removed: Boolean): Seq[(SnapshotDescriptor, Seq[CDCDataSpec[T]])] = written match {
+    case None => Seq(snapshot -> specs)
+    case Some(written) =>
+      val readPartitionColumns = snapshot.metadata.physicalPartitionColumns
+      // Partition columns are matched to the read schema by physical name.
+      val namesByPhysicalName = snapshot.metadata.schema.fields.map { f =>
+        DeltaColumnMapping.getPhysicalName(f) -> f.name
+      }.toMap
+      val groups = MutableLinkedHashMap[Seq[String], ListBuffer[CDCDataSpec[T]]]()
+      specs.foreach { spec =>
+        val metadata = if (removed) {
+          written.ofRemovedFiles(spec.version)
+        } else {
+          written.ofAddedFiles(spec.version)
+        }
+        // A written partition column that the read schema does not have is not read, and the
+        // other written partition columns still are.
+        val physicalColumns =
+          metadata.physicalPartitionColumns.filter(namesByPhysicalName.contains)
+        groups.getOrElseUpdate(physicalColumns, ListBuffer()) += spec
+      }
+      groups.toSeq.map { case (physicalColumns, groupSpecs) =>
+        if (physicalColumns == readPartitionColumns) {
+          snapshot -> groupSpecs.toSeq
+        } else {
+          new SnapshotDescriptorWithPartitionColumns(
+            snapshot, physicalColumns.map(namesByPhysicalName)) -> groupSpecs.toSeq
+        }
+      }
+  }
 
   /**
    * For a sequence of changes(AddFile, RemoveFile, AddCDCFile) create a DataFrame that represents
@@ -270,20 +338,28 @@ trait CDCReaderImpl extends CDCReaderBase {
     )
     val blockReadsAcrossPartitionSchemaChanges = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES)
+    val readFilesWithWrittenPartitioning = !isStreaming && spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_CDF_READ_FILES_WITH_WRITTEN_PARTITIONING)
 
-    // Track whether a partition schema change happens on a non-empty table. We could blindly
-    // reject all partition changes, but setting up an empty table and changing partitioning in a
-    // later commit is a valid pattern that we can support.
+    // Track the partition schema changes in the range. Without reading files with the partitioning
+    // they were written with, a partition schema change on a non-empty table blocks the read. We
+    // could blindly reject all partition changes, but setting up an empty table and changing
+    // partitioning in a later commit is a valid pattern that we can support. With it, the versions
+    // that change the partition columns tell which partitioning each file was written with.
     val partitionSchemaTracker = if (
-        checkSchemaToBlockRead && blockReadsAcrossPartitionSchemaChanges) {
-      val startSnapshot = startVersionSnapshot.collect { case snapshot: Snapshot => snapshot }
-        .getOrElse(loadedStartVersionSnapshot)
+        (checkSchemaToBlockRead && blockReadsAcrossPartitionSchemaChanges) ||
+          readFilesWithWrittenPartitioning) {
       Some(new CdfPartitionSchemaTracker(
-        startVersionMetadata.partitionColumns,
-        startSnapshotHasData = startSnapshot.numOfFiles > 0))
+        start,
+        startVersionMetadata,
+        startSnapshotHasData = startVersionSnapshot.collect { case snapshot: Snapshot => snapshot }
+          .getOrElse(loadedStartVersionSnapshot).numOfFiles > 0))
     } else {
       None
     }
+    // The metadata of the version before the start version, if the start version removes files and
+    // has a metadata action: the files it removes were written with that metadata.
+    var metadataBeforeStart: Option[Metadata] = None
 
     var totalBytes = 0L
     var numAddFiles, numRemoveFiles, numAddCDCFiles = 0L
@@ -308,7 +384,7 @@ trait CDCReaderImpl extends CDCReaderBase {
         // Removed files in that commit can use the previous schema, so we check it separately
         // when selecting those files for inferred CDC.
         actions.collect { case a: Metadata => a }.foreach { metadata =>
-          partitionSchemaTracker.ifDefined(_.processMetadata(metadata))
+          partitionSchemaTracker.ifDefined(_.processMetadata(v, metadata))
           if (v > start) {
             // Verify with start snapshot to check for any read-incompatible changes
             // This also detects the corner case in that there's only one schema change between
@@ -318,7 +394,11 @@ trait CDCReaderImpl extends CDCReaderBase {
               metadata, v, isSchemaChange = true)
           }
         }
-        partitionSchemaTracker.ifDefined(_.processActions(actions))
+        // Only the block decision needs to know whether the range changes data; reading files with
+        // the partitioning they were written with only needs the metadata, so no file is visited.
+        if (!readFilesWithWrittenPartitioning) {
+          partitionSchemaTracker.ifDefined(_.processActions(actions))
+        }
 
         // Set up buffers for all action types to avoid multiple passes.
         val cdcActions = ListBuffer[AddCDCFile]()
@@ -365,9 +445,21 @@ trait CDCReaderImpl extends CDCReaderBase {
             val addActions = actions.collect { case a: AddFile if changesDataFunc(a) => a }
             val removeActions = actions.collect { case r: RemoveFile if changesDataFunc(r) => r }
             if (v == start && removeActions.nonEmpty && actions.exists(_.isInstanceOf[Metadata])) {
+              // The schema check and the partitioning of the removed files both use the metadata
+              // of the version before the start version, so it is loaded once.
+              val previousMetadata =
+                if (checkSchemaToBlockRead || readFilesWithWrittenPartitioning) {
+                  loadMetadataBeforeStartVersion(readSchemaSnapshot, start, end, catalogTableOpt)
+                } else {
+                  None
+                }
               checkStartVersionRemovedFilesSchema(
-                readSchemaSnapshot, start, end, checkSchemaToBlockRead, catalogTableOpt,
+                readSchemaSnapshot, start, end, checkSchemaToBlockRead, previousMetadata,
                 operation = commitInfo.map(_.operation))
+              if (readFilesWithWrittenPartitioning) {
+                // Without it, the removed files are read with the start version's partitioning.
+                metadataBeforeStart = previousMetadata
+              }
             }
             numAddFiles += addActions.size
             numRemoveFiles += removeActions.size
@@ -400,6 +492,8 @@ trait CDCReaderImpl extends CDCReaderBase {
     // It is sufficient to just verify with the start version schema because we have already
     // verified that all data being queried is read-compatible with start schema.
     val blockOnIncompatiblePartitionSchema = partitionSchemaTracker match {
+      // Partition schema changes do not block the read; see checkBatchCdfReadSchemaIncompatibility.
+      case _ if readFilesWithWrittenPartitioning => false
       case Some(tracker) => tracker.blockStartVersionPartitionSchemaCheck
       case None => true
     }
@@ -410,18 +504,28 @@ trait CDCReaderImpl extends CDCReaderBase {
       isSchemaChange = false,
       blockOnIncompatiblePartitionSchema = blockOnIncompatiblePartitionSchema)
 
+    val writtenPartitioning = if (readFilesWithWrittenPartitioning) {
+      partitionSchemaTracker.flatMap(
+        _.writtenPartitioning(readSchemaSnapshot.metadata, metadataBeforeStart))
+    } else {
+      None
+    }
+
     val dfs = ListBuffer[DataFrame]()
     if (changeFiles.nonEmpty) {
-      dfs.append(scanIndex(
-        spark,
-        new TahoeChangeFileIndex(
-          spark, changeFiles.toSeq, deltaLog, deltaLog.dataPath, readSchemaSnapshot),
-        isStreaming))
+      groupByWrittenPartitioning(
+        changeFiles.toSeq, readSchemaSnapshot, writtenPartitioning, removed = false).foreach {
+        case (groupSnapshot, specs) =>
+          dfs.append(scanIndex(
+            spark,
+            new TahoeChangeFileIndex(spark, specs, deltaLog, deltaLog.dataPath, groupSnapshot),
+            isStreaming))
+      }
     }
 
     val deletedAndAddedRows = getDeletedAndAddedRows(
       addFiles.toSeq, removeFiles.toSeq, deltaLog,
-      readSchemaSnapshot, isStreaming, spark)
+      readSchemaSnapshot, isStreaming, spark, writtenPartitioning)
     dfs.append(deletedAndAddedRows: _*)
 
     val readSchema = cdcReadSchema(readSchemaSnapshot.metadata.schema)
@@ -481,7 +585,8 @@ trait CDCReaderImpl extends CDCReaderBase {
       deltaLog: DeltaLog,
       snapshot: SnapshotDescriptor,
       isStreaming: Boolean,
-      spark: SparkSession): Seq[DataFrame] = {
+      spark: SparkSession,
+      writtenPartitioning: Option[CdfWrittenPartitioning] = None): Seq[DataFrame] = {
     // Transform inputs to maps indexed by version and path and map each version to a CommitInfo
     // object.
     val versionToCommitInfo = MutableMap.empty[Long, CommitInfo]
@@ -527,24 +632,32 @@ trait CDCReaderImpl extends CDCReaderBase {
     val dfAddsAndRemoves = ListBuffer[DataFrame]()
 
     if (finalAddFilesSpecs.nonEmpty) {
-      dfAddsAndRemoves.append(
-        scanIndex(
-          spark,
-          new CdcAddFileIndex(spark, finalAddFilesSpecs, deltaLog, deltaLog.dataPath, snapshot),
-          isStreaming))
+      groupByWrittenPartitioning(
+        finalAddFilesSpecs, snapshot, writtenPartitioning, removed = false).foreach {
+        case (groupSnapshot, specs) =>
+          dfAddsAndRemoves.append(
+            scanIndex(
+              spark,
+              new CdcAddFileIndex(spark, specs, deltaLog, deltaLog.dataPath, groupSnapshot),
+              isStreaming))
+      }
     }
 
     if (finalRemoveFilesSpecs.nonEmpty) {
-      dfAddsAndRemoves.append(
-        scanIndex(
-          spark,
-          new TahoeRemoveFileIndex(
-            spark,
-            finalRemoveFilesSpecs,
-            deltaLog,
-            deltaLog.dataPath,
-            snapshot),
-          isStreaming))
+      groupByWrittenPartitioning(
+        finalRemoveFilesSpecs, snapshot, writtenPartitioning, removed = true).foreach {
+        case (groupSnapshot, specs) =>
+          dfAddsAndRemoves.append(
+            scanIndex(
+              spark,
+              new TahoeRemoveFileIndex(
+                spark,
+                specs,
+                deltaLog,
+                deltaLog.dataPath,
+                groupSnapshot),
+              isStreaming))
+      }
     }
 
     val dfGeneratedDvScanActions = processDeletionVectorActions(
@@ -554,7 +667,8 @@ trait CDCReaderImpl extends CDCReaderBase {
       deltaLog,
       snapshot,
       isStreaming,
-      spark)
+      spark,
+      writtenPartitioning)
 
     dfAddsAndRemoves.toSeq ++ dfGeneratedDvScanActions
   }
@@ -566,7 +680,8 @@ trait CDCReaderImpl extends CDCReaderBase {
       deltaLog: DeltaLog,
       snapshot: SnapshotDescriptor,
       isStreaming: Boolean,
-      spark: SparkSession): Seq[DataFrame] = {
+      spark: SparkSession,
+      writtenPartitioning: Option[CdfWrittenPartitioning] = None): Seq[DataFrame] = {
     val finalReplaceAddFiles = MutableMap[TableVersion, ListBuffer[AddFile]]()
     val finalReplaceRemoveFiles = MutableMap[TableVersion, ListBuffer[RemoveFile]]()
 
@@ -597,36 +712,44 @@ trait CDCReaderImpl extends CDCReaderBase {
     // see explanation in [[generateFileActionsWithInlineDv]].
     finalReplaceAddFiles.foreach { case (tableVersion, addFiles) =>
       val commitInfo = versionToCommitInfo.get(tableVersion.version)
-      dfs.append(
-        scanIndex(
-          spark,
-          new CdcAddFileIndex(
-            spark,
-            Seq(new CDCDataSpec(tableVersion, addFiles.toSeq, commitInfo)),
-            deltaLog,
-            deltaLog.dataPath,
-            snapshot,
-            rowIndexFilters =
-              Some(fileActionsToIfNotContainedRowIndexFilters(addFiles.toSeq))),
-          isStreaming))
+      val specs = Seq(new CDCDataSpec(tableVersion, addFiles.toSeq, commitInfo))
+      groupByWrittenPartitioning(specs, snapshot, writtenPartitioning, removed = false).foreach {
+        case (groupSnapshot, groupSpecs) =>
+          dfs.append(
+            scanIndex(
+              spark,
+              new CdcAddFileIndex(
+                spark,
+                groupSpecs,
+                deltaLog,
+                deltaLog.dataPath,
+                groupSnapshot,
+                rowIndexFilters = Some(
+                  fileActionsToIfNotContainedRowIndexFilters(groupSpecs.flatMap(_.actions)))),
+              isStreaming))
+      }
     }
 
     // Scan for masked rows as change_type = "delete",
     // see explanation in [[generateFileActionsWithInlineDv]].
     finalReplaceRemoveFiles.foreach { case (tableVersion, removeFiles) =>
       val commitInfo = versionToCommitInfo.get(tableVersion.version)
-      dfs.append(
-        scanIndex(
-          spark,
-          new TahoeRemoveFileIndex(
-            spark,
-            Seq(new CDCDataSpec(tableVersion, removeFiles.toSeq, commitInfo)),
-            deltaLog,
-            deltaLog.dataPath,
-            snapshot,
-            rowIndexFilters =
-              Some(fileActionsToIfNotContainedRowIndexFilters(removeFiles.toSeq))),
-          isStreaming))
+      val specs = Seq(new CDCDataSpec(tableVersion, removeFiles.toSeq, commitInfo))
+      groupByWrittenPartitioning(specs, snapshot, writtenPartitioning, removed = true).foreach {
+        case (groupSnapshot, groupSpecs) =>
+          dfs.append(
+            scanIndex(
+              spark,
+              new TahoeRemoveFileIndex(
+                spark,
+                groupSpecs,
+                deltaLog,
+                deltaLog.dataPath,
+                groupSnapshot,
+                rowIndexFilters = Some(
+                  fileActionsToIfNotContainedRowIndexFilters(groupSpecs.flatMap(_.actions)))),
+              isStreaming))
+      }
     }
 
     dfs.toSeq
