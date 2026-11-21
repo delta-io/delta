@@ -45,8 +45,12 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
   test("can cast to") {
     ALL_TYPES.foreach { fromType =>
       ALL_TYPES.foreach { toType =>
-        assert(canCastTo(fromType, toType) ===
-          allowedCasts.contains((fromType, toType)))
+        val expected = allowedCasts.contains((fromType, toType)) ||
+          // DECIMAL can widen to itself (same precision and scale)
+          (fromType.isInstanceOf[DecimalType] && fromType == toType)
+        assert(
+          canCastTo(fromType, toType) === expected,
+          s"canCastTo($fromType, $toType) expected $expected")
       }
     }
   }
@@ -104,6 +108,46 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
   // Utility method to generate a value based on the rowId. Returned value is a double
   // which the callers can cast to appropriate numerical type.
   private def generateValue(rowId: Int): Double = rowId * 2.76 + 7623
+
+  test("canCastTo: Decimal widening") {
+    assert(canCastTo(new DecimalType(15, 5), new DecimalType(16, 5)))
+    assert(canCastTo(new DecimalType(10, 2), new DecimalType(18, 6)))
+    assert(canCastTo(new DecimalType(10, 2), new DecimalType(10, 2))) // same type
+    assert(!canCastTo(new DecimalType(16, 5), new DecimalType(15, 5))) // narrowing
+    assert(!canCastTo(new DecimalType(10, 6), new DecimalType(10, 5))) // scale narrowing
+    assert(!canCastTo(
+      new DecimalType(10, 2),
+      new DecimalType(11, 6)
+    )) // integer part narrows: 8 -> 5
+  }
+
+  test("eval cast expression: Decimal(15,5) -> Decimal(16,5)") {
+    val fromType = new DecimalType(15, 5)
+    val toType = new DecimalType(16, 5)
+    val testValues = Seq(
+      java.math.BigDecimal.valueOf(12345, 5),
+      java.math.BigDecimal.valueOf(-99999, 5),
+      java.math.BigDecimal.ZERO.setScale(5),
+      null
+    ) // null row to validate null propagation
+    val nullIndex = 3
+    val inputVector = new ColumnVector {
+      override def getDataType: DataType = fromType
+      override def getSize: Int = testValues.size
+      override def close(): Unit = {}
+      override def isNullAt(rowId: Int): Boolean = rowId == nullIndex
+      override def getDecimal(rowId: Int): java.math.BigDecimal = testValues(rowId)
+    }
+    val outputVector = new ImplicitCastExpression(new Column("id"), toType).eval(inputVector)
+    assert(outputVector.getDataType === toType)
+    assert(outputVector.getSize === testValues.size)
+    for (i <- testValues.indices) {
+      assert(outputVector.isNullAt(i) === (i == nullIndex))
+      if (i != nullIndex) {
+        assert(outputVector.getDecimal(i).compareTo(testValues(i)) == 0)
+      }
+    }
+  }
 
   private def checkCastOutput(input: ColumnVector, toType: DataType, output: ColumnVector): Unit = {
     assert(input.getSize === output.getSize)
