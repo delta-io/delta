@@ -22,7 +22,7 @@ import java.sql.Timestamp
 import scala.concurrent.duration._
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaLog, DeltaTimeTravelTestHelpers, InCommitTimestampTestUtils, VersionNotFoundException}
-import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
+import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, noonDaysAgo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -123,7 +123,7 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
   test("SQL TIMESTAMP AS OF before the earliest recreatable commit fails") {
     val tbl = "delta_tt_v2_ts_recreatable"
     withTable(tbl) {
-      val start = System.currentTimeMillis() - 5.days.toMillis
+      val start = noonDaysAgo(5)
       inV1 {
         // v0, v1, v2. Checkpoint at v2, then delete v0's commit file.
         generateCommits(tbl, start, start + 20.minutes, start + 40.minutes)
@@ -144,7 +144,7 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
 
   test("SQL TIMESTAMP AS OF reflects the historical schema before a column was added") {
     val tbl = "delta_tt_v2_ts_schema"
-    val start = System.currentTimeMillis() - 5.days.toMillis
+    val start = noonDaysAgo(5)
     withTable(tbl) {
       inV1 {
         sql(s"CREATE TABLE $tbl (id INT) USING delta")      // v0
@@ -419,7 +419,7 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
   test("DataFrame timestampAsOf resolves to the commit active at that time") {
     val tbl = "delta_tt_v2_df_ts"
     withTable(tbl) {
-      val start = System.currentTimeMillis() - 5.days.toMillis
+      val start = noonDaysAgo(5)
       inV1 { generateCommits(tbl, start, start + 20.minutes, start + 40.minutes) }
 
       // A timestamp between commits resolves to the commit active at that time.
@@ -458,7 +458,7 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
   test("DataFrame timestampAsOf before the earliest recreatable commit fails") {
     val tbl = "delta_tt_v2_df_ts_recreatable"
     withTable(tbl) {
-      val start = System.currentTimeMillis() - 5.days.toMillis
+      val start = noonDaysAgo(5)
       inV1 {
         // v0, v1, v2. Checkpoint at v2, then delete v0's commit file.
         generateCommits(tbl, start, start + 20.minutes, start + 40.minutes)
@@ -477,7 +477,7 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
 
   test("DataFrame timestampAsOf reflects the historical schema before a column was added") {
     val tbl = "delta_tt_v2_df_ts_schema"
-    val start = System.currentTimeMillis() - 5.days.toMillis
+    val start = noonDaysAgo(5)
     withTable(tbl) {
       inV1 {
         sql(s"CREATE TABLE $tbl (id INT) USING delta")      // v0
@@ -723,7 +723,7 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
       val tbl = "delta_tt_v2_path_ts"
       val path = dir.getCanonicalPath
       withTable(tbl) {
-        val start = System.currentTimeMillis() - 5.days.toMillis
+        val start = noonDaysAgo(5)
         inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes, start + 40.minutes) }
 
         val q = s"delta.`$path`"
@@ -772,7 +772,7 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
       val tbl = "delta_tt_v2_path_ts_recreatable"
       val path = dir.getCanonicalPath
       withTable(tbl) {
-        val start = System.currentTimeMillis() - 5.days.toMillis
+        val start = noonDaysAgo(5)
         inV1 {
           // v0, v1, v2. Checkpoint at v2, then delete v0's commit file.
           generateCommitsAtPath(tbl, path, start, start + 20.minutes, start + 40.minutes)
@@ -796,7 +796,7 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
     withTempDir { dir =>
       val tbl = "delta_tt_v2_path_ts_schema"
       val path = dir.getCanonicalPath
-      val start = System.currentTimeMillis() - 5.days.toMillis
+      val start = noonDaysAgo(5)
       withTable(tbl) {
         inV1 {
           sql(s"CREATE TABLE $tbl (id INT) USING delta LOCATION '$path'") // v0
@@ -933,7 +933,7 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
       val tbl = "delta_tt_v2_at_ts"
       val path = dir.getCanonicalPath
       withTable(tbl) {
-        val start = System.currentTimeMillis() - 5.days.toMillis
+        val start = noonDaysAgo(5)
         inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes, start + 40.minutes) }
 
         // A timestamp between commits resolves to the commit active at that time.

@@ -28,7 +28,7 @@ import scala.language.implicitConversions
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
-import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, modifyCommitTimestamp}
+import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, modifyCommitTimestamp, noonDaysAgo}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -281,7 +281,7 @@ trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
   test("as of timestamp on exact timestamp") {
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = System.currentTimeMillis() - 5.days.toMillis
+      val start = noonDaysAgo(5)
       generateCommits(tblName, start, start + 20.minutes)
 
       // Simulate getting the timestamp directly from Spark SQL
