@@ -1,16 +1,7 @@
 name: "Delta Flink"
 
 on:
-  push:
-    branches: [master, branch-*]
-    paths:
-      - 'flink/**'
-      - 'kernel/**'
-      - 'build.sbt'
-      - 'project/CrossFlinkVersions.scala'
-      - '.github/workflows/flink_test.yaml'
-      - '!**/*.md'
-      - '!**/*.txt'
+  workflow_call:
   pull_request:
     branches: [master, branch-*]
     paths:
@@ -22,10 +13,10 @@ on:
       - '!**/*.md'
       - '!**/*.txt'
 
-# Cancel previous runs when new commits are pushed
+# Cancel superseded PR runs; use a unique group for calls from Master CI.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.event.pull_request.number) || format('flink-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Point SBT to our cache directories for consistency.

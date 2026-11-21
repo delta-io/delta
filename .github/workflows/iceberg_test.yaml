@@ -1,15 +1,12 @@
 name: "Delta Iceberg Latest"
 on:
-  push:
-    branches: [master, branch-*]
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
+  workflow_call:
   pull_request:
     branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
+
 jobs:
   test:
     name: "DIL: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}"
