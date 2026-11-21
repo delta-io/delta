@@ -235,7 +235,7 @@ class DeltaAnalysis(protected val session: SparkSession)
             isEnablingCatalogManagedViaExplicitPropertyOverrides = true
           }
 
-          val config =
+          var config =
             sourceMetadata.configuration.-("delta.columnMapping.maxColumnId")
               .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
               .-(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
@@ -244,6 +244,12 @@ class DeltaAnalysis(protected val session: SparkSession)
               .filterKeys(!InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(_)).toMap
               // Catalog-Managed: Do not copy table UUID from source table
               .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY).toMap
+          // The checkpoint protection version is a version of the source's log. The target is a
+          // new table with no history to protect.
+          if (conf.getConf(
+              DeltaSQLConf.DELTA_CREATE_TABLE_LIKE_STRIP_SOURCE_CHECKPOINT_PROTECTION_VERSION)) {
+            config -= DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+          }
 
           new CatalogTable(
             identifier = targetTableIdentifier,
