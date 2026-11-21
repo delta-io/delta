@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.perf
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaLog, DeltaOperations, DeltaTestUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase
@@ -34,6 +34,7 @@ import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 
 class OptimizeMetadataOnlyDeltaQuerySuite
@@ -95,6 +96,42 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       totalRows = result.getLong(0)
       minId = result.getLong(1)
       maxId = result.getLong(2)
+    }
+  }
+
+  test("malformed partition values in metadata-only aggregates match reads") {
+    val table = "metadata_aggregate_malformed_partition"
+    withTable(table) {
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
+        sql(s"CREATE TABLE $table (id INT, part INT) USING DELTA PARTITIONED BY (part)")
+        sql(s"INSERT INTO $table VALUES (1, 1), (2, 2)")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
+        val snapshot = deltaLog.update()
+        val partitionField = snapshot.metadata.partitionSchema("part")
+        val partitionKey = DeltaColumnMapping.getPhysicalName(partitionField)
+        val file = snapshot.allFiles.collect().find(_.partitionValues(partitionKey) == "1").get
+        deltaLog.startTransaction().commit(
+          Seq(file.copy(partitionValues = Map(partitionKey -> "abc"))),
+          DeltaOperations.ManualUpdate)
+
+        for {
+          ansiEnabled <- Seq("true", "false")
+          useMetadata <- Seq("true", "false")
+        } {
+          withSQLConf(
+              SQLConf.ANSI_ENABLED.key -> ansiEnabled,
+              DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> useMetadata) {
+            withClue(s"ansi=$ansiEnabled, metadata optimization=$useMetadata: ") {
+              checkAnswer(sql(s"SELECT COUNT(*) FROM $table"), Row(2L))
+              val df = sql(s"SELECT COUNT(*), MIN(part), MAX(part) FROM $table")
+              checkAnswer(df, Row(2L, 2, 2))
+              assert(df.queryExecution.optimizedPlan.isInstanceOf[LocalRelation] ==
+                (useMetadata == "true"))
+            }
+          }
+        }
+      }
     }
   }
 
