@@ -20,6 +20,7 @@ import java.io.File
 import java.lang.ref.Reference
 import java.net.URI
 import java.util.concurrent.{Callable, ExecutorService, TimeUnit}
+
 import java.util.concurrent.Executors
 
 import org.apache.spark.sql.delta.DeltaLog
