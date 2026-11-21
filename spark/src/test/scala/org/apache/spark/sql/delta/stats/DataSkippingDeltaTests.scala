@@ -1880,6 +1880,58 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
     }
   }
 
+  testSkipping(
+    "IN list tests each value against the file's range",
+    """{"a": 1, "b": {"c": "d"}, "s": "d"}
+      |{"a": 10, "b": {"c": "m"}, "s": "m"}""".stripMargin,
+    hits = Seq(
+      "a IN (1, 20)",
+      "a IN (-1, 5, 20)",
+      "a IN (10, 11)",
+      "a IN (NULL, 5)",
+      "b.c IN ('a', 'f')",
+      "s IN ('a', 'f', 'z')",
+      s"a IN (${((100 until 1099) :+ 7).mkString(", ")})"),
+    misses = Seq(
+      "a IN (0, 11)",
+      "a IN (-5, -1, 11, 20)",
+      "a IN (NULL, 0, 11)",
+      "b.c IN ('a', 'n')",
+      "s IN ('a', 'c', 'n', 'z')",
+      s"a IN (${(-1000 until 0).mkString(", ")}, ${(11 until 1011).mkString(", ")})"))
+
+  testSkipping(
+    "IN list longer than skipping.inList.exactMaxValues uses the range of the list",
+    """{"a": 1}
+      |{"a": 10}""".stripMargin,
+    hits = Seq("a IN (0, 11)", "a IN (1, 20)"),
+    misses = Seq("a IN (11, 20)", "a IN (-5, 0)"),
+    sqlConfs = Seq(DeltaSQLConf.DELTA_DATASKIPPING_IN_LIST_EXACT_MAX_VALUES.key -> "1"))
+
+  for (timestampType <- Seq("TIMESTAMP", "TIMESTAMP_NTZ")) {
+    test(s"data skipping on $timestampType IN list") {
+      val df = Seq("2019-09-09 01:02:03.456789").toDF("strTs")
+        .selectExpr(s"CAST(strTs AS $timestampType) AS ts")
+      val t = "ds_timestamp_in_list"
+      withTable(t) {
+        df.coalesce(1).write.format("delta").saveAsTable(t)
+        def ts(value: String): String = s"""cast("$value" AS $timestampType)"""
+        checkSkipping(
+          DeltaLog.forTable(spark, TableIdentifier(t)),
+          hits = Seq(
+            s"ts IN (${ts("2019-09-09 01:02:03.456789")}, ${ts("2030-01-01 00:00:00")})",
+            s"ts IN (${ts("2010-01-01 00:00:00")}, ${ts("2019-09-09 01:02:03.456999")})"),
+          // The statistics are truncated to milliseconds, so only values outside of
+          // [01:02:03.456, 01:02:03.457] can be skipped.
+          misses = Seq(
+            s"ts IN (${ts("2019-09-09 01:02:03.457001")}, ${ts("2030-01-01 00:00:00")})",
+            s"ts IN (${ts("2010-01-01 00:00:00")}, ${ts("2019-09-09 01:02:03.455999")})"),
+          data = "2019-09-09 01:02:03.456789",
+          checkEmptyUnusedFiltersForHits = false)
+      }
+    }
+  }
+
   for (timestampType <- Seq("TIMESTAMP", "TIMESTAMP_NTZ")) {
     test(s"data skipping on $timestampType with Long.MaxValue") {
       val maxVal = "294247-01-10 04:00:54.775807Z"

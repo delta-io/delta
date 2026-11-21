@@ -86,7 +86,9 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     // Prune non-matching files if we don't need to collect them for NOT MATCHED BY SOURCE clauses.
     val dataSkippedFiles =
       if (notMatchedBySourceClauses.isEmpty) {
-        deltaTxn.filterFiles(getTargetOnlyPredicates(spark), keepNumRecords = true)
+        deltaTxn.filterFiles(
+          getTargetOnlyPredicates(spark) ++ getSourceKeyFilePruningPredicates(spark),
+          keepNumRecords = true)
       } else {
         deltaTxn.filterFiles(filters = Seq(Literal.TrueLiteral), keepNumRecords = true)
       }
