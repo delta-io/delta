@@ -149,20 +149,8 @@ public class MetadataEvolutionHandler {
    *
    * <p>V2 port of V1's {@code DeltaSourceMetadataEvolutionSupport.shouldTrackMetadataChange}.
    */
-  public boolean shouldTrackMetadataChange() {
+  boolean shouldTrackMetadataChange() {
     return DeltaSourceMetadataEvolutionSupport$.MODULE$.shouldTrackMetadataChange(
-        schemaReadOptions, metadataTrackingLog);
-  }
-
-  /**
-   * Whether the tracking log is provided but still empty, so it should be initialized eagerly on
-   * the first batch. Should only be consulted before the first write to the log.
-   *
-   * <p>V2 port of V1's {@code
-   * DeltaSourceMetadataEvolutionSupport.shouldInitializeMetadataTrackingEagerly}.
-   */
-  public boolean shouldInitializeMetadataTrackingEagerly() {
-    return DeltaSourceMetadataEvolutionSupport$.MODULE$.shouldInitializeMetadataTrackingEagerly(
         schemaReadOptions, metadataTrackingLog);
   }
 

@@ -101,7 +101,7 @@ private[read] class DeltaV2MicroBatchStream(
       ddlOrderedReadOutputSchema: StructType,
       inputDataFilters: Array[Filter],
       scalaOptions: scala.collection.immutable.Map[String, String],
-      metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog],
+      override protected val metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog],
       metadataPath: String,
       originalStreamingQueryContext: DeltaV2QueryContext)
     extends MicroBatchStream
@@ -258,9 +258,6 @@ private[read] class DeltaV2MicroBatchStream(
           readSnapshotDescriptor,
           metadataPath)
 
-  override protected def trackingMetadataChange: Boolean =
-      metadataEvolutionHandler.shouldTrackMetadataChange()
-
   locally {
     val shouldValidateSchemaOnRestart: Boolean =
         spark
@@ -270,7 +267,7 @@ private[read] class DeltaV2MicroBatchStream(
     // When schema tracking is enabled, the MetadataEvolutionHandler manages schema changes via
     // the schema log; the analysis-vs-snapshot mismatch this check guards against is expected on
     // restart and is surfaced via the schema-log evolution exception instead.
-    if (shouldValidateSchemaOnRestart && !metadataEvolutionHandler.shouldTrackMetadataChange()) {
+    if (shouldValidateSchemaOnRestart && !trackingMetadataChange) {
       validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit)
     }
   }
@@ -419,7 +416,7 @@ private[read] class DeltaV2MicroBatchStream(
     // Initialize schema tracking log eagerly if possible (fresh stream, first batch).
     // This mirrors v1's getStartingOffsetFromSpecificDeltaVersion eager init path.
     if (isFirstBatch) {
-      if (metadataEvolutionHandler.shouldInitializeMetadataTrackingEagerly()) {
+      if (readyToInitializeMetadataTrackingEagerly) {
         metadataEvolutionHandler.initializeMetadataTrackingAndExitStream(
             previousOffset.reservoirVersion,
             /* batchEndVersion= */ null,
@@ -432,7 +429,7 @@ private[read] class DeltaV2MicroBatchStream(
       } else {
         startVersionForMetadataLogInit = previousOffset.reservoirVersion
       }
-      if (metadataEvolutionHandler.shouldInitializeMetadataTrackingEagerly()) {
+      if (readyToInitializeMetadataTrackingEagerly) {
         metadataEvolutionHandler.initializeMetadataTrackingAndExitStream(
             startVersionForMetadataLogInit,
             /* batchEndVersion= */ null,
@@ -443,7 +440,7 @@ private[read] class DeltaV2MicroBatchStream(
     }
 
     // Handle pending schema change offsets (two-barrier protocol).
-    if (metadataEvolutionHandler.shouldTrackMetadataChange()) {
+    if (trackingMetadataChange) {
       val pendingOffset: Option[DeltaSourceOffset] =
           ScalaUtils.toScalaOption(
               metadataEvolutionHandler.getNextOffsetFromPreviousOffsetIfPendingSchemaChange(
@@ -922,7 +919,7 @@ private[read] class DeltaV2MicroBatchStream(
       endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
     // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
     require(
-      options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+      options.failOnDataLoss || !trackingMetadataChange,
       "Using schema from schema tracking log cannot tolerate missing commit files.")
     val commits: ClosableIterator[DeltaSingleCommit] =
         streamingBackend.getSingleCommitIterator(
@@ -944,7 +941,7 @@ private[read] class DeltaV2MicroBatchStream(
       endOffset: Optional[DeltaSourceOffset]): ClosableIterator[(IndexedFile, CDCDataFile)] = {
     // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
     require(
-      options.failOnDataLoss || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+      options.failOnDataLoss || !trackingMetadataChange,
       "Using schema from schema tracking log cannot tolerate missing commit files.")
     var commits: ClosableIterator[DeltaSingleCommit] =
         streamingBackend.getSingleCommitIterator(
@@ -995,7 +992,6 @@ private[read] class DeltaV2MicroBatchStream(
       //
       // When schema tracking is enabled, skip per-commit metadata verification - the handler
       // manages schema changes through the barrier protocol instead.
-      val trackingMetadataChange: Boolean = metadataEvolutionHandler.shouldTrackMetadataChange()
       val validationResult: CommitValidationResult =
           validateCommitAndDecideSkipping(
               commit,
@@ -1188,7 +1184,7 @@ private[read] class DeltaV2MicroBatchStream(
         } else endOffset.reservoirVersion
 
     // For eager initialization, we initialize the log right now.
-    if (metadataEvolutionHandler.shouldInitializeMetadataTrackingEagerly()) {
+    if (readyToInitializeMetadataTrackingEagerly) {
       metadataEvolutionHandler.initializeMetadataTrackingAndExitStream(
           startVersion,
           endVersionForMetadataLogInit,
@@ -1226,7 +1222,7 @@ private[read] class DeltaV2MicroBatchStream(
       batchStartVersion: Long, batchEndVersion: Option[Long]): Unit = {
     // When schema tracking is enabled, the MetadataEvolutionHandler manages schema changes
     // through the barrier protocol - skip the traditional compatibility check.
-    if (metadataEvolutionHandler.shouldTrackMetadataChange()) return
+    if (trackingMetadataChange) return
 
     if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return
 
@@ -1317,7 +1313,7 @@ private[read] class DeltaV2MicroBatchStream(
       //    changes inside initial snapshot, we will then be reading the files using a wrong schema!
       // The below logic allows us to detect any discrepancies when reading initial snapshot using
       // a tracked schema, and reinitialize the log if needed.
-      if (metadataEvolutionHandler.shouldTrackMetadataChange()
+      if (trackingMetadataChange
           && initialSnapshot.snapshot.version >= readSnapshotDescriptor.version) {
         metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(
             snapshot.metadata,
@@ -1400,8 +1396,6 @@ private[read] class DeltaV2MicroBatchStream(
       timestamp: Long,
       startVersion: Long,
       endOffsetOpt: Optional[DeltaSourceOffset]): List[(IndexedFile, CDCDataFile)] = {
-    val trackingMetadataChange: Boolean = metadataEvolutionHandler.shouldTrackMetadataChange()
-
     // Phase 1: scan actions to validate metadata and collect CDC/Add/Remove files.
     val explicitCdcFiles: List[CDCDataFile] = new ArrayList[CDCDataFile]()
     // Single ordered list for inferred CDC files, preserving delta-log action ordering.
