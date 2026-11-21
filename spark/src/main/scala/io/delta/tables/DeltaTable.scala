@@ -107,7 +107,8 @@ class DeltaTable private[tables](
    * maintaining older versions up to the given retention threshold. This method will return an
    * empty DataFrame on successful completion.
    *
-   * note: This will use the default retention period of 7 days.
+   * note: Uses `delta.deletedFileRetentionDuration`. That property defaults to
+   *       7 days when unset.
    *
    * @since 0.3.0
    */
