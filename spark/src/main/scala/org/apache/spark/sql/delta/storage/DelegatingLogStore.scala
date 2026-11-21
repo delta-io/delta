@@ -112,7 +112,7 @@ class DelegatingLogStore(hadoopConf: Configuration)
                 log"Use a supported Hadoop S3A filesystem with conditional creation enabled.")
             }
             val actualLogStoreClassName = logStore match {
-              case lsa: LogStoreAdaptor => s"LogStoreAdapter(${lsa.logStoreImpl.getClass.getName})"
+              case lsa: LogStoreAdaptor => s"LogStoreAdaptor(${lsa.logStoreImpl.getClass.getName})"
               case _ => logStore.getClass.getName
             }
             logInfo(log"LogStore ${MDC(DeltaLogKeys.SYSTEM_CLASS_NAME, actualLogStoreClassName)} " +
