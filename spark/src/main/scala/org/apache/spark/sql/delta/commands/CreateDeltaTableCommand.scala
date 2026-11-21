@@ -619,6 +619,26 @@ case class CreateDeltaTableCommand(
   }
 
   /**
+   * When creating a table over a location that already has a Delta table, the specified table
+   * properties must match the existing ones. CREATE TABLE LIKE does not copy
+   * [[DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION]] from its source, so its command
+   * does not carry the value that the existing table stores.
+   */
+  private def filterCheckpointProtectionVersion(
+      sparkSession: SparkSession,
+      existingProperties: Map[String, String],
+      tableProperties: Map[String, String]): Map[String, String] = {
+    val key = DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+    if (sparkSession.conf.get(
+          DeltaSQLConf.DELTA_CREATE_TABLE_LIKE_STRIP_SOURCE_CHECKPOINT_PROTECTION_VERSION) &&
+        !tableProperties.contains(key)) {
+      existingProperties - key
+    } else {
+      existingProperties
+    }
+  }
+
+  /**
    * Schema diffs for CREATE TABLE over an existing location. Always compare field order.
    * Fail CREATE on an order mismatch only when the flag is on; otherwise log a usage event.
    * A bug in the check must not fail CREATE. The usage event records the table id,
@@ -732,6 +752,8 @@ case class CreateDeltaTableCommand(
         }
         filteredExistingProperties =
           filterCoordinatedCommitsProperties(filteredExistingProperties, filteredTableProperties)
+        filteredExistingProperties = filterCheckpointProtectionVersion(
+          sparkSession, filteredExistingProperties, filteredTableProperties)
         if (filteredTableProperties != filteredExistingProperties) {
           throw DeltaErrors.createTableWithDifferentPropertiesException(
             path, filteredTableProperties, filteredExistingProperties)
