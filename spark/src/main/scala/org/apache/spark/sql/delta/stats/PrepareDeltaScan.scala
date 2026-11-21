@@ -192,6 +192,16 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     }
   }
 
+  /**
+   * Whether `plan` is a DataSourceV2 write plan that this rule should skip. By default we skip
+   * all of them, since Delta writes get planned again later through a V1 fallback. Subclasses
+   * whose writes don't go through that fallback should override this so their scans still get
+   * prepared.
+   */
+  protected def shouldSkipV2WritePlan(plan: LogicalPlan): Boolean = {
+    plan.isInstanceOf[V2WriteCommand]
+  }
+
   override def apply(_plan: LogicalPlan): LogicalPlan = {
     var plan = _plan
 
