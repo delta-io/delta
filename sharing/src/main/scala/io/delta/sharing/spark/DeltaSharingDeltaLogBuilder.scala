@@ -136,14 +136,25 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       client.getProfileProvider.getCustomTablePath(tablePath),
       snapshotQueryParamsHashId
     )
+    // A response version does not fix recipient filters or best-effort file subsets. Scope
+    // immutable log blocks to their contents, while keeping the data and URL cache identity.
+    val logTablePath = if (useResponseVersion) {
+      DeltaSharingUtils.getTablePathWithIdSuffix(
+        tablePathWithHashIdSuffix,
+        DeltaSharingLogFileSystem.snapshotContentsHash(deltaTableFiles.lines))
+    } else {
+      tablePathWithHashIdSuffix
+    }
     val deltaLogMetadata = DeltaSharingLogFileSystem.constructLocalDeltaLogAtVersionZero(
       deltaTableFiles.lines,
-      tablePathWithHashIdSuffix
+      logTablePath,
+      overwriteBlocks = !useResponseVersion,
+      dataTablePath = Some(tablePathWithHashIdSuffix)
     )
 
     // 3. Carry the (pre-computed) registration inputs; registerPreSignedUrls does the register.
     UnregisteredSnapshotDeltaLog(
-      encodedPath = DeltaSharingLogFileSystem.encode(tablePathWithHashIdSuffix),
+      encodedPath = DeltaSharingLogFileSystem.encode(logTablePath),
       // Using tablePath directly because it will be customized within CachedTableManager.
       registrationTablePath =
         DeltaSharingUtils.getTablePathWithIdSuffix(tablePath, snapshotQueryParamsHashId),

@@ -16,6 +16,7 @@
 
 package io.delta.sharing.spark
 
+import java.io.{FileNotFoundException, IOException}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.text.SimpleDateFormat
 import java.util.{TimeZone, UUID}
@@ -287,6 +288,25 @@ object DeltaSharingUtils extends Logging {
       level = StorageLevel.MEMORY_AND_DISK_SER,
       tellMaster = true
     )
+  }
+
+  /** Insert an immutable snapshot block and return its contents. The caller must exhaust them. */
+  def putSnapshotBlockIfAbsent[T: ClassTag](
+      blockId: BlockId,
+      values: Iterator[T]): Iterator[T] = {
+    assert(
+      blockId.name.startsWith(DELTA_SHARING_BLOCK_ID_PREFIX),
+      s"invalid delta sharing log block id: $blockId")
+    val blockManager = SparkEnv.get.blockManager
+    if (!blockManager.putIterator(
+        blockId, values, StorageLevel.MEMORY_AND_DISK_SER, tellMaster = true)) {
+      throw new IOException(s"Failed to store Delta Sharing snapshot block: $blockId")
+    }
+    blockManager.get[T](blockId) match {
+      case Some(block) => block.data.asInstanceOf[Iterator[T]]
+      case None =>
+        throw new FileNotFoundException(s"Failed to read Delta Sharing snapshot block: $blockId")
+    }
   }
 
   // A helper function used by DeltaSharingSource and DeltaSharingDataSource to get
