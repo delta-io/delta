@@ -1327,9 +1327,12 @@ object DeltaLogUtils extends DeltaLogging {
         partitionCol match {
           case Some(f: StructField) =>
             val name = DeltaColumnMapping.getPhysicalName(f)
+            // Parse partition metadata with the same non-ANSI cast as the scan.
             Cast(
               UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
-              f.dataType)
+              f.dataType,
+              timeZoneId = None,
+              ansiEnabled = false)
           case None =>
             // This should not be able to happen, but the case was present in the original code so
             // we kept it to be safe.
