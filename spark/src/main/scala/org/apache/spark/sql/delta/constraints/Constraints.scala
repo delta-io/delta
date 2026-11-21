@@ -55,11 +55,17 @@ sealed trait Constraint {
  */
 object Constraints extends DeltaLogging {
   /**
-   * A constraint that the specified column must not be NULL. Note that when the column is nested,
-   * this implies its parents must also not be NULL.
+   * A constraint that the specified column must not be NULL.
    */
-  case class NotNull(column: Seq[String]) extends Constraint {
+  case class NotNull(column: Seq[String], expression: Expression) extends Constraint {
     override val name: String = "NOT NULL"
+  }
+
+  object NotNull {
+    // Used by unit tests to easily create a not null constraint
+    private[delta] def apply(column: Seq[String]): NotNull = {
+      NotNull(column, IsNotNull(UnresolvedAttribute(column)))
+    }
   }
 
   /** A SQL expression to check for when writing out data. */
@@ -186,11 +192,8 @@ object Constraints extends DeltaLogging {
     val selectExprs = constraints.map {
       case Check(name, expression) =>
         Alias(expression, name)()
-      case NotNull(columnPath) =>
-        // Create an IsNotNull expression to validate the column exists
-        val columnRef = UnresolvedAttribute(columnPath)
-        val isNotNullExpr = IsNotNull(columnRef)
-        Alias(isNotNullExpr, s"NOT NULL ${columnPath.mkString(".")}")()
+      case NotNull(columnPath, expression) =>
+        Alias(expression, s"NOT NULL ${columnPath.mkString(".")}")()
     }
 
     // Analyze all constraint expressions to ensure they can be properly resolved
