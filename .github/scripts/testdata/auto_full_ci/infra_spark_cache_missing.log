@@ -1,0 +1,9 @@
+﻿2026-11-02T22:16:13.8758528Z Current runner version: '2.338.2'
+2026-11-02T22:16:13.8799022Z ##[group]Runner Image Provisioner
+2026-11-02T22:16:13.8800519Z Hosted Compute Agent
+2026-11-02T22:17:25.3204476Z   SPARK_SOURCE_REF: 3db813416c8716996b0d4d2fbb94fed5dc121fd2
+2026-11-02T22:17:25.3204834Z   SPARK_ARTIFACT_VERSION: 4.3.0-3db813416c87-SNAPSHOT
+2026-11-02T22:17:25.3205117Z ##[endgroup]
+2026-11-02T22:17:25.3265399Z ##[error]Prepared Spark Maven cache was not found for 3db813416c8716996b0d4d2fbb94fed5dc121fd2.
+2026-11-02T22:17:25.3268456Z ##[error]Process completed with exit code 1.
+2026-11-02T22:17:25.3275498Z ##[end-action id=__self.__run_2;outcome=failure;conclusion=failure;duration_ms=15]

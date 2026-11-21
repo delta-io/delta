@@ -1,0 +1,26 @@
+﻿2026-11-16T10:00:35.3476901Z Current runner version: '2.338.2'
+2026-11-16T10:00:35.3507392Z ##[group]Runner Image Provisioner
+2026-11-16T10:00:35.3508427Z Hosted Compute Agent
+2026-11-16T10:10:10.2904770Z [0m[[0m[0minfo[0m] [0m[0m[36mTotal number of tests run: 20[0m[0m
+2026-11-16T10:10:10.3001094Z [0m[[0m[0minfo[0m] [0m[0m[36mSuites: completed 2, aborted 0[0m[0m
+2026-11-16T10:10:10.3023987Z [0m[[0m[0minfo[0m] [0m[0m[36mTests: succeeded 20, failed 0, canceled 0, ignored 0, pending 0[0m[0m
+2026-11-16T11:20:10.6694731Z [0m[[0m[0minfo[0m] [0m[0m[32m- creating the table with delta.enableRowTracking explicitly disabled is rejected[0m[0m
+2026-11-16T11:20:10.7346395Z [0m[[0m[0minfo[0m] [0m[0m[32m- creating the table with delta.enableDeletionVectors explicitly disabled is rejected[0m[0m
+2026-11-16T11:20:11.7530963Z [0m[[0m[0minfo[0m] [0m[0m[31m- enabling the feature on an existing table is rejected *** FAILED ***[0m[0m
+2026-11-16T11:20:11.7577319Z [0m[[0m[0minfo[0m] [0m[0m[31m  "...A_ADAPTIVE_METADATA_[REQUIRES_COLUMN_MAPPING_ID_MODE]" did not equal "...A_ADAPTIVE_METADATA_[UPGRADE_NOT_SUPPORTED]" Unexpected error: [DELTA_ADAPTIVE_METADATA_REQUIRES_COLUMN_MAPPING_ID_MODE] The table feature 'adaptiveMetadata-preview' requires column mapping mode 'id', but the table property 'delta.columnMapping.mode' is set to 'none'. Recreate the table with 'delta.columnMapping.mode' = 'id', or omit the property to have it set automatically. (AdaptiveMetadataTableFeatureSuite.scala:346)[0m[0m
+2026-11-16T11:20:11.7623860Z [0m[[0m[0minfo[0m] [0m[0m[31m  Analysis:[0m[0m
+2026-11-16T11:20:11.7647457Z [0m[[0m[0minfo[0m] [0m[0m[31m  "...A_ADAPTIVE_METADATA_[REQUIRES_COLUMN_MAPPING_ID_MODE]" -> "...A_ADAPTIVE_METADATA_[UPGRADE_NOT_SUPPORTED]"[0m[0m
+2026-11-16T11:20:11.7703786Z [0m[[0m[0minfo[0m] [0m[0m[31m  org.scalatest.exceptions.TestFailedException:[0m[0m
+2026-11-16T11:20:11.7834593Z [0m[[0m[0minfo[0m] [0m[0m[31m  at org.scalatest.Assertions.newAssertionFailedException(Assertions.scala:472)[0m[0m
+2026-11-16T11:32:48.6420992Z [0m[[0m[0minfo[0m] [0m[0m[36mRun completed in 1 hour, 18 minutes, 45 seconds.[0m[0m
+2026-11-16T11:32:48.6421441Z [0m[[0m[0minfo[0m] [0m[0m[36mTotal number of tests run: 2782[0m[0m
+2026-11-16T11:32:48.6421958Z [0m[[0m[0minfo[0m] [0m[0m[36mSuites: completed 104, aborted 0[0m[0m
+2026-11-16T11:32:48.6422611Z [0m[[0m[0minfo[0m] [0m[0m[36mTests: succeeded 2781, failed 1, canceled 36, ignored 761, pending 0[0m[0m
+2026-11-16T11:32:48.6423270Z [0m[[0m[0minfo[0m] [0m[0m[31m*** 1 TEST FAILED ***[0m[0m
+2026-11-16T11:32:48.6443653Z [0m[[0m[31merror[0m] [0m[0mFailed: Total 2790, Failed 1, Errors 0, Passed 2789, Ignored 761, Canceled 36[0m
+2026-11-16T11:32:48.6473078Z [0m[[0m[31merror[0m] [0m[0mFailed tests:[0m
+2026-11-16T11:32:48.6474079Z [0m[[0m[31merror[0m] [0m[0m	org.apache.spark.sql.delta.amt.AdaptiveMetadataTableFeatureSuite[0m
+2026-11-16T11:32:58.3895011Z [0m[[0m[33mwarn[0m] [0m[0mIn the last 5356 seconds, 5.814 (0.1%) were spent in GC. [Heap: 2.57GB free of 3.66GB, max 6.00GB] Consider increasing the JVM heap using `-Xmx` or try a different collector, e.g. `-XX:+UseG1GC`, for better performance.[0m
+2026-11-16T11:32:58.4686026Z [0m[[0m[31merror[0m] [0m[0m(spark / Test / [31mtest[0m) sbt.TestsFailedException: Tests unsuccessful[0m
+2026-11-16T11:32:58.4964325Z [0m[[0m[31merror[0m] [0m[0mTotal time: 5357 s (01:29:17), completed Nov 16, 2026, 11:32:58 AM[0m
+2026-11-16T11:32:59.5701231Z [0J============================================================
