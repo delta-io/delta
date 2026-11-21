@@ -1003,6 +1003,21 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  object MissingStructFieldsCheckMode extends
+    DeltaBreakingChangeEnum(DELTA_WRITE_MISSING_STRUCT_FIELDS_CHECK_MODE)
+
+  val DELTA_WRITE_MISSING_STRUCT_FIELDS_CHECK_MODE =
+    buildConf("write.missingStructFieldsCheck.mode")
+      .internal()
+      .doc("Controls validation of missing nested struct fields before batch write schema " +
+        "merging. OFF skips validation, LOG_ONLY records failures and allows the write, and " +
+        "ASSERT records failures and rejects the write. Top-level omissions and schema " +
+        "replacement are allowed. COPY INTO and streaming writes are not affected.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(DeltaBreakingChangeEnum.validValues)
+      .createWithDefault(DeltaBreakingChangeEnum.LOG_ONLY)
+
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
       .doc("If true, enables schema merging on appends and on overwrites.")

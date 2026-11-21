@@ -17,12 +17,16 @@
 package org.apache.spark.sql.delta.util
 
 import scala.util.Random
+import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMappingMode, DeltaConfigs, DeltaLog, NoMapping}
+import org.apache.spark.sql.delta.{DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaLog, NoMapping}
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.DeltaBreakingChangeEnum
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{functions, Column, Dataset}
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.ElementAt
@@ -30,7 +34,7 @@ import org.apache.spark.sql.catalyst.expressions.ElementAt
 /**
  * Various utility methods used by Delta.
  */
-object Utils {
+object Utils extends DeltaLogging {
 
   /** Measures the time taken by function `f` */
   def timedMs[T](f: => T): (T, Long) = {
@@ -114,5 +118,60 @@ object Utils {
    */
   def try_element_at(mapColumn: Column, key: Any): Column = {
     functions.try_element_at(mapColumn, functions.lit(key))
+  }
+
+  /**
+   * Executes a validation function with configurable behavior for rolling out breaking changes.
+   *
+   * This utility function supports a tri-state config pattern for gradually introducing
+   * validations that may break existing workloads:
+   *
+   * - OFF: Validation is completely skipped, maintains the current behavior.
+   * - LOG_ONLY: Validation runs, but failures are only logged.
+   * - ASSERT: Throw exceptions when validation fails.
+   *
+   * This pattern allows safe rollout of breaking changes by:
+   * Starting with LOG_ONLY to gather telemetry on how many workloads would be affected,
+   * switching to ASSERT after assessing the change's impact.
+   *
+   * All events are recorded under the opType "delta.breakingChange.recordFailure".
+   * *validationConfName* can be used to determine the conf that was being applied.
+   *
+   * @param confEnum Enum configuration controlling the validation behavior.
+   *                 Must extend [[DeltaBreakingChangeEnum]] with OFF, LOG_ONLY, and ASSERT values.
+   * @param deltaLog The DeltaLog instance used for recording usage events.
+   * @param spark    The SparkSession to read the configuration value from.
+   * @param params   Additional parameters to include in the usage event blob.
+   * @param fn       The validation function to execute. *MUST* throw an exception on failure.
+   */
+  def withBreakingChangeRollout(
+      confEnum: DeltaBreakingChangeEnum,
+      deltaLog: DeltaLog,
+      spark: SparkSession,
+      params: Map[String, String] = Map.empty)(fn: => Unit): Unit = {
+    val mode = confEnum.fromConf(spark.sessionState.conf)
+    if (mode == confEnum.OFF) return
+    try {
+      fn
+    } catch {
+      case NonFatal(e) =>
+        val errorClassName = e match {
+          case analysisEx: AnalysisException => analysisEx.getErrorClass
+          case _ => e.getClass
+        }
+        recordDeltaEvent(
+          deltaLog,
+          "delta.breakingChange.recordFailure",
+          data = Map(
+            "errorClassName" -> errorClassName,
+            "errorMessage" -> e.getMessage,
+            "validationConfName" -> confEnum.confName,
+            "additionalParams" -> params.toString()
+          )
+        )
+        if (mode == confEnum.ASSERT) {
+          throw e
+        }
+    }
   }
 }

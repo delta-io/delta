@@ -574,16 +574,16 @@ trait DeltaInsertIntoTest
                 assert(target.schema === expectedData.schema)
                 checkExpectedRows(target, expectedData)
               case ExpectedResult.Failure(checkError) =>
-                val ex = if (insert == StreamingInsert) {
-                  intercept[StreamingQueryException] {
-                    runInsert()
-                  }.getCause.asInstanceOf[SparkThrowable]
-                } else {
-                  intercept[SparkThrowable] {
-                    runInsert()
+                  val ex = if (insert == StreamingInsert) {
+                    intercept[StreamingQueryException] {
+                      runInsert()
+                    }.getCause.asInstanceOf[SparkThrowable]
+                  } else {
+                    intercept[SparkThrowable] {
+                      runInsert()
+                    }
                   }
-                }
-                checkError(ex)
+                  checkError(ex)
             }
           }
         }

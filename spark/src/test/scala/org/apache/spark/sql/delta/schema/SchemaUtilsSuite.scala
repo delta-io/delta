@@ -22,7 +22,8 @@ import java.util.regex.Pattern
 
 import scala.annotation.tailrec
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils, TypeWideningMode}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTableProvider, DeltaTestUtils, TypeWideningMode}
+import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.RowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -40,6 +41,7 @@ import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{caseInsensitiveResolution, caseSensitiveResolution, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -49,10 +51,170 @@ class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
   with DeltaSQLTestUtils
+  with DeltaTableProvider
   with DeltaSQLCommandTest {
   import SchemaUtils._
   import TypeWideningMode._
   import testImplicits._
+
+  private val missingFieldsErrorClass = "INCOMPATIBLE_DATA_FOR_TABLE.STRUCT_MISSING_FIELDS"
+
+  // Expose the protected entry point to test batch opt-in and current transaction metadata.
+  private class MetadataOperation(
+      override protected val canMergeSchema: Boolean = false) extends ImplicitMetadataOperation {
+    override protected val canOverwriteSchema: Boolean = false
+
+    def update(txn: OptimisticTransaction, schema: StructType): Unit = {
+      updateMetadata(spark, txn, schema, Nil, Map.empty,
+        isOverwriteMode = false, rearrangeOnly = false)
+    }
+  }
+
+  test("find missing nested fields recursively in structs, arrays, and map keys and values") {
+    val tableSchema = StructType.fromDDL(
+      """omitted struct<x: int>,
+        |s struct<gone: struct<x: int>, keep: int>,
+        |a array<map<struct<k: int, keep: int>, struct<v: int, keep: int>>>,
+        |m map<string, array<struct<x: int, keep: int>>>
+        |""".stripMargin)
+    val dataSchema = StructType.fromDDL(
+      """s struct<keep: int>,
+        |a array<map<struct<keep: int>, struct<keep: int>>>,
+        |m map<string, array<struct<keep: int>>>,
+        |extra int
+        |""".stripMargin)
+    assert(findMissingNestedFields(tableSchema, dataSchema) === Seq(
+      Seq("s", "gone"),
+      Seq("a", "element", "key", "k"),
+      Seq("a", "element", "value", "v"),
+      Seq("m", "value", "element", "x")))
+  }
+
+  test("find missing nested fields ignores case, order, nullability, and type mismatches") {
+    val tableSchema = StructType.fromDDL("s struct<X: int, Y: int>, a array<struct<z: int>>")
+    val dataSchema = StructType.fromDDL("A array<struct<Z: long>>, S struct<y: long, x: int>")
+    assert(findMissingNestedFields(tableSchema, dataSchema).isEmpty)
+    val nonNullable = new StructType().add("s",
+      new StructType().add("x", IntegerType, nullable = false), nullable = false)
+    assert(findMissingNestedFields(nonNullable, nonNullable.asNullable).isEmpty)
+    assert(findMissingNestedFields(tableSchema, StructType.fromDDL("s int, a void")).isEmpty)
+    assert(findMissingNestedFields(tableSchema, new StructType()).isEmpty)
+    assert(findMissingNestedFields(new StructType(), dataSchema).isEmpty)
+  }
+
+  test("find missing nested fields reports renamed fields and quotes special names") {
+    val tableSchema = StructType.fromDDL("`s.t` struct<`a.b`: int, `a``b`: int, keep: int>")
+    val dataSchema = StructType.fromDDL("`s.t` struct<renamed: int, keep: int>")
+    val missingFields = findMissingNestedFields(tableSchema, dataSchema)
+    assert(missingFields === Seq(Seq("s.t", "a.b"), Seq("s.t", "a`b")))
+  }
+
+  for {
+    (description, tableDDL, dataDDL, parent, missing) <- Seq(
+      ("multiple siblings and parents",
+        "s struct<x: int, keep: int, y: int>, t struct<z: int, keep: int>",
+        "t struct<keep: int>, s struct<keep: int>", Seq("s"), Seq("x", "y")),
+      ("quoted names", "`s.t` struct<`a.b`: int, `a``b`: int, keep: int>",
+        "`s.t` struct<renamed: int, keep: int>", Seq("s.t"), Seq("a.b", "a`b")),
+      ("equal field counts", "s struct<x: int, y: int>",
+        "s struct<y: int, z: int>", Seq("s"), Seq("x")),
+      ("map keys", "s map<struct<x: int, y: int>, int>",
+        "s map<struct<y: int>, int>", Seq("s", "key"), Seq("x")),
+      ("case and order", "s struct<X: int, Y: int, Z: int>",
+        "S struct<z: int, y: int>", Seq("s"), Seq("X")))
+  } {
+    test(s"missing nested fields error reports $description") {
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_MISSING_STRUCT_FIELDS_CHECK_MODE.key -> "ASSERT") {
+        withTempDir { dir =>
+          val path = new java.io.File(dir, "table.with`quote").getCanonicalPath
+          val tableSchema = StructType.fromDDL(tableDDL)
+          spark.createDataFrame(spark.sparkContext.emptyRDD[Row], tableSchema)
+            .write.format(writeFormat).save(path)
+          val deltaLog = DeltaLog.forTable(spark, path)
+          val txn = deltaLog.startTransaction(catalogTableOpt = None)
+          val operation = new MetadataOperation(canMergeSchema = true) {
+            override protected def shouldCheckMissingStructFields: Boolean = true
+          }
+          checkError(
+            intercept[AnalysisException] { operation.update(txn, StructType.fromDDL(dataDDL)) },
+            missingFieldsErrorClass,
+            sqlState = "KD000",
+            parameters = Map(
+              "tableName" ->
+                TableIdentifier(deltaLog.dataPath.toString, Some("delta")).quotedString,
+              "colName" -> QueryCompilationErrors.toSQLId(parent),
+              "missingFields" ->
+                missing.map(field => QueryCompilationErrors.toSQLId(Seq(field))).mkString(", ")))
+          assert(txn.metadata.schema === tableSchema.asNullable)
+          assert(deltaLog.update().version === 0L)
+        }
+      }
+    }
+  }
+
+  test("missing nested fields error quotes the catalog table identifier") {
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_MISSING_STRUCT_FIELDS_CHECK_MODE.key -> "ASSERT") {
+      withTable("target") {
+        sql("SELECT named_struct('x', 1, 'y', 2) AS s")
+          .write.format(writeFormat).saveAsTable("target")
+        // Hive only accepts simple names; supply quoted catalog metadata for the validation.
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("target"))
+          .copy(identifier = TableIdentifier("table.with`quote", Some("db.with`quote")))
+        val deltaLog = DeltaLog.forTable(spark, catalogTable)
+        val txn = deltaLog.startTransaction(Some(catalogTable))
+        val operation = new MetadataOperation() {
+          override protected def shouldCheckMissingStructFields: Boolean = true
+        }
+        checkError(
+          intercept[AnalysisException] {
+            operation.update(txn, StructType.fromDDL("s struct<y: int>"))
+          },
+          missingFieldsErrorClass,
+          sqlState = "KD000",
+          parameters = Map("tableName" -> catalogTable.identifier.quotedString,
+            "colName" -> QueryCompilationErrors.toSQLId(Seq("s")),
+            "missingFields" -> QueryCompilationErrors.toSQLId(Seq("x"))))
+        assert(deltaLog.update().version === 0L)
+      }
+    }
+  }
+
+  test("missing nested fields validation uses the current transaction metadata") {
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_MISSING_STRUCT_FIELDS_CHECK_MODE.key -> "ASSERT") {
+      withTempDir { dir =>
+        sql("SELECT named_struct('x', 1, 'y', 2) AS s").write.format(writeFormat).save(dir.toString)
+        val txn = DeltaLog.forTable(spark, dir.getCanonicalPath).startTransaction()
+        val currentSchema = StructType.fromDDL("s struct<y: int>")
+        assert(txn.snapshot.schema("s").dataType.asInstanceOf[StructType].fieldNames.toSeq ===
+          Seq("x", "y"))
+        txn.updateMetadata(txn.metadata.copy(schemaString = currentSchema.json))
+        val expectedSchema = txn.metadata.schema
+        val operation = new MetadataOperation() {
+          override protected def shouldCheckMissingStructFields: Boolean = true
+        }
+        operation.update(txn, currentSchema)
+        assert(txn.metadata.schema === expectedSchema)
+      }
+    }
+  }
+
+  for (mode <- Seq("OFF", "LOG_ONLY", "ASSERT")) {
+    test(s"missing nested fields from a stale merged streaming schema are allowed, mode=$mode") {
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_MISSING_STRUCT_FIELDS_CHECK_MODE.key -> mode) {
+        withTempDir { dir =>
+          sql("SELECT named_struct('x', 1, 'added', 2) AS s")
+            .write.format(writeFormat).save(dir.toString)
+          val txn = DeltaLog.forTable(spark, dir.getCanonicalPath).startTransaction()
+          // Streaming init can merge against a snapshot before 'added' appears, then open this txn.
+          val staleWriteSchema = StructType.fromDDL("s struct<x: int, streamAdded: int>")
+            new MetadataOperation(canMergeSchema = true)
+              .update(txn, staleWriteSchema)
+          assert(txn.metadata.schema("s").dataType.asInstanceOf[StructType].fieldNames.toSeq ===
+            Seq("x", "added", "streamAdded"))
+        }
+      }
+    }
+  }
 
   private def expectFailure(shouldContain: String*)(f: => Unit): Unit = {
     val e = intercept[AnalysisException] {

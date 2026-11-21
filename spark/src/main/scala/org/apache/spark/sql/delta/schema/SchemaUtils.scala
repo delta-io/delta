@@ -342,6 +342,39 @@ object SchemaUtils extends DeltaLogging {
   }
 
   /**
+   * Finds fields omitted from structs that are present in both schemas, using Delta's
+   * case-insensitive column resolution. Missing top-level columns are allowed. Collection
+   * paths use element, key, and value components, as in other nested schema utilities.
+   */
+  def findMissingNestedFields(
+      tableSchema: StructType,
+      dataSchema: StructType): Seq[Seq[String]] = {
+    def compare(tableType: DataType, dataType: DataType, path: Seq[String]): Seq[Seq[String]] = {
+      (tableType, dataType) match {
+        case (tableStruct: StructType, dataStruct: StructType) =>
+          val dataFields = SchemaMergingUtils.toFieldMap(dataStruct.fields, caseSensitive = false)
+          tableStruct.fields.toSeq.flatMap { field =>
+            val fieldPath = path :+ field.name
+            dataFields.get(field.name) match {
+              case Some(dataField) => compare(field.dataType, dataField.dataType, fieldPath)
+              case None if path.nonEmpty => Seq(fieldPath)
+              case None => Seq.empty
+            }
+          }
+        case (ArrayType(tableElement, _), ArrayType(dataElement, _)) =>
+          compare(tableElement, dataElement, path :+ "element")
+        case (MapType(tableKey, tableValue, _), MapType(dataKey, dataValue, _)) =>
+          compare(tableKey, dataKey, path :+ "key") ++
+            compare(tableValue, dataValue, path :+ "value")
+        case _ => Seq.empty
+      }
+    }
+
+    compare(tableSchema, dataSchema, Seq.empty)
+  }
+
+
+  /**
    * Returns the name of the first column/field that has null type (void).
    */
   def findNullTypeColumn(schema: StructType): Option[String] = {
