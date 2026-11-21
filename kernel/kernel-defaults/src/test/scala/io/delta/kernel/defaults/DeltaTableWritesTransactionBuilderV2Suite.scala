@@ -267,6 +267,59 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
     }
   }
 
+  test("UpdateTableTransactionBuilder removes the table description") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+        .withTableProperties(Map("key" -> "value").asJava)
+        .withDescription("table description")
+        .build(engine)
+        .commit(engine, emptyIterable())
+      val metadataBefore = getMetadata(engine, tablePath)
+      assert(metadataBefore.getDescription === Optional.of("table description"))
+
+      TableManager.loadSnapshot(tablePath)
+        .build(engine)
+        .buildUpdateTableTransaction(testEngineInfo, Operation.MANUAL_UPDATE)
+        .withDescriptionRemoved()
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      val metadataAfter = getMetadata(engine, tablePath)
+      assert(!metadataAfter.getDescription.isPresent)
+      assert(metadataAfter.getId === metadataBefore.getId)
+      assert(metadataAfter.getSchema === metadataBefore.getSchema)
+      assert(metadataAfter.getConfiguration === metadataBefore.getConfiguration)
+      assert(sparkDescription(tablePath) === None)
+    }
+  }
+
+  test("The last of withDescription and withDescriptionRemoved takes effect") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+        .withDescription("old description")
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      TableManager.loadSnapshot(tablePath)
+        .build(engine)
+        .buildUpdateTableTransaction(testEngineInfo, Operation.MANUAL_UPDATE)
+        .withDescription("new description")
+        .withDescriptionRemoved()
+        .build(engine)
+        .commit(engine, emptyIterable())
+      assert(!getMetadata(engine, tablePath).getDescription.isPresent)
+
+      TableManager.loadSnapshot(tablePath)
+        .build(engine)
+        .buildUpdateTableTransaction(testEngineInfo, Operation.MANUAL_UPDATE)
+        .withDescriptionRemoved()
+        .withDescription("new description")
+        .build(engine)
+        .commit(engine, emptyIterable())
+      assert(getMetadata(engine, tablePath).getDescription === Optional.of("new description"))
+    }
+  }
+
   test("Can evolve schema using withUpdatedSchema") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(

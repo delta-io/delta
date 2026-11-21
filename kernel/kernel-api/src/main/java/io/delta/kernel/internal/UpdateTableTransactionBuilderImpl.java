@@ -47,7 +47,8 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tablePropertiesAddedOpt = Optional.empty();
   private Optional<Set<String>> tablePropertiesRemovedOpt = Optional.empty();
-  private Optional<String> descriptionOpt = Optional.empty();
+  // Present if the connector changes the description. An inner Optional.empty() removes it.
+  private Optional<Optional<String>> descriptionOpt = Optional.empty();
   private Optional<StructType> updatedSchemaOpt = Optional.empty();
   private Optional<List<Column>> inputLogicalClusteringColumnsOpt = Optional.empty();
   private Optional<Integer> userProvidedMaxRetries = Optional.empty();
@@ -93,7 +94,14 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
 
   @Override
   public UpdateTableTransactionBuilder withDescription(String description) {
-    this.descriptionOpt = Optional.of(requireNonNull(description, "description cannot be null"));
+    this.descriptionOpt =
+        Optional.of(Optional.of(requireNonNull(description, "description cannot be null")));
+    return this;
+  }
+
+  @Override
+  public UpdateTableTransactionBuilder withDescriptionRemoved() {
+    this.descriptionOpt = Optional.of(Optional.empty());
     return this;
   }
 
