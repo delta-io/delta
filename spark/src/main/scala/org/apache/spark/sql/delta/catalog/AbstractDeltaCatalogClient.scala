@@ -20,6 +20,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils
 import io.delta.storage.commit.uniform.UniformMetadata
 
 import java.util
+import java.util.UUID
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -27,6 +28,17 @@ import org.apache.spark.sql.connector.catalog.{Identifier, Table}
 import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+
+/**
+ * A catalog's entry for a table, as needed to bring it in line with a Delta snapshot.
+ *
+ * @param table   the entry as a [[CatalogTable]], with its schema, partition columns, comment and
+ *                properties filled in. A [[CatalogTable]] loaded for reads keeps the properties in
+ *                `storage.properties` instead, mixed with credentials.
+ * @param tableId the catalog's id of the table
+ * @param etag    version of the entry; an update conditional on it fails if the entry has changed
+ */
+private[delta] case class CatalogTableEntry(table: CatalogTable, tableId: UUID, etag: String)
 
 /**
  * Backend hook through which [[AbstractDeltaCatalog]] injects custom catalog interactions
@@ -115,6 +127,9 @@ private[delta] trait AbstractDeltaCatalogClient {
    *                              `metadata` / `protocol`, used by the catalog as the
    *                              authoritative "last updated" timestamp on the registered
    *                              entry.
+   * @param lastCommitVersion     version of the snapshot being registered. It is 0 for a new
+   *                              table and can be higher when an EXTERNAL table is registered
+   *                              over an existing Delta log.
    * @param uniformMetadata       UniForm Iceberg metadata generated atomically with the initial
    *                              snapshot;
    *                              [[None]] when the table was not created with UniForm enabled.
@@ -126,7 +141,47 @@ private[delta] trait AbstractDeltaCatalogClient {
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
       uniformMetadata: Option[UniformMetadata] = None): Unit
+
+  /**
+   * Loads the catalog entry of the table behind `ct`, as needed to bring it in line with a Delta
+   * snapshot. Used by the post-commit hook; never fetches credentials.
+   *
+   * @param ct catalog metadata of the committed table.
+   * @return the entry, or `None` if the catalog no longer has the table.
+   */
+  def loadTableEntry(ct: CatalogTable): Option[CatalogTableEntry]
+
+  /**
+   * Updates the catalog entry of an EXTERNAL table to match a committed snapshot, without a
+   * commit. Used by the post-commit hook after a commit that changes the table's metadata.
+   *
+   * Exceptions bubble out; implementations must not swallow failures internally.
+   *
+   * @param ct                catalog metadata for the committed table.
+   * @param entry             the catalog entry the update is conditional on, as loaded by
+   *                          [[loadTableEntry]].
+   * @param oldMetadata       what the entry holds now; the update sets what differs from
+   *                          `newMetadata`. Properties the catalog derives itself must be left out
+   *                          of its configuration, or they would be removed.
+   * @param newMetadata       Delta [[Metadata]] to record.
+   * @param newProtocol       Delta [[Protocol]] to record, or `None` if the entry already has it.
+   * @param domainMetadata    the snapshot's [[DomainMetadata]] plus removed ones to clear.
+   * @param commitVersion     the Delta version the metadata belongs to.
+   * @param commitTimestampMs that version's timestamp.
+   * @return `true` if the entry was updated; `false` if the catalog rejected the update because
+   *         the entry changed since it was loaded.
+   */
+  def updateTableMetadata(
+      ct: CatalogTable,
+      entry: CatalogTableEntry,
+      oldMetadata: Metadata,
+      newMetadata: Metadata,
+      newProtocol: Option[Protocol],
+      domainMetadata: Seq[DomainMetadata],
+      commitVersion: Long,
+      commitTimestampMs: Long): Boolean
 
   /**
    * Reports post-commit telemetry for the table to the catalog. Implementations build
@@ -160,8 +215,8 @@ private[catalog] trait AbstractDeltaCatalogClientFactory {
 /**
  * Factory entry point for [[AbstractDeltaCatalogClient]] instances. Used both by
  * `AbstractDeltaCatalog.initialize` (to wire the catalog's own client at construction
- * time) and by the post-commit metrics hook (to build a fresh per-commit client without
- * caching state across commits).
+ * time) and by the post-commit metrics and metadata hooks (to build a fresh per-commit client
+ * without caching state across commits).
  */
 private[delta] object AbstractDeltaCatalogClient extends Logging {
 

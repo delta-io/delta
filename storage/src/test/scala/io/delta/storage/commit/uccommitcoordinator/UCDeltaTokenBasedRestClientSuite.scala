@@ -28,7 +28,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
+import io.delta.storage.commit.uccommitcoordinator.exceptions.{NoSuchTableException, TableAlreadyExistsException}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -86,9 +86,12 @@ class UCDeltaTokenBasedRestClientSuite
       location: String = "s3://bucket/table",
       tableType: String = "MANAGED",
       commitsJson: String = "[]",
-      latestTableVersion: Long = -1L): String =
+      latestTableVersion: Long = -1L,
+      etag: String = "etag-1",
+      lastCommitVersion: Option[Long] = None): String =
     s"""{"metadata":{"table-uuid":"$tableUuid","data-source-format":"$format",""" +
-    s""""table-type":"$tableType",""" +
+    s""""table-type":"$tableType","etag":"$etag",""" +
+    lastCommitVersion.map(v => s""""last-commit-version":$v,""").getOrElse("") +
     s""""location":"$location",""" +
     s""""columns":{"type":"struct","fields":[""" +
     s"""{"name":"date","type":"string","nullable":true,"metadata":{}},""" +
@@ -728,6 +731,231 @@ class UCDeltaTokenBasedRestClientSuite
   }
 
   // --------------- toSDKDomainMetadataUpdates ---------------
+
+  // --------------- createTable / updateTableMetadata ---------------
+
+  private val tablesPath = s"/catalogs/$testCatalog/schemas/$testSchema/tables"
+
+  /** Records each request as (method, path suffix after the schema, body). */
+  private def recordingHandler(
+      requests: collection.mutable.Buffer[(String, String, String)])(
+      respond: (String, String) => (Int, String)): (HttpExchange, String) => Unit =
+    (exchange, body) => {
+      val path = exchange.getRequestURI.getPath
+      val suffix = path.substring(path.indexOf(tablesPath) + tablesPath.length)
+      requests += ((exchange.getRequestMethod, suffix, body))
+      val (status, response) = respond(exchange.getRequestMethod, suffix)
+      sendJson(exchange, status, response)
+    }
+
+  private def updatesOf(body: String): Map[String, com.fasterxml.jackson.databind.JsonNode] = {
+    val updates = objectMapper.readTree(body).get("updates")
+    (0 until updates.size()).map(updates.get).map(u => u.get("action").asText() -> u).toMap
+  }
+
+  private def requirementsOf(body: String): Map[String, String] = {
+    val reqs = objectMapper.readTree(body).get("requirements")
+    (0 until reqs.size()).map(reqs.get).map { r =>
+      val t = r.get("type").asText()
+      t -> (if (t == "assert-etag") r.get("etag").asText() else r.get("uuid").asText())
+    }.toMap
+  }
+
+  /** A client that skips credential vending, so tests see only the table requests. */
+  private def withNoVendingClient(fn: UCDeltaTokenBasedRestClient => Unit): Unit = {
+    val config = clientConfig
+    config.put("credentialVending.enabled", "false")
+    val client = new UCDeltaTokenBasedRestClient(config, null)
+    try fn(client) finally client.close()
+  }
+
+  private val externalSchema =
+    """{"type":"struct","fields":[{"name":"id","type":"integer","nullable":true,"metadata":{}}]}"""
+
+  private def createExternal(c: UCDeltaTokenBasedRestClient, version: Long): Unit =
+    c.createTable(new URI("s3://bucket/table"), testIdentifier, UCDeltaModels.TableType.EXTERNAL,
+      metadata(schema = externalSchema), protocol(1, 2),
+      java.util.List.of(dm("delta.unknownDomain", "{}")), 2000L, version, Optional.empty())
+
+  test("createTable sends empty properties and skips unmodeled domains for an EXTERNAL table") {
+    val requests = collection.mutable.Buffer[(String, String, String)]()
+    deltaHandler = recordingHandler(requests)((_, _) =>
+      (HttpStatus.SC_OK, loadTableJson(tableType = "EXTERNAL")))
+
+    withNoVendingClient(createExternal(_, version = 0L))
+
+    assert(requests.map(r => (r._1, r._2)) === Seq(("POST", "")))
+    val json = objectMapper.readTree(requests.head._3)
+    assert(json.get("properties").size() === 0)
+    assert(json.get("domain-metadata") === null)
+  }
+
+  test("createTable records the version of an EXTERNAL table registered over an existing log") {
+    val requests = collection.mutable.Buffer[(String, String, String)]()
+    deltaHandler = recordingHandler(requests)((_, _) =>
+      (HttpStatus.SC_OK, loadTableJson(tableType = "EXTERNAL", etag = "etag-created")))
+
+    withNoVendingClient(createExternal(_, version = 3L))
+
+    assert(requests.map(r => (r._1, r._2)) === Seq(("POST", ""), ("POST", s"/$testTable")))
+    val followUp = requests(1)._3
+    assert(requirementsOf(followUp) ===
+      Map("assert-table-uuid" -> testTableId.toString, "assert-etag" -> "etag-created"))
+    val snapshotVersion = updatesOf(followUp)
+    assert(snapshotVersion.keySet === Set("update-metadata-snapshot-version"))
+    assert(snapshotVersion.head._2.get("last-commit-version").asLong() === 3L)
+    assert(snapshotVersion.head._2.get("last-commit-timestamp-ms").asLong() === 2000L)
+  }
+
+  test("createTable succeeds when recording the version fails") {
+    val requests = collection.mutable.Buffer[(String, String, String)]()
+    deltaHandler = recordingHandler(requests) {
+      case ("POST", "") => (HttpStatus.SC_OK, loadTableJson(tableType = "EXTERNAL"))
+      case _ => (HttpStatus.SC_BAD_REQUEST, """{"error":"rejected"}""")
+    }
+
+    withNoVendingClient(createExternal(_, version = 3L))
+
+    assert(requests.map(r => (r._1, r._2)) === Seq(("POST", ""), ("POST", s"/$testTable")))
+  }
+
+  test("createTable of an EXTERNAL table fetches no credentials") {
+    val paths = collection.mutable.Buffer[String]()
+    deltaHandler = (exchange, _) => {
+      paths += exchange.getRequestURI.getPath
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson(tableType = "EXTERNAL"))
+    }
+
+    withClient(createExternal(_, version = 0L))
+
+    assert(paths.size === 1 && !paths.head.endsWith("/credentials"))
+  }
+
+  test("createTable throws TableAlreadyExistsException when the table exists") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_CONFLICT, """{"error":"exists"}""")
+
+    withNoVendingClient { c =>
+      intercept[TableAlreadyExistsException](createExternal(c, version = 0L))
+    }
+  }
+
+  private val newProtocol: Optional[AbstractProtocol] = Optional.of(
+    protocol(1, 7, writerFeatures = java.util.Set.of("clustering", "domainMetadata")))
+
+  private def updateTableMetadata(
+      c: UCDeltaTokenBasedRestClient,
+      oldMetadata: AbstractMetadata,
+      newMetadata: AbstractMetadata,
+      protocol: Optional[AbstractProtocol] = Optional.empty(),
+      domains: java.util.List[AbstractDomainMetadata] = Collections.emptyList()): Boolean =
+    c.updateTableMetadata(
+      testIdentifier, testTableId, "etag-1", oldMetadata, newMetadata, protocol, domains, 2L, 2000L)
+
+  test("updateTableMetadata sends the changes, conditional on the entry's uuid and etag") {
+    val requests = collection.mutable.Buffer[(String, String, String)]()
+    deltaHandler = recordingHandler(requests)((_, _) =>
+      (HttpStatus.SC_OK, loadTableJson(tableType = "EXTERNAL")))
+
+    withClient { c =>
+      assert(updateTableMetadata(
+        c,
+        metadata(
+          desc = "old",
+          partitions = java.util.List.of("p"),
+          config = java.util.Map.of("changed", "0", "kept", "1", "removed", "2")),
+        metadata(
+          schema = externalSchema,
+          desc = "new",
+          config = java.util.Map.of("changed", "1", "kept", "1")),
+        newProtocol,
+        java.util.List.of(
+          dm("delta.clustering", """{"clusteringColumns":[["id"]]}"""),
+          dm("delta.rowTracking", "{}", removed = true),
+          dm("delta.unknownDomain", "{}"))))
+    }
+
+    assert(requests.map(r => (r._1, r._2)) === Seq(("POST", s"/$testTable")))
+    val body = requests.head._3
+    assert(requirementsOf(body) ===
+      Map("assert-table-uuid" -> testTableId.toString, "assert-etag" -> "etag-1"))
+    val updates = updatesOf(body)
+    assert(updates.keySet === Set("set-columns", "set-partition-columns", "set-table-comment",
+      "set-properties", "remove-properties", "set-protocol", "set-domain-metadata",
+      "remove-domain-metadata", "update-metadata-snapshot-version"))
+    assert(updates("set-columns").get("columns").get("fields").get(0).get("name").asText() === "id")
+    assert(updates("set-partition-columns").get("partition-columns").size() === 0)
+    assert(updates("set-table-comment").get("comment").asText() === "new")
+    // Only what differs: `kept` is unchanged and `removed` is gone.
+    assert(updates("set-properties").get("updates").toString === """{"changed":"1"}""")
+    assert(updates("remove-properties").get("removals").toString === """["removed"]""")
+    assert(updates("set-protocol").get("protocol").get("min-writer-version").asInt() === 7)
+    assert(updates("set-domain-metadata").get("updates").fieldNames().asScala.toSet ===
+      Set("delta.clustering"))
+    assert(updates("remove-domain-metadata").get("domains").toString === """["delta.rowTracking"]""")
+    assert(updates("update-metadata-snapshot-version").get("last-commit-version").asLong() === 2L)
+  }
+
+  test("updateTableMetadata sends only the property that changed, and the version") {
+    val requests = collection.mutable.Buffer[(String, String, String)]()
+    deltaHandler = recordingHandler(requests)((_, _) =>
+      (HttpStatus.SC_OK, loadTableJson(tableType = "EXTERNAL")))
+
+    withClient { c =>
+      assert(updateTableMetadata(
+        c,
+        metadata(config = java.util.Map.of("k", "1", "same", "x")),
+        metadata(config = java.util.Map.of("k", "2", "same", "x"))))
+    }
+
+    val updates = updatesOf(requests.head._3)
+    assert(updates.keySet === Set("set-properties", "update-metadata-snapshot-version"))
+    assert(updates("set-properties").get("updates").toString === """{"k":"2"}""")
+  }
+
+  test("updateTableMetadata sends the protocol and the comment only when given or changed") {
+    val requests = collection.mutable.Buffer[(String, String, String)]()
+    deltaHandler = recordingHandler(requests)((_, _) =>
+      (HttpStatus.SC_OK, loadTableJson(tableType = "EXTERNAL")))
+
+    withClient { c =>
+      // Protocol given, comment unchanged.
+      assert(updateTableMetadata(c, metadata(), metadata(), newProtocol))
+      // Comment cleared, protocol not given.
+      assert(updateTableMetadata(c, metadata(desc = "old"), metadata(desc = null)))
+    }
+
+    assert(updatesOf(requests(0)._3).keySet ===
+      Set("set-protocol", "update-metadata-snapshot-version"))
+    val cleared = updatesOf(requests(1)._3)
+    assert(cleared.keySet === Set("set-table-comment", "update-metadata-snapshot-version"))
+    assert(cleared("set-table-comment").get("comment").asText() === "")
+  }
+
+  test("updateTableMetadata returns false on an etag conflict and throws on other errors") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_CONFLICT, """{"error":"etag"}""")
+    withClient(c => assert(!updateTableMetadata(c, metadata(), metadata())))
+
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_BAD_REQUEST, """{"error":"bad"}""")
+    withClient(c => intercept[java.io.IOException](updateTableMetadata(c, metadata(), metadata())))
+  }
+
+  test("loadTable without credentials returns the entry's etag and fetches none") {
+    var requests = 0
+    deltaHandler = (exchange, _) => {
+      requests += 1
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson(tableType = "EXTERNAL", etag = "etag-9"))
+    }
+
+    withClient { c =>
+      val info = c.loadTable(testIdentifier, false)
+      assert(info.getEtag.get === "etag-9")
+      assert(info.getStorageProperties.isEmpty)
+    }
+    assert(requests === 1)
+  }
 
   /** Minimal AbstractDomainMetadata stub for the mapping tests. */
   private def dm(domain: String, configuration: String, removed: Boolean = false)

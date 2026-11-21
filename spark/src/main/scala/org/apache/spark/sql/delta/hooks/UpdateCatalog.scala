@@ -50,6 +50,9 @@ import org.apache.spark.util.ThreadUtils
  */
 object UpdateCatalogFactory {
   def getUpdateCatalogHook(table: CatalogTable, spark: SparkSession): UpdateCatalogBase = {
+    if (UpdateUnityCatalog.appliesTo(table, spark)) {
+      return UpdateUnityCatalog(table)
+    }
     UpdateCatalog(table)
   }
 }
@@ -60,7 +63,8 @@ object UpdateCatalogFactory {
  */
 trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
 
-  protected val table: CatalogTable
+  // A `def` rather than a `val` so that a subclass can swap in a refreshed CatalogTable.
+  protected def table: CatalogTable
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     // There's a potential race condition here, where a newer commit has already triggered
