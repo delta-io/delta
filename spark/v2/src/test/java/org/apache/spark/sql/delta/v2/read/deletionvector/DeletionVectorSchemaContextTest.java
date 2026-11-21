@@ -89,7 +89,14 @@ public class DeletionVectorSchemaContextTest {
             IllegalArgumentException.class,
             () -> new DeletionVectorSchemaContext(schemaWithDv, new StructType()));
 
+    org.apache.spark.SparkThrowable error = (org.apache.spark.SparkThrowable) exception;
+    assertEquals("DELTA_V2_INTERNAL_ERROR.ILLEGAL_ARGUMENT", error.getCondition());
+    assertEquals("XXKDS", error.getSqlState());
+    assertTrue(error.getMessageParameters().isEmpty());
     assertTrue(
-        exception.getMessage().contains(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME()));
+        exception
+            .getCause()
+            .getMessage()
+            .contains(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME()));
   }
 }

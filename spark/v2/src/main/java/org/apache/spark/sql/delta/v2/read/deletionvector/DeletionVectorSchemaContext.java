@@ -17,6 +17,7 @@ package org.apache.spark.sql.delta.v2.read.deletionvector;
 
 import java.io.Serializable;
 import java.util.Arrays;
+import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.types.StructType;
 import scala.collection.immutable.Seq;
@@ -51,7 +52,7 @@ public class DeletionVectorSchemaContext implements Serializable {
     // provides a safety guard in the V2 connector.
     String dvColumnName = DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME();
     if (Arrays.asList(readDataSchema.fieldNames()).contains(dvColumnName)) {
-      throw new IllegalArgumentException(
+      throw DeltaErrors.deltaV2IllegalArgument(
           "readDataSchema already contains the deletion vector column: " + dvColumnName);
     }
     this.schemaWithDvColumn =
