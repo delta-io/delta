@@ -841,12 +841,21 @@ private[delta] class ConflictChecker(
   }
 
   /**
+   * Allow list of configurations whose UNSET is conflict-free with a concurrent transaction:
+   * unsetting a property here only stops it from being applied and does not affect the data
+   * itself, so a concurrent transaction that committed while it was set is still valid. Empty by
+   * default; downstream builds may add properties that satisfy this contract.
+   */
+  protected lazy val metadataConfigurationRemovalAllowList: Set[String] = Set.empty
+
+  /**
    * Validates configuration changes between the current metadata and the winning metadata.
    * Returns a [[ConfigurationChanges]] object that indicates whether the changes are valid.
    */
   protected[delta] def checkConfigurationChangesForConflicts(
       currentMetadata: Metadata,
       winningMetadata: Metadata,
+      removalAllowList: Set[String] = metadataConfigurationRemovalAllowList,
       allowList: Set[String] = metadataConfigurationChangeAllowList): ConfigurationChanges = {
 
     val currentConf = currentMetadata.configuration
@@ -872,8 +881,9 @@ private[delta] class ConflictChecker(
     def INVALID_CONFIGURATION_CHANGES = configurationChanges(areValid = false)
     def VALID_CONFIGURATION_CHANGES = configurationChanges(areValid = true)
 
-    // Unsetting a configuration is not supported at the moment.
-    if (removedKeys.nonEmpty) {
+    // Only configurations in the removal allow list may be unset conflict-free. With the default
+    // (empty) allow list this rejects every removal, matching the prior behavior.
+    if (!removedKeys.subsetOf(removalAllowList)) {
       return INVALID_CONFIGURATION_CHANGES
     }
 
