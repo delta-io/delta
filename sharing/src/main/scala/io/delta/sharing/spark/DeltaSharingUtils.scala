@@ -16,7 +16,6 @@
 
 package io.delta.sharing.spark
 
-import java.io.{FileNotFoundException, IOException}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.text.SimpleDateFormat
 import java.util.{TimeZone, UUID}
@@ -32,7 +31,7 @@ import io.delta.sharing.client.util.JsonUtils
 
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkEnv
+import org.apache.spark.{SparkEnv, SparkException}
 import org.apache.spark.delta.sharing.TableRefreshResult
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
@@ -300,12 +299,14 @@ object DeltaSharingUtils extends Logging {
     val blockManager = SparkEnv.get.blockManager
     if (!blockManager.putIterator(
         blockId, values, StorageLevel.MEMORY_AND_DISK_SER, tellMaster = true)) {
-      throw new IOException(s"Failed to store Delta Sharing snapshot block: $blockId")
+      throw SparkException.internalError(
+        s"Failed to store Delta Sharing snapshot block: $blockId")
     }
     blockManager.get[T](blockId) match {
       case Some(block) => block.data.asInstanceOf[Iterator[T]]
       case None =>
-        throw new FileNotFoundException(s"Failed to read Delta Sharing snapshot block: $blockId")
+        throw SparkException.internalError(
+          s"Failed to read Delta Sharing snapshot block: $blockId")
     }
   }
 
