@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta
 import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
@@ -285,6 +286,15 @@ private[delta] class ConflictChecker(
   protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
 
   protected def recordSkippedPhase(phase: String): Unit = timingStats += phase -> 0
+
+  /** Set when conflict-time data skipping was evaluated by a checked-appends probe. */
+  private var dataSkippingApplied = false
+
+  /**
+   * Whether conflict-time data skipping was applied while checking against the winning commit.
+   * Read by the transaction, which reports it once the commit succeeds.
+   */
+  private[delta] def conflictDataSkippingApplied: Boolean = dataSkippingApplied
 
   /**
    * This function checks conflict of the `initialCurrentTransactionInfo` against the
@@ -1054,27 +1064,49 @@ private[delta] class ConflictChecker(
       return None
     }
 
+    // Reader-side data skipping: a concurrently-added file whose column stats prove it cannot match
+    // the read predicates is not a conflict -- this is what lets unpartitioned / liquid-clustered
+    // tables avoid conflicting on every added file. Not applied for a whole-table read, nor when
+    // there are no read predicates: a non-blind-append (e.g. it removed files) can have no read
+    // predicates, and then every added file must remain a conflict candidate, exactly as when the
+    // feature is disabled.
+    val useDataSkipping =
+      spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_ENABLED) &&
+        !currentTransactionInfo.readWholeTable &&
+        currentTransactionInfo.readPredicates.nonEmpty
+
+    val candidates = {
+      import org.apache.spark.sql.delta.implicits._
+      new ConflictCandidateFiles(
+        files,
+        spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_DATA_SKIPPING_BATCH_SIZE),
+        toDF = _.toDF(spark))
+    }
+
     // There is no reason to filter files if the table is not partitioned.
     if (currentTransactionInfo.readWholeTable ||
         currentTransactionInfo.readSnapshot.metadata.partitionColumns.isEmpty) {
-      return files.headOption
+      if (!useDataSkipping) return files.headOption
+      return getFirstFileMatchingDataPredicates(
+        candidates, currentTransactionInfo.readPredicates.map(_.dataPredicates),
+        partitionFilter = None)
     }
-
-    import org.apache.spark.sql.delta.implicits._
-    val filesDf = files.toDF(spark)
 
     spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_WIDEN_NONDETERMINISTIC_PREDICATES) match {
       case DeltaSQLConf.NonDeterministicPredicateWidening.OFF =>
         getFirstFileMatchingPartitionPredicatesInternal(
-          filesDf, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false)
+          candidates, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false,
+          useDataSkipping)
       case wideningMode =>
         val fileWithWidening = getFirstFileMatchingPartitionPredicatesInternal(
-          filesDf, shouldWidenNonDeterministicPredicates = true, shouldWidenAllUdf = true)
+          candidates, shouldWidenNonDeterministicPredicates = true, shouldWidenAllUdf = true,
+          useDataSkipping)
 
         fileWithWidening.flatMap { fileWithWidening =>
           val fileWithoutWidening =
             getFirstFileMatchingPartitionPredicatesInternal(
-              filesDf, shouldWidenNonDeterministicPredicates = false, shouldWidenAllUdf = false)
+              candidates, shouldWidenNonDeterministicPredicates = false,
+              shouldWidenAllUdf = false, useDataSkipping)
           if (fileWithoutWidening.isEmpty) {
             // Conflict due to widening of non-deterministic predicate.
             recordDeltaEvent(deltaLog,
@@ -1098,9 +1130,10 @@ private[delta] class ConflictChecker(
   }
 
   private def getFirstFileMatchingPartitionPredicatesInternal(
-      filesDf: DataFrame,
+      candidates: ConflictCandidateFiles,
       shouldWidenNonDeterministicPredicates: Boolean,
-      shouldWidenAllUdf: Boolean): Option[AddFile] = {
+      shouldWidenAllUdf: Boolean,
+      useDataSkipping: Boolean): Option[AddFile] = {
 
     def rewritePredicateFn(
         predicate: Expression,
@@ -1130,15 +1163,46 @@ private[delta] class ConflictChecker(
           canonicalRewrites ++ canonicalNonRewrites
       }
 
+    // With data skipping, each probe is a partition predicate plus the data predicates of the reads
+    // that share it, so a read's data predicates are only combined with that same read's partition
+    // predicate: a file conflicts iff it could match (P_i AND D_i) for some read i, not the looser
+    // (P_1 OR P_2) AND (D_1 OR D_2). Reads are grouped by their partition predicate after widening,
+    // so predicates that widen to the same one share a probe. Like ExpressionSet, non-deterministic
+    // predicates are never merged.
+    val probes: Seq[(DeltaTableReadPredicate, Seq[Seq[Expression]])] = if (useDataSkipping) {
+      val groups =
+        mutable.LinkedHashMap[Any, (DeltaTableReadPredicate, mutable.Buffer[Seq[Expression]])]()
+      currentTransactionInfo.readPredicates.zipWithIndex.foreach { case (rp, i) =>
+        val widened = rewritePredicateFn(rp.partitionPredicate, rp.shouldRewriteFilter)
+        val key = if (widened.partitionPredicate.deterministic) {
+          (widened.shouldRewriteFilter, widened.partitionPredicate.canonicalized)
+        } else {
+          i
+        }
+        groups.getOrElseUpdate(key, (widened, mutable.ArrayBuffer.empty))._2 += rp.dataPredicates
+      }
+      groups.values.toSeq.map { case (widened, dataFiltersPerRead) =>
+        widened -> dataFiltersPerRead.toSeq
+      }
+    } else {
+      canonicalPredicates.toSeq.map(_ -> Seq.empty[Seq[Expression]])
+    }
+
     import org.apache.spark.sql.delta.implicits._
-    val filesMatchingPartitionPredicates = canonicalPredicates.iterator
-      .flatMap { readPredicate =>
-        val matchingFileOpt = DeltaLog.filterFileList(
+    val filesMatchingPartitionPredicates = probes.iterator
+      .flatMap { case (readPredicate, dataFiltersPerRead) =>
+        def filterByPartition(filesDf: DataFrame): DataFrame = DeltaLog.filterFileList(
           partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
           files = filesDf,
           partitionFilters = readPredicate.partitionPredicates,
           shouldRewritePartitionFilters = readPredicate.shouldRewriteFilter
-        ).as[AddFile].head(1).headOption
+        )
+        val matchingFileOpt = if (useDataSkipping) {
+          getFirstFileMatchingDataPredicates(
+            candidates, dataFiltersPerRead, partitionFilter = Some(filterByPartition))
+        } else {
+          filterByPartition(candidates.all).as[AddFile].head(1).headOption
+        }
         matchingFileOpt.foreach { f =>
           logInfo(log"Partition predicate is matching a file changed by the winning transaction: " +
             log"predicate=${MDC(DeltaLogKeys.DATA_FILTER,
@@ -1149,6 +1213,56 @@ private[delta] class ConflictChecker(
       }.take(1).toArray
 
     filesMatchingPartitionPredicates.headOption
+  }
+
+  /**
+   * Returns the first candidate file that passes `partitionFilter` and whose column stats do not
+   * prove it fails every read in `dataFiltersPerRead`, i.e. a file that must still be treated as a
+   * conflict. The partition and skipping filters are fused into the same query, run over bounded
+   * batches of candidates until one holds a match. When there are no candidates or nothing can be
+   * skipped, no stats are parsed, and an unpartitioned check (`partitionFilter = None`) runs no
+   * query at all.
+   *
+   * Skipping is a pure optimization over conservative conflict detection: if building or
+   * evaluating the skipping filter fails, this records an event and falls back to checking without
+   * skipping, exactly as when the feature is disabled.
+   */
+  private def getFirstFileMatchingDataPredicates(
+      candidates: ConflictCandidateFiles,
+      dataFiltersPerRead: Seq[Seq[Expression]],
+      partitionFilter: Option[DataFrame => DataFrame]): Option[AddFile] = {
+    // Nothing to check, so nothing is skipped: do not report skipping as applied.
+    if (candidates.files.isEmpty) return None
+    import org.apache.spark.sql.delta.implicits._
+    def firstFile(df: DataFrame): Option[AddFile] = df.as[AddFile].head(1).headOption
+    def firstFileWithoutSkipping: Option[AddFile] = partitionFilter match {
+      case Some(filter) => firstFile(filter(candidates.all))
+      case None => candidates.files.headOption
+    }
+    val readSnapshot = currentTransactionInfo.readSnapshot
+    try {
+      readSnapshot.conflictSkippingCondition(dataFiltersPerRead) match {
+        case None => firstFileWithoutSkipping
+        case Some(condition) =>
+          val matchingFileOpt = candidates.batches.iterator.map { batch =>
+            val filtered = partitionFilter.map(filter => filter(batch)).getOrElse(batch)
+            firstFile(readSnapshot.applyConflictSkippingCondition(filtered, condition))
+          }.collectFirst { case Some(file) => file }
+          dataSkippingApplied = true
+          matchingFileOpt
+      }
+    } catch {
+      case NonFatal(e) =>
+        logWarning(log"Conflict-time data skipping failed; falling back to treating all added " +
+          log"files as conflict candidates", e)
+        recordDeltaEvent(deltaLog,
+          opType = "delta.conflictDetection.dataSkipping.fallback",
+          data = Map(
+            "winningCommitVersion" -> winningCommitVersion,
+            "exceptionClass" -> e.getClass.getName,
+            "exceptionMessage" -> e.getMessage))
+        firstFileWithoutSkipping
+    }
   }
 
   /**
@@ -1769,4 +1883,23 @@ private[delta] object ConflictChecker extends DeltaLogging {
       action
     }
   }
+}
+
+/**
+ * The concurrently-added files a conflict check tests against the current transaction's reads,
+ * as the DataFrames its probes need. Built lazily on first use and shared by every probe.
+ *
+ * @param toDF builds a DataFrame of [[AddFile]]s from a group of files.
+ */
+private[delta] class ConflictCandidateFiles(
+    val files: Seq[AddFile],
+    batchSize: Int,
+    toDF: Seq[AddFile] => DataFrame) {
+  lazy val all: DataFrame = toDF(files)
+  // The files form a local relation, whose filters the optimizer evaluates over every row before
+  // applying a limit, so `head(1)` alone does not stop early. Bounded batches let a probe stop at
+  // the first batch that holds a conflicting file. The groups are memoized before `toDF` runs, so
+  // a `toDF` failure is retried for the same group by the next probe instead of skipping it.
+  lazy val batches: LazyList[DataFrame] =
+    files.grouped(batchSize).to(LazyList).map(toDF)
 }
