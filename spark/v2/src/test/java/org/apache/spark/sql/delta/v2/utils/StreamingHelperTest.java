@@ -72,7 +72,6 @@ import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
@@ -88,9 +87,9 @@ public class StreamingHelperTest extends DeltaV2TestBase {
   private final SnapshotDescriptor mockReadSnapshot = mock(SnapshotDescriptor.class);
   private final DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.empty();
 
-  @AfterEach
-  void clearTableManagerCache() {
-    DeltaV2TableManagerCache$.MODULE$.clearCache();
+  @Override
+  protected boolean clearTableManagerCacheAfterEach() {
+    return true;
   }
 
   @Test

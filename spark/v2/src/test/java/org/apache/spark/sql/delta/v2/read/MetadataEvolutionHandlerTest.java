@@ -46,7 +46,6 @@ import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -59,9 +58,9 @@ import scala.collection.immutable.Seq$;
 /** Unit tests for {@link MetadataEvolutionHandler}. */
 public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
-  @AfterEach
-  void clearTableManagerCache() {
-    DeltaV2TableManagerCache$.MODULE$.clearCache();
+  @Override
+  protected boolean clearTableManagerCacheAfterEach() {
+    return true;
   }
 
   // ---------------------------------------------------------------------------
