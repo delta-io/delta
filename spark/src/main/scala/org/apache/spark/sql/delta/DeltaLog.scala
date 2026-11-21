@@ -548,16 +548,7 @@ class DeltaLog private(
   def assertTableFeaturesMatchMetadata(
       targetProtocol: Protocol,
       targetMetadata: Metadata): Unit = {
-    if (!targetProtocol.supportsReaderFeatures && !targetProtocol.supportsWriterFeatures) return
-
-    val protocolEnabledFeatures = targetProtocol.writerFeatureNames
-      .flatMap(TableFeature.featureNameToFeature)
-    val activeFeatures =
-      Protocol.extractAutomaticallyEnabledFeatures(spark, targetMetadata, targetProtocol)
-    val activeButNotEnabled = activeFeatures.diff(protocolEnabledFeatures)
-    if (activeButNotEnabled.nonEmpty) {
-      throw DeltaErrors.tableFeatureMismatchException(activeButNotEnabled.map(_.name))
-    }
+    DeltaLog.assertTableFeaturesMatchMetadata(spark, targetProtocol, targetMetadata)
   }
 
   def protocolRead(protocol: Protocol): Unit = {
@@ -1232,6 +1223,27 @@ object DeltaLog extends DeltaLogging {
     val metadata = snapshot.metadata
     if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
       throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)
+    }
+  }
+
+  /**
+   * Asserts that the protocol lists every table feature that the metadata makes active. This is
+   * the body of the instance method [[DeltaLog.assertTableFeaturesMatchMetadata]], so that a
+   * caller without a [[DeltaLog]], such as a reader of a V2 snapshot, can run the same check.
+   */
+  private[delta] def assertTableFeaturesMatchMetadata(
+      spark: SparkSession,
+      targetProtocol: Protocol,
+      targetMetadata: Metadata): Unit = {
+    if (!targetProtocol.supportsReaderFeatures && !targetProtocol.supportsWriterFeatures) return
+
+    val protocolEnabledFeatures = targetProtocol.writerFeatureNames
+      .flatMap(TableFeature.featureNameToFeature)
+    val activeFeatures =
+      Protocol.extractAutomaticallyEnabledFeatures(spark, targetMetadata, targetProtocol)
+    val activeButNotEnabled = activeFeatures.diff(protocolEnabledFeatures)
+    if (activeButNotEnabled.nonEmpty) {
+      throw DeltaErrors.tableFeatureMismatchException(activeButNotEnabled.map(_.name))
     }
   }
 
