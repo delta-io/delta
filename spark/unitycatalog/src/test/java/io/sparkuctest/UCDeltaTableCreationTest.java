@@ -809,24 +809,25 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       assertThat(tableInfo.getStorageLocation()).isEqualTo(externalTableLocation);
     }
 
+    // Delta sent the schema of both managed and external tables to server
     List<ColumnInfo> columns = tableInfo.getColumns();
     assertThat(columns).isNotNull();
+    assertThat(columns).isNotEmpty();
+    List<String> columnNamesFromServer =
+        columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
+    assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
+    if (partitionColumn.isPresent()) {
+      List<ColumnInfo> matchingColumns =
+          columns.stream()
+              .filter(c -> c.getName().equals(partitionColumn.get()))
+              .collect(Collectors.toList());
+      assertThat(matchingColumns).hasSize(1);
+      assertThat(matchingColumns.get(0).getPartitionIndex()).isEqualTo(0);
+    } else {
+      assertThat(columns.stream().anyMatch(c -> c.getPartitionIndex() != null)).isFalse();
+    }
 
     if (tableType == TableType.MANAGED) {
-      assertThat(columns).isNotEmpty();
-      List<String> columnNamesFromServer =
-          columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
-      assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
-      if (partitionColumn.isPresent()) {
-        List<ColumnInfo> matchingColumns =
-            columns.stream()
-                .filter(c -> c.getName().equals(partitionColumn.get()))
-                .collect(Collectors.toList());
-        assertThat(matchingColumns).hasSize(1);
-        assertThat(matchingColumns.get(0).getPartitionIndex()).isEqualTo(0);
-      } else {
-        assertThat(columns.stream().anyMatch(c -> c.getPartitionIndex() != null)).isFalse();
-      }
       // Delta sent properties of managed tables to server
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
@@ -912,7 +913,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
       assertThat(unexpectedTablePropertiesFromServer).isEmpty();
     } else {
-      assertThat(columns).isEmpty();
+      // Delta sent the protocol and properties of external tables to server
+      assertThat(tableInfo.getProperties())
+          .containsEntry("delta.lastUpdateVersion", expectedLastUpdateVersion)
+          .containsKeys("delta.minReaderVersion", "delta.minWriterVersion")
+          .containsAllEntriesOf(customizedProps);
     }
 
     // Also verify table using DESC EXTENDED
@@ -960,6 +965,46 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       assertThat(tableProperties).doesNotContain(UC_TABLE_ID_KEY);
       // Check for catalogManaged feature
       assertThat(tableProperties).doesNotContain(DELTA_CATALOG_MANAGED_KEY);
+    }
+  }
+
+  /**
+   * The UC Delta API cannot register an EXTERNAL table with no columns, a VOID column or UniForm
+   * Iceberg, so those creates stay on the legacy path and keep working.
+   */
+  @Test
+  public void testCreateExternalTableTheDeltaApiCannotRegister() throws Exception {
+    // Label -> the columns and table properties of the CREATE TABLE.
+    Map<String, String[]> definitions = new HashMap<>();
+    definitions.put(
+        "uniform",
+        new String[] {
+          "(id INT)",
+          "TBLPROPERTIES ('delta.enableIcebergCompatV2' = 'true',"
+              + " 'delta.universalFormat.enabledFormats' = 'iceberg')"
+        });
+    definitions.put("no_columns", new String[] {"", ""});
+    // VOID columns need Spark 4.1+.
+    if (!spark().version().startsWith("4.0")) {
+      definitions.put("void_column", new String[] {"(id INT, v VOID)", ""});
+    }
+    for (Map.Entry<String, String[]> definition : definitions.entrySet()) {
+      String label = definition.getKey();
+      withTempDir(
+          dir -> {
+            String tableName = fullTableName("external_" + label);
+            sql(
+                "CREATE TABLE %s %s USING DELTA LOCATION '%s' %s",
+                tableName,
+                definition.getValue()[0],
+                new org.apache.hadoop.fs.Path(dir, label),
+                definition.getValue()[1]);
+            try {
+              assertThat(sql("DESCRIBE DETAIL %s", tableName)).as(label).isNotEmpty();
+            } finally {
+              sql("DROP TABLE IF EXISTS %s", tableName);
+            }
+          });
     }
   }
 

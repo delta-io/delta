@@ -1142,6 +1142,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
+  val DELTA_UC_EXTERNAL_TABLE_METADATA_SYNC_ENABLED =
+    buildConf("externalTableMetadataSync.enabled")
+      .doc("When enabled, Delta updates the Unity Catalog entry of an external table after " +
+        "each commit that changes the table's schema, properties, protocol, or clustering. " +
+        "The update is sent when the commit finishes, and a failure never fails the commit.")
+      .booleanConf
+      .createWithDefault(true)
+
   val COORDINATED_COMMITS_GET_COMMITS_THREAD_POOL_SIZE =
     buildStaticConf("coordinatedCommits.getCommits.threadPoolSize")
       .internal()
