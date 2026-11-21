@@ -3516,6 +3516,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val RETAIN_CHECKPOINT_PROTECTION_VERSION_DURING_REPLACE_TABLE =
+    buildConf("retainCheckpointProtectionVersionDuringReplace")
+      .internal()
+      .doc(
+        """
+          |If enabled, replacing a table (CREATE OR REPLACE TABLE, REPLACE TABLE, or the
+          |DataFrameWriterV2 replace()/createOrReplace() APIs) retains the table property
+          |delta.requireCheckpointProtectionBeforeVersion from the old table when the new DDL
+          |does not set it.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val ALLOW_COLUMN_MAPPING_REMOVAL =
     buildConf("columnMapping.allowRemoval")
       .internal()
