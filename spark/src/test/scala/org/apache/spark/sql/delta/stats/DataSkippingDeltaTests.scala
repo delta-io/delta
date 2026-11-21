@@ -1283,14 +1283,12 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
       setNumIndexedColumns("table", 3)
       hits = Seq(
         "col3 = 3",  // 3 is in col3, but no stats
-        "col3 = 10",  // No stats on col3
-        // The data skipping filters will be generated but verifyStatsForFilter will invalidate
-        // the entire predicate
-        "col1 = 5 and col3 = 10"
+        "col3 = 10"  // No stats on col3
       )
       misses = Seq(
         "col1 = 5",
-        "col1 = 5 AND col2 = 10"
+        "col1 = 5 AND col2 = 10",
+        "col1 = 5 and col3 = 10"
       )
       checkSkipping(r, hits, misses, dataSeq.toString(), false)
     }
@@ -1415,13 +1413,13 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
         "col3 = 3",
         "col1 = 5",
         "col3 = 10",
-        "col1 = 5 AND col2 = 10",
-        "col1 = 5 and col3 = 10",
-        "col1 = 5 and col2 = 10 and col3 = 10"
+        "col1 = 5 and col3 = 10"
       )
       val misses = Seq(
         "col2 = 10",
-        "col2 = 5 and col3 = 10"  // This can pass because stats also exists on col3
+        "col1 = 5 AND col2 = 10",
+        "col2 = 5 and col3 = 10",  // This can pass because stats also exists on col3
+        "col1 = 5 and col2 = 10 and col3 = 10"
       )
 
       checkSkipping(r, hits, misses, dataSeq.toString(), false)
@@ -1452,13 +1450,13 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
           "col3 = 3",
           "col1 = 5",
           "col3 = 10",
-          "col1 = 5 AND col2 = 10",
-          "col1 = 5 and col3 = 10",
-          "col1 = 5 and col2 = 10 and col3 = 10"
+          "col1 = 5 and col3 = 10"
         )
         val misses = Seq(
           "col2 = 10",
-          "col2 = 5 and col3 = 10" // This can pass because stats also exists on col3
+          "col1 = 5 AND col2 = 10",
+          "col2 = 5 and col3 = 10", // This can pass because stats also exists on col3
+          "col1 = 5 and col2 = 10 and col3 = 10"
         )
 
         checkSkipping(r, hits, misses, dataSeq.toString(), false)
