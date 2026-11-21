@@ -36,6 +36,9 @@ if TYPE_CHECKING:
     from py4j.java_collections import JavaMap  # type: ignore[import]
 
 
+__all__ = ['DeltaTable', "DeltaMergeBuilder", "DeltaTableBuilder", "DeltaOptimizeBuilder"]
+
+
 class DeltaTable(object):
     """
         Main class for programmatically interacting with Delta tables.
