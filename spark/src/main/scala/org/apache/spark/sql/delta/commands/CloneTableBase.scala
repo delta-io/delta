@@ -330,6 +330,15 @@ abstract class CloneTableBase(
         conf.getConf(DeltaSQLConf.DELTA_CLONE_STRIP_SOURCE_CHECKPOINT_PROTECTION_VERSION)) {
       filteredConfiguration -= DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
     }
+    // CLONE into an existing table keeps the target's checkpoint protection version, because the
+    // history before that version is still in the target's log. RESTORE also runs this method,
+    // and its source is an older version of the same log.
+    if (tableExists(targetSnapshot) && opName == DeltaOperations.OP_CLONE &&
+        conf.getConf(DeltaSQLConf.DELTA_CLONE_KEEP_TARGET_CHECKPOINT_PROTECTION_VERSION)) {
+      val key = DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+      filteredConfiguration = filteredConfiguration - key ++
+        targetSnapshot.metadata.configuration.get(key).map(key -> _)
+    }
     val clonedSchema =
       IdentityColumn.copySchemaWithMergedHighWaterMarks(
         deltaLog = targetSnapshot.deltaLog,

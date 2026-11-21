@@ -3265,6 +3265,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CLONE_KEEP_TARGET_CHECKPOINT_PROTECTION_VERSION =
+    buildConf("clone.keepTargetCheckpointProtectionVersion")
+      .internal()
+      .doc("If enabled, CLONE into an existing table keeps the target's table property " +
+        "delta.requireCheckpointProtectionBeforeVersion, and does not copy it from the source.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CREATE_TABLE_LIKE_STRIP_SOURCE_CHECKPOINT_PROTECTION_VERSION =
     buildConf("createTableLike.stripSourceCheckpointProtectionVersion")
       .internal()
