@@ -50,7 +50,9 @@ class DeltaTimeTravelV2Suite extends DeltaTimeTravelSuite with V2ForceTest {
     // Catalog reads.
     "SPARK-41154: Correct relation caching for queries with time travel spec",
     "timestamp as of expression for table in database",
-    "Dataframe-based time travel works with different timestamp precisions"
+    "Dataframe-based time travel works with different timestamp precisions",
+    // Deleted-file retention on catalog time travel is enforced by the shared check.
+    "Block time travel beyond deletedFileRetention"
   )
 
   override protected def shouldFailTests: Set[String] = Set(
@@ -70,7 +72,6 @@ class DeltaTimeTravelV2Suite extends DeltaTimeTravelSuite with V2ForceTest {
     "time travel with schema changes - should instantiate old schema",
     "time travel with partition changes - should instantiate old schema",
     // Write / maintenance surfaces not supported.
-    "Block time travel beyond deletedFileRetention",
     "Block CDC beyond deletedFileRetention",
     "Block restore table beyond deletedFileRetention",
     "Block clone table beyond deletedFileRetention"

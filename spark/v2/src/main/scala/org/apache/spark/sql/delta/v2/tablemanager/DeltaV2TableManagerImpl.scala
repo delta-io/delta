@@ -128,6 +128,9 @@ private[tablemanager] class DeltaV2TableManagerImpl(
   override def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot =
     cachedSnapshotManager.loadLatestSnapshot(queryContext)
 
+  override def loadLatestSnapshotSynchronously(queryContext: DeltaV2QueryContext): Snapshot =
+    cachedSnapshotManager.loadLatestSnapshotSynchronously(queryContext)
+
   override def loadSnapshotAt(version: Long, queryContext: DeltaV2QueryContext): Snapshot =
     cachedSnapshotManager.loadSnapshotAt(version, queryContext)
 

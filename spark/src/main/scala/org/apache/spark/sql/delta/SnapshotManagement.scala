@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTUsageLogs, AMTU
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.DeltaLoggingProvider
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
@@ -48,6 +49,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.util.Clock
 import org.apache.spark.util.ThreadUtils
 
 /**
@@ -1732,46 +1734,15 @@ trait SnapshotManagement { self: DeltaLog =>
       checksumOpt = checksumOpt)
 
     if (enforceTimeTravelWithinDeletedFileRetention) {
-      enforceTimeTravelWithinDeletedFileRetentionDuration(ret, currentSnapshot)
+      SnapshotManagement.enforceTimeTravelWithinDeletedFileRetentionDuration(
+        SparkSession.active,
+        logPath,
+        clock,
+        loggingProvider = this,
+        targetSnapshot = ret,
+        latestSnapshot = currentSnapshot)
     }
     ret
-  }
-
-  private def enforceTimeTravelWithinDeletedFileRetentionDuration(
-    targetSnapshot: Snapshot, latestSnapshot: Snapshot): Unit = {
-    if (!SparkSession.active.sessionState.conf.getConf(
-      DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION)) {
-      return
-    }
-
-    // Skip enforcement for delta-sharing tables since they create a faked delta-log
-    // where the version timestamp may be set to 0.
-    val deltasharingLogFileSystemSchema =
-      // Cannot import io.delta.sharing.spark.DeltaSharingLogFileSystemConstants.SCHEME
-      // in the current (spark) module since sharing depends on spark; falling back to
-      // string comparison.
-      "delta-sharing-log"
-    if (logPath.toUri.getScheme == deltasharingLogFileSystemSchema) {
-      return
-    }
-
-    // Time travel to the latest version is always allowed
-    if (targetSnapshot.version == latestSnapshot.version) return
-
-    val deletedFileRetentionDuration = DeltaLog.tombstoneRetentionMillis(latestSnapshot.metadata)
-    val currentTime = clock.getTimeMillis()
-    if (targetSnapshot.timestamp < (currentTime - deletedFileRetentionDuration)) {
-      recordDeltaEvent(this, s"delta.timeTravel.fail", data = Map(
-        // Log the cached version of the table on the cluster
-        "latestVersion" -> latestSnapshot.version,
-        "queriedVersion" -> targetSnapshot.version,
-        "currentTimestamp" -> currentTime,
-        "targetSnapshotTimestamp" -> targetSnapshot.timestamp,
-        "deletedFileRetentionDuration" -> deletedFileRetentionDuration
-      ))
-      throw DeltaErrors.timeTravelBeyondDeletedFileRetentionDurationException(
-        deletedFileRetentionDuration.millis.toHours.toString)
-    }
   }
 
   // Populate commit coordinator using catalogOpt if the snapshot is catalog managed.
@@ -1817,6 +1788,63 @@ object SnapshotManagement extends DeltaLogging {
       .getConf(DeltaSQLConf.COORDINATED_COMMITS_GET_COMMITS_THREAD_POOL_SIZE)
     val tpe = ThreadUtils.newDaemonCachedThreadPool("commit-coordinator-get-commits", numThreads)
     new DeltaThreadPool(tpe)
+  }
+
+  /**
+   * Blocks time travel to a version that is older than the table's
+   * `delta.deletedFileRetentionDuration`, because VACUUM can delete the data files of such a
+   * version. Does nothing when
+   * [[DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION]] is off.
+   *
+   * The V1 [[DeltaLog]] time travel path and the DSv2 connector share this check, so both
+   * connectors accept and reject the same versions with the same error.
+   *
+   * @param logPath the `_delta_log` path of the table. Delta Sharing paths are exempt.
+   * @param clock supplies the current time.
+   * @param loggingProvider supplies the tags of the failure event, such as the table id and path.
+   * @param targetSnapshot the snapshot of the requested version.
+   * @param latestSnapshot the latest known snapshot. It supplies the retention duration.
+   */
+  private[delta] def enforceTimeTravelWithinDeletedFileRetentionDuration(
+      spark: SparkSession,
+      logPath: Path,
+      clock: Clock,
+      loggingProvider: DeltaLoggingProvider,
+      targetSnapshot: Snapshot,
+      latestSnapshot: Snapshot): Unit = {
+    if (!spark.sessionState.conf.getConf(
+      DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION)) {
+      return
+    }
+
+    // Skip enforcement for delta-sharing tables since they create a faked delta-log
+    // where the version timestamp may be set to 0.
+    val deltasharingLogFileSystemSchema =
+      // Cannot import io.delta.sharing.spark.DeltaSharingLogFileSystemConstants.SCHEME
+      // in the current (spark) module since sharing depends on spark; falling back to
+      // string comparison.
+      "delta-sharing-log"
+    if (logPath.toUri.getScheme == deltasharingLogFileSystemSchema) {
+      return
+    }
+
+    // Time travel to the latest version is always allowed
+    if (targetSnapshot.version == latestSnapshot.version) return
+
+    val deletedFileRetentionDuration = DeltaLog.tombstoneRetentionMillis(latestSnapshot.metadata)
+    val currentTime = clock.getTimeMillis()
+    if (targetSnapshot.timestamp < (currentTime - deletedFileRetentionDuration)) {
+      recordDeltaEvent(loggingProvider, s"delta.timeTravel.fail", data = Map(
+        // Log the cached version of the table on the cluster
+        "latestVersion" -> latestSnapshot.version,
+        "queriedVersion" -> targetSnapshot.version,
+        "currentTimestamp" -> currentTime,
+        "targetSnapshotTimestamp" -> targetSnapshot.timestamp,
+        "deletedFileRetentionDuration" -> deletedFileRetentionDuration
+      ))
+      throw DeltaErrors.timeTravelBeyondDeletedFileRetentionDurationException(
+        deletedFileRetentionDuration.millis.toHours.toString)
+    }
   }
 
   /**

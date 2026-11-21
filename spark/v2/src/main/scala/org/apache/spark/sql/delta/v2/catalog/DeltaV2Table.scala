@@ -41,8 +41,10 @@ import org.apache.spark.sql.delta.{
   RowTracking,
   Snapshot
 }
+import org.apache.spark.sql.delta.SnapshotManagement
 import org.apache.spark.sql.delta.catalog.DeltaV2TableMarker
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.PersistedMetadata
 import org.apache.spark.sql.delta.util.DeltaFileSystemOptions
 import org.apache.spark.sql.delta.v2.exception.{
@@ -107,6 +109,7 @@ import org.apache.spark.sql.connector.write.{
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.types.{DataType, DataTypes, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.util.SystemClock
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
 /**
@@ -460,6 +463,7 @@ class DeltaV2Table private (
 
   /**
    * Validates that {@code version} exists in the Delta log, then loads the snapshot pinned to it.
+   * Like V1, rejects a version beyond the deleted-file retention of the table.
    */
   private def loadSnapshotAtCheckedVersion(
       manager: DeltaV2TableManager,
@@ -468,7 +472,36 @@ class DeltaV2Table private (
     val allowOutOfRange = false
     manager.checkVersionExists(version, mustBeRecreatable, allowOutOfRange, queryContext)
     val loadSnapshot: Supplier[Snapshot] = () => manager.loadSnapshotAt(version, queryContext)
-    recordFrameProfileValue("snapshot.loadAtVersion", loadSnapshot)
+    val snapshot = recordFrameProfileValue("snapshot.loadAtVersion", loadSnapshot)
+    enforceTimeTravelWithinDeletedFileRetention(manager, snapshot)
+    snapshot
+  }
+
+  /**
+   * Applies the V1 deleted-file retention check to a time travel snapshot.
+   *
+   * <p>V1 skips the check only for internal time travel specs with `enforceRetention = false`.
+   * No such spec reaches this table, so every V2 time travel enforces it, like V1 SQL reads.
+   */
+  private def enforceTimeTravelWithinDeletedFileRetention(
+      manager: DeltaV2TableManager,
+      targetSnapshot: Snapshot): Unit = {
+    // When the conf is off, do not load the latest snapshot below.
+    if (!spark.sessionState.conf.getConf(
+        DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION)) {
+      return
+    }
+    // Like V1's DeltaLog.update in checkVersionExists, load the latest snapshot synchronously. A
+    // stale latest could equal the target and skip the check as "time travel to latest", or carry
+    // an outdated retention duration. The stalenessLimit conf does not apply here.
+    val latestSnapshot = manager.loadLatestSnapshotSynchronously(queryContext)
+    SnapshotManagement.enforceTimeTravelWithinDeletedFileRetentionDuration(
+      spark,
+      targetSnapshot.logPath,
+      new SystemClock,
+      loggingProvider = latestSnapshot,
+      targetSnapshot = targetSnapshot,
+      latestSnapshot = latestSnapshot)
   }
 
 

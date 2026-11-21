@@ -77,6 +77,18 @@ private[tablemanager] class CachedSnapshotManager(
     }
   }
 
+  /**
+   * Loads the latest snapshot, validated against the log before it returns, even when the table's
+   * staleness limit allows a stale latest. Like V1 `DeltaLog.update()` without
+   * `stalenessAcceptable`, so callers that compare against the latest version see it.
+   */
+  def loadLatestSnapshotSynchronously(queryContext: DeltaV2QueryContext): Snapshot = {
+    Objects.requireNonNull(queryContext, "queryContext is null")
+    recordFrameProfile("cachedSnapshotManager.loadLatestSnapshotSynchronously") {
+      loadLatestSnapshotInternal(queryContext.catalogTableOpt, stalenessAcceptable = false)
+    }
+  }
+
   override def loadSnapshotAt(version: Long): Snapshot = {
     recordFrameProfile("cachedSnapshotManager.loadSnapshotAt") {
       loadSnapshotAtInternal(version, Option(latestCatalogTable.get()))
@@ -205,8 +217,12 @@ private[tablemanager] class CachedSnapshotManager(
 
   // === Acquisition ==========================================================
 
-  private def loadLatestSnapshotInternal(catalogTableOpt: Option[CatalogTable]): Snapshot = {
-    val requiredFreshAfter = latestSnapshotFreshnessThreshold()
+  private def loadLatestSnapshotInternal(
+      catalogTableOpt: Option[CatalogTable],
+      stalenessAcceptable: Boolean = true): Snapshot = {
+    // Without staleness acceptable, the cached latest must be validated after this call starts.
+    val requiredFreshAfter =
+      if (stalenessAcceptable) latestSnapshotFreshnessThreshold() else System.currentTimeMillis()
     recordFrameProfile("cachedSnapshotManager.loadLatestSnapshotInternal") {
       val existing = currentSnapshot
       if (isFresh(existing, requiredFreshAfter)) {
