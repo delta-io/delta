@@ -25,14 +25,16 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaLog, DeltaOpe
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.{FileSizeHistogram, FileSizeHistogramUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
+import org.apache.spark.sql.delta.util.SamePathFileActionMetrics.SamePathPairMetrics
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.functions.{column, lit}
+import org.apache.spark.sql.functions.{coalesce, column, count, lit, struct, sum, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.IGNORE_MISSING_FILES
 import org.apache.spark.sql.types.LongType
@@ -193,7 +195,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
             snapshotId = None,
             modifiedSnapshotId = None))
 
-        val filesToRemove = normalizedTarget
+        val filesToRemove: Dataset[RemoveFile] = normalizedTarget
           .join(normalizedSource, joinExprs, "left_anti")
           .select(column("tgtAddFile").as[AddFile])
           .map(_.removeWithTimestamp())
@@ -207,10 +209,14 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           checkSnapshotFilesAvailability(deltaLog, filesToAdd, versionToRestore)
         }
 
-          // Commit files, metrics, protocol and metadata to delta log
-        val metrics = withDescription("metrics") {
-          computeMetrics(filesToAdd, filesToRemove, snapshotToRestore)
+        val fileMetrics = withDescription("metrics") {
+          computeFileMetrics(
+            normalizedSource,
+            normalizedTarget,
+            excludeSamePathPairs = txn.dvAwareFileMetricsEnabled &&
+              (sourceMayHaveDVs || targetMayHaveDVs))
         }
+        val metrics = operationMetrics(fileMetrics, snapshotToRestore)
         val addActions = withDescription("add actions") {
           filesToAdd.toLocalIterator().asScala
         }
@@ -252,7 +258,8 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           DomainMetadataUtils.handleDomainMetadataForRestoreTable(snapshotToRestore, latestSnapshot)
 
         val restoreChangesData =
-          metrics.getOrElse(NUM_RESTORED_FILES, 0L) + metrics.getOrElse(NUM_REMOVED_FILES, 0L) > 0
+          fileMetrics.samePathPairs.numAddRemovePathPairs > 0 ||
+            fileMetrics.numRestoredFiles > 0 || fileMetrics.numRemovedFiles > 0
 
         txn.commitLarge(
           spark,
@@ -261,7 +268,8 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
           metrics.mapValues(_.toString).toMap,
-          dataChange = restoreChangesData)
+          dataChange = restoreChangesData,
+          samePathPairMetrics = fileMetrics.samePathPairs)
 
         Seq(Row(
           metrics.get(TABLE_SIZE_AFTER_RESTORE),
@@ -293,29 +301,69 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
     }
   }
 
-  private def computeMetrics(
-    toAdd: Dataset[AddFile],
-    toRemove: Dataset[RemoveFile],
-    snapshot: Snapshot
-  ): Map[String, Long] = {
+  private def operationMetrics(files: RestoreFileMetrics, snapshot: Snapshot): Map[String, Long] = {
+    Map(
+      NUM_RESTORED_FILES -> files.numRestoredFiles,
+      RESTORED_FILES_SIZE -> files.restoredFilesSize,
+      NUM_REMOVED_FILES -> files.numRemovedFiles,
+      REMOVED_FILES_SIZE -> files.removedFilesSize,
+      NUM_OF_FILES_AFTER_RESTORE -> snapshot.numOfFiles,
+      TABLE_SIZE_AFTER_RESTORE -> snapshot.sizeInBytes)
+  }
+
+  /**
+   * Match files by path between the snapshot being restored and the current snapshot. A path
+   * unique to either side generates one action. A path in both generates an add and a remove
+   * only when its deletion vector changed. Null-safe equality also skips files with no DV in
+   * either snapshot. Each remaining row carries the size on each side that produces an action.
+   */
+  private def changedFileSizes(source: DataFrame, target: DataFrame): DataFrame = {
+    source.join(target, column("srcPath") === column("tgtPath"), "full_outer")
+      .where(column("srcPath").isNull || column("tgtPath").isNull ||
+        !(column("srcDeletionVectorId") <=> column("tgtDeletionVectorId")))
+      .select(
+        column("srcAddFile.size").as("addedFileSize"),
+        column("tgtAddFile.size").as("removedFileSize"))
+  }
+
+  private def computeFileMetrics(
+      source: DataFrame,
+      target: DataFrame,
+      excludeSamePathPairs: Boolean): RestoreFileMetrics = {
+    import org.apache.spark.sql.delta.ClassicColumnConversions._
     // scalastyle:off sparkimplicits
-    import toAdd.sparkSession.implicits._
+    import source.sparkSession.implicits._
     // scalastyle:on sparkimplicits
 
-    val (numRestoredFiles, restoredFilesSize) = toAdd
-      .agg("size" -> "count", "size" -> "sum").as[(Long, Option[Long])].head()
+    val addedFileSize = column("addedFileSize")
+    val removedFileSize = column("removedFileSize")
+    val excludePair = lit(excludeSamePathPairs) &&
+      addedFileSize.isNotNull && removedFileSize.isNotNull
+    val pairedAdded = when(excludePair, addedFileSize)
+    val pairedRemoved = when(excludePair, removedFileSize)
+    def bytes(size: Column): Column = coalesce(sum(size), lit(0L))
+    val collectHistograms = excludeSamePathPairs &&
+      conf.getConf(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)
+    def histogram(size: Column): Column = if (collectHistograms) {
+      FileSizeHistogramUtils.histogramAggregate(size.expr)
+    } else {
+      lit(null).cast(FileSizeHistogram.schema)
+    }
 
-    val (numRemovedFiles, removedFilesSize) = toRemove
-      .agg("size" -> "count", "size" -> "sum").as[(Long, Option[Long])].head()
-
-    Map(
-      NUM_RESTORED_FILES -> numRestoredFiles,
-      RESTORED_FILES_SIZE -> restoredFilesSize.getOrElse(0),
-      NUM_REMOVED_FILES -> numRemovedFiles,
-      REMOVED_FILES_SIZE -> removedFilesSize.getOrElse(0),
-      NUM_OF_FILES_AFTER_RESTORE -> snapshot.numOfFiles,
-      TABLE_SIZE_AFTER_RESTORE -> snapshot.sizeInBytes
-    )
+    // Aggregate on the executors so the driver receives one fixed-size row.
+    changedFileSizes(source, target).agg(
+      count(when(!excludePair, addedFileSize)).as(NUM_RESTORED_FILES),
+      bytes(when(!excludePair, addedFileSize)).as(RESTORED_FILES_SIZE),
+      count(when(!excludePair, removedFileSize)).as(NUM_REMOVED_FILES),
+      bytes(when(!excludePair, removedFileSize)).as(REMOVED_FILES_SIZE),
+      struct(
+        count(pairedAdded).as("numAddRemovePathPairs"),
+        bytes(pairedAdded).as("addedBytes"),
+        bytes(pairedAdded).as("dataChangeAddedBytes"),
+        bytes(pairedRemoved).as("removedBytes"),
+        histogram(pairedAdded).as("addedFileSizeHistogram"),
+        histogram(pairedRemoved).as("removedFileSizeHistogram")).as("samePathPairs"))
+      .as[RestoreFileMetrics].head()
   }
 
   /* Prevent users from running restore to table version with missed
@@ -358,3 +406,10 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
     }
   }
 }
+
+private[commands] case class RestoreFileMetrics(
+    numRestoredFiles: Long,
+    restoredFilesSize: Long,
+    numRemovedFiles: Long,
+    removedFilesSize: Long,
+    samePathPairs: SamePathPairMetrics)
