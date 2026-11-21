@@ -17,9 +17,8 @@
 package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
-import java.nio.charset.StandardCharsets.UTF_8
 
-import com.google.common.hash.Hashing
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingProfileProvider}
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
 import org.apache.hadoop.fs.Path
@@ -74,7 +73,7 @@ object DeltaSharingDeltaLogBuilder extends Logging {
    * @param tablePath the shared table path; base of both the synthetic log path and the
    *   [[CachedTableManager]] key.
    * @param queryParamsHashId legacy hash using the metadata response version.
-   * @param queryParamsHashIdForVersion hashes the effective scan parameters with the supplied
+   * @param queryParamsHashIdForVersion hashes the same query parameters with the supplied
    *   snapshot version. The response-version flag uses this after getFiles returns, so the log
    *   and URL cache key describe the snapshot whose actions are being stored.
    * @param jsonPredicateHints optional server-side filter hints forwarded to getFiles.
@@ -93,7 +92,8 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       jsonPredicateHints: Option[String],
       limit: Option[Long],
       logPrefix: String): UnregisteredSnapshotDeltaLog = {
-    val useResponseVersion = true
+    val useResponseVersion = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_SHARING_SNAPSHOT_RESPONSE_VERSION_ENABLED)
     // 1. Call client.getFiles, and build the matching refresher next to it so the two share the
     // same params.
     val startTime = System.currentTimeMillis()
@@ -123,12 +123,10 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       s"${(System.currentTimeMillis() - startTime) / 1000.0}s."
     )
 
-    // 2. Prepare a DeltaLog. A latest read can advance between getMetadata and getFiles, so
-    // the metadata version must not identify the snapshot returned by getFiles.
+    // 2. Prepare a DeltaLog. When enabled, use the getFiles version because a latest read can
+    // advance after getMetadata.
     val snapshotQueryParamsHashId = if (useResponseVersion) {
-      // Keep legacy writers in a separate namespace during a session config transition.
-      Hashing.sha256().hashString(
-        s"snapshot_${queryParamsHashIdForVersion(deltaTableFiles.version)}", UTF_8).toString
+      queryParamsHashIdForVersion(deltaTableFiles.version)
     } else {
       queryParamsHashId
     }

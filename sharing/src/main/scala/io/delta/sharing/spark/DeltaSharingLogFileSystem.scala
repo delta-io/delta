@@ -34,7 +34,7 @@ import org.apache.hadoop.fs._
 import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
-import org.apache.spark.SparkEnv
+import org.apache.spark.{SparkEnv, SparkException}
 import org.apache.spark.internal.Logging
 import org.apache.spark.storage.BlockId
 
@@ -779,7 +779,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
         case protocol: model.DeltaSharingProtocol => protocol.deltaProtocol.json
         case metadata: model.DeltaSharingMetadata => metadata.deltaMetadata.json
         case action =>
-          throw new IllegalStateException(s"Unexpected snapshot action: $action")
+          throw SparkException.internalError(s"Unexpected snapshot action: $action")
       }
     }
     val hasher = Hashing.sha256().newHasher()

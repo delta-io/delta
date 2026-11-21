@@ -94,10 +94,9 @@ case class DeltaSharingFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression],
       overrideLimit: Option[Long]): DeltaLog = {
-    val useResponseVersion = true
     val jsonPredicateHints = DeltaSharingJsonPredicates.convert(
       partitionFilters, dataFilters, params.spark.sessionState.conf)
-    def queryParamsHash(version: Long, limit: Option[Long]): String =
+    def queryParamsHashIdForVersion(version: Long): String =
       DeltaSharingUtils.getQueryParamsHashId(
         params.options,
         // Using .sql instead of toString because it doesn't include class pointer, which
@@ -105,16 +104,16 @@ case class DeltaSharingFileIndex(
         partitionFilters.map(_.sql).mkString(";"),
         dataFilters.map(_.sql).mkString(";"),
         jsonPredicateHints.getOrElse(""),
-        limit.map(_.toString).getOrElse(""),
+        overrideLimit.map(_.toString).getOrElse(""),
         version
       )
-    val queryParamsHashId = queryParamsHash(params.deltaSharingTableMetadata.version, overrideLimit)
-    val effectiveLimit = overrideLimit.orElse(limitHint)
+    val queryParamsHashId =
+      queryParamsHashIdForVersion(params.deltaSharingTableMetadata.version)
     // listFiles will be called twice or more in a spark query, with this check we can avoid
     // duplicated work of making expensive rpc and constructing the delta log.
     val tableKey = DeltaSharingUtils.getTablePathWithIdSuffix(
       fileIndexId + "." + params.path.toString,
-      s"$queryParamsHashId.$useResponseVersion"
+      queryParamsHashId
     )
     queriedTableQueryIdToDeltaLog.get(tableKey) match {
       case Some(deltaLog) =>
@@ -125,7 +124,7 @@ case class DeltaSharingFileIndex(
         val newDeltaLog = createDeltaLog(
           jsonPredicateHints,
           queryParamsHashId,
-          version => queryParamsHash(version, effectiveLimit),
+          queryParamsHashIdForVersion,
           overrideLimit
         )
         // In theory there should only be one entry in this set since each query creates its own
