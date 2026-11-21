@@ -1037,6 +1037,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    kernelApiMimaSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
 
@@ -1075,6 +1076,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.
     Compile / packageBin := assembly.value,
+    // MiMa should use the generated JAR because kernel-api shades dependencies at package time.
+    mimaCurrentClassfiles := (Compile / packageBin).value,
     assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
     assembly / logLevel := Level.Info,
     assembly / test := {},
@@ -1140,6 +1143,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    kernelDefaultsMimaSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
 

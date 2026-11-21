@@ -114,4 +114,20 @@ object Mima {
     },
     mimaBinaryIssueFilters ++= FlinkMimaExcludes.ignoredABIProblems
   )
+
+  lazy val kernelApiMimaSettings = Seq(
+    Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
+    mimaPreviousArtifacts := {
+      Set("io.delta" % "delta-kernel-api" % getPrevSparkVersion(version.value))
+    },
+    mimaBinaryIssueFilters ++= KernelMimaExcludes.ignoredABIProblems
+  )
+
+  lazy val kernelDefaultsMimaSettings = Seq(
+    Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
+    mimaPreviousArtifacts := {
+      Set("io.delta" % "delta-kernel-defaults" % getPrevSparkVersion(version.value))
+    },
+    mimaBinaryIssueFilters ++= KernelMimaExcludes.ignoredABIProblems
+  )
 }
