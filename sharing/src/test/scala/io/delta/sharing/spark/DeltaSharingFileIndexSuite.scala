@@ -131,6 +131,8 @@ class TestDeltaSharingClientForFileIndex(
   }
 
   var numGetFileCalls: Int = -1
+  var responseVersion: Long = 0L
+  var responseLines: Option[Seq[String]] = None
 
   var savedLimits = Seq.empty[Long]
   var savedJsonPredicateHints = Seq.empty[String]
@@ -168,13 +170,13 @@ class TestDeltaSharingClientForFileIndex(
     }
 
     DeltaTableFiles(
-      version = 0,
-      lines = Seq[String](
+      version = responseVersion,
+      lines = responseLines.getOrElse(Seq[String](
         protocolStr,
         metaDataStr,
         getAddFileStr1(paths(numGetFileCalls.min(1)), urlExpirationMsOpt),
         getAddFileStr2(urlExpirationMsOpt)
-      ),
+      )),
       refreshToken = Some(refreshTokens(numGetFileCalls.min(2))),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )

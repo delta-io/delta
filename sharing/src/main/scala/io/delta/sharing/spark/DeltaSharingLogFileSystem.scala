@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, DeletionVectorDescriptor, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.util.FileNames
+import com.google.common.hash.Hashing
 import io.delta.sharing.client.util.JsonUtils
 import io.delta.sharing.spark.DeltaSharingUtils.{DeltaSharingTableMetadata, FAKE_CHECKPOINT_BYTE_ARRAY}
 import org.apache.hadoop.fs._
@@ -767,16 +768,42 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     }
   }
 
+  /** Hash reader-visible actions, excluding signed URLs and their expiration timestamps. */
+  def snapshotContentsHash(lines: Seq[String]): String = {
+    val actions = lines.map { line =>
+      JsonUtils.fromJson[model.DeltaSharingSingleAction](line).unwrap match {
+        case file: model.DeltaSharingFileAction =>
+          getActionWithDeltaSharingPath(
+            file.copy(deltaSingleAction = setModificationTimestampToZero(file.deltaSingleAction)),
+            "snapshot")
+        case protocol: model.DeltaSharingProtocol => protocol.deltaProtocol.json
+        case metadata: model.DeltaSharingMetadata => metadata.deltaMetadata.json
+        case action =>
+          throw new IllegalStateException(s"Unexpected snapshot action: $action")
+      }
+    }
+    val hasher = Hashing.sha256().newHasher()
+    actions.sorted.foreach { action =>
+      val bytes = action.getBytes(StandardCharsets.UTF_8)
+      hasher.putInt(bytes.length).putBytes(bytes)
+    }
+    hasher.hash().toString
+  }
+
   /**
    * Construct local delta log at version zero based on lines returned from delta sharing server,
    * to support latest snapshot or time travel queries. Storing both protocol/metadata and
    * the actual data actions in version 0 will simplify both the log construction and log reply.
+   * Existing blocks are replaced unless overwriteBlocks is false. The insertion-only mode
+   * requires a path identifying the getFiles response version, scan parameters, and contents.
    *
    * @param lines           a list of delta actions, to be processed and put in the local delta log,
    *                        each action contains a version field to indicate the version of log to
    *                        put it in.
-   * @param customTablePath query customized table path, used to construct action.path field for
-   *                        DeltaSharingFileSystem
+   * @param customTablePath identity of the synthetic log directory.
+   * @param overwriteBlocks whether to replace existing blocks or preserve the first publication.
+   * @param dataTablePath optional identity for data file paths and URL registration, independent
+   *                      of the synthetic log identity. Defaults to customTablePath.
    * @return ConstructedDeltaLogMetadata, which contains 3 fields:
    *          - idToUrl: mapping from file id to pre-signed url
    *          - minUrlExpirationTimestamp timestamp indicating the when to refresh pre-signed urls.
@@ -785,7 +812,9 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
    */
   def constructLocalDeltaLogAtVersionZero(
       lines: Seq[String],
-      customTablePath: String): ConstructedDeltaLogMetadata = {
+      customTablePath: String,
+      overwriteBlocks: Boolean = true,
+      dataTablePath: Option[String] = None): ConstructedDeltaLogMetadata = {
     val startTime = System.currentTimeMillis()
     val jsonLogSeq = Seq.newBuilder[String]
     var jsonLogSize = 0
@@ -835,7 +864,8 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       }
 
       // 2. prepare json log content.
-      val actionJsonStr = getActionWithDeltaSharingPath(fileAction, customTablePath) + "\n"
+      val actionJsonStr = getActionWithDeltaSharingPath(
+        fileAction, dataTablePath.getOrElse(customTablePath)) + "\n"
       jsonLogSize += actionJsonStr.getBytes(StandardCharsets.UTF_8).length
       jsonLogSeq += actionJsonStr
 
@@ -856,21 +886,42 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     // Always use 0.json for snapshot queries.
     val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
     val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString
-    DeltaSharingUtils.overrideIteratorBlock[String](
-      getDeltaSharingLogBlockId(jsonFilePath),
-      jsonLogSeq.result().toIterator
-    )
+    val jsonBlockId = getDeltaSharingLogBlockId(jsonFilePath)
+    val storedJsonLogSize = if (overwriteBlocks) {
+      DeltaSharingUtils.overrideIteratorBlock[String](jsonBlockId, jsonLogSeq.result().iterator)
+      jsonLogSize.toLong
+    } else {
+      // A duplicate put can return while the first writer is still publishing. Reading waits
+      // for that writer, and uses the winning JSON's size if a later response differs in bytes.
+      val storedLines = DeltaSharingUtils.putSnapshotBlockIfAbsent[String](
+        jsonBlockId, jsonLogSeq.result().iterator)
+      var size = 0L
+      // Exhaust the iterator to release the BlockManager read lock.
+      while (storedLines.hasNext) {
+        size += storedLines.next().getBytes(StandardCharsets.UTF_8).length
+      }
+      size
+    }
 
     val fileStatusSeq = Seq(
-      DeltaSharingLogFileStatus(path = jsonFilePath, size = jsonLogSize, modificationTime = 0L)
+      DeltaSharingLogFileStatus(
+        path = jsonFilePath, size = storedJsonLogSize, modificationTime = 0L)
     )
-    DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
-      getDeltaSharingLogBlockId(deltaLogPath),
-      fileStatusSeq.toIterator
-    )
+    val listingBlockId = getDeltaSharingLogBlockId(deltaLogPath)
+    if (overwriteBlocks) {
+      DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
+        listingBlockId, fileStatusSeq.iterator)
+    } else {
+      // Also wait for a competing directory writer before returning a usable snapshot path.
+      val storedStatuses = DeltaSharingUtils.putSnapshotBlockIfAbsent(
+        listingBlockId, fileStatusSeq.iterator)
+      while (storedStatuses.hasNext) {
+        storedStatuses.next()
+      }
+    }
     logInfo(
       s"It takes ${(System.currentTimeMillis() - startTime) / 1000.0}s to construct delta" +
-      s" log for $customTablePath with ${jsonLogSize} bytes for ${idToUrl.toMap.size} urls."
+      s" log for $customTablePath with ${storedJsonLogSize} bytes for ${idToUrl.toMap.size} urls."
     )
     ConstructedDeltaLogMetadata(
       idToUrl = idToUrl.toMap,
