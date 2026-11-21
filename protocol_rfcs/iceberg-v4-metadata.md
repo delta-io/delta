@@ -144,11 +144,11 @@ This design enables:
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>version</ins> | <ins>Long</ins> | <ins>The version of the manifest commit that emitted the latest [`checkpoint` action](#checkpoint-action).</ins> |
-| <ins>contentRoot</ins> | <ins>Struct</ins> | <ins>An exact copy of the `contentRoot` entry of that `checkpoint` action, including all of its fields. Schema defined in [Checkpoint Action Contents](#checkpoint-action-contents).</ins> |
+| <ins>contentRoot</ins> | <ins>Struct</ins> | <ins>A copy of the `contentRoot` entry of that `checkpoint` action. `path`, `sizeInBytes`, `version`, and `commitTimestamp` must be copied unchanged. Writers may omit `tags`. Schema defined in [Checkpoint Action Contents](#checkpoint-action-contents).</ins> |
 
-<ins>When the `adaptiveMetadata` table feature is enabled, each log commit must carry `lastManifestCommit` forward from the prior commit, including its absence before the first manifest commit. A manifest commit must set `version` to its own commit version and `contentRoot` to the `contentRoot` of its emitted `checkpoint` action.</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, each log commit must carry `lastManifestCommit` forward from the prior commit, including its absence before the first manifest commit. A manifest commit must set `version` to its own commit version and `contentRoot` to a copy of the `contentRoot` of its emitted `checkpoint` action, as described above.</ins>
 
-<ins>All fields of `lastManifestCommit` are required. Readers can therefore start reading the root manifest from `contentRoot.path` without first reading the `checkpoint` action from the commit at `version`.</ins>
+<ins>`version` and `contentRoot` are required, and so are the `contentRoot` fields that must be copied. Readers can therefore start reading the root manifest from `contentRoot.path` without first reading the `checkpoint` action from the commit at `version`. Readers that need `tags` must read them from that `checkpoint` action, because `lastManifestCommit` may omit them.</ins>
 
 ### Version Checksum File
 
