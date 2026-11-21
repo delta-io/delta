@@ -174,6 +174,11 @@ public class TableBuilder {
     return this;
   }
 
+  public TableBuilder withCatalogName(String catalogName) {
+    this.catalogName = Objects.requireNonNull(catalogName, "catalogName");
+    return this;
+  }
+
   public TableBuilder withEndpoint(String catalogEndpoint) {
     this.endpoint = URI.create(catalogEndpoint);
     return this;
