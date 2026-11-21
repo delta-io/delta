@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.serverSidePlanning
 
 import scala.jdk.CollectionConverters._
 
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils
+
 import io.unitycatalog.client.auth.TokenProvider
 
 import org.apache.spark.sql.SparkSession
@@ -105,7 +107,14 @@ object UnityCatalogMetadata {
       // Legacy token: convert to static format. Matches UC AuthConfigUtils behavior.
       Map("type" -> "static", "token" -> legacyToken)
     } else {
-      newFormatConfig
+      // As in UCConfigUtils.extractAuthConfig: pass the catalog uri as catalogUri, for token
+      // providers that call the UC server themselves.
+      val uri = spark.conf.get(s"${catalogPrefix}${UCConfigUtils.URI_KEY}", "")
+      if (newFormatConfig.nonEmpty && uri.nonEmpty) {
+        newFormatConfig + (UCConfigUtils.AUTH_CATALOG_URI_KEY -> uri)
+      } else {
+        newFormatConfig
+      }
     }
   }
 }

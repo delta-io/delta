@@ -50,6 +50,21 @@ class UCConfigUtilsSuite extends AnyFunSuite {
     assert(!auth.containsKey("token"))
   }
 
+  test("extractAuthConfig passes the catalog uri as catalogUri") {
+    val auth = UCConfigUtils.extractAuthConfig(config(
+      "uri" -> "https://uc.example.com",
+      "auth.type" -> "oauth",
+      "auth.catalogUri" -> "https://elsewhere.example.com"))
+    // The catalog uri wins over auth.catalogUri, so the token only goes to this catalog's server.
+    assert(auth.get("catalogUri") === "https://uc.example.com")
+
+    assert(!UCConfigUtils.extractAuthConfig(config("auth.type" -> "oauth"))
+      .containsKey("catalogUri"))
+    assert(!UCConfigUtils.extractAuthConfig(config(
+      "uri" -> "https://uc.example.com",
+      "token" -> "my-token")).containsKey("catalogUri"))
+  }
+
   test("extractAuthConfig falls back to legacy token") {
     val auth = UCConfigUtils.extractAuthConfig(config(
       "uri" -> "https://uc.example.com",
