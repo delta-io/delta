@@ -28,6 +28,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.data.StructRow;
+import io.delta.kernel.internal.stats.DeletedRecordCountsHistogram;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -58,6 +59,7 @@ public class CRCInfo {
   private static final String NUM_DELETED_RECORDS_OPT = "numDeletedRecordsOpt";
   private static final String NUM_DELETION_VECTORS_OPT = "numDeletionVectorsOpt";
   private static final String ALL_FILES = "allFiles";
+  private static final String DELETED_RECORD_COUNTS_HISTOGRAM = "deletedRecordCountsHistogramOpt";
   private static final String HISTOGRAM_OPT = "histogramOpt";
 
   public static final StructType CRC_FILE_SCHEMA =
@@ -76,7 +78,8 @@ public class CRCInfo {
               SET_TRANSACTIONS, new ArrayType(SetTransaction.FULL_SCHEMA, false), /*nullable*/ true)
           .add(NUM_DELETED_RECORDS_OPT, LongType.LONG, /*nullable*/ true)
           .add(NUM_DELETION_VECTORS_OPT, LongType.LONG, /*nullable*/ true)
-          .add(ALL_FILES, new ArrayType(AddFile.FULL_SCHEMA, false), /*nullable*/ true);
+          .add(ALL_FILES, new ArrayType(AddFile.FULL_SCHEMA, false), /*nullable*/ true)
+          .add(DELETED_RECORD_COUNTS_HISTOGRAM, DeletedRecordCountsHistogram.FULL_SCHEMA, true);
 
   // Used by ChecksumReader to support reading CRC files with the legacy "histogramOpt" field.
   public static final StructType CRC_FILE_READ_SCHEMA =
@@ -164,7 +167,9 @@ public class CRCInfo {
             setTransactions,
             numDeletedRecords,
             numDeletionVectors,
-            allFiles));
+            allFiles,
+            DeletedRecordCountsHistogram.fromColumnVector(
+                batch.getColumnVector(getSchemaIndex(DELETED_RECORD_COUNTS_HISTOGRAM)), rowId)));
   }
 
   private static Optional<Long> readOptionalLong(ColumnarBatch batch, String fieldName, int rowId) {
@@ -262,7 +267,12 @@ public class CRCInfo {
         setTransactions,
         numDeletedRecords,
         numDeletionVectors,
-        allFiles);
+        allFiles,
+        row.isNullAt(getSchemaIndex(DELETED_RECORD_COUNTS_HISTOGRAM))
+            ? Optional.empty()
+            : Optional.of(
+                DeletedRecordCountsHistogram.fromRow(
+                    row.getStruct(getSchemaIndex(DELETED_RECORD_COUNTS_HISTOGRAM)))));
   }
 
   private static Optional<Long> readOptionalLongFromRow(Row row, String fieldName) {
@@ -283,6 +293,7 @@ public class CRCInfo {
   private final Optional<Long> numDeletedRecords;
   private final Optional<Long> numDeletionVectors;
   private final Optional<List<AddFile>> allFiles;
+  private final Optional<DeletedRecordCountsHistogram> deletedRecordCountsHistogram;
 
   public CRCInfo(
       long version,
@@ -323,6 +334,38 @@ public class CRCInfo {
       Optional<Long> numDeletedRecords,
       Optional<Long> numDeletionVectors,
       Optional<List<AddFile>> allFiles) {
+    this(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        inCommitTimestamp,
+        setTransactions,
+        numDeletedRecords,
+        numDeletionVectors,
+        allFiles,
+        Optional.empty());
+  }
+
+  public CRCInfo(
+      long version,
+      Metadata metadata,
+      Protocol protocol,
+      long tableSizeBytes,
+      long numFiles,
+      Optional<String> txnId,
+      Optional<Set<DomainMetadata>> domainMetadata,
+      Optional<FileSizeHistogram> fileSizeHistogram,
+      Optional<Long> inCommitTimestamp,
+      Optional<List<SetTransaction>> setTransactions,
+      Optional<Long> numDeletedRecords,
+      Optional<Long> numDeletionVectors,
+      Optional<List<AddFile>> allFiles,
+      Optional<DeletedRecordCountsHistogram> deletedRecordCountsHistogram) {
     checkArgument(tableSizeBytes >= 0);
     checkArgument(numFiles >= 0);
     // Live Domain Metadata actions at this version, excluding tombstones.
@@ -366,6 +409,7 @@ public class CRCInfo {
     // The complete list of live AddFile actions at this version, when small enough to store.
     // When present it must be consistent with numFiles.
     this.allFiles = requireNonNull(allFiles);
+    this.deletedRecordCountsHistogram = requireNonNull(deletedRecordCountsHistogram);
     allFiles.ifPresent(
         files ->
             checkArgument(
@@ -390,7 +434,8 @@ public class CRCInfo {
         setTransactions,
         numDeletedRecords,
         numDeletionVectors,
-        allFiles);
+        allFiles,
+        deletedRecordCountsHistogram);
   }
 
   /** The version of the Delta table that this CRCInfo represents. */
@@ -431,6 +476,11 @@ public class CRCInfo {
 
   public Optional<List<SetTransaction>> getSetTransactions() {
     return setTransactions;
+  }
+
+  /** File counts by DV cardinality; absent in legacy CRCs or when the distribution is unknown. */
+  public Optional<DeletedRecordCountsHistogram> getDeletedRecordCountsHistogram() {
+    return deletedRecordCountsHistogram;
   }
 
   /** DV stats */
@@ -502,6 +552,8 @@ public class CRCInfo {
                 VectorUtils.buildArrayValue(
                     files.stream().map(AddFile::toRow).collect(Collectors.toList()),
                     AddFile.FULL_SCHEMA)));
+    deletedRecordCountsHistogram.ifPresent(
+        h -> values.put(getSchemaIndex(DELETED_RECORD_COUNTS_HISTOGRAM), h.toRow()));
     return new GenericRow(CRC_FILE_SCHEMA, values);
   }
 
@@ -520,7 +572,8 @@ public class CRCInfo {
         setTransactions,
         numDeletedRecords,
         numDeletionVectors,
-        allFiles);
+        allFiles,
+        deletedRecordCountsHistogram);
   }
 
   @Override
@@ -541,7 +594,8 @@ public class CRCInfo {
         && setTransactions.equals(other.setTransactions)
         && numDeletedRecords.equals(other.numDeletedRecords)
         && numDeletionVectors.equals(other.numDeletionVectors)
-        && allFiles.equals(other.allFiles);
+        && allFiles.equals(other.allFiles)
+        && deletedRecordCountsHistogram.equals(other.deletedRecordCountsHistogram);
   }
 
   private static int getSchemaIndex(String fieldName) {

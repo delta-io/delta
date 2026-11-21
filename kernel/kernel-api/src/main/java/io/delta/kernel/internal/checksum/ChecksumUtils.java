@@ -34,6 +34,7 @@ import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplayUtils;
 import io.delta.kernel.internal.replay.LogReplayUtils.UniqueFileActionTuple;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.stats.DeletedRecordCountsHistogram;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
@@ -927,6 +928,36 @@ public class ChecksumUtils {
       this.numDeletedRecords = numDeletedRecords;
       this.numDeletionVectors = numDeletionVectors;
     }
+  }
+
+  /**
+   * Recovers a base distribution from a legacy CRC when its file list or zero-deletion count is
+   * sufficient. A positive deleted-record total alone does not determine the histogram.
+   */
+  public static Optional<DeletedRecordCountsHistogram> histogramSeed(CRCInfo crc) {
+    if (crc.getDeletedRecordCountsHistogram().isPresent()) {
+      return crc.getDeletedRecordCountsHistogram();
+    }
+    DeletedRecordCountsHistogram histogram = DeletedRecordCountsHistogram.empty();
+    if (!crc.getProtocol().supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
+        || crc.getNumFiles() == 0
+        || crc.getNumDeletedRecords().filter(n -> n == 0).isPresent()) {
+      histogram.add(0, crc.getNumFiles());
+      return Optional.of(histogram);
+    }
+    if (crc.getAllFiles().isPresent()) {
+      crc.getAllFiles()
+          .get()
+          .forEach(
+              f ->
+                  histogram.add(
+                      f.getDeletionVector()
+                          .map(DeletionVectorDescriptor::getCardinality)
+                          .orElse(0L),
+                      1));
+      return Optional.of(histogram);
+    }
+    return Optional.empty();
   }
 
   private static void validateDeltaContinuity(List<FileStatus> deltas, long checksumVersion) {

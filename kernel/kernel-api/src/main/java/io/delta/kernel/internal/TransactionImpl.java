@@ -35,6 +35,7 @@ import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
@@ -54,6 +55,7 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.stats.DeletedRecordCountsHistogram;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
@@ -770,7 +772,8 @@ public class TransactionImpl implements Transaction {
         txnMetrics.captureTransactionMetricsResult();
 
     final Optional<CRCInfo> postCommitCrcOpt =
-        buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetricsCaptured);
+        buildPostCommitCrcInfoIfCurrentCrcAvailable(
+            committedVersion, txnMetricsCaptured, txnMetrics);
 
     final Optional<SnapshotImpl> postCommitSnapshotOpt =
         buildPostCommitSnapshotOpt(engine, committedDelta, committedIctOpt, postCommitCrcOpt);
@@ -863,12 +866,20 @@ public class TransactionImpl implements Transaction {
   }
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
-      long commitAtVersion, TransactionMetricsResult metricsResult) {
+      long commitAtVersion, TransactionMetricsResult metricsResult, TransactionMetrics txnMetrics) {
     // TODO(#8026): Use the incremental operation allowlist for SIMPLE CRCs.
     Optional<Long> numDeletedRecords =
         updatedDvMetric(CRCInfo::getNumDeletedRecords, metricsResult.getNumDeletedRecordsDelta());
     Optional<Long> numDeletionVectors =
         updatedDvMetric(CRCInfo::getNumDeletionVectors, metricsResult.getNumDeletionVectorsDelta());
+    Optional<DeletedRecordCountsHistogram> deletedRecordCountsHistogram =
+        numDeletedRecords
+            .flatMap(
+                ignored ->
+                    !readSnapshotOpt.isPresent()
+                        ? Optional.of(DeletedRecordCountsHistogram.empty())
+                        : currentCrcInfo.flatMap(ChecksumUtils::histogramSeed))
+            .map(h -> h.plus(txnMetrics.getDeletedRecordCountsHistogramDelta()));
     if (isCreateOrReplace) {
       // We don't need to worry about conflicting transaction here since new tables always commit
       // metadata (and thus fail any conflicts)
@@ -888,7 +899,8 @@ public class TransactionImpl implements Transaction {
               Optional.empty(), // setTransactions
               numDeletedRecords,
               numDeletionVectors,
-              Optional.empty())); // allFiles
+              Optional.empty(), // allFiles
+              deletedRecordCountsHistogram));
     }
 
     return currentCrcInfo
@@ -915,7 +927,8 @@ public class TransactionImpl implements Transaction {
                     Optional.empty(), // setTransactions
                     numDeletedRecords,
                     numDeletionVectors,
-                    Optional.empty())); // allFiles
+                    Optional.empty(), // allFiles
+                    deletedRecordCountsHistogram));
   }
 
   private Optional<Long> updatedDvMetric(Function<CRCInfo, Optional<Long>> getter, long delta) {
