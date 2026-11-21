@@ -45,7 +45,8 @@ class DeltaFastDropFeatureSuite
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeletionVectorsTestUtils
-    with DeltaRetentionSuiteBase {
+    with DeltaRetentionSuiteBase
+    with DeltaTableProvider {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -588,6 +589,31 @@ class DeltaFastDropFeatureSuite
 
         val targetTable = io.delta.tables.DeltaTable.forPath(dir.getCanonicalPath)
         assert(targetTable.toDF.as[Long].collect().sorted === Seq.range(0, 40))
+      }
+    }
+  }
+
+  test("REPLACE keeps requireCheckpointProtectionBeforeVersion unless the statement sets it") {
+    withSQLConf(
+        DeltaSQLConf.RETAIN_CHECKPOINT_PROTECTION_VERSION_DURING_REPLACE_TABLE.key -> "true") {
+      withTempDir { dir =>
+        val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        createTableWithFeature(deltaLog, TestRemovableReaderWriterFeature)
+        // Adds the CheckpointProtectionTableFeature.
+        dropTableFeature(deltaLog, TestRemovableReaderWriterFeature)
+        val checkpointProtectionVersion =
+          deltaLog.update().metadata.configuration(barrierVersionPropKey)
+        val table = s"delta.`${dir.getCanonicalPath}`"
+
+        sql(s"REPLACE TABLE $table (id bigint) USING $tableProvider")
+        assert(deltaLog.update().metadata.configuration.get(barrierVersionPropKey) ===
+          Some(checkpointProtectionVersion))
+
+        val statementVersion = (checkpointProtectionVersion.toLong + 1).toString
+        sql(s"REPLACE TABLE $table (id bigint) USING $tableProvider " +
+          s"TBLPROPERTIES ('$barrierVersionPropKey' = '$statementVersion')")
+        assert(deltaLog.update().metadata.configuration.get(barrierVersionPropKey) ===
+          Some(statementVersion))
       }
     }
   }
