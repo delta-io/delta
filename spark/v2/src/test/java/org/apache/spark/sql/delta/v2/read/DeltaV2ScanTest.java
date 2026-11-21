@@ -302,7 +302,9 @@ public class DeltaV2ScanTest extends DeltaV2PartitionedTableTestBase {
     assertNotNull(configuration, "configuration should not be null");
     // Verify configuration matches expected: built from same options via Spark session
     Configuration expectedConf =
-        spark.sessionState().newHadoopConfWithOptions(ScalaUtils.toScalaMap(options));
+        spark
+            .sessionState()
+            .newHadoopConfWithOptions(ScalaUtils.toScalaMap(options.asCaseSensitiveMap()));
     assertEquals(
         expectedConf.get("fs.defaultFS"),
         configuration.get("fs.defaultFS"),
@@ -335,6 +337,7 @@ public class DeltaV2ScanTest extends DeltaV2PartitionedTableTestBase {
     Map<String, String> optionsWithHadoop = new HashMap<>();
     optionsWithHadoop.put("fs.file.impl.disable.cache", "true");
     optionsWithHadoop.put("dfs.replication", "2");
+    optionsWithHadoop.put("fs.azure.skipUserGroupMetadataDuringInitialization", "true");
     CaseInsensitiveStringMap optionsWithHadoopMap = new CaseInsensitiveStringMap(optionsWithHadoop);
 
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(optionsWithHadoopMap);
@@ -349,6 +352,10 @@ public class DeltaV2ScanTest extends DeltaV2PartitionedTableTestBase {
         "2",
         configuration.get("dfs.replication"),
         "Hadoop option dfs.replication should flow through to Configuration");
+    assertEquals(
+        "true",
+        configuration.get("fs.azure.skipUserGroupMetadataDuringInitialization"),
+        "Mixed-case Hadoop option key should preserve casing in Configuration");
   }
 
   @Test

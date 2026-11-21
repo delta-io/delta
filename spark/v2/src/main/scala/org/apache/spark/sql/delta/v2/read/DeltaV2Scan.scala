@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.{DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog
 import org.apache.spark.sql.delta.stats.{DataSize, DeltaScan}
+import org.apache.spark.sql.delta.util.DeltaFileSystemOptions
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapshot, DeltaV2SnapshotManager}
 import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory
@@ -124,10 +125,11 @@ private[read] class DeltaV2Scan(
   Objects.requireNonNull(catalogStats, "catalogStats is null")
   Objects.requireNonNull(options, "options is null")
   Objects.requireNonNull(pushedLimit, "pushedLimit is null")
-  private val scalaOptions: Map[String, String] = ScalaUtils.toScalaMap(options)
+  private val sqlConf: SQLConf = SQLConf.get
+  private val scalaOptions: Map[String, String] =
+    ScalaUtils.toScalaMap(DeltaFileSystemOptions.toCaseSensitiveMap(options, sqlConf))
   private val hadoopConf: Configuration =
     SparkSession.active.sessionState.newHadoopConfWithOptions(scalaOptions)
-  private val sqlConf: SQLConf = SQLConf.get
   private val deltaOptions: DeltaOptions = new DeltaOptions(scalaOptions, sqlConf)
   private[this] val cdcReadEnabled: Boolean = deltaOptions.readChangeFeed
   private val zoneId: ZoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone)
