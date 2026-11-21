@@ -133,6 +133,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
               CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
           case "numDeletionVectorsOpt" => nullColumnVector(
               CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
+          case "deletedRecordCountsHistogramOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("deletedRecordCountsHistogramOpt").getDataType)
           case "allFiles" => nullColumnVector(CRC_FILE_SCHEMA.get("allFiles").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(fileSizeHistogram)
           case "histogramOpt" => histogramColumnVector(histogramOpt)
@@ -239,6 +241,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
               CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
           case "numDeletionVectorsOpt" => nullColumnVector(
               CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
+          case "deletedRecordCountsHistogramOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("deletedRecordCountsHistogramOpt").getDataType)
           case "allFiles" => nullColumnVector(CRC_FILE_SCHEMA.get("allFiles").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ =>
@@ -277,6 +281,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
             nullColumnVector(CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
           case "numDeletionVectorsOpt" =>
             nullColumnVector(CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
+          case "deletedRecordCountsHistogramOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("deletedRecordCountsHistogramOpt").getDataType)
           case "allFiles" => nullColumnVector(CRC_FILE_SCHEMA.get("allFiles").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ => throw new IllegalArgumentException(s"Unknown field: $fieldName")
