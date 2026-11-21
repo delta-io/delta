@@ -115,7 +115,7 @@ When using a Delta table as a stream source, the query first processes all of th
 
 In a stateful streaming query with a defined watermark, processing files by modification time can result in records being processed in the wrong order. This could lead to records dropping as late events by the watermark.
 
-You can avoid the data drop issue by enabling the following option:
+You can avoid the data drop issue by enabling the following option (available on Databricks Runtime; not part of open-source Delta Lake):
 
 - withEventTimeOrder: Whether the initial snapshot should be processed with event time order.
 
