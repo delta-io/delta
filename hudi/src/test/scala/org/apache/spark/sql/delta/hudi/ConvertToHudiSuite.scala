@@ -33,7 +33,7 @@ import org.apache.hudi.common.engine.HoodieLocalEngineContext
 import org.apache.hudi.common.fs.FSUtils
 import org.apache.hudi.common.model.HoodieBaseFile
 import org.apache.hudi.common.table.{HoodieTableMetaClient, TableSchemaResolver}
-import org.apache.hudi.metadata.HoodieMetadataFileSystemView
+import org.apache.hudi.common.table.view.HoodieTableFileSystemView
 import org.apache.hudi.storage.StorageConfiguration
 import org.apache.hudi.storage.hadoop.{HadoopStorageConfiguration, HoodieHadoopStorage}
 import org.scalatest.concurrent.Eventually
@@ -79,12 +79,15 @@ trait HudiTestBase extends QueryTest
       val storageConf : StorageConfiguration[_] = new HadoopStorageConfiguration(hadoopConf)
       val metaClient: HoodieTableMetaClient = buildHudiMetaClient(testTablePath)
       val engContext: HoodieLocalEngineContext = new HoodieLocalEngineContext(storageConf)
-      val fsView: HoodieMetadataFileSystemView = new HoodieMetadataFileSystemView(engContext,
-        metaClient, metaClient.getActiveTimeline.getCommitsTimeline.filterCompletedInstants,
-        HoodieMetadataConfig.newBuilder.enable(true).build)
+      val fsView: HoodieTableFileSystemView =
+        HoodieTableFileSystemView.fileListingBasedFileSystemView(
+          engContext,
+          metaClient,
+          metaClient.getActiveTimeline.getCommitsTimeline.filterCompletedInstants
+        )
       val hoodieStorage = new HoodieHadoopStorage(testTablePath, storageConf)
       val paths = JavaConverters.asScalaBuffer(
-          FSUtils.getAllPartitionPaths(engContext, hoodieStorage, testTablePath, true, false))
+          FSUtils.getAllPartitionPaths(engContext, metaClient, true))
         .flatMap(partition => JavaConverters.asScalaBuffer(fsView.getLatestBaseFiles(partition)
           .collect(Collectors.toList[HoodieBaseFile])))
         .map(baseFile => baseFile.getPath).sorted
