@@ -175,6 +175,8 @@ class ParquetSchemaUtils {
     final Map<Integer, Type> parquetFieldIdToTypeMap = getParquetFieldToTypeMap(type);
 
     return deltaDataType.fields().stream()
+        // Void columns are always read as all-null columns, even if a file has a column for it
+        .filter(column -> !(column.getDataType() instanceof VoidType))
         .map(
             column -> {
               Type subType = findSubFieldType(type, column, parquetFieldIdToTypeMap);

@@ -272,6 +272,51 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     }
   }
 
+  // The protocol requires readers to reconstruct `void` columns as all-null columns, even though
+  // they are never written to the data files. Spark 4.1+ keeps them in the table schema.
+  test("read table with void columns written by Spark") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"""CREATE TABLE delta.`$path` (
+        id INT, n VOID, s STRUCT<a: INT, v: VOID>) USING DELTA""")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, NULL, named_struct('a', 10, 'v', NULL))")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (2, NULL, named_struct('a', 20, 'v', NULL))")
+
+      val schema = latestSnapshot(path).getSchema
+      assert(schema.get("n").getDataType.toString === "void")
+      assert(schema.get("s").getDataType.asInstanceOf[StructType].get("v").getDataType.toString
+        === "void")
+
+      checkTable(
+        path,
+        Seq(TestRow(1, null, TestRow(10, null)), TestRow(2, null, TestRow(20, null))))
+      // Only the void column
+      checkTable(path, Seq(TestRow(null: Any), TestRow(null: Any)), readCols = Seq("n"))
+    }
+  }
+
+  test("void column is read as nulls even if a data file contains that column") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, n INT) USING DELTA")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+      // Change the type of `n` to void in the table metadata only
+      val commit0 = new File(tempDir, "_delta_log/00000000000000000000.json").toPath
+      // Delete the checksums (Hadoop's of the commit file and Delta's version checksum files)
+      // since they hold the old metadata
+      new File(tempDir, "_delta_log").listFiles().filter(_.getName.endsWith(".crc"))
+        .foreach(_.delete())
+      val schemaJson = """\"name\":\"n\",\"type\":\""""
+      val metadata = new String(java.nio.file.Files.readAllBytes(commit0), "UTF-8")
+      assert(metadata.contains(schemaJson + "integer"))
+      java.nio.file.Files.write(
+        commit0,
+        metadata.replace(schemaJson + "integer", schemaJson + "void").getBytes("UTF-8"))
+
+      checkTable(path, Seq(TestRow(1, null)))
+    }
+  }
+
   test("read table with far-future timestamp in stats") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
@@ -971,22 +1016,6 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
         .build()
     }
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
-  }
-
-  test("table with void type - schema parsing is lazy") {
-    withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
-      spark.sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}`(x INTEGER, y VOID) USING DELTA")
-      // Snapshot loading should succeed since schema parsing is now lazy
-      val snapshot = latestSnapshot(path)
-      assert(snapshot.getVersion >= 0)
-      // Accessing the schema should still throw KernelException due to VOID type
-      val e = intercept[KernelException] {
-        snapshot.getSchema
-      }
-      assert(e.getMessage.contains(
-        "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))
-    }
   }
 
   test("read a shallow cloned table") {

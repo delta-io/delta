@@ -74,8 +74,9 @@ class RowColumnReader extends GroupConverter implements ParquetColumnReaders.Bas
       final StructField field = fields.get(i);
       final DataType typeFromClient = field.getDataType();
       final Map<Integer, Type> parquetFieldIdToTypeMap = getParquetFieldToTypeMap(fileSchema);
+      // Void columns are always read as all-null columns, even if the file has a column for it
       final Type typeFromFile =
-          field.isDataColumn()
+          field.isDataColumn() && !(typeFromClient instanceof VoidType)
               ? findSubFieldType(fileSchema, field, parquetFieldIdToTypeMap)
               : null;
       if (typeFromFile == null) {

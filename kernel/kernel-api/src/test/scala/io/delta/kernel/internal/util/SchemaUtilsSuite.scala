@@ -31,7 +31,7 @@ import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
 import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, validateUpdatedSchemaAndGetUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange, VariantType}
+import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange, VariantType, VoidType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
@@ -295,6 +295,57 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add("variant", VariantType.VARIANT))
 
     validateSchema(schema)
+  }
+
+  test("void - top level and nested") {
+    validateSchema(new StructType().add("a", IntegerType.INTEGER).add("v", VoidType.VOID))
+    validateSchema(
+      new StructType().add(
+        "s",
+        new StructType().add("a", IntegerType.INTEGER).add("v", VoidType.VOID)))
+  }
+
+  test("validateVoidTypeIsWritable") {
+    val valid = Seq(
+      new StructType().add("a", IntegerType.INTEGER),
+      new StructType().add("a", IntegerType.INTEGER).add("v", VoidType.VOID),
+      new StructType().add(
+        "s",
+        new StructType().add("a", IntegerType.INTEGER).add("v", VoidType.VOID)),
+      new StructType().add("a", new ArrayType(IntegerType.INTEGER, true)),
+      new StructType().add("v", VoidType.VOID).add(
+        "a",
+        new ArrayType(
+          new StructType().add("x", IntegerType.INTEGER),
+          true)))
+    valid.foreach(SchemaUtils.validateVoidTypeIsWritable)
+
+    val invalid = Seq(
+      (
+        new StructType().add("a", new ArrayType(VoidType.VOID, true)).add("i", INTEGER),
+        "void type inside an array or map at 'table schema.a.element'"),
+      (
+        new StructType().add("a", new MapType(StringType.STRING, VoidType.VOID, true))
+          .add("i", INTEGER),
+        "void type inside an array or map at 'table schema.a.value'"),
+      (
+        new StructType().add(
+          "a",
+          new ArrayType(
+            new StructType().add("x", INTEGER).add("v", VoidType.VOID),
+            true)),
+        "void type inside an array or map at 'table schema.a.element.v'"),
+      (
+        new StructType().add("i", INTEGER).add("s", new StructType().add("v", VoidType.VOID)),
+        "only void fields in 'table schema.s'"),
+      (
+        new StructType().add("v1", VoidType.VOID).add("v2", VoidType.VOID),
+        "only void fields in 'table schema'"))
+    invalid.foreach { case (schema, expectedMessage) =>
+      expectFailure("Cannot write data files", expectedMessage) {
+        SchemaUtils.validateVoidTypeIsWritable(schema)
+      }
+    }
   }
 
   test("duplicate column with back ticks - nested") {
@@ -1281,6 +1332,46 @@ class SchemaUtilsSuite extends AnyFunSuite {
         emptySet(),
         false /* allowNewRequiredFields */ )
     }
+  }
+
+  test("validateUpdatedSchema allows changing a void column to another type") {
+    def voidSchema(newType: DataType): (StructType, StructType) = (
+      newSchema(
+        (1, new StructField("id", INTEGER, true)),
+        (2, new StructField("v", VoidType.VOID, true))),
+      newSchema(
+        (1, new StructField("id", INTEGER, true)),
+        (2, new StructField("v", newType, true))))
+
+    Seq(
+      LONG,
+      StringType.STRING,
+      new ArrayType(INTEGER, true),
+      new StructType().add("x", INTEGER, true, fieldMetadata(3))).foreach { newType =>
+      val (before, after) = voidSchema(newType)
+      // Type widening is not enabled; the change must not record `delta.typeChanges` either
+      val updated = validateUpdatedSchemaAndGetUpdatedSchema(
+        metadata(before),
+        metadata(after),
+        dummyProtocol,
+        emptySet(),
+        false /* allowNewRequiredFields */ )
+      assert(!updated.isPresent || updated.get.get("v").getTypeChanges.isEmpty)
+    }
+  }
+
+  test("validateUpdatedSchema fails when changing a column to void") {
+    val before = newSchema((1, new StructField("v", INTEGER, true)))
+    val after = newSchema((1, new StructField("v", VoidType.VOID, true)))
+    val e = intercept[KernelException] {
+      validateUpdatedSchemaAndGetUpdatedSchema(
+        metadata(before),
+        metadata(after),
+        dummyProtocol,
+        emptySet(),
+        false /* allowNewRequiredFields */ )
+    }
+    assert(e.getMessage.contains("Cannot change the type of existing field v from integer to void"))
   }
 
   private val nonNullableFieldAdded = Table(

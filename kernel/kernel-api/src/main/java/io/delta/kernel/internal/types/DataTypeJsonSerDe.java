@@ -24,7 +24,6 @@ import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
 import java.io.IOException;
@@ -473,10 +472,6 @@ public class DataTypeJsonSerDe {
       return GeometryType.ofDefault();
     } else if (name.equals("geography")) {
       return GeographyType.ofDefault();
-    } else if ("void".equalsIgnoreCase(name)) {
-      // Earlier versions of Delta had VOID type which is not specified in Delta Protocol.
-      // It is not readable or writable. Throw a user-friendly error message.
-      throw DeltaErrors.voidTypeEncountered();
     } else {
       // decimal has a special pattern with a precision and scale
       Matcher decimalMatcher = FIXED_DECIMAL_PATTERN.matcher(name);
