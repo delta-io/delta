@@ -77,6 +77,39 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
     }
   }
 
+  // POC: proves the one-line fix in ResolveDeltaPathTable.resolveAsPathTableRelation forwards
+  // UnresolvedRelation.options into DeltaLog's Hadoop conf. A catalog/session extension can inject
+  // per-relation storage credentials (fs.* options) onto a bare `delta.`path`` relation; before
+  // the fix these were dropped (Map.empty) and the fake:// read would fail. We simulate the
+  // injection by attaching options to the parsed UnresolvedRelation, then run the resolved plan.
+  test("bare delta.`path` read picks up per-relation Hadoop file system options") {
+    import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
+    import org.apache.spark.sql.util.CaseInsensitiveStringMap
+    import scala.collection.JavaConverters._
+    withTempPath { dir =>
+      val path = fakeFileSystemPath(dir)
+      // Seed a Delta table. Writing needs the options; that path already worked.
+      spark.range(1, 10).write.format("delta").options(fakeFileSystemOptions).save(path)
+      clearCachedDeltaLogToForceReload()
+
+      // Parse `SELECT * FROM delta.`fake://...`` and inject the fs.* options onto the bare
+      // relation, exactly like a credential-vending extension would.
+      val parsed = spark.sessionState.sqlParser.parsePlan(s"SELECT * FROM delta.`$path`")
+      val withOptions = parsed.transform {
+        case u: UnresolvedRelation if u.multipartIdentifier == Seq("delta", path) =>
+          u.copy(options = new CaseInsensitiveStringMap(fakeFileSystemOptions.asJava))
+      }
+      // Analyze + execute the plan. Without the fix, options are dropped and this fails to
+      // open fake://; with the fix, the fs.* options reach DeltaLog's Hadoop conf.
+      val df = DataFrameUtils.ofRows(spark, withOptions)
+      // DIAGNOSTIC: print the analyzed plan so we can see which rule resolved the relation.
+      // scalastyle:off println
+      println("=== ANALYZED PLAN ===\n" + df.queryExecution.analyzed.treeString)
+      // scalastyle:on println
+      assert(df.count() == 9)
+    }
+  }
+
   testQuietly("SC-86916: disabling the conf should not pick up Hadoop file system options") {
     withSQLConf(DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS.key -> "false") {
       withTempPath { dir =>
