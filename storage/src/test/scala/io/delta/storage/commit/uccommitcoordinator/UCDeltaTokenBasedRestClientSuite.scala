@@ -663,6 +663,49 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
+  test("commit throws CommitLimitReachedException on 429 ResourceExhausted") {
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST") {
+        sendJson(exchange, 429,
+          """{"error":{"code":429,"type":"ResourceExhaustedException",""" +
+            """"message":"Max number of commits per table reached"}}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+    withClient { c =>
+      val e = intercept[CommitLimitReachedException] {
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
+      }
+      assert(e.getMessage.contains(s"$testCatalog.$testSchema.$testTable"))
+      assert(e.getMessage.contains("Max number of commits per table reached"))
+    }
+  }
+
+  test("commit keeps 429 TooManyRequests as a transient IOException") {
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST") {
+        sendJson(exchange, 429,
+          """{"error":{"code":429,"type":"TooManyRequestsException",""" +
+            """"message":"Too many requests"}}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+    withClient { c =>
+      val e = intercept[java.io.IOException] {
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
+      }
+      assert(e.getMessage.contains("HTTP 429"))
+    }
+  }
+
   // --------------- createStagingTable ---------------
 
   test("createStagingTable sends request and converts response fields") {
