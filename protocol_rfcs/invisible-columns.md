@@ -89,6 +89,7 @@ metadata or relax the table's reader and writer requirements.
 | Domain metadata | No new metadata domain or dependency on `domainMetadata`. Other features' domains continue to follow their existing rules. |
 | In-commit timestamps | No change to commit timestamps, `commitInfo` placement, or time-travel rules. The schemas come from the metadata of the requested snapshot. |
 | Type widening | See the Type widening requirements under [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). |
+| Schema annotations | See [Schema annotations](#schema-annotations) for lossless adjustments when splitting and merging schemas. |
 | Generated columns, CHECK constraints, invariants, default columns, identity columns | See [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). Generation expressions on partition columns cannot reference invisible fields. Column invariants apply to invisible columns under the same feature-support and enforcement requirements as visible columns. |
 | Clustering and partitioning | See the Clustering and Partitioning requirements under [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). |
 | Statistics and data skipping | Invisible columns use the normal per-column statistics formats and column-resolution rules, including physical names with Column Mapping. Existing requirements for statistics, including those for clustering and deletion vectors, still apply. Readers use statistics for the columns they read; no new statistics format is introduced. |
@@ -154,6 +155,9 @@ The `metaData.invisibleSchemaString` field contains the complete invisible schem
 as a JSON string. It uses the same [Schema Serialization Format](#schema-serialization-format) as
 `metaData.schemaString`.
 
+For invisible fields, requirements that describe type declarations and type-specific annotations
+in `metaData.schemaString` apply to their declarations in `metaData.invisibleSchemaString`.
+
 The valid states are:
 
 - `invisibleSchemaString` is absent.
@@ -190,9 +194,10 @@ retain them as separate columns.
 
 The merge combines struct fields at matching field paths, retaining fields present in only one
 schema. Shared structs are merged recursively; arrays and maps recursively merge their element,
-key, and value types, subject to the map-key restriction above. Shared definitions MUST agree except
-for the nested struct fields contributed by each schema. Their nullability and metadata, including
-column-mapping metadata, MUST match.
+key, and value types, subject to the map-key restriction above. Definitions of fields present in both
+schemas MUST match in all properties except the nested struct fields contributed by each schema
+and the [schema annotations](#schema-annotations) adjusted as specified below.
+Their nullability and all other metadata, including column-mapping metadata, MUST match.
 A shared ancestor represents one column in the complete data schema, not two distinct columns.
 Each input schema and the complete data schema MUST satisfy the case-insensitive column-name
 uniqueness requirements of the [Schema Serialization Format](#schema-serialization-format).
@@ -212,6 +217,21 @@ An invisible column is a data column. Except for the visibility behavior and the
 Protocol semantics and guarantees as a visible column. Writers that support Invisible Columns,
 and readers that expose them, MUST apply every requirement that inspects, validates, reads, or
 writes a data column to an invisible column in the same way as to a visible column.
+
+### Schema annotations
+
+Column annotations that describe nested schema structure MUST remain valid for the schema
+containing them. Writers MUST adjust affected annotations when splitting schemas, including those
+on ancestor fields. Clients interpreting annotations for the complete data schema MUST combine
+them using the schema merge's field paths, recursion boundaries, and field order.
+
+Adjustments MUST follow each annotation's defined semantics and preserve every field's type
+information and constraints, including invisible fields. Only lossless adjustments required by the
+split or merge are exempt from metadata equality and preservation.
+
+A writer MUST reject a visibility change if a required lossless transformation is undefined or
+cannot be applied. Existing requirements for which annotations a client must interpret are unchanged.
+See [Examples](#examples) for `__CHAR_VARCHAR_TYPE_STRING`.
 
 ## Reader Requirements for Invisible Columns
 
@@ -267,7 +287,9 @@ A writer that emits a `metaData` action MUST preserve both schemas except for in
 changes. Moving a column between the visible and invisible schemas MUST update both fields in the
 same `metaData` action. Changing only a column's visibility MUST preserve all of its column
 metadata, including column-mapping metadata, generation expressions, identity-column properties,
-and column defaults. Such a change does not require rewriting data files.
+and column defaults, except for the lossless adjustments specified in
+[Schema annotations](#schema-annotations). Writers MUST make those adjustments on every
+affected ancestor in the same `metaData` action. Such a change does not require rewriting data files.
 
 When rewriting an existing row, a writer MUST preserve its invisible-column values unless the
 write explicitly changes them or changes are required to satisfy
@@ -402,6 +424,20 @@ Invisible: Profile { internal_id }
 Result:    Invalid (case-only difference)
 ```
 
+The following example shows how annotations are adjusted when splitting and merging schemas.
+`__CHAR_VARCHAR_TYPE_STRING` records CHAR/VARCHAR declarations that are serialized as `string`
+(see [PR #8073](https://github.com/delta-io/delta/pull/8073)). These schematic types show how `addr`'s
+annotation follows its fields while preserving the invisible `label`'s `VARCHAR(8)` declaration:
+
+Schema | Serialized type of `addr` (schematic) | Annotation on `addr`
+-|-|-
+Visible | `struct<zip:string>` | `struct<zip:char(5)>`
+Invisible | `struct<label:string,geo_id:long>` | `struct<label:varchar(8),geo_id:bigint>`
+Complete | `struct<zip:string,label:string,geo_id:long>` | `struct<zip:char(5),label:varchar(8),geo_id:bigint>`
+
+If the invisible fragment contained only `geo_id`, its annotation could be omitted. Merging it with
+the visible fragment would reconstruct `struct<zip:char(5),geo_id:bigint>`.
+
 For a top-level map column with the following schematic type:
 
 ```text
@@ -530,6 +566,7 @@ no table properties.
   - [Schema](#schema)
     - [Invisible Columns Metadata](#invisible-columns-metadata)
     - [Complete data schema](#complete-data-schema)
+    - [Schema annotations](#schema-annotations)
   - [Reader Requirements for Invisible Columns](#reader-requirements-for-invisible-columns)
   - [Writer Requirements for Invisible Columns](#writer-requirements-for-invisible-columns)
     - [Constraints and interactions with other features](#constraints-and-interactions-with-other-features)
