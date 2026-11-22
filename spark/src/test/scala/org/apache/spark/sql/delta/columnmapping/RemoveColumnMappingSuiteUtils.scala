@@ -68,7 +68,7 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
 
   protected def testRemovingColumnMapping(unsetTableProperty: Boolean = false): Any = {
     // Verify the input data is as expected.
-    val originalData = spark.table(tableName = testTableName).select(logicalColumnName).collect()
+    val originalData = spark.table(tableName = testTableName).collect()
     // Add a schema comment and verify it is preserved after the rewrite.
     val comment = "test comment"
     executeDml(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")
@@ -105,9 +105,7 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
       startingVersion: Long,
       originalData: Array[Row],
       droppedFeature: Boolean = false): Unit = {
-    checkAnswer(
-      spark.table(tableName = testTableName).select(logicalColumnName),
-      originalData)
+    checkAnswer(spark.table(tableName = testTableName), originalData)
     val newSnapshot = table.update()
     val versionsAddedByRewrite = if (droppedFeature) {
       2
