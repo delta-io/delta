@@ -2938,7 +2938,7 @@ JSON Encoded Table Schema:
 ```
 
 ## Checkpoint Schema
-The following examples uses a table with two partition columns: "date" and "region" of types date and string, respectively, and three data columns: "asset", "quantity", and "is_available" with data types string, double, and boolean. The checkpoint schema will look as follows:
+This example shows the checkpoint schema for a table that supports the [domain metadata](#domain-metadata) writer feature. The table has two partition columns, `date` (date) and `region` (string), and three data columns, `asset` (string), `quantity` (double), and `is_available` (boolean).
 
 ```
 |-- metaData: struct
@@ -2988,6 +2988,10 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |-- path: string
 |    |-- deletionTimestamp: long
 |    |-- dataChange: boolean
+|-- domainMetadata: struct
+|    |-- domain: string
+|    |-- configuration: string
+|    |-- removed: boolean
 |-- checkpointMetadata: struct
 |    |-- version: long
 |    |-- tags: map<string,string>
