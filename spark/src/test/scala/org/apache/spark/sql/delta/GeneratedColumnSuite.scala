@@ -2025,8 +2025,11 @@ trait GeneratedColumnSuiteBase
             val e = intercept[AnalysisException] {
               df2.write.format("delta").mode("append").saveAsTable("tbl")
             }
-            e.getMessage.contains(
-              "A column, variable, or function parameter with name `c2` cannot be resolved")
+            checkError(
+              exception = e,
+              condition = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+              parameters = Map("objectName" -> "`c2`", "proposal" -> "`c1`"))
+            checkAnswer(spark.read.table(tbl), df1.withColumn("c3", 'c1 + 1))
           }
         }
       }
