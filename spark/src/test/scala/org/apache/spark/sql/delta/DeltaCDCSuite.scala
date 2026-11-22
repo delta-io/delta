@@ -350,9 +350,10 @@ abstract class DeltaCDCSuiteBase
 
       val ts0 = dateFormat.format(new Date(1000))
       val ts1 = dateFormat.format(new Date(3000))
-      intercept[AnalysisException] {
+      val error = intercept[AnalysisException] {
         cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1)).collect()
-      }.getMessage.contains("before the earliest version")
+      }
+      assert(error.getMessage.contains("before the earliest version"))
     }
   }
 
@@ -410,10 +411,14 @@ abstract class DeltaCDCSuiteBase
 
       val ts0 = dateFormat.format(new Date(3000))
       val ts1 = dateFormat.format(new Date(1000))
-      intercept[DeltaIllegalArgumentException] {
+      val error = intercept[DeltaIllegalArgumentException] {
         cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
           .collect()
-      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+      }
+      checkError(
+        exception = error,
+        condition = "DELTA_INVALID_CDC_RANGE",
+        parameters = Map("start" -> "1", "end" -> "0"))
     }
   }
 
@@ -428,10 +433,14 @@ abstract class DeltaCDCSuiteBase
 
       val ts0 = dateFormat.format(new Date(5000))
       val ts1 = dateFormat.format(new Date(3000))
-      intercept[DeltaIllegalArgumentException] {
+      val error = intercept[DeltaIllegalArgumentException] {
         cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
           .collect()
-      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+      }
+      checkError(
+        exception = error,
+        condition = "DELTA_INVALID_CDC_RANGE",
+        parameters = Map("start" -> "2", "end" -> "0"))
     }
   }
 
