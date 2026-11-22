@@ -23,12 +23,13 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
-import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DefaultRowCommitVersionSuite extends QueryTest
@@ -96,23 +97,38 @@ class DefaultRowCommitVersionSuite extends QueryTest
   }
 
   test("data skipping reads defaultRowCommitVersion") {
-    withRowTrackingEnabled(enabled = true) {
-      withTempDir { tempDir =>
-        spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
-          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
-        spark.range(start = 100, end = 200, step = 1, numPartitions = 1)
-          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
-        spark.range(start = 200, end = 300, step = 1, numPartitions = 1)
-          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+    withSQLConf(
+        DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true",
+        DeltaSQLConf.DELTA_STATS_SKIPPING.key -> "true") {
+      withRowTrackingEnabled(enabled = true) {
+        withTempDir { tempDir =>
+          spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
+            .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+          spark.range(start = 100, end = 200, step = 1, numPartitions = 1)
+            .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+          spark.range(start = 200, end = 300, step = 1, numPartitions = 1)
+            .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
 
-        val deltaLog = DeltaLog.forTable(spark, tempDir)
-        val commitVersionForFiles = expectedCommitVersionsForAllFiles(deltaLog)
+          val deltaLog = DeltaLog.forTable(spark, tempDir)
+          val commitVersionForFiles = expectedCommitVersionsForAllFiles(deltaLog)
+          val snapshot = deltaLog.update()
+          val idAttribute = spark.read.format("delta").load(tempDir.getAbsolutePath)
+            .queryExecution.analyzed.output.head
 
-        val filters = Seq(col("id = 150").expr)
-        val scan = deltaLog.update().filesForScan(filters)
-
-        scan.files.foreach { f =>
-          assert(f.defaultRowCommitVersion.contains(commitVersionForFiles(f.path)))
+          for ((value, expectedVersion) <- Seq[(Long, Option[Long])](
+              50L -> Some(0L), 150L -> Some(1L), 250L -> Some(2L), 350L -> None)) {
+            withClue(s"id = $value: ") {
+              val scan = snapshot.filesForScan(Seq(EqualTo(idAttribute, Literal(value))))
+              val expectedFiles = commitVersionForFiles.collect {
+                case (path, version) if expectedVersion.contains(version) => path
+              }.toSet
+              assert(scan.files.size === expectedVersion.size)
+              assert(scan.files.map(_.path).toSet === expectedFiles)
+              scan.files.foreach { f =>
+                assert(f.defaultRowCommitVersion.contains(commitVersionForFiles(f.path)))
+              }
+            }
+          }
         }
       }
     }
