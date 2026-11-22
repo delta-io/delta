@@ -726,28 +726,34 @@ class DeltaColumnMappingSuite extends QueryTest
   }
 
   testColumnMapping("update column mapped table invalid max id property is blocked") { mode =>
-    withTable("t1") {
-      createTableWithSQLAPI(
-        "t1",
-        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-        withColumnIds = true
-      )
+    withSQLConf(DeltaSQLConf.DELTA_COLUMN_MAPPING_CHECK_MAX_COLUMN_ID.key -> "true") {
+      withTable("t1") {
+        createTableWithSQLAPI(
+          "t1",
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
+          withColumnIds = true
+        )
 
-      val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-      // Get rid of max column id prop
-      assert {
-        intercept[DeltaAnalysisException] {
+        val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+        val originalMetadata = log.update().metadata
+        // Get rid of max column id prop
+        val missingMaxId = intercept[DeltaAnalysisException] {
           log.withNewTransaction { txn =>
             val existingMetadata = log.update().metadata
             txn.commit(existingMetadata.copy(configuration =
               existingMetadata.configuration - DeltaConfigs.COLUMN_MAPPING_MAX_ID.key) :: Nil,
               DeltaOperations.ManualUpdate)
           }
-        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET"
-      }
-      // Use an invalid max column id prop
-      assert {
-        intercept[DeltaAnalysisException] {
+        }
+        checkError(
+          exception = missingMaxId,
+          condition = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET",
+          sqlState = "42703",
+          parameters = Map("prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
+        assert(log.update().metadata === originalMetadata)
+
+        // Use an invalid max column id prop
+        val tooSmallMaxId = intercept[DeltaAnalysisException] {
           log.withNewTransaction { txn =>
             val existingMetadata = log.update().metadata
             txn.commit(existingMetadata.copy(configuration =
@@ -757,7 +763,16 @@ class DeltaColumnMappingSuite extends QueryTest
               )) :: Nil,
               DeltaOperations.ManualUpdate)
           }
-        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY"
+        }
+        checkError(
+          exception = tooSmallMaxId,
+          condition = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY",
+          sqlState = "42703",
+          parameters = Map(
+            "prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key,
+            "tableMax" -> "1",
+            "fieldMax" -> "2"))
+        assert(log.update().metadata === originalMetadata)
       }
     }
   }
