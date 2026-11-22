@@ -186,13 +186,13 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#statistics-for-variant-columns)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the Variant `minValues` and `maxValues` stats must not be shredded in Parquet files that hold checkpoint state: the manifests of the metadata tree and [standalone checkpoints](#standalone-checkpoint). Writers must write them as unshredded Variant values. This matches the Iceberg V4 specification, which stores Variant bounds as unshredded `variant` values (see [Content Stats](#content-stats)). Shredding of Variant data in data files is not affected.</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, the Variant `minValues` and `maxValues` stats must not be shredded in Parquet files that hold checkpoint state: the manifests of the metadata tree and [standalone checkpoints](#standalone-checkpoint). Writers must write them as unshredded Variant values. Shredding of Variant data in data files is not affected.</ins>
 
 ### Partition Value Serialization
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#partition-value-serialization)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, writers must store `timestamp` partition values of newly added files adjusted to UTC and in ISO8601 format (option 2 of the existing section). They must not store them without a time zone. `timestamp without time zone` partition values are not affected.</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, writers must store `timestamp` partition values of newly added files adjusted to UTC and in ISO8601 format. They must not store them without a time zone. `timestamp without time zone` partition values are not affected.</ins>
 
 <ins>Files added before the feature was enabled may still have `timestamp` partition values without a time zone. Readers continue to interpret those values as described in the existing section.</ins>
 
