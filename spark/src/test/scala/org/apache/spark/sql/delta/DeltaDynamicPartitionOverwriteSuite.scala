@@ -166,7 +166,7 @@ class DeltaDynamicPartitionOverwriteSuite
         if (overwriteSchema) {
           checkAnswer(castValue(srcData, "string"))
         } else {
-          targetData.filter("id != 1").union(castValue(srcData, "string"))
+          checkAnswer(targetData.filter("id != 1").union(castValue(srcData, "string")))
         }
       } else {
         if (overwriteSchema) {
@@ -255,8 +255,8 @@ class DeltaDynamicPartitionOverwriteSuite
     }
 
     dpoTest(s"DataframeV1($method): Ignore mode") { conf =>
+      v1Write(v1Writer(sourceData, SaveMode.Ignore, conf), method)
       if (method == "insertInto") {
-        v1Write(v1Writer(sourceData, SaveMode.Ignore, conf), method)
         checkAnswer(targetData.union(sourceData))
       } else {
         checkAnswer(targetData)
@@ -311,7 +311,7 @@ class DeltaDynamicPartitionOverwriteSuite
       checkAnswer(srcData)
     } else if (mergeSchema) {
       writer.overwritePartitions()
-      targetData.filter("id != 1").withColumn("newCol", lit(null)).union(srcData)
+      checkAnswer(targetData.filter("id != 1").withColumn("newCol", lit(null)).union(srcData))
     } else {
       val e = intercept[DeltaAnalysisException] {
         writer.overwritePartitions()
