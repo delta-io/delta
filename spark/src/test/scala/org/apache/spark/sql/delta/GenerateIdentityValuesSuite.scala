@@ -53,7 +53,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
 
     // Check every value is after high watermark OR >= start.
     val highWaterMark = identityInfo.highWaterMark.getOrElse(identityInfo.start - identityInfo.step)
-    val condViolateHighWaterMark = s"(($colName - $highWaterMark)/${identityInfo.step}) < 0"
+    val condViolateHighWaterMark = s"(($colName - $highWaterMark)/${identityInfo.step}) <= 0"
     checkAnswer(df.where(condViolateHighWaterMark), Seq.empty)
 
     // When high watermark is empty, the first value should be start.
