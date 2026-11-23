@@ -208,7 +208,8 @@ object AMTWriteHelper extends DeltaLogging {
       metadata = metadata,
       protocol = protocol,
       desiredNumLeaves = desiredNumLeaves,
-      newLeafTracking = newLeafTracking)
+      newLeafTracking = newLeafTracking,
+      isFirstTree = readSnapshot.lastManifestCommitOpt.isEmpty)
     leafEntries match {
       case Seq(onlyLeaf) =>
         assert(onlyLeaf.manifest_info.tombstoneFilesCount == 0,
@@ -264,7 +265,8 @@ object AMTWriteHelper extends DeltaLogging {
       metadata: Metadata,
       protocol: Protocol,
       desiredNumLeaves: Int,
-      newLeafTracking: NewLeafTracking): Seq[DataManifestEntry] = {
+      newLeafTracking: NewLeafTracking,
+      isFirstTree: Boolean): Seq[DataManifestEntry] = {
     import org.apache.spark.sql.delta.implicits._
     val addFilesDs = addFilesDf.as[AddFile]
 
@@ -274,11 +276,16 @@ object AMTWriteHelper extends DeltaLogging {
     val tableRootSparkPath = SparkPath.fromPath(tableRoot)
     val metadataDirSparkPath = SparkPath.fromPath(metadataDir)
     val tableRootPath = tableRootSparkPath.toPath
+    // Files from before an upgrade have no snapshot IDs, so the first tree gives them its own.
+    // Every file committed after that has snapshot IDs, and later trees copy them as they are.
+    val treeSnapshotId = newLeafTracking.snapshotId
     val amtDs = addFilesDs.mapPartitions { iter =>
       iter.map { add =>
         require(add.baseRowId.isDefined,
           s"Cannot write AMT leaf entry without a materialized baseRowId: ${add.path}.")
-        DataEntry.fromAddFile(add, dataEntryTracking, tableRootPath).wrap
+        val withSnapshotIds =
+          if (isFirstTree) AMTSnapshotId.assignIfMissing(add, treeSnapshotId) else add
+        DataEntry.fromAddFile(withSnapshotIds, dataEntryTracking, tableRootPath).wrap
       }
     }
     val amtWithPartition = AMTPartitionValues.forWrite(amtDs.toDF(), metadata.partitionSchema)

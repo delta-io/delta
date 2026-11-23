@@ -52,7 +52,7 @@ trait MergeCDCTests extends QueryTest
   with MergeCDCMixin
   with CDCTestMixin {
 
-  import testImplicits._
+  import deltaImplicits._
 
   // scalastyle:off argcount
   /**

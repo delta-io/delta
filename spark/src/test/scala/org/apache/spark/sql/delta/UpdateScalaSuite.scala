@@ -56,7 +56,7 @@ trait UpdateScalaMixin extends UpdateBaseMixin
 }
 
 trait UpdateScalaTests extends UpdateScalaMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   test("update usage test - without condition") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))

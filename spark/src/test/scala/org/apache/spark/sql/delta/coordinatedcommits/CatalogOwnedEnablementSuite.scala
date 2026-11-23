@@ -41,7 +41,7 @@ class CatalogOwnedEnablementSuite
     super.beforeEach()
     CatalogManagedCommitCoordinatorProvider.clearBuilders()
     CatalogManagedCommitCoordinatorProvider.registerBuilder(
-      catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
       commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3)
     )
   }
@@ -60,7 +60,7 @@ class CatalogOwnedEnablementSuite
       tableName: String,
       expectEnabled: Boolean): Unit = {
     val (_, snapshot) = getDeltaLogWithSnapshot(TableIdentifier(tableName))
-    assert(snapshot.isCatalogOwned == expectEnabled)
+    assert(snapshot.isCatalogManaged == expectEnabled)
     Seq(
       CatalogManagedTableFeature,
       VacuumProtocolCheckTableFeature,
@@ -77,7 +77,7 @@ class CatalogOwnedEnablementSuite
   }
 
   protected def commitCoordinatorName: String =
-    CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING
+    CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING
 
   protected def createTable(
       tableName: String,
@@ -264,9 +264,9 @@ class CatalogOwnedEnablementSuite
     withRandomTable(createCatalogOwnedTableAtInit = false) { tableName =>
       withTable("t1", "t2") {
         val qolTableFeatures =
-          CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._1)
+          CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._1)
             .toSet
-        withSQLConf(defaultCatalogOwnedFeatureEnabledKey -> "supported") {
+        withSQLConf(defaultCatalogManagedFeatureEnabledKey -> "supported") {
           sql(s"CREATE TABLE t1 SHALLOW CLONE $tableName")
         }
         sql(s"CREATE TABLE t2 SHALLOW CLONE $tableName TBLPROPERTIES " +

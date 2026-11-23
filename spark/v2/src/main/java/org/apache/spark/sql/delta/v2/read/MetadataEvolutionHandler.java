@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
@@ -46,6 +47,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.DeltaStreamingBackend;
+import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper;
@@ -147,20 +149,8 @@ public class MetadataEvolutionHandler {
    *
    * <p>V2 port of V1's {@code DeltaSourceMetadataEvolutionSupport.shouldTrackMetadataChange}.
    */
-  public boolean shouldTrackMetadataChange() {
+  boolean shouldTrackMetadataChange() {
     return DeltaSourceMetadataEvolutionSupport$.MODULE$.shouldTrackMetadataChange(
-        schemaReadOptions, metadataTrackingLog);
-  }
-
-  /**
-   * Whether the tracking log is provided but still empty, so it should be initialized eagerly on
-   * the first batch. Should only be consulted before the first write to the log.
-   *
-   * <p>V2 port of V1's {@code
-   * DeltaSourceMetadataEvolutionSupport.shouldInitializeMetadataTrackingEagerly}.
-   */
-  public boolean shouldInitializeMetadataTrackingEagerly() {
-    return DeltaSourceMetadataEvolutionSupport$.MODULE$.shouldInitializeMetadataTrackingEagerly(
         schemaReadOptions, metadataTrackingLog);
   }
 
@@ -176,6 +166,11 @@ public class MetadataEvolutionHandler {
    */
   public ClosableIterator<IndexedFile> stopIndexedFileIteratorAtSchemaChangeBarrier(
       ClosableIterator<IndexedFile> fileActions) {
+    return stopIndexedFileIteratorAtSchemaChangeBarrier(fileActions, Function.identity());
+  }
+
+  <T> ClosableIterator<T> stopIndexedFileIteratorAtSchemaChangeBarrier(
+      ClosableIterator<T> fileActions, Function<T, IndexedFile> indexedFile) {
     // Lazily include files up to and including the barrier, then break.
     boolean[] sawBarrier = {false};
     return new IteratorCloseOps<>(fileActions)
@@ -186,7 +181,8 @@ public class MetadataEvolutionHandler {
                       if (sawBarrier[0]) {
                         return false;
                       }
-                      if (file.getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
+                      if (indexedFile.apply(file).index()
+                          == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
                         sawBarrier[0] = true;
                       }
                       return true;
@@ -206,7 +202,8 @@ public class MetadataEvolutionHandler {
         && hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)) {
       return new ClosableWrapper<>(
               Iterator.single(
-                  IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX())))
+                  DeltaV2MicroBatchStreamUtils.sentinel(
+                      version, DeltaSourceOffset.METADATA_CHANGE_INDEX())))
           .toClosable();
     }
     return new ClosableWrapper<>(List$.MODULE$.<IndexedFile>empty().iterator()).toClosable();

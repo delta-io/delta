@@ -33,7 +33,7 @@ import org.apache.spark.util.Utils
 
 class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("delta 0.1.0") {
     testEvolvability("src/test/resources/delta/delta-0.1.0")

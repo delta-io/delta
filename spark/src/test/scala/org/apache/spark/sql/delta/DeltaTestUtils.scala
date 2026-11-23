@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -528,7 +528,7 @@ trait DeltaMinorCompactionTestUtils extends DeltaTestUtilsBase {
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val catalogTable = tableName
       .map(name => spark.sessionState.catalog.getTableMetadata(new TableIdentifier(name)))
-    CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+    CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark, catalogTable, snapshotForReplay).foreach {
       tableCommitCoordinatorClient =>
         CoordinatedCommitsUtils.ensureCommitFilesBackfilled(
@@ -908,9 +908,10 @@ trait DeltaDMLTestUtils
   with DeltaTestUtilsBase
   with DeltaTableProvider
   with BeforeAndAfterEach
+  with DeltaSQLCommandTest
   with CDCTestMixin {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def tableSQLIdentifier: String
 
@@ -980,7 +981,7 @@ trait DeltaDMLTestUtils
       targetKeyValueNames: (String, String) = ("key", "value"))(
       thunk: (String, String) => Unit = null): Unit = {
 
-    import testImplicits._
+    import deltaImplicits._
 
     append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
       if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)

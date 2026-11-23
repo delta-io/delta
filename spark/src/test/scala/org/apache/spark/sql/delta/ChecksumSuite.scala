@@ -229,7 +229,7 @@ class ChecksumSuite
       // Explicitly create the table w/o any AddFile for the subsequent
       // DeltaLog construction.
       withTempTable(createTable = true) { tableName =>
-        import testImplicits._
+        import deltaImplicits._
         val numAddFiles = 10
 
         // Procedure:

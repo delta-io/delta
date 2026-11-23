@@ -161,15 +161,8 @@ trait DeltaSourceBase extends Source
    */
   @volatile protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
-  override val schema: StructType = {
-    val readSchemaWithCdc = if (options.readChangeFeed) {
-      CDCReader.cdcReadSchema(readSchemaAtSourceInit)
-    } else {
-      readSchemaAtSourceInit
-    }
-    DeltaTableUtils.removeInternalDeltaMetadata(
-      spark, DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaWithCdc))
-  }
+  override val schema: StructType =
+    DeltaSource.sourceSchema(spark, options, readSchemaAtSourceInit)
 
   // A dummy empty dataframe that can be returned at various point during streaming
   protected val emptyDataFrame: DataFrame =
@@ -561,102 +554,6 @@ trait DeltaSourceBase extends Source
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true
   }
-
-  /**
-   * Narrow waist to verify a metadata action for read-incompatible schema changes, specifically:
-   * 1. Any column mapping related schema changes (rename / drop) columns
-   * 2. Standard read-compatibility changes including:
-   *    a) No missing columns
-   *    b) No data type changes
-   *    c) No read-incompatible nullability changes
-   * If the check fails, we throw an exception to exit the stream.
-   * If lazy log initialization is required, we also run a one time scan to safely initialize the
-   * metadata tracking log upon any non-additive schema change failures.
-   * @param metadata Metadata that contains a potential schema change
-   * @param version Version for the metadata action
-   * @param validatedDuringStreamStart Whether this check is being done during stream start.
-   */
-  protected def checkReadIncompatibleSchemaChanges(
-      metadata: Metadata,
-      version: Long,
-      batchStartVersion: Long,
-      batchEndVersionOpt: Option[Long] = None,
-      validatedDuringStreamStart: Boolean = false): Unit = {
-    log.info(s"checking read incompatibility with schema at version $version, " +
-      s"inside batch[$batchStartVersion, ${batchEndVersionOpt.getOrElse("latest")}]")
-
-    val (newMetadata, oldMetadata) = if (version < snapshotAtSourceInit.version) {
-      (snapshotAtSourceInit.metadata, metadata)
-    } else {
-      (metadata, snapshotAtSourceInit.metadata)
-    }
-
-    // Table ID has changed during streaming
-    if (newMetadata.id != oldMetadata.id) {
-      throw DeltaErrors.differentDeltaTableReadByStreamingSource(
-        newTableId = newMetadata.id, oldTableId = oldMetadata.id)
-    }
-
-    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart)
-
-    // Other standard read compatibility changes
-    if (!validatedDuringStreamStart ||
-        !schemaReadOptions.
-            forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
-
-      val schemaChange = if (options.readChangeFeed) {
-        CDCReader.cdcReadSchema(metadata.schema)
-      } else {
-        metadata.schema
-      }
-
-      // There is a schema change. All of files after this commit will use `schemaChange`. Hence, we
-      // check whether we can use `schema` (the fixed source schema we use in the same run of the
-      // query) to read these new files safely.
-      val backfilling = version < snapshotAtSourceInit.version
-      // Partition column change will be ignored if user enable the unsafe flag
-      val newPartitionColumns =
-        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-        else newMetadata.partitionColumns
-      val oldPartitionColumns =
-        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-        else oldMetadata.partitionColumns
-
-      val checkResult = DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
-        schemaChange, schema,
-        newPartitionColumns, oldPartitionColumns,
-        backfilling,
-        schemaReadOptions)
-
-      if (!DeltaStreamUtils.SchemaCompatibilityResult.isCompatible(checkResult)) {
-        val isRetryable =
-          DeltaStreamUtils.SchemaCompatibilityResult.isRetryableIncompatible(checkResult)
-        recordDeltaEvent(
-          snapshotAtSourceInit,
-          "delta.streaming.source.schemaChanged",
-          data = Map(
-            "currentVersion" -> snapshotAtSourceInit.version,
-            "newVersion" -> version,
-            "retryable" -> isRetryable,
-            "backfilling" -> backfilling,
-            "readChangeDataFeed" -> options.readChangeFeed,
-            "typeWideningEnabled" -> schemaReadOptions.typeWideningEnabled,
-            "enableSchemaTrackingForTypeWidening" ->
-                schemaReadOptions.enableSchemaTrackingForTypeWidening,
-            "containsWideningTypeChanges" ->
-              TypeWidening.containsWideningTypeChanges(schema, schemaChange)
-          )
-        )
-
-        throw DeltaErrors.schemaChangedException(
-          schema,
-          schemaChange,
-          retryable = isRetryable,
-          Some(version),
-          includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
-      }
-    }
-  }
 }
 
 /**
@@ -673,10 +570,10 @@ case class DeltaSource(
     override val spark: SparkSession,
     deltaLog: DeltaLog,
     catalogTableOpt: Option[CatalogTable],
-    options: DeltaOptions,
-    snapshotAtSourceInit: SnapshotDescriptor,
+    override val options: DeltaOptions,
+    override val snapshotAtSourceInit: SnapshotDescriptor,
     metadataPath: String,
-    metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog] = None,
+    override val metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog] = None,
     filters: Seq[Expression] = Nil)
   extends DeltaSourceBase
   with DeltaSourceCDCSupport
@@ -1314,6 +1211,23 @@ object DeltaSource extends DeltaLogging {
           maxBytes = Some(composite.bytes.maxBytes)))
       case other => throw DeltaErrors.unknownReadLimit(other.toString())
     }
+  }
+
+  /**
+   * Returns the schema of a Delta streaming source: the read schema, plus the CDC columns when the
+   * source reads the change data feed, without internal Delta metadata.
+   */
+  def sourceSchema(
+      spark: SparkSession,
+      options: DeltaOptions,
+      readSchemaAtSourceInit: StructType): StructType = {
+    val readSchemaWithCdc = if (options.readChangeFeed) {
+      CDCReader.cdcReadSchema(readSchemaAtSourceInit)
+    } else {
+      readSchemaAtSourceInit
+    }
+    DeltaTableUtils.removeInternalDeltaMetadata(
+      spark, DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaWithCdc))
   }
 
   /**

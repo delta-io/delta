@@ -54,7 +54,7 @@ abstract class DeltaCDCSuiteBase
   with DeltaSQLTestUtils
   with CDFNondeterministicFilterTests {
 
-  import testImplicits._
+  import deltaImplicits._
 
   /** Represents path or metastore table name */
   abstract case class TblId(id: String)

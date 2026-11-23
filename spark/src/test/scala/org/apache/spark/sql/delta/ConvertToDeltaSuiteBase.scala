@@ -101,7 +101,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
   with ConvertToDeltaHiveTableTests {
 
   import org.apache.spark.sql.functions._
-  import testImplicits._
+  import deltaImplicits._
 
   // Use different batch sizes to cover different merge schema code paths.
   protected def testSchemaMerging(testName: String)(block: => Unit): Unit = {

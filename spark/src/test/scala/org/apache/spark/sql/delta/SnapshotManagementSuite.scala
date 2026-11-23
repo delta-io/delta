@@ -499,7 +499,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
     //    and `cachedSnapshot`.
     withTempDir { dir =>
       val path = dir.getCanonicalPath
-      import testImplicits._
+      import deltaImplicits._
       // Commit 0 - to trigger the initial snapshot construction for version 0
       Seq(1).toDF().write.format("delta").mode("overwrite").save(path)
       val snapshot = DeltaLog.forTable(spark, path).update()

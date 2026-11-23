@@ -49,7 +49,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
   with DeletionVectorsTestUtils
   with DeltaColumnMappingTestUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   def executeOptimizeTable(table: String, condition: Option[String] = None)
   def executeOptimizePath(path: String, condition: Option[String] = None)
@@ -228,56 +228,76 @@ trait OptimizeCompactionSuiteBase extends QueryTest
     actions.filter(_.isInstanceOf[AddFile]).map(_.asInstanceOf[AddFile])
   }
 
-  def appendRowsToDeltaTable(
+  private def appendPartitionFiles(
       path: String,
-      numFiles: Int,
-      numRowsPerFiles: Int,
-      partitionColumns: Option[Seq[String]],
-      partitionValues: Seq[Int]): Unit = {
-    partitionValues.foreach { partition =>
-      (0 until numFiles).foreach { _ =>
-        appendToDeltaTable(
-          (0 until numRowsPerFiles).toDF("value").withColumn("id", lit(partition)),
-          path,
-          partitionColumns)
-      }
+      partitions: Seq[Int],
+      filesPerPartition: Int,
+      rowsPerFile: Int): Unit = {
+    val rows = partitions.flatMap { partition =>
+      (0 until filesPerPartition * rowsPerFile).map(ordinal => (partition, ordinal))
     }
+    // Roll over each file after writing one full copy of its row values.
+    rows.toDF("id", "ordinal")
+      .repartition(1)
+      .sortWithinPartitions("id", "ordinal")
+      .select(($"ordinal" % rowsPerFile).as("value"), $"id")
+      .write
+      .format("delta")
+      .option("maxRecordsPerFile", rowsPerFile)
+      .option(DeltaOptions.OPTIMIZE_WRITE_OPTION, false)
+      .partitionBy("id")
+      .mode("append")
+      .save(path)
   }
 
-  def testOptimizeCompactWithLargeFile(
-      name: String, unCompactablePartitions: Seq[Int], compactablePartitions: Seq[Int]) {
+  private def testOptimizeCompactWithLargeFile(
+      name: String,
+      unCompactablePartitions: Seq[Int],
+      compactablePartitions: Seq[Int]): Unit = {
     test(name) {
       withTempDir { tempDir =>
+        withSQLConf(
+          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false",
+          DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true"
+        ) {
           val path = new File(tempDir, "testTable").getCanonicalPath
-          val partitionColumns = Some(Seq("id"))
-          // Create un-compactable partitions.
-          appendRowsToDeltaTable(
-            path, numFiles = 1, numRowsPerFiles = 200, partitionColumns, unCompactablePartitions)
-          // Create compactable partitions with 5 files
-          appendRowsToDeltaTable(
-            path, numFiles = 5, numRowsPerFiles = 10, partitionColumns, compactablePartitions)
+          appendPartitionFiles(
+            path, unCompactablePartitions, filesPerPartition = 1, rowsPerFile = 200)
+          appendPartitionFiles(
+            path, compactablePartitions, filesPerPartition = 5, rowsPerFile = 10)
 
-          val deltaLogBefore = DeltaLog.forTable(spark, path)
-          val txnBefore = deltaLogBefore.startTransaction()
-          val fileListBefore = txnBefore.filterFiles()
-          val versionBefore = deltaLogBefore.snapshot.version
+          val deltaLog = DeltaLog.forTable(spark, path)
+          val snapshotBefore = deltaLog.update()
+          val id = "id".phy(deltaLog)
+          def partitionKey(partition: Int): Map[String, String] = Map(id -> partition.toString)
+          val filesBefore = snapshotBefore.allFiles.collect().toSeq.groupBy(_.partitionValues)
+          val expectedPartitions =
+            (unCompactablePartitions ++ compactablePartitions).map(partitionKey).toSet
+          assert(filesBefore.keySet === expectedPartitions)
+          unCompactablePartitions.foreach { partition =>
+            val files = filesBefore(partitionKey(partition))
+            assert(files.map(_.numPhysicalRecords) === Seq(Some(200L)))
+          }
+          compactablePartitions.foreach { partition =>
+            assert(filesBefore(partitionKey(partition)).map(_.numPhysicalRecords) ===
+              Seq.fill(5)(Some(10L)))
+          }
 
-          val id = "id".phy(deltaLogBefore)
-          unCompactablePartitions.foreach(partId =>
-            assert(fileListBefore.count(_.partitionValues === Map(id -> partId.toString)) == 1))
-          compactablePartitions.foreach(partId =>
-            assert(fileListBefore.count(_.partitionValues === Map(id -> partId.toString)) == 5))
-          // Optimize compact all partitions
           spark.sql(s"OPTIMIZE '$path'")
 
-          val deltaLogAfter = DeltaLog.forTable(spark, path)
-          val txnAfter = deltaLogAfter.startTransaction();
-          val fileListAfter = txnAfter.filterFiles();
-          // All partitions should only contains single file.
-          (unCompactablePartitions ++ compactablePartitions).foreach(partId =>
-            assert(fileListAfter.count(_.partitionValues === Map(id -> partId.toString)) === 1))
-          // version is incremented
-          assert(deltaLogAfter.snapshot.version === versionBefore + 1)
+          val snapshotAfter = deltaLog.update()
+          val filesAfter = snapshotAfter.allFiles.collect().toSeq.groupBy(_.partitionValues)
+          assert(filesAfter.keySet === expectedPartitions)
+          unCompactablePartitions.foreach { partition =>
+            val key = partitionKey(partition)
+            assert(filesAfter(key).map(_.path) === filesBefore(key).map(_.path))
+          }
+          compactablePartitions.foreach { partition =>
+            val files = filesAfter(partitionKey(partition))
+            assert(files.map(_.numPhysicalRecords) === Seq(Some(50L)))
+          }
+          assert(snapshotAfter.version === snapshotBefore.version + 1)
+        }
       }
     }
   }
@@ -724,7 +744,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
  */
 class OptimizeCompactionSQLSuite extends OptimizeCompactionSuiteBase
     with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   def executeOptimizeTable(table: String, condition: Option[String] = None): Unit = {
     val conditionClause = condition.map(c => s"WHERE $c").getOrElse("")

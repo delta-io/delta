@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.convert.ConvertUtils
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -200,7 +200,7 @@ class DeltaAnalysis(protected val session: SparkSession)
 
 
       // Whether we are enabling Catalog-Managed via explicit property overrides.
-      var isEnablingCatalogOwnedViaExplicitPropertyOverrides: Boolean = false
+      var isEnablingCatalogManagedViaExplicitPropertyOverrides: Boolean = false
 
       val catalogTableTarget =
         // If source table is Delta format
@@ -220,7 +220,7 @@ class DeltaAnalysis(protected val session: SparkSession)
 
           // Catalog-Managed: Specifying the table UUID in the TBLPROPERTIES clause
           // should be blocked.
-          CatalogOwnedTableUtils.validateUCTableIdNotPresent(property = ctl.properties)
+          CatalogManagedTableUtils.validateUCTableIdNotPresent(property = ctl.properties)
 
           // Check whether we are trying to enable Catalog-Managed via explicit property overrides.
           // The reason to check this is, if the source table is a Catalog-Managed table, and
@@ -232,7 +232,7 @@ class DeltaAnalysis(protected val session: SparkSession)
           // It works as intended if source table is a normal delta table.
           if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
                 configs = ctl.properties).contains(CatalogManagedTableFeature)) {
-            isEnablingCatalogOwnedViaExplicitPropertyOverrides = true
+            isEnablingCatalogManagedViaExplicitPropertyOverrides = true
           }
 
           val config =
@@ -282,8 +282,8 @@ class DeltaAnalysis(protected val session: SparkSession)
         }
       // Catalog-Managed: Do not copy over [[CatalogManagedTableFeature]] from source table
       //                except the certain case.
-      val protocolAfterFilteringCatalogOwnedFromSource = protocol match {
-        case Some(p) if !isEnablingCatalogOwnedViaExplicitPropertyOverrides =>
+      val protocolAfterFilteringCatalogManagedFromSource = protocol match {
+        case Some(p) if !isEnablingCatalogManagedViaExplicitPropertyOverrides =>
           // Only filter out [[CatalogManagedTableFeature]] when target table is not enabling
           // CatalogManaged.
           // E.g.,
@@ -315,7 +315,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         mode = saveMode,
         query = None,
         output = ctl.output,
-        protocol = protocolAfterFilteringCatalogOwnedFromSource,
+        protocol = protocolAfterFilteringCatalogManagedFromSource,
         tableByPath = isTableByPath)
 
     // Handling df.insertInto() with `replaceOn`/`replaceUsing`.

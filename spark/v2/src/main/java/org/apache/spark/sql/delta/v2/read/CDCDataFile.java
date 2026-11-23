@@ -114,6 +114,11 @@ public class CDCDataFile {
     return removeFile;
   }
 
+  @Nullable
+  AddCDCFile getAddCDCFile() {
+    return addCDCFile;
+  }
+
   /** Returns the file path for any CDC file variant. */
   public String getPath() {
     if (addFile != null) {

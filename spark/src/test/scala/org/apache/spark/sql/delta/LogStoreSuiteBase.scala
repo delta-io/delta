@@ -206,7 +206,7 @@ abstract class LogStoreSuiteBase extends QueryTest
   test(
     "use isPartialWriteVisible to decide whether use rename") {
     withTempDir { tempDir =>
-      import testImplicits._
+      import deltaImplicits._
       // Write 5 files to delta table
       (1 to 100).toDF().repartition(5).write.format("delta").save(tempDir.getCanonicalPath)
       withSQLConf(

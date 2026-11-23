@@ -25,6 +25,7 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
 import org.apache.spark.sql.delta.VersionNotFoundException;
@@ -35,7 +36,6 @@ import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import scala.Option;
@@ -45,9 +45,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
 
   private final DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.empty();
 
-  @AfterEach
-  void clearTableManagerCache() {
-    DeltaV2TableManagerCache$.MODULE$.clearCache();
+  @Override
+  protected boolean clearTableManagerCacheAfterEach() {
+    return true;
   }
 
   private static String createTable(File dir, int commits) {
@@ -214,6 +214,21 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
 
     assertEquals(1L, commitVersion);
     assertEquals(1L, backend.unsafeVolatileSnapshot().version());
+  }
+
+  @Test
+  public void unsafeVolatileTableIdMatchesDeltaLog(@TempDir File tempDir) {
+    String path = createTable(tempDir, /* commits= */ 2);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 1L);
+
+    // The V1 backend returns DeltaLog.unsafeVolatileTableId.
+    assertEquals(
+        DeltaLog.forTable(spark, path).unsafeVolatileTableId(), backend.unsafeVolatileTableId());
   }
 
   @Test

@@ -15,6 +15,7 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
+import static org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamUtils.sentinel;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -31,9 +32,11 @@ import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport$;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
+import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
@@ -44,7 +47,6 @@ import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -57,9 +59,9 @@ import scala.collection.immutable.Seq$;
 /** Unit tests for {@link MetadataEvolutionHandler}. */
 public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
-  @AfterEach
-  void clearTableManagerCache() {
-    DeltaV2TableManagerCache$.MODULE$.clearCache();
+  @Override
+  protected boolean clearTableManagerCacheAfterEach() {
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -276,30 +278,45 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
   }
 
   // ---------------------------------------------------------------------------
-  // shouldTrackMetadataChange / shouldInitializeMetadataTrackingEagerly
+  // shouldTrackMetadataChange, with the V1 eager-initialization check
   //
-  // These two methods share the same preconditions (tracking log state + unsafe
-  // read flag), so we test them together for each configuration.
+  // The handler's check and the V1 eager-initialization check that the stream shares through
+  // DeltaSourceOffsetLogic have the same preconditions (tracking log state + unsafe read flag),
+  // so we test them together for each configuration.
   // ---------------------------------------------------------------------------
+
+  private void assertTrackingState(
+      Option<DeltaSourceMetadataTrackingLog> trackingLog,
+      boolean allowUnsafeColumnMappingRead,
+      boolean expectTracking,
+      boolean expectEagerInit) {
+    DeltaStreamUtils.SchemaReadOptions options = schemaReadOptions(allowUnsafeColumnMappingRead);
+    assertEquals(
+        expectTracking, buildLightweightHandler(trackingLog, options).shouldTrackMetadataChange());
+    assertEquals(
+        expectEagerInit,
+        DeltaSourceMetadataEvolutionSupport$.MODULE$.shouldInitializeMetadataTrackingEagerly(
+            options, trackingLog));
+  }
 
   /** Both should be false when unsafe column mapping reads bypass tracking entirely. */
   @Test
   public void testTrackingState_disabledWhenUnsafeColumnMappingReadAllowed() {
-    MetadataEvolutionHandler handler =
-        buildLightweightHandler(
-            Option.empty(), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ true));
-    assertFalse(handler.shouldTrackMetadataChange());
-    assertFalse(handler.shouldInitializeMetadataTrackingEagerly());
+    assertTrackingState(
+        Option.empty(),
+        /* allowUnsafeColumnMappingRead= */ true,
+        /* expectTracking= */ false,
+        /* expectEagerInit= */ false);
   }
 
   /** Both should be false when no tracking log is provided (Option.empty). */
   @Test
   public void testTrackingState_disabledWhenNoTrackingLog() {
-    MetadataEvolutionHandler handler =
-        buildLightweightHandler(
-            Option.empty(), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
-    assertFalse(handler.shouldTrackMetadataChange());
-    assertFalse(handler.shouldInitializeMetadataTrackingEagerly());
+    assertTrackingState(
+        Option.empty(),
+        /* allowUnsafeColumnMappingRead= */ false,
+        /* expectTracking= */ false,
+        /* expectEagerInit= */ false);
   }
 
   /**
@@ -308,13 +325,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
    */
   @Test
   public void testTrackingState_emptyLog_notTrackingButReadyToInitialize(@TempDir File tempDir) {
-    DeltaSourceMetadataTrackingLog emptyLog =
-        createStandaloneTrackingLog(tempDir, /* seedWithDefaultEntry= */ false);
-    MetadataEvolutionHandler handler =
-        buildLightweightHandler(
-            Option.apply(emptyLog), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
-    assertFalse(handler.shouldTrackMetadataChange());
-    assertTrue(handler.shouldInitializeMetadataTrackingEagerly());
+    assertTrackingState(
+        Option.apply(createStandaloneTrackingLog(tempDir, /* seedWithDefaultEntry= */ false)),
+        /* allowUnsafeColumnMappingRead= */ false,
+        /* expectTracking= */ false,
+        /* expectEagerInit= */ true);
   }
 
   /**
@@ -323,13 +338,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
    */
   @Test
   public void testTrackingState_seededLog_trackingActiveAndInitComplete(@TempDir File tempDir) {
-    DeltaSourceMetadataTrackingLog seededLog =
-        createStandaloneTrackingLog(tempDir, /* seedWithDefaultEntry= */ true);
-    MetadataEvolutionHandler handler =
-        buildLightweightHandler(
-            Option.apply(seededLog), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false));
-    assertTrue(handler.shouldTrackMetadataChange());
-    assertFalse(handler.shouldInitializeMetadataTrackingEagerly());
+    assertTrackingState(
+        Option.apply(createStandaloneTrackingLog(tempDir, /* seedWithDefaultEntry= */ true)),
+        /* allowUnsafeColumnMappingRead= */ false,
+        /* expectTracking= */ true,
+        /* expectEagerInit= */ false);
   }
 
   // ---------------------------------------------------------------------------
@@ -347,10 +360,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             Option.empty(), schemaReadOptions(/* allowUnsafeColumnMappingRead= */ true));
 
     List<IndexedFile> inputFiles =
-        Arrays.asList(
-            IndexedFile.sentinel(1L, 0L),
-            IndexedFile.sentinel(1L, 1L),
-            IndexedFile.sentinel(1L, 2L));
+        Arrays.asList(sentinel(1L, 0L), sentinel(1L, 1L), sentinel(1L, 2L));
 
     List<IndexedFile> result =
         drainIndexedFiles(
@@ -369,20 +379,20 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     long barrierIndex = DeltaSourceOffset.METADATA_CHANGE_INDEX();
     List<IndexedFile> inputFiles =
         Arrays.asList(
-            IndexedFile.sentinel(1L, 0L),
-            IndexedFile.sentinel(1L, 1L),
-            IndexedFile.sentinel(1L, barrierIndex),
-            IndexedFile.sentinel(1L, 3L),
-            IndexedFile.sentinel(1L, 4L));
+            sentinel(1L, 0L),
+            sentinel(1L, 1L),
+            sentinel(1L, barrierIndex),
+            sentinel(1L, 3L),
+            sentinel(1L, 4L));
 
     List<IndexedFile> result =
         drainIndexedFiles(
             handler.stopIndexedFileIteratorAtSchemaChangeBarrier(
                 ScalaUtils.toClosableIterator(inputFiles.iterator())));
     assertEquals(3, result.size());
-    assertEquals(0L, result.get(0).getIndex());
-    assertEquals(1L, result.get(1).getIndex());
-    assertEquals(barrierIndex, result.get(2).getIndex());
+    assertEquals(0L, result.get(0).index());
+    assertEquals(1L, result.get(1).index());
+    assertEquals(barrierIndex, result.get(2).index());
   }
 
   /** Empty input produces empty output. */
@@ -452,8 +462,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             handler.getMetadataOrProtocolChangeIndexedFileIterator(
                 DEFAULT_METADATA, upgradedProtocol, 5L));
     assertEquals(1, result.size());
-    assertEquals(5L, result.get(0).getVersion());
-    assertEquals(DeltaSourceOffset.METADATA_CHANGE_INDEX(), result.get(0).getIndex());
+    assertEquals(5L, result.get(0).version());
+    assertEquals(DeltaSourceOffset.METADATA_CHANGE_INDEX(), result.get(0).index());
     assertFalse(result.get(0).hasFileAction());
   }
 
@@ -487,8 +497,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             handler.getMetadataOrProtocolChangeIndexedFileIterator(
                 metadataWithNewColumn, DEFAULT_PROTOCOL, 7L));
     assertEquals(1, result.size());
-    assertEquals(7L, result.get(0).getVersion());
-    assertEquals(DeltaSourceOffset.METADATA_CHANGE_INDEX(), result.get(0).getIndex());
+    assertEquals(7L, result.get(0).version());
+    assertEquals(DeltaSourceOffset.METADATA_CHANGE_INDEX(), result.get(0).index());
     assertFalse(result.get(0).hasFileAction());
   }
 
@@ -520,8 +530,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
             handler.getMetadataOrProtocolChangeIndexedFileIterator(
                 metadataWithNewConfig, DEFAULT_PROTOCOL, 3L));
     assertEquals(1, result.size());
-    assertEquals(3L, result.get(0).getVersion());
-    assertEquals(DeltaSourceOffset.METADATA_CHANGE_INDEX(), result.get(0).getIndex());
+    assertEquals(3L, result.get(0).version());
+    assertEquals(DeltaSourceOffset.METADATA_CHANGE_INDEX(), result.get(0).index());
     assertFalse(result.get(0).hasFileAction());
   }
 

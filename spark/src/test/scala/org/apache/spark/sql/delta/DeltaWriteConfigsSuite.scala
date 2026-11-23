@@ -61,7 +61,7 @@ class DeltaWriteConfigsSuite extends QueryTest
   val config_prefix_2_value = "20"
 
   override def afterAll(): Unit = {
-    import testImplicits._
+    import deltaImplicits._
     // scalastyle:off println
 
     println("DataFrameWriter Test Output")

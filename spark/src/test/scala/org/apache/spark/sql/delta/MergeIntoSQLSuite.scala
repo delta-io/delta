@@ -129,7 +129,7 @@ trait MergeIntoSQLNondeterministicOrderTests extends MergeIntoSQLMixin {
 
 trait MergeIntoSQLTests extends MergeIntoSQLMixin {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("CTE as a source in MERGE") {
     withTable("source") {

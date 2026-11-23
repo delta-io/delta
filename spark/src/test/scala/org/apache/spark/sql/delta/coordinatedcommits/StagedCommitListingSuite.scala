@@ -76,8 +76,8 @@ class StagedCommitListingSuite extends QueryTest
 
   /** The [[InMemoryCommitCoordinator]] backing the builder, for manipulating its ledger. */
   private def getInMemoryCoordinator: InMemoryCommitCoordinator = {
-    val client = getCatalogOwnedCommitCoordinatorClient(
-      CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+    val client = getCatalogManagedCommitCoordinatorClient(
+      CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
     client match {
       case tracking: TrackingCommitCoordinatorClient =>
         tracking.delegatingCommitCoordinatorClient.asInstanceOf[InMemoryCommitCoordinator]

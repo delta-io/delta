@@ -38,6 +38,8 @@ private[delta] class DeltaLogStreamingBackend(
 
   override def unsafeVolatileSnapshot: Snapshot = deltaLog.unsafeVolatileSnapshot
 
+  override def unsafeVolatileTableId: String = deltaLog.unsafeVolatileTableId
+
   override def getSnapshotAt(version: Long): Snapshot =
     deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTableOpt())
 

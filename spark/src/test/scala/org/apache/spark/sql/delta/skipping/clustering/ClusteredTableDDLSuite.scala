@@ -39,7 +39,7 @@ import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructTy
 import org.apache.spark.util.Utils
 
 trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
-  with SharedSparkSession
+  with DeltaSQLCommandTest
   with ClusteredTableTestUtils {
 
   override protected def beforeAll(): Unit = {
@@ -484,7 +484,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   }
 
   test("Replace clustered table with non-clustered table") {
-    import testImplicits._
+    import deltaImplicits._
     val sourceTable = this.sourceTable
     val testTable = this.testTable
     withTable(sourceTable) {
@@ -519,7 +519,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   }
 
   test("Replace clustered table with non-clustered table - dataframe writer") {
-    import testImplicits._
+    import deltaImplicits._
     val sourceTable = this.sourceTable
     val testTable = this.testTable
     withTable(sourceTable) {
@@ -698,7 +698,7 @@ trait ClusteredTableDDLSuiteBase
   extends ClusteredTableCreateOrReplaceDDLSuite
     with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("cluster by with more than 4 columns - alter table") {
     val testTable = s"test_table_$tableSuffix"
@@ -935,7 +935,7 @@ trait ClusteredTableDDLSuiteBase
   test("validate CLONE on clustered table") {
     assume(!catalogOwnedDefaultCreationEnabledInTests,
       "OPTIMIZE is blocked on catalog-managed tables")
-    import testImplicits._
+    import deltaImplicits._
     val srcTable = s"SrcTbl_$tableSuffix"
     val dstTable1 = s"DestTbl1_$tableSuffix"
     val dstTable2 = s"DestTbl2_$tableSuffix"

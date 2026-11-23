@@ -85,7 +85,7 @@ trait StreamingSchemaEvolutionSuiteBase
     }
   }
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected val ExpectSchemaLogInitializationFailedException =
     ExpectFailure[DeltaRuntimeException](e =>
@@ -2487,7 +2487,7 @@ class DeltaSourceSchemaEvolutionIdColumnMappingSuite
 trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuiteBase {
   override def isCdcTest: Boolean = true
 
-  import testImplicits._
+  import deltaImplicits._
 
   // This test will generate AddCDCFiles
   test("CDC streaming with schema evolution") {

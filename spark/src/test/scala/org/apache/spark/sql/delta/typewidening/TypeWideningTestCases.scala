@@ -16,15 +16,16 @@
 
 package org.apache.spark.sql.delta.typewidening
 
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.{DataFrame, Encoder, Row}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.types._
 
 /**
  * Trait collecting supported and unsupported type change test cases.
  */
-trait TypeWideningTestCases extends SQLTestUtils {
-  import testImplicits._
+trait TypeWideningTestCases extends DeltaSQLCommandTest {
+  import deltaImplicits._
 
   /**
    * Represents the input of a type change test.

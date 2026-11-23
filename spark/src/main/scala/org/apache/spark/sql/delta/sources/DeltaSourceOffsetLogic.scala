@@ -16,16 +16,19 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, TypeWidening}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaOptions, SnapshotDescriptor, TypeWidening}
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.types.StructType
 
 /**
  * Offset logic shared by the Delta streaming sources: [[DeltaSource]] (V1) and
  * `DeltaV2MicroBatchStream` (V2). Both sources mix in this trait and run the same code.
  */
-trait DeltaSourceOffsetLogic {
+trait DeltaSourceOffsetLogic extends DeltaLogging {
 
   // ---------------------------------------------------------------------------------------------
   // Required from the source
@@ -33,12 +36,43 @@ trait DeltaSourceOffsetLogic {
 
   protected def spark: SparkSession
 
+  protected def options: DeltaOptions
+
+  /**
+   * The snapshot of the table when the source starts. V2 passes a snapshot with no DeltaLog, so
+   * do not call `deltaLog` on it.
+   */
+  protected def snapshotAtSourceInit: SnapshotDescriptor
+
+  /**
+   * The fixed source schema that later metadata must be read-compatible with, see
+   * [[DeltaSource.sourceSchema]].
+   */
+  protected def schema: StructType
+
   /** Options that control how the source handles schema changes. */
   protected def schemaReadOptions: DeltaStreamUtils.SchemaReadOptions
 
-  /** Whether the source reads with a schema from the metadata tracking log. */
-  protected def trackingMetadataChange: Boolean
+  /** The metadata tracking log (schema tracking log) of the stream, if it has one. */
+  protected def metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog]
 
+
+  // ---------------------------------------------------------------------------------------------
+  // Metadata tracking
+  // ---------------------------------------------------------------------------------------------
+
+  /** Whether the source reads with a schema from the metadata tracking log. */
+  protected def trackingMetadataChange: Boolean =
+    DeltaSourceMetadataEvolutionSupport.shouldTrackMetadataChange(
+      schemaReadOptions, metadataTrackingLog)
+
+  /**
+   * Whether the tracking log is provided but still empty, so the source initializes it now.
+   * Only consult it before the first write to the log.
+   */
+  protected def readyToInitializeMetadataTrackingEagerly: Boolean =
+    DeltaSourceMetadataEvolutionSupport.shouldInitializeMetadataTrackingEagerly(
+      schemaReadOptions, metadataTrackingLog)
 
   // ---------------------------------------------------------------------------------------------
   // Schema checks
@@ -90,6 +124,102 @@ trait DeltaSourceOffsetLogic {
         oldMetadata.schema,
         newMetadata.schema,
         detectedDuringStreaming = !validatedDuringStreamStart)
+    }
+  }
+
+  /**
+   * Narrow waist to verify a metadata action for read-incompatible schema changes, specifically:
+   * 1. Any column mapping related schema changes (rename / drop) columns
+   * 2. Standard read-compatibility changes including:
+   *    a) No missing columns
+   *    b) No data type changes
+   *    c) No read-incompatible nullability changes
+   * If the check fails, we throw an exception to exit the stream.
+   * If lazy log initialization is required, we also run a one time scan to safely initialize the
+   * metadata tracking log upon any non-additive schema change failures.
+   * @param metadata Metadata that contains a potential schema change
+   * @param version Version for the metadata action
+   * @param validatedDuringStreamStart Whether this check is being done during stream start.
+   */
+  protected def checkReadIncompatibleSchemaChanges(
+      metadata: Metadata,
+      version: Long,
+      batchStartVersion: Long,
+      batchEndVersionOpt: Option[Long] = None,
+      validatedDuringStreamStart: Boolean = false): Unit = {
+    log.info(s"checking read incompatibility with schema at version $version, " +
+      s"inside batch[$batchStartVersion, ${batchEndVersionOpt.getOrElse("latest")}]")
+
+    val (newMetadata, oldMetadata) = if (version < snapshotAtSourceInit.version) {
+      (snapshotAtSourceInit.metadata, metadata)
+    } else {
+      (metadata, snapshotAtSourceInit.metadata)
+    }
+
+    // Table ID has changed during streaming
+    if (newMetadata.id != oldMetadata.id) {
+      throw DeltaErrors.differentDeltaTableReadByStreamingSource(
+        newTableId = newMetadata.id, oldTableId = oldMetadata.id)
+    }
+
+    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart)
+
+    // Other standard read compatibility changes
+    if (!validatedDuringStreamStart ||
+        !schemaReadOptions.
+            forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
+
+      val schemaChange = if (options.readChangeFeed) {
+        CDCReader.cdcReadSchema(metadata.schema)
+      } else {
+        metadata.schema
+      }
+
+      // There is a schema change. All of files after this commit will use `schemaChange`. Hence, we
+      // check whether we can use `schema` (the fixed source schema we use in the same run of the
+      // query) to read these new files safely.
+      val backfilling = version < snapshotAtSourceInit.version
+      // Partition column change will be ignored if user enable the unsafe flag
+      val newPartitionColumns =
+        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+        else newMetadata.partitionColumns
+      val oldPartitionColumns =
+        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+        else oldMetadata.partitionColumns
+
+      val checkResult = DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
+        schemaChange, schema,
+        newPartitionColumns, oldPartitionColumns,
+        backfilling,
+        schemaReadOptions)
+
+      if (!DeltaStreamUtils.SchemaCompatibilityResult.isCompatible(checkResult)) {
+        val isRetryable =
+          DeltaStreamUtils.SchemaCompatibilityResult.isRetryableIncompatible(checkResult)
+        recordDeltaEvent(
+          snapshotAtSourceInit,
+          "delta.streaming.source.schemaChanged",
+          data = Map(
+            "currentVersion" -> snapshotAtSourceInit.version,
+            "newVersion" -> version,
+            "retryable" -> isRetryable,
+            "backfilling" -> backfilling,
+            "readChangeDataFeed" -> options.readChangeFeed,
+            "typeWideningEnabled" -> schemaReadOptions.typeWideningEnabled,
+            "enableSchemaTrackingForTypeWidening" ->
+                schemaReadOptions.enableSchemaTrackingForTypeWidening,
+            "containsWideningTypeChanges" ->
+              TypeWidening.containsWideningTypeChanges(schema, schemaChange)
+          )
+        )
+
+        throw DeltaErrors.schemaChangedException(
+          schema,
+          schemaChange,
+          retryable = isRetryable,
+          Some(version),
+          includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
+      }
     }
   }
 }

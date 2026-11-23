@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.amt.AMTCommitStats
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -167,9 +167,9 @@ trait TransactionHelper extends DeltaLogging {
 
   private[delta] lazy val readSnapshotTableCommitCoordinatorClientOpt:
       Option[TableCommitCoordinatorClient] = {
-    if (snapshot.isCatalogOwned) {
+    if (snapshot.isCatalogManaged) {
       // Catalog managed table's commit coordinator is always determined by the catalog.
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+      CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark, catalogTable, snapshot
       )
     } else {
@@ -184,7 +184,7 @@ trait TransactionHelper extends DeltaLogging {
       readSnapshotTableCommitCoordinatorClientOpt match {
         // TODO: Capture the CO -> FS downgrade case when we start
         //       supporting downgrade for CO.
-        case Some(_) if snapshot.isCatalogOwned =>                             // CO commit
+        case Some(_) if snapshot.isCatalogManaged =>                             // CO commit
           (CoordinatedCommitType.CO_COMMIT, snapshot.metadata)
         case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
           (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
@@ -215,7 +215,7 @@ trait TransactionHelper extends DeltaLogging {
         // "CATALOG_EMPTY" because `catalogTable` is not available
         // for the 0th FS commit.
         catalogTable.flatMap { ct =>
-          CatalogOwnedTableUtils.getCatalogName(
+          CatalogManagedTableUtils.getCatalogName(
             spark,
             identifier = ct.identifier)
         }.getOrElse("CATALOG_MISSING")

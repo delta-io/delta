@@ -47,7 +47,7 @@ class DeltaVariantShreddingSuite
     with DeltaSQLTestUtils
     with TestsStatistics {
 
-  import testImplicits._
+  import deltaImplicits._
 
   private def numShreddedFiles(path: String, validation: GroupType => Boolean = _ => true): Int = {
     def listParquetFilesRecursively(dir: String): Seq[String] = {
