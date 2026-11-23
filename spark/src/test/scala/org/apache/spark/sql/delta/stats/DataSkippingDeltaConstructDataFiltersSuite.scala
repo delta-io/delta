@@ -83,18 +83,17 @@ class DataSkippingDeltaConstructDataFiltersSuite
     // Runs f on a thread with a fixed 256 KB stack, so the result does not depend on the
     // stack size of the test thread or on how the JIT compiles the recursion.
     def onSmallStack[T](f: => T): T = {
-      var result: Either[Throwable, T] = null
+      var result: Option[T] = None
+      var error: Throwable = null
       val thread = new Thread(
         null,
-        () => result = try Right(f) catch { case t: Throwable => Left(t) },
+        () => try { result = Some(f) } catch { case t: Throwable => error = t },
         "areAllLeavesLiteral-small-stack",
         256 * 1024)
       thread.start()
       thread.join()
-      result match {
-        case Left(error) => throw error
-        case Right(value) => value
-      }
+      if (error != null) throw error
+      result.get
     }
 
     assert(onSmallStack(DataFiltersBuilder.areAllLeavesLiteral(nestedExpr)))
