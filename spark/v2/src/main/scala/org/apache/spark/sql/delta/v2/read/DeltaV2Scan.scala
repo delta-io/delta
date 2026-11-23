@@ -28,7 +28,6 @@ import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog
 import org.apache.spark.sql.delta.stats.{DataSize, DeltaScan}
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapshot, DeltaV2SnapshotManager}
-import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext
 import org.apache.spark.sql.delta.v2.read.deletionvector.DeletionVectorSchemaContext
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
@@ -250,8 +249,7 @@ private[read] class DeltaV2Scan(
         spark,
         latestSnapshot,
         options,
-        snapshotManager,
-        KernelEngineFactory.createDefaultEngine(hadoopConf),
+        streamTableManager,
         Option(checkpointLocation),
         /* mergeConsecutiveSchemaChanges= */ false,
         originalQueryContext

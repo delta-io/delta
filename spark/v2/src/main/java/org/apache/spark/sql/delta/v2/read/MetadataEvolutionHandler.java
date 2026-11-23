@@ -15,12 +15,6 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
-import io.delta.kernel.CommitActions;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.DeltaLogActionUtils;
-import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.util.Preconditions;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -34,9 +28,12 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.TypeWideningMode;
+import org.apache.spark.sql.delta.actions.Action;
+import org.apache.spark.sql.delta.actions.FileAction;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.schema.SchemaUtils$;
@@ -55,9 +52,6 @@ import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam$;
-import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
@@ -503,8 +497,7 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       Snapshot snapshot,
       Map<String, String> options,
-      DeltaV2SnapshotManager snapshotManager,
-      Engine engine,
+      DeltaV2TableManager tableManager,
       DeltaV2QueryContext originalStreamingQueryContext) {
     boolean mergeConsecutiveSchemaChanges =
         (boolean)
@@ -519,8 +512,7 @@ public class MetadataEvolutionHandler {
             spark,
             snapshot,
             options,
-            snapshotManager,
-            engine,
+            tableManager,
             /* sourceMetadataPathOpt= */ Option.empty(),
             mergeConsecutiveSchemaChanges,
             originalStreamingQueryContext);
@@ -566,8 +558,7 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       Snapshot snapshot,
       Map<String, String> options,
-      DeltaV2SnapshotManager snapshotManager,
-      Engine engine,
+      DeltaV2TableManager tableManager,
       Option<String> sourceMetadataPathOpt,
       boolean mergeConsecutiveSchemaChanges,
       DeltaV2QueryContext originalStreamingQueryContext) {
@@ -601,9 +592,7 @@ public class MetadataEvolutionHandler {
                 currentMetadata ->
                     getMergedConsecutiveMetadataChanges(
                         currentMetadata,
-                        snapshotManager,
-                        engine,
-                        tablePath,
+                        tableManager,
                         originalStreamingQueryContext)),
             /* initMetadataLogEagerly= */ true));
   }
@@ -611,9 +600,7 @@ public class MetadataEvolutionHandler {
   /** V2 port of {@code DeltaSourceMetadataEvolutionSupport.getMergedConsecutiveMetadataChanges}. */
   public static Option<PersistedMetadata> getMergedConsecutiveMetadataChanges(
       PersistedMetadata currentMetadata,
-      DeltaV2SnapshotManager snapshotManager,
-      Engine engine,
-      String tablePath,
+      DeltaV2TableManager tableManager,
       DeltaV2QueryContext originalStreamingQueryContext) {
     final long currentMetadataVersion = currentMetadata.deltaCommitVersion();
     // We start from the currentSchemaVersion so that we can stop early in case the current
@@ -622,74 +609,41 @@ public class MetadataEvolutionHandler {
     Metadata mergedMetadata = null;
     Protocol mergedProtocol = null;
 
-    CommitRangeImpl commitRange =
-        (CommitRangeImpl)
-            snapshotManager.getTableChanges(
-                engine,
-                GetTableChangesParam$.MODULE$.apply(currentMetadataVersion, Option.empty()),
-                originalStreamingQueryContext);
-
-    try (ClosableIterator<CommitActions> commitsIter =
-        // Always include CDC: the merger must stop on any file action
-        // TODO: Read metadata-merging commits through V1 APIs to remove this iterator adapter.
-        ScalaUtils.toClosableIterator(
-            StreamingHelper.getCommitActionsFromRangeUnsafe(
-                engine, commitRange, tablePath, DeltaV2MicroBatchStreamUtils.CDC_ACTION_SET))) {
+    // Match V1's getMergedConsecutiveMetadataChanges, which uses failOnDataLoss=false
+    // instead of the stream's configured option.
+    try (ClosableIterator<DeltaSingleCommit> commitsIter =
+        tableManager.getSingleCommitIterator(
+            currentMetadataVersion,
+            Option.empty(),
+            originalStreamingQueryContext,
+            /* failOnDataLoss= */ false)) {
       while (commitsIter.hasNext()) {
-        try (CommitActions commit = commitsIter.next()) {
-          long version = commit.getVersion();
+        DeltaSingleCommit commit = commitsIter.next();
+        long version = commit.version();
+        try (ClosableIterator<Action> actionsIter =
+            commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) {
           Metadata metadataAction = null;
           Protocol protocolAction = null;
           boolean hasFileAction = false;
 
-          // TODO: Read V1 actions from the commit to remove this iterator adapter.
-          try (ClosableIterator<ColumnarBatch> actionsIter =
-              ScalaUtils.toClosableIterator(commit.getActions())) {
-            outer:
-            while (actionsIter.hasNext()) {
-              ColumnarBatch batch = actionsIter.next();
-              int numRows = batch.getSize();
-              int addIdx = batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.ADD.colName);
-              int removeIdx =
-                  batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.REMOVE.colName);
-              int cdcIdx = batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.CDC.colName);
-              ColumnVector addVec = addIdx >= 0 ? batch.getColumnVector(addIdx) : null;
-              ColumnVector removeVec = removeIdx >= 0 ? batch.getColumnVector(removeIdx) : null;
-              ColumnVector cdcVec = cdcIdx >= 0 ? batch.getColumnVector(cdcIdx) : null;
-
-              for (int rowId = 0; rowId < numRows; rowId++) {
-                Metadata metadata =
-                    StreamingHelper.getMetadata(batch, rowId)
-                        .map(KernelActionUtils$.MODULE$::metadataFromKernel)
-                        .orElse(null);
-                if (metadata != null) {
-                  Preconditions.checkArgument(
-                      metadataAction == null,
-                      "Should not encounter two metadata actions in the same commit of version %d",
-                      version);
-                  metadataAction = metadata;
-                }
-                Protocol protocol =
-                    StreamingHelper.getProtocol(batch, rowId)
-                        .map(KernelActionUtils$.MODULE$::protocolFromKernel)
-                        .orElse(null);
-                if (protocol != null) {
-                  Preconditions.checkArgument(
-                      protocolAction == null,
-                      "Should not encounter two protocol actions in the same commit of version %d",
-                      version);
-                  protocolAction = protocol;
-                }
-                if ((addVec != null && !addVec.isNullAt(rowId))
-                    || (removeVec != null && !removeVec.isNullAt(rowId))
-                    || (cdcVec != null && !cdcVec.isNullAt(rowId))) {
-                  hasFileAction = true;
-                  break outer;
-                }
-              }
+          while (actionsIter.hasNext()) {
+            Action action = actionsIter.next();
+            if (action instanceof Metadata) {
+              Preconditions.checkArgument(
+                  metadataAction == null,
+                  "Should not encounter two metadata actions in the same commit of version %d",
+                  version);
+              metadataAction = (Metadata) action;
+            } else if (action instanceof Protocol) {
+              Preconditions.checkArgument(
+                  protocolAction == null,
+                  "Should not encounter two protocol actions in the same commit of version %d",
+                  version);
+              protocolAction = (Protocol) action;
+            } else if (action instanceof FileAction) {
+              hasFileAction = true;
+              break;
             }
-          } catch (IOException e) {
-            throw new RuntimeException("Failed to process commit at version " + version, e);
           }
 
           // Mirror v1's takeWhile predicate:
@@ -700,12 +654,11 @@ public class MetadataEvolutionHandler {
           mergedVersion = version;
           if (metadataAction != null) mergedMetadata = metadataAction;
           if (protocolAction != null) mergedProtocol = protocolAction;
+        } catch (IOException e) {
+          throw new RuntimeException("Failed to process commit at version " + version, e);
         }
       }
-    } catch (RuntimeException e) {
-      throw e; // Rethrow runtime exceptions directly
-    } catch (Exception e) {
-      // CommitActions.close() throws Exception
+    } catch (IOException e) {
       throw new RuntimeException("Failed to merge consecutive metadata changes", e);
     }
 

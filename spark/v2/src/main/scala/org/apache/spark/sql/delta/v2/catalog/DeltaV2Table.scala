@@ -193,8 +193,7 @@ class DeltaV2Table private (
         SparkSession.active,
         initialSnapshotValue,
         options,
-        tableManager.snapshotManager(queryContext.catalogTableOpt),
-        kernelEngine(),
+        tableManager,
         queryContext)
 
     val (rawSchema, partitionColumnNames) = if (persistedMetadata.isPresent) {
