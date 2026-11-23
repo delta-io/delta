@@ -26,7 +26,6 @@ import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, DeletionVectorDescriptor, RemoveFile, SingleAction}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.util.JsonUtils
@@ -264,11 +263,6 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
   }
 
   def getDeltaSharingLogBlockId(path: String): BlockId = {
-    // Set at startup so block writers and readers use the same ID format throughout a query.
-    val flatBlockIdsConf = DeltaSQLConf.DELTA_SHARING_FLAT_LOG_BLOCK_IDS_ENABLED
-    if (!SparkEnv.get.conf.getBoolean(flatBlockIdsConf.key, flatBlockIdsConf.defaultValue.get)) {
-      return BlockId(LEGACY_BLOCK_ID_PREFIX + path)
-    }
     // DiskBlockManager uses the block name as a local filename. A log URI contains slashes,
     // so it cannot be used directly when the block is written to disk.
     val scope = deltaLogScope(path)

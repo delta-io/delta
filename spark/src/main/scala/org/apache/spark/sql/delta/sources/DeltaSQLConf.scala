@@ -3723,14 +3723,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   // Delta Sharing
   //////////////////
 
-  val DELTA_SHARING_FLAT_LOG_BLOCK_IDS_ENABLED =
-    SQLConf.buildStaticConf("spark.delta.sharing.flatLogBlockIds.enabled")
-      .internal()
-      .doc("Use flat BlockManager IDs for Delta Sharing logs. Set at application startup " +
-        "and keep consistent across the driver and executors while cached log blocks exist.")
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_SHARING_ENABLE_DELTA_FORMAT_BATCH =
     buildConf("spark.sql.delta.sharing.enableDeltaFormatBatch")
       .doc("Enable delta format sharing in case of issues.")
