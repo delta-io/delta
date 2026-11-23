@@ -21,6 +21,7 @@ import java.util.regex.Pattern
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog, DeltaTableProvider, DeltaTestUtils}
+import org.apache.spark.sql.delta.constraints.{CheckDeltaInvariant, Constraints}
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
@@ -30,7 +31,11 @@ import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
+import org.apache.spark.sql.catalyst.parser.CatalystSqlParser
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.catalyst.util.quoteIdentifier
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ArrayType, BooleanType, CharType, IntegerType, MapType, MetadataBuilder, StringType, StructField, StructType}
 
@@ -58,6 +63,60 @@ class CheckConstraintsSuite extends QueryTest
           |""".stripMargin)
 
       thunk("checkConstraintsTest")
+    }
+  }
+
+  for {
+    (label, columnName, escapedName) <- Seq(
+      ("normal", "normal", "normal"),
+      ("quote", "c\"q", "c\\\"q"),
+      ("backslash", "c\\q", "c\\\\q"),
+      ("backslash and quote", "c\\\"q", "c\\\\\\\"q"),
+      ("literal unicode escape", "c\\" + "u0022", "c\\\\" + "u0022"),
+      ("tab", "c\tq", "c\\tq"),
+      ("newline", "c\nq", "c\\nq"),
+      ("non-ASCII", "caf\u00e9", "caf\\u00E9"))
+  } {
+    test(s"CHECK-constraint column name escaping: $label") {
+      val conf = new SQLConf
+      SQLConf.withExistingConf(conf) {
+        val invariant = CheckDeltaInvariant(
+          Literal.create(false, BooleanType),
+          Seq((columnName, Literal.create(1, IntegerType))),
+          Constraints.Check("chk", Literal.create(false, BooleanType)))
+        val generated = invariant.genCode(new CodegenContext).code.toString
+
+        // Inspect emitted literals because interpreted fallback can hide codegen errors.
+        assert(generated.contains(s""".add("$escapedName");"""),
+          s"Unexpected column name literal in generated code:\n$generated")
+      }
+    }
+
+    test(s"CHECK-constraint column name round trip: $label") {
+      withConf(SQLConf.CODEGEN_FACTORY_MODE.key -> "CODEGEN_ONLY") {
+        withTable("escape_e2e") {
+          val column = quoteIdentifier(columnName)
+          val predicate = s"$column > 0"
+          sql(
+            s"""
+               |CREATE TABLE escape_e2e (id INT, $column INT) USING $tableProvider
+               |TBLPROPERTIES('delta.columnMapping.mode' = 'name')
+               |""".stripMargin)
+          sql(s"ALTER TABLE escape_e2e ADD CONSTRAINT chk CHECK ($predicate)")
+          sql("INSERT INTO escape_e2e VALUES (1, 1)")
+
+          checkError(
+            exception = intercept[SparkThrowable] {
+              sql("INSERT INTO escape_e2e VALUES (2, -1)")
+            },
+            condition = "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
+            parameters = Map(
+              "constraintName" -> "chk",
+              "expression" -> CatalystSqlParser.parseExpression(predicate).sql,
+              "values" -> s" - $columnName : -1"))
+          checkAnswer(sql(s"SELECT id, $column FROM escape_e2e"), Seq(Row(1, 1)))
+        }
+      }
     }
   }
 
