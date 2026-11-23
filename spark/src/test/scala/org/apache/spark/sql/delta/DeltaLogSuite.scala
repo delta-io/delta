@@ -109,6 +109,38 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
+  test("Mixed same-path commit with more removes than adds and a dataChange=false pair") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> "true",
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+      withTempDir { dir =>
+        val log = DeltaLog.forTable(spark, dir)
+        spark.range(0).write.format("delta").save(dir.getCanonicalPath)
+        // Both encodings delete the same row, so replacing the DV preserves the logical data.
+        val bitmap = RoaringBitmapArray(0L)
+        def dv(format: RoaringBitmapArrayFormat.Value): DeletionVectorDescriptor =
+          DeletionVectorDescriptor.inlineInLog(
+            bitmap.serializeAsByteArray(format), bitmap.cardinality)
+        val paired = createTestAddFile("paired", size = 400L,
+          stats = """{"numRecords":2,"tightBounds":false}""")
+          .copy(deletionVector = dv(RoaringBitmapArrayFormat.Native))
+        val removed = createTestAddFile("removed", size = 100L)
+        log.startTransaction().commit(Seq(paired, removed), DeltaOperations.ManualUpdate)
+
+        val (add, remove) = paired.removeRows(
+          dv(RoaringBitmapArrayFormat.Portable), updateStats = true, dataChange = false)
+        val events = Log4jUsageLogger.track {
+          log.startTransaction().commit(
+            Seq(remove, removed.remove, add), DeltaOperations.ManualUpdate)
+        }
+        val stats = events.filter(_.tags.get("opType").contains("delta.commit.stats"))
+          .map(e => JsonUtils.fromJson[CommitStats](e.blob)).last
+        assert(stats.numAdd === 0 && stats.numRemove === 1)
+        assert(stats.bytesNew === 0L && stats.bytesRemoved.contains(removed.size))
+      }
+    }
+  }
+
   testDifferentCheckpoints("checkpoint", quiet = true) { (_, _) =>
     val tempDir = Utils.createTempDir()
     val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))

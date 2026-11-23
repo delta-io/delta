@@ -23,7 +23,7 @@ import scala.concurrent.duration._
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -367,53 +367,78 @@ class RestoreTableScalaDeletionVectorSuite
     }
   }
 
-  test("DV metrics: unchanged, DV-updated, restored and removed files in one RESTORE") {
-    withSQLConf(DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> "true") {
-      withTempDir { dir =>
-        val path = dir.getCanonicalPath
-        val log = DeltaLog.forTable(spark, path)
-        val table = s"delta.`$path`"
-        // One file per partition. Partition 0 stays unchanged, partition 1 keeps its file
-        // with a different DV, and partitions 2 and 3 appear on only one side of RESTORE.
-        spark.range(12).selectExpr("id", "CAST(id DIV 4 AS INT) AS part").coalesce(1)
-          .write.format("delta").partitionBy("part").save(path)
-        sql(s"DELETE FROM $table WHERE part = 1 AND id = 4")
-        val restoreSnapshot = log.update()
-        sql(s"DELETE FROM $table WHERE part = 1 AND id = 5")
-        sql(s"DELETE FROM $table WHERE part = 2")
-        sql(s"INSERT INTO $table VALUES (12, 3)")
+  for {
+    metricsEnabled <- BOOLEAN_DOMAIN
+    histogramsEnabled <- BOOLEAN_DOMAIN
+  } {
+    test(s"DV metrics: mixed RESTORE, metrics = $metricsEnabled, histograms = $histogramsEnabled") {
+      withSQLConf(
+          DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> metricsEnabled.toString,
+          DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> histogramsEnabled.toString) {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          val log = DeltaLog.forTable(spark, path)
+          val table = s"delta.`$path`"
+          // One file per partition. Partition 0 stays unchanged, partition 1 keeps its file
+          // with a different DV, and partitions 2 and 3 appear on only one side of RESTORE.
+          spark.range(12).selectExpr("id", "CAST(id DIV 4 AS INT) AS part").coalesce(1)
+            .write.format("delta").partitionBy("part").save(path)
+          sql(s"DELETE FROM $table WHERE part = 1 AND id = 4")
+          val restoreSnapshot = log.update()
+          sql(s"DELETE FROM $table WHERE part = 1 AND id = 5")
+          sql(s"DELETE FROM $table WHERE part = 2")
+          sql(s"INSERT INTO $table VALUES (12, 3)")
 
-        def filesByPartition(snapshot: Snapshot): Map[String, AddFile] = {
-          val files = snapshot.allFiles.collect()
-          assert(files.length === 3)
-          files.map(f => f.partitionValues("part") -> f).toMap
-        }
-        val before = filesByPartition(restoreSnapshot)
-        val current = filesByPartition(log.update())
-        assert(before.keySet === Set("0", "1", "2"))
-        assert(current.keySet === Set("0", "1", "3"))
-        assert(before("0") === current("0"))
-        assert(before("1").path === current("1").path)
-        val restoredDV = before("1").deletionVector
-        val removedDV = current("1").deletionVector
-        assert(restoredDV != null && removedDV != null && restoredDV != removedDV)
+          def filesByPartition(snapshot: Snapshot): Map[String, AddFile] = {
+            val files = snapshot.allFiles.collect()
+            assert(files.length === 3)
+            files.map(f => f.partitionValues("part") -> f).toMap
+          }
+          val before = filesByPartition(restoreSnapshot)
+          val current = filesByPartition(log.update())
+          assert(before.keySet === Set("0", "1", "2"))
+          assert(current.keySet === Set("0", "1", "3"))
+          assert(before("0") === current("0"))
+          assert(before("1").path === current("1").path)
+          val restoredDV = before("1").deletionVector
+          val removedDV = current("1").deletionVector
+          assert(restoredDV != null && removedDV != null && restoredDV != removedDV)
 
-        val restoredBytes = before("2").size
-        val removedBytes = current("3").size
-        val usageLogs = Log4jUsageLogger.track {
-          val result = sql(s"RESTORE TABLE $table TO VERSION AS OF ${restoreSnapshot.version}")
-          checkAnswer(result.select("num_restored_files", "restored_files_size",
-            "num_removed_files", "removed_files_size"), Row(1L, restoredBytes, 1L, removedBytes))
+          val expectedCount = if (metricsEnabled) 1L else 2L
+          val restoredBytes = before("2").size + (if (metricsEnabled) 0L else before("1").size)
+          val removedBytes = current("3").size + (if (metricsEnabled) 0L else current("1").size)
+          val usageLogs = Log4jUsageLogger.track {
+            val result = sql(s"RESTORE TABLE $table TO VERSION AS OF ${restoreSnapshot.version}")
+            checkAnswer(result.select("num_restored_files", "restored_files_size",
+              "num_removed_files", "removed_files_size"),
+              Row(expectedCount, restoredBytes, expectedCount, removedBytes))
+          }
+          val stats = usageLogs.filter(_.tags.get("opType").contains("delta.commit.stats"))
+            .map(record => JsonUtils.fromJson[CommitStats](record.blob)).last
+          assert(stats.numAdd === expectedCount && stats.numRemove === expectedCount)
+          assert(stats.bytesNew === restoredBytes)
+          def whenEnabled(value: Long): Option[Long] = if (metricsEnabled) Some(value) else None
+          assert(stats.bytesRemoved === whenEnabled(removedBytes))
+          assert(stats.numDeletionVectorsAdded === whenEnabled(1L))
+          assert(stats.numDeletionVectorsRemoved === whenEnabled(1L))
+          assert(stats.numDeletionVectorsBytesAdded === whenEnabled(restoredDV.sizeInBytes))
+          assert(stats.numDeletionVectorsBytesRemoved === whenEnabled(removedDV.sizeInBytes))
+          if (histogramsEnabled) {
+            assert(stats.addFilesHistogram.get.fileCounts.sum === expectedCount)
+            assert(stats.removeFilesHistogram.get.fileCounts.sum === expectedCount)
+            assert(stats.addFilesHistogram.get.totalBytes.sum === restoredBytes)
+            assert(stats.removeFilesHistogram.get.totalBytes.sum === removedBytes)
+          } else {
+            assert(stats.addFilesHistogram.isEmpty && stats.removeFilesHistogram.isEmpty)
+          }
+
+          val actions = log.getChanges(log.update().version).next()._2
+          assert(actions.collect { case f: AddFile => f.path }.sorted ===
+            Seq(before("1").path, before("2").path).sorted)
+          assert(actions.collect { case f: RemoveFile => f.path }.sorted ===
+            Seq(current("1").path, current("3").path).sorted)
+          checkAnswer(sql(s"SELECT id FROM $table"), (0L until 12L).filterNot(_ == 4L).map(Row(_)))
         }
-        val stats = usageLogs.filter(_.tags.get("opType").contains("delta.commit.stats"))
-          .map(record => JsonUtils.fromJson[CommitStats](record.blob)).last
-        assert(stats.numAdd === 1L && stats.numRemove === 1L)
-        assert(stats.bytesNew === restoredBytes && stats.bytesRemoved.contains(removedBytes))
-        assert(stats.numDeletionVectorsAdded.contains(1L))
-        assert(stats.numDeletionVectorsRemoved.contains(1L))
-        assert(stats.numDeletionVectorsBytesAdded.contains(restoredDV.sizeInBytes.toLong))
-        assert(stats.numDeletionVectorsBytesRemoved.contains(removedDV.sizeInBytes.toLong))
-        checkAnswer(sql(s"SELECT id FROM $table"), (0L until 12L).filterNot(_ == 4L).map(Row(_)))
       }
     }
   }
