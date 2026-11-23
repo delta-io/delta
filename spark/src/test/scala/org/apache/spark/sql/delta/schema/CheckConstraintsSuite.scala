@@ -75,7 +75,9 @@ class CheckConstraintsSuite extends QueryTest
       ("literal unicode escape", "c\\" + "u0022", "c\\\\" + "u0022"),
       ("tab", "c\tq", "c\\tq"),
       ("newline", "c\nq", "c\\nq"),
+      // scalastyle:off nonascii
       ("non-ASCII", "caf\u00e9", "caf\\u00E9"))
+      // scalastyle:on nonascii
   } {
     test(s"CHECK-constraint column name escaping: $label") {
       val conf = new SQLConf
