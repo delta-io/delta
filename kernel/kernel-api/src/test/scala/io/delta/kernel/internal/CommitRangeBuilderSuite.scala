@@ -1492,16 +1492,20 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     assert(getDeltaFileVersions(commitRange) == Seq(4L))
   }
 
-  test("withMaxEndVersion: start version must be <= maxEndVersion") {
-    val fileList = deltaFileStatuses(0L to 10L)
-    val exMsg = intercept[IllegalArgumentException] {
-      TableManager
-        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(6))
-        .withMaxEndVersion(5)
-        .build(createMockFSListFromEngine(fileList))
-    }.getMessage
+  Seq(true, false).foreach { commitRangeValidation =>
+    test("withMaxEndVersion: start version must be <= maxEndVersion - " +
+      s"commitRangeValidation=$commitRangeValidation") {
+      val fileList = deltaFileStatuses(0L to 10L)
+      val exMsg = intercept[IllegalArgumentException] {
+        TableManager
+          .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(6))
+          .withMaxEndVersion(5)
+          .withCommitRangeValidation(commitRangeValidation)
+          .build(createMockFSListFromEngine(fileList))
+      }.getMessage
 
-    assert(exMsg.contains("startVersion (6) must be <= maxEndVersion (5)"))
+      assert(exMsg.contains("startVersion (6) must be <= maxEndVersion (5)"))
+    }
   }
 
   test("withMaxEndVersion: cannot be combined with withEndBoundary") {
@@ -1529,17 +1533,21 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     assert(commitRange.getEndVersion == 4)
   }
 
-  test("withMaxEndVersion: start timestamp boundary resolving after maxEndVersion fails") {
-    val fileList = deltaFileStatuses(0L to 10L)
-    val mockLatestSnapshot = getMockSnapshot(dataPath, 10)
-    val exMsg = intercept[KernelException] {
-      TableManager
-        .loadCommitRange(dataPath.toString, CommitBoundary.atTimestamp(70, mockLatestSnapshot))
-        .withMaxEndVersion(5)
-        .build(createMockFSListFromEngine(fileList))
-    }.getMessage
+  Seq(true, false).foreach { commitRangeValidation =>
+    test("withMaxEndVersion: start timestamp boundary resolving after maxEndVersion fails - " +
+      s"commitRangeValidation=$commitRangeValidation") {
+      val fileList = deltaFileStatuses(0L to 10L)
+      val mockLatestSnapshot = getMockSnapshot(dataPath, 10)
+      val exMsg = intercept[KernelException] {
+        TableManager
+          .loadCommitRange(dataPath.toString, CommitBoundary.atTimestamp(70, mockLatestSnapshot))
+          .withMaxEndVersion(5)
+          .withCommitRangeValidation(commitRangeValidation)
+          .build(createMockFSListFromEngine(fileList))
+      }.getMessage
 
-    assert(exMsg.contains("startVersion=7 > endVersion=5"))
+      assert(exMsg.contains("startVersion=7 > endVersion=5"))
+    }
   }
 
   Seq(

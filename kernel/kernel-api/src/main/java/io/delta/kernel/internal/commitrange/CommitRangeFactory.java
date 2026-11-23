@@ -71,8 +71,12 @@ class CommitRangeFactory {
     logResolvedVersions(startVersion, requiredEndVersionOpt);
     List<ParsedDeltaData> deltas;
     Optional<Long> nextVersionAfterEnd = Optional.empty();
-    if (ctx.commitRangeValidation) {
+    // Without an explicit end boundary the end is capped by maxEndVersion or maxCatalogVersion,
+    // and the start must not exceed that cap, even for a relaxed range.
+    if (ctx.commitRangeValidation || !ctx.endBoundaryOpt.isPresent()) {
       validateVersionRange(startVersion, listingEndVersionOpt);
+    }
+    if (ctx.commitRangeValidation) {
       deltas =
           getDeltasForVersionRangeWithCatalogPriority(
               engine, startVersion, listingEndVersionOpt, ratifiedCommits);

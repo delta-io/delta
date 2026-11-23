@@ -118,13 +118,8 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
         !(ctx.endBoundaryOpt.isPresent() && ctx.maxEndVersionOpt.isPresent()),
         "withEndBoundary and withMaxEndVersion cannot be used together");
 
-    // A reversed range is only rejected when the range is validated. A relaxed range
-    // (commitRangeValidation=false) matches DeltaLog's raw commit-file listing, where start > end
-    // simply selects no commits.
     // A timestamp-based start boundary is checked once it is resolved, in CommitRangeFactory
-    if (ctx.commitRangeValidation
-        && ctx.maxEndVersionOpt.isPresent()
-        && ctx.startBoundary.isVersion()) {
+    if (ctx.maxEndVersionOpt.isPresent() && ctx.startBoundary.isVersion()) {
       checkArgument(
           ctx.startBoundary.getVersion() <= ctx.maxEndVersionOpt.get(),
           String.format(
@@ -133,7 +128,7 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
     }
 
     // Validate that start boundary is less than or equal to end boundary if end boundary is
-    // provided (not for a relaxed range)
+    // provided. A relaxed range may be reversed: as in DeltaLog, start > end selects no commits.
     if (ctx.commitRangeValidation && ctx.endBoundaryOpt.isPresent()) {
       CommitBoundary startBoundary = ctx.startBoundary;
       CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
