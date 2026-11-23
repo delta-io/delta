@@ -32,6 +32,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{
   CredentialFetchFailedException,
+  TableAlreadyExistsException => StorageTableAlreadyExistsException,
   UnsupportedTableFormatException,
   NoSuchTableException => StorageNoSuchTableException
 }
@@ -40,7 +41,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, TableAlreadyExistsException}
 import org.apache.spark.sql.catalyst.catalog.{
   CatalogStorageFormat,
   CatalogTable,
@@ -481,12 +482,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       lastCommitTimestampMs: Long,
+      lastCommitVersion: Long,
       uniformMetadata: Option[StorageUniformMetadata] = None): Unit = {
-    if (table.tableType != CatalogTableType.MANAGED) {
-      throw new IllegalArgumentException(
-        s"UCDeltaClient createTable only supports MANAGED tables; " +
-          s"got ${table.tableType} for ${fullQualifiedTableName(ident)}.")
-    }
     val locationUri = table.storage.locationUri.getOrElse(throw new IllegalArgumentException(
       s"createTable requires a storage location on the CatalogTable for " +
         s"${fullQualifiedTableName(ident)}"))
@@ -496,17 +493,23 @@ private[catalog] class UCDeltaCatalogClientImpl(
       metadata.configuration.view
         .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
         .toMap
-    ucClient.createTable(
-      locationUri,
-      toStorageTableIdent(ident),
-      toUcTableType(table.tableType),
-      metadata.copy(
-        description = table.comment.orNull,
-        configuration = cleanedConfiguration),
-      protocol,
-      domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
-      lastCommitTimestampMs,
-      uniformMetadata.toJava)
+    try {
+      ucClient.createTable(
+        locationUri,
+        toStorageTableIdent(ident),
+        toUcTableType(table.tableType),
+        metadata.copy(
+          description = table.comment.orNull,
+          configuration = cleanedConfiguration),
+        protocol,
+        domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
+        lastCommitTimestampMs,
+        lastCommitVersion,
+        uniformMetadata.toJava)
+    } catch {
+      // Spark implements CREATE TABLE IF NOT EXISTS on this exception.
+      case _: StorageTableAlreadyExistsException => throw new TableAlreadyExistsException(ident)
+    }
   }
 
   // -------------------------------------------------------------------------

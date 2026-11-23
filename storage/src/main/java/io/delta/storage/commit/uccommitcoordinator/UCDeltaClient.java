@@ -57,7 +57,8 @@ public interface UCDeltaClient extends UCClient {
   StagingTableInfo createStagingTable(TableIdentifier tableIdentifier) throws IOException;
 
   /**
-   * Finalizes a previously staged Delta table, making it visible in the catalog. Mirrors the
+   * Finalizes a previously staged Delta table, or registers an EXTERNAL Delta table, making it
+   * visible in the catalog. Mirrors the
    * shape of {@link UCClient#commit}: the catalog-level identity is conveyed by
    * {@code tableId} / {@code tableUri} / {@code tableIdentifier}; the Delta-log shape is
    * conveyed by an {@link AbstractMetadata} (description, schemaString, partitionColumns,
@@ -75,6 +76,11 @@ public interface UCDeltaClient extends UCClient {
    *                               row-tracking); pass an empty list when none are set
    * @param lastCommitTimestampMs  Delta-log timestamp of the initial commit; UC stores this on
    *                               the catalog entry
+   * @param lastCommitVersion      Delta-log version of the registered snapshot. It is 0 for a
+   *                               new table and can be higher when an EXTERNAL table is
+   *                               registered over an existing Delta log. Recording a version
+   *                               above 0 is best effort: the table can be created with UC
+   *                               still at version 0
    * @param uniformMetadata        UniForm Iceberg metadata generated for the initial snapshot;
    *                               empty when the table was not created with UniForm enabled
    * @return the newly created table's {@link TableInfo}
@@ -88,6 +94,7 @@ public interface UCDeltaClient extends UCClient {
       AbstractProtocol protocol,
       List<AbstractDomainMetadata> domainMetadata,
       long lastCommitTimestampMs,
+      long lastCommitVersion,
       Optional<UniformMetadata> uniformMetadata) throws IOException;
 
   /**
