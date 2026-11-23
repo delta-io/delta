@@ -62,6 +62,127 @@ class DeltaLogSuite extends QueryTest
 
   protected val testOp = Truncate()
 
+  private def trackCommitStatsBlob(operation: => Unit): String = {
+    Log4jUsageLogger.track(operation).filter(_.tags.get("opType").contains("delta.commit.stats"))
+      .last.blob
+  }
+
+  for (enabled <- Seq(true, false)) {
+    def whenEnabled(value: Long): Option[Long] = if (enabled) Some(value) else None
+
+    test(s"CommitStats for an append and a DV DELETE, DV-aware metrics = $enabled") {
+      withSQLConf(
+          DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> enabled.toString,
+          DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "true",
+          DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true",
+          DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false") {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          val table = s"delta.`$path`"
+          spark.range(0, 4, 1, 1).write.format("delta").save(path)
+          val log = DeltaLog.forTable(spark, dir)
+          val blob = trackCommitStatsBlob {
+            spark.range(4, 8, 1, 1).write.format("delta").mode("append").save(path)
+          }
+          val append = JsonUtils.fromJson[CommitStats](blob)
+          assert(append.numAdd === 1 && append.numRemove === 0 && append.bytesNew > 0)
+          assert(append.bytesRemoved === whenEnabled(0L))
+          assert(append.addFilesHistogram.get.fileCounts.sum === 1L)
+          assert(append.removeFilesHistogram.get.fileCounts.sum === 0L)
+          assert(append.numDeletionVectorsAdded === whenEnabled(0L))
+          assert(append.numDeletionVectorsRemoved === whenEnabled(0L))
+          assert(append.numDeletionVectorsBytesAdded === whenEnabled(0L))
+          assert(append.numDeletionVectorsBytesRemoved === whenEnabled(0L))
+          if (!enabled) {
+            val json = JsonUtils.mapper.readTree(blob)
+            Seq("bytesRemoved", "numDeletionVectorsAdded", "numDeletionVectorsRemoved",
+              "numDeletionVectorsBytesAdded", "numDeletionVectorsBytesRemoved").foreach { field =>
+              assert(!json.has(field), field)
+            }
+          }
+
+          sql(s"DELETE FROM $table WHERE id = 4")
+          val deleted = JsonUtils.fromJson[CommitStats](trackCommitStatsBlob {
+            sql(s"DELETE FROM $table WHERE id = 5").collect()
+          })
+          val actions = log.getChanges(deleted.commitVersion).next()._2
+          val adds = actions.collect { case a: AddFile => a }
+          val removes = actions.collect { case r: RemoveFile => r }
+          assert(adds.size === 1 && removes.size === 1 && adds.head.path === removes.head.path)
+          val addedDV = adds.head.deletionVector
+          val removedDV = removes.head.deletionVector
+          assert(addedDV != null && removedDV != null && addedDV != removedDV)
+          val physicalCount = if (enabled) 0L else 1L
+          assert(deleted.numAdd === physicalCount && deleted.numRemove === physicalCount)
+          assert(deleted.bytesNew === (if (enabled) 0L else adds.head.size))
+          assert(deleted.bytesRemoved === whenEnabled(0L))
+          assert(deleted.addFilesHistogram.get.fileCounts.sum === physicalCount)
+          assert(deleted.removeFilesHistogram.get.fileCounts.sum === physicalCount)
+          assert(deleted.numDeletionVectorsAdded === whenEnabled(1L))
+          assert(deleted.numDeletionVectorsRemoved === whenEnabled(1L))
+          assert(deleted.numDeletionVectorsBytesAdded === whenEnabled(addedDV.sizeInBytes))
+          assert(deleted.numDeletionVectorsBytesRemoved === whenEnabled(removedDV.sizeInBytes))
+        }
+      }
+    }
+
+    test(s"CommitStats for OPTIMIZE with more removes than adds, DV-aware metrics = $enabled") {
+      withSQLConf(
+          DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> enabled.toString,
+          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false",
+          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
+          DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> "1048576",
+          DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE.key -> "1048576") {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          spark.range(0, 4, 1, 1).write.format("delta").save(path)
+          spark.range(4, 8, 1, 1).write.format("delta").mode("append").save(path)
+          val log = DeltaLog.forTable(spark, dir)
+          val inputs = log.update().allFiles.collect()
+          assert(inputs.length === 2)
+          val stats = JsonUtils.fromJson[CommitStats](trackCommitStatsBlob {
+            sql(s"OPTIMIZE delta.`$path`").collect()
+          })
+          val actions = log.getChanges(stats.commitVersion).next()._2
+          val adds = actions.collect { case a: AddFile => a }
+          val removes = actions.collect { case r: RemoveFile => r }
+          assert(adds.size === 1 && !adds.head.dataChange)
+          assert(removes.size === 2 && removes.forall(r => !r.dataChange))
+          assert(removes.map(_.path).toSet === inputs.map(_.path).toSet)
+          assert(stats.numAdd === 1 && stats.numRemove === 2)
+          assert(stats.bytesNew === 0L)
+          assert(stats.bytesRemoved === whenEnabled(inputs.map(_.size).sum))
+        }
+      }
+    }
+  }
+
+  test("CommitStats for a DV UPDATE with more adds than removes") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> "true",
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true",
+        DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        spark.range(0, 4, 1, 1).write.format("delta").save(path)
+        val log = DeltaLog.forTable(spark, dir)
+        val original = log.update().allFiles.head()
+        val stats = JsonUtils.fromJson[CommitStats](trackCommitStatsBlob {
+          sql(s"UPDATE delta.`$path` SET id = 10 WHERE id = 1").collect()
+        })
+        val actions = log.getChanges(stats.commitVersion).next()._2
+        val adds = actions.collect { case a: AddFile => a }
+        val removes = actions.collect { case r: RemoveFile => r }
+        assert(adds.size === 2 && removes.map(_.path) === Seq(original.path))
+        assert(adds.exists(a => a.path == original.path && a.deletionVector != null))
+        assert(stats.numAdd === 1 && stats.numRemove === 0)
+        assert(stats.bytesNew === adds.find(_.path != original.path).get.size)
+        assert(stats.bytesRemoved.contains(0L))
+      }
+    }
+  }
+
   for (histogramsEnabled <- Seq(true, false)) {
     test(s"Mixed same-path commit reports physical file metrics, histograms = $histogramsEnabled") {
       withSQLConf(
