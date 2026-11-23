@@ -1180,7 +1180,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                         Optional.empty());
             Executable readV2 =
                 () -> {
-                  try (ClosableIterator<IndexedFile> iter =
+                  try (ClosableIterator<Tuple2<IndexedFile, CDCDataFile>> iter =
                       stream.getFileChangesWithRateLimitForCDC(
                           2L,
                           DeltaSourceOffset.BASE_INDEX(),
@@ -1189,7 +1189,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                           Optional.empty())) {
                     assertTrue(
                         collectAll(iter).stream()
-                            .anyMatch(file -> file.getVersion() == 5L && file.hasFileAction()));
+                            .map(Tuple2::_1)
+                            .anyMatch(file -> file.version() == 5L && file.hasFileAction()));
                   }
                 };
             for (Executable read : List.of(readV1, readV2)) {
