@@ -38,6 +38,22 @@ import org.apache.spark.unsafe.types.UTF8String
 
 trait DeltaSharingTestSparkUtils extends DeltaSQLTestUtils {
 
+  /** Temporarily override the backing SparkContext configuration for sharing tests. */
+  protected def withSharingSparkContextConf[T](
+      pairs: (String, String)*)(f: => T): T = {
+    val conf = spark.sparkContext.conf
+    val previous = pairs.map { case (key, _) => key -> conf.getOption(key) }
+    try {
+      pairs.foreach { case (key, value) => conf.set(key, value) }
+      f
+    } finally {
+      previous.foreach {
+        case (key, Some(value)) => conf.set(key, value)
+        case (key, None) => conf.remove(key)
+      }
+    }
+  }
+
   /**
    * Creates 3 temporary directories for use within a function.
    *

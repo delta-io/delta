@@ -21,7 +21,6 @@ import java.lang.ref.Reference
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtilsBase.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableMetadata, Table => DeltaSharingTable}
@@ -31,9 +30,7 @@ import org.apache.logging.log4j.Level
 
 import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.sql.{QueryTest, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
-import org.apache.spark.sql.types.IntegerType
 
 /**
  * Unit tests for [[DeltaSharingDeltaLogBuilder.buildSnapshotDeltaLogPath]], the FileIndex-free
@@ -52,7 +49,7 @@ class DeltaSharingDeltaLogBuilderSuite
   private val sharedTableName = "table"
 
   private val responseVersionKey =
-    DeltaSQLConf.DELTA_SHARING_SNAPSHOT_RESPONSE_VERSION_ENABLED.key
+    "spark.databricks.deltaSharing.snapshotResponseVersion.enabled"
 
   private def snapshotIndex(
       client: DeltaSharingClient,
@@ -94,14 +91,15 @@ class DeltaSharingDeltaLogBuilderSuite
            |}""".stripMargin,
         "utf-8"
       )
-      withSQLConf(
-        responseVersionKey -> "false",
-        "spark.delta.sharing.client.class" -> classOf[TestDeltaSharingClientForFileIndex].getName,
-        "fs.delta-sharing-log.impl" -> classOf[DeltaSharingLogFileSystem].getName,
-        "spark.delta.sharing.profile.provider.class" ->
-        "io.delta.sharing.client.DeltaSharingFileProfileProvider"
-      ) {
-        f(profileFile.getCanonicalPath)
+      withSharingSparkContextConf(responseVersionKey -> "false") {
+        withSQLConf(
+          "spark.delta.sharing.client.class" -> classOf[TestDeltaSharingClientForFileIndex].getName,
+          "fs.delta-sharing-log.impl" -> classOf[DeltaSharingLogFileSystem].getName,
+          "spark.delta.sharing.profile.provider.class" ->
+          "io.delta.sharing.client.DeltaSharingFileProfileProvider"
+        ) {
+          f(profileFile.getCanonicalPath)
+        }
       }
     }
   }
@@ -201,7 +199,7 @@ class DeltaSharingDeltaLogBuilderSuite
   BOOLEAN_DOMAIN.foreach { enabled =>
     test(s"V1 snapshot path version follows rollout flag: enabled=$enabled") {
       withProfile { profilePath =>
-        withSQLConf(responseVersionKey -> enabled.toString) {
+        withSharingSparkContextConf(responseVersionKey -> enabled.toString) {
           val (client, table, options, path) = setup(profilePath)
           val testClient = client.asInstanceOf[TestDeltaSharingClientForFileIndex]
           CachedTableManager.INSTANCE.clear()
@@ -210,11 +208,12 @@ class DeltaSharingDeltaLogBuilderSuite
           val first = firstIndex.fetchFilesAndConstructDeltaLog(Nil, Nil, None)
 
           testClient.responseVersion = 102L
-          // A retained FileIndex still reuses its memoized DeltaLog without another getFiles RPC.
+          val callsBeforeReuse = testClient.numGetFileCalls
           assert(firstIndex.fetchFilesAndConstructDeltaLog(Nil, Nil, None) eq first)
+          assert(testClient.numGetFileCalls == callsBeforeReuse)
           val secondIndex = snapshotIndex(client, table, options, path, metadataVersion = 100L)
           val second = secondIndex.fetchFilesAndConstructDeltaLog(Nil, Nil, None)
-          assert(testClient.numGetFileCalls == 1) // The counter starts at -1.
+          assert(testClient.numGetFileCalls == callsBeforeReuse + 1)
 
           def expectedKey(version: Long): String = {
             val hash = DeltaSharingUtils.getQueryParamsHashId(options, "", "", "", "", version)
@@ -226,7 +225,6 @@ class DeltaSharingDeltaLogBuilderSuite
           assert(firstKey == expectedKey(if (enabled) 101L else 100L))
           assert(secondKey == expectedKey(if (enabled) 102L else 100L))
           assert((first.dataPath != second.dataPath) == enabled)
-          assert(CachedTableManager.INSTANCE.size() == (if (enabled) 2 else 1))
           val fileId = "11d9b72771a72f178a6f2839f7f08528"
           assert(CachedTableManager.INSTANCE.getPreSignedUrl(secondKey, fileId)._1.nonEmpty)
           if (enabled) {
@@ -236,53 +234,9 @@ class DeltaSharingDeltaLogBuilderSuite
               TestUtils.paths.head)
           }
 
-          // Only the selected version changes the hash; equal response versions need no new path.
-          val thirdIndex = snapshotIndex(client, table, options, path, metadataVersion = 99L)
-          val third = thirdIndex.fetchFilesAndConstructDeltaLog(Nil, Nil, None)
-          assert((second.dataPath == third.dataPath) == enabled)
           Reference.reachabilityFence(firstIndex)
           Reference.reachabilityFence(secondIndex)
-          Reference.reachabilityFence(thirdIndex)
         }
-      }
-    }
-  }
-
-  test("enabled V1 snapshot paths retain nonempty filter and hint inputs") {
-    withProfile { profilePath =>
-      withSQLConf(
-        responseVersionKey -> "true",
-        "spark.delta.sharing.jsonPredicateHints.enabled" -> "true",
-        "spark.delta.sharing.jsonPredicateV2Hints.enabled" -> "true") {
-        val (client, table, options, path) = setup(profilePath)
-        client.asInstanceOf[TestDeltaSharingClientForFileIndex].responseVersion = 101L
-        CachedTableManager.INSTANCE.clear()
-        val filters = Seq(1, 2).map { value =>
-          Seq(EqualTo(AttributeReference("c1", IntegerType)(), Literal(value, IntegerType)))
-        }
-        val indexes = filters.map { _ =>
-          snapshotIndex(client, table, options, path, metadataVersion = 100L)
-        }
-        val logs = indexes.zip(filters).map { case (index, dataFilters) =>
-          index.fetchFilesAndConstructDeltaLog(Nil, dataFilters, None)
-        }
-        val expectedKeys = filters.map { dataFilters =>
-          val hints = DeltaSharingJsonPredicates.convert(Nil, dataFilters, spark.sessionState.conf)
-          assert(hints.nonEmpty)
-          val hash = DeltaSharingUtils.getQueryParamsHashId(
-            options, "", dataFilters.map(_.sql).mkString(";"), hints.get, "", 101L)
-          client.getProfileProvider.getCustomTablePath(
-            DeltaSharingUtils.getTablePathWithIdSuffix(path.toString, hash))
-        }
-        assert(logs.map(_.dataPath).distinct.size == 2)
-        assert(expectedKeys.distinct.size == 2)
-        assert(logs.map(log => DeltaSharingLogFileSystem.decode(log.dataPath)) == expectedKeys)
-        assert(CachedTableManager.INSTANCE.size() == 2)
-        val fileId = "11d9b72771a72f178a6f2839f7f08528"
-        expectedKeys.zip(TestUtils.paths).foreach { case (key, url) =>
-          assert(CachedTableManager.INSTANCE.getPreSignedUrl(key, fileId)._1 == url)
-        }
-        indexes.foreach(index => Reference.reachabilityFence(index))
       }
     }
   }

@@ -18,7 +18,6 @@ package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingProfileProvider}
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
 import org.apache.hadoop.fs.Path
@@ -66,7 +65,7 @@ object DeltaSharingDeltaLogBuilder extends Logging {
    * path to classic `DeltaLog.forTable`; the DSV2 scan feeds `.toString` to Delta Kernel's
    * `PathBasedSnapshotManager`, whose DefaultEngine reads the same synthetic Hadoop FS.
    *
-   * @param spark session that owns the scan and its rollout configuration.
+   * @param spark session whose SparkContext owns the scan's rollout configuration.
    * @param client Delta Sharing client for the getFiles RPC and presigned-url refresh.
    * @param table the shared table to fetch.
    * @param options read options; supplies versionAsOf / timestampAsOf for the snapshot.
@@ -92,8 +91,8 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       jsonPredicateHints: Option[String],
       limit: Option[Long],
       logPrefix: String): UnregisteredSnapshotDeltaLog = {
-    val useResponseVersion = spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_SHARING_SNAPSHOT_RESPONSE_VERSION_ENABLED)
+    val useGetFilesResponseVersion = spark.sparkContext.getConf.getBoolean(
+      "spark.databricks.deltaSharing.snapshotResponseVersion.enabled", false)
     // 1. Call client.getFiles, and build the matching refresher next to it so the two share the
     // same params.
     val startTime = System.currentTimeMillis()
@@ -125,11 +124,12 @@ object DeltaSharingDeltaLogBuilder extends Logging {
 
     // 2. Prepare a DeltaLog. When enabled, use the getFiles version because a latest read can
     // advance after getMetadata.
-    val snapshotVersion = if (useResponseVersion) deltaTableFiles.version else metadataVersion
-    val snapshotQueryParamsHashId = queryParamsHashIdForVersion(snapshotVersion)
+    val snapshotIdentityVersion =
+      if (useGetFilesResponseVersion) deltaTableFiles.version else metadataVersion
+    val snapshotIdentityHash = queryParamsHashIdForVersion(snapshotIdentityVersion)
     val tablePathWithHashIdSuffix = DeltaSharingUtils.getTablePathWithIdSuffix(
       client.getProfileProvider.getCustomTablePath(tablePath),
-      snapshotQueryParamsHashId
+      snapshotIdentityHash
     )
     val deltaLogMetadata = DeltaSharingLogFileSystem.constructLocalDeltaLogAtVersionZero(
       deltaTableFiles.lines,
@@ -141,7 +141,7 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       encodedPath = DeltaSharingLogFileSystem.encode(tablePathWithHashIdSuffix),
       // Using tablePath directly because it will be customized within CachedTableManager.
       registrationTablePath =
-        DeltaSharingUtils.getTablePathWithIdSuffix(tablePath, snapshotQueryParamsHashId),
+        DeltaSharingUtils.getTablePathWithIdSuffix(tablePath, snapshotIdentityHash),
       idToUrl = deltaLogMetadata.idToUrl,
       minUrlExpirationTimestamp = deltaLogMetadata.minUrlExpirationTimestamp,
       refreshToken = deltaTableFiles.refreshToken,
@@ -182,7 +182,6 @@ object DeltaSharingDeltaLogBuilder extends Logging {
    * returning the encoded `delta-sharing-log://` [[Path]]. Used by the V1 path
    * ([[DeltaSharingFileIndex]]), whose anchor (its FileIndex) already exists at call time.
    */
-  // scalastyle:off argcount
   def buildSnapshotDeltaLogPath(
       spark: SparkSession,
       client: DeltaSharingClient,
@@ -210,5 +209,4 @@ object DeltaSharingDeltaLogBuilder extends Logging {
     registerPreSignedUrls(unregistered, anchor)
     unregistered.encodedPath
   }
-  // scalastyle:on argcount
 }
