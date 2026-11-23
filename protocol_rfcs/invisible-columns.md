@@ -81,6 +81,7 @@ metadata or relax the table's reader and writer requirements.
 | Feature | Interaction |
 |-|-|
 | Column mapping | See the Column mapping requirements under [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). |
+| [Column Updates](column-updates.md) (proposed) | Top-level invisible columns can be updated through column files under the same rules as visible columns. Visibility changes preserve field IDs, so existing column-file updates continue to apply. |
 | Deletion vectors | Apply to rows, including their invisible-column values. Row positions, deletion-vector encoding, and statistics requirements are unchanged. |
 | Checkpoints (classic, multi-part, V2, sidecars) | Existing [checkpoint requirements](#checkpoints-1) preserve the entire `metaData` action, including `invisibleSchemaString`, in all checkpoint formats. In V2 checkpoints, metadata remains in the top-level checkpoint, not a sidecar. See the Checkpoint Schema edit under [Appendix changes](#appendix-changes). |
 | [Checkpoint Protection](checkpoint-protection.md) (proposed) | Removing Invisible Columns while retaining history containing invisible columns requires Checkpoint Protection, including its protected checkpoint boundary, historical-version feature checks, and cleanup requirements. See [Removing the feature](#removing-the-feature). |
@@ -163,7 +164,7 @@ as a JSON string. It uses the same [Schema Serialization Format](#schema-seriali
 For invisible fields, requirements that describe type declarations and type-specific annotations
 in `metaData.schemaString` apply to their declarations in `metaData.invisibleSchemaString`.
 
-The valid states are:
+In JSON representations, the valid states are:
 
 - `invisibleSchemaString` is absent.
 - The value of `invisibleSchemaString` is a JSON-encoded struct, possibly representing an empty
@@ -171,7 +172,9 @@ The valid states are:
 
 An absent `invisibleSchemaString`, or a string encoding an empty struct, means that the
 snapshot has no invisible columns.
-`null` is not a valid value for `invisibleSchemaString`.
+In JSON representations, an explicit `null` value is invalid. In Parquet checkpoints, a missing
+or null `invisibleSchemaString` MUST be treated as absent. In every format, a non-null value MUST
+be a string encoding a struct; the string `"null"` is invalid.
 
 ### Complete data schema
 
