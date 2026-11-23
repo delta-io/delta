@@ -44,8 +44,8 @@ public interface CommitRange {
    *
    * <p>The iterator must be closed after use. With {@link
    * CommitRangeBuilder#withFailOnDataLoss(boolean)} enabled, the iterator throws when a later
-   * commit proves the start version or a later version in the range is missing, and ends after that
-   * error. Otherwise, available files are yielded across gaps.
+   * commit proves a version is missing, and ends after that error. Otherwise, available files are
+   * yielded across gaps.
    *
    * @return a closeable iterator over the commit files in this range
    */
