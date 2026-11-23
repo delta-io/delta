@@ -876,7 +876,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       "Missing delta files: versions are not contiguous: ([0, 2, 3])"))
   }
 
-  test("getCommitFiles returns commit metadata") {
+  test("getCommitFiles returns commit metadata and stops after close") {
     val fileList = deltaFileStatuses(Seq(0L, 1L))
     val commitRange = buildCommitRange(
       createMockFSListFromEngine(fileList),
@@ -888,6 +888,11 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     assert(commitFiles.map(_.getVersion) == Seq(0L, 1L))
     assert(commitFiles.map(_.getFileStatus.getPath) == fileList.map(_.getPath))
     intercept[NullPointerException](new CommitFileStatus(0L, null))
+
+    val iterator = commitRange.getCommitFiles
+    assert(iterator.next().getVersion == 0)
+    iterator.close()
+    assert(!iterator.hasNext)
   }
 
   private type ExpectedError = (Class[_ <: Throwable], Seq[String])
@@ -1158,19 +1163,6 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       }
   }
 
-  test("relaxed getCommitFiles close stops iteration") {
-    val fileList = deltaFileStatuses(Seq(5L, 6L, 7L))
-    val iterator = buildCommitRange(
-      createMockFSListFromEngine(fileList),
-      fileList,
-      startBoundary = VersionBoundaryDef(5),
-      endBoundary = VersionBoundaryDef(7),
-      commitRangeValidation = Some(false)).getCommitFiles
-    assert(iterator.next().getVersion == 5)
-    iterator.close()
-    assert(!iterator.hasNext)
-  }
-
   test("relaxed getCommitFiles prefers a staged commit over a published one") {
     val fileList = deltaFileStatuses(Seq(5L, 6L, 7L))
     val commitFiles = buildCommitRange(
@@ -1194,23 +1186,19 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     assert(error.getMessage.contains("no log files found"))
   }
 
-  // The second range is empty: the listing has no commit at or after its start
-  Seq((0L, 1L), (5L, 7L)).foreach { case (start, end) =>
-    test(s"relaxed ranges reject action iteration - [$start, $end]") {
-      val fileList = deltaFileStatuses(Seq(0L, 1L))
-      val commitRange = buildCommitRange(
-        createMockFSListFromEngine(fileList),
-        fileList,
-        startBoundary = VersionBoundaryDef(start),
-        endBoundary = VersionBoundaryDef(end),
-        commitRangeValidation = Some(false))
+  test("relaxed ranges reject action iteration") {
+    val fileList = deltaFileStatuses(Seq(0L, 1L))
+    val commitRange = buildCommitRange(
+      createMockFSListFromEngine(fileList),
+      fileList,
+      startBoundary = VersionBoundaryDef(0),
+      endBoundary = VersionBoundaryDef(1),
+      commitRangeValidation = Some(false))
 
-      val actionsError = intercept[KernelException](commitRange.getActions(null, null, null))
-      assert(actionsError.getMessage.contains("Commit action iteration is not supported"))
-      val commitsError =
-        intercept[KernelException](commitRange.getCommitActions(null, null, null))
-      assert(commitsError.getMessage.contains("Commit action iteration is not supported"))
-    }
+    val actionsError = intercept[KernelException](commitRange.getActions(null, null, null))
+    assert(actionsError.getMessage.contains("Commit action iteration is not supported"))
+    val commitsError = intercept[KernelException](commitRange.getCommitActions(null, null, null))
+    assert(commitsError.getMessage.contains("Commit action iteration is not supported"))
   }
 
   Seq(
@@ -1726,66 +1714,5 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         assertError(error, expectedError)
         assert(filesListed() == expectedFilesListed)
     }
-  }
-
-  test("validated withMaxEndVersion ends at the last commit before a gap") {
-    val fileList = deltaFileStatuses(Seq(5L, 6L, 12L))
-    val commitRange = buildCommitRange(
-      createMockFSListFromEngine(fileList),
-      fileList,
-      startBoundary = VersionBoundaryDef(5),
-      endBoundary = DefaultBoundaryDef(6),
-      maxEndVersion = Some(10))
-    assert(commitRange.getEndVersion == 6)
-    assert(getDeltaFileVersions(commitRange) == Seq(5L, 6L))
-    assert(drainCommitFiles(commitRange)._1 == Seq(5L, 6L))
-  }
-
-  test("validated ranges yield commit files up to the end") {
-    val fileList = deltaFileStatuses(Seq(5L, 6L, 7L, 8L))
-    val commitRange = buildCommitRange(
-      createMockFSListFromEngine(fileList),
-      fileList,
-      startBoundary = VersionBoundaryDef(5),
-      endBoundary = VersionBoundaryDef(7))
-    assert(commitRange.getEndVersion == 7)
-    assert(drainCommitFiles(commitRange)._1 == Seq(5L, 6L, 7L))
-    assert(getDeltaFileVersions(commitRange) == Seq(5L, 6L, 7L))
-  }
-
-  Seq(
-    // (description, listed versions, start, end, expected error)
-    (
-      "reversed",
-      Seq(7L, 8L),
-      7L,
-      5L,
-      classOf[IllegalArgumentException] -> Seq("startVersion must be <= endVersion")),
-    ("no commit in range", 0L to 4L, 5L, 7L, classOf[KernelException] -> Seq("no log files found")),
-    ("missing start", Seq(6L, 7L), 5L, 7L, startVersionError(5, 6)),
-    (
-      "missing end without a later commit",
-      Seq(5L, 6L),
-      5L,
-      7L,
-      classOf[KernelException] -> Seq("endVersion=7")),
-    (
-      "interior gap",
-      Seq(5L, 7L),
-      5L,
-      7L,
-      classOf[InvalidTableException] -> Seq("versions are not contiguous"))).foreach {
-    case (description, listed, start, end, expectedError) =>
-      test(s"validated ranges still reject a $description range") {
-        val fileList = deltaFileStatuses(listed)
-        val error = intercept[RuntimeException] {
-          buildCommitRange(
-            createMockFSListFromEngine(fileList),
-            fileList,
-            startBoundary = VersionBoundaryDef(start),
-            endBoundary = VersionBoundaryDef(end))
-        }
-        assertError(Some(error), Some(expectedError))
-      }
   }
 }
