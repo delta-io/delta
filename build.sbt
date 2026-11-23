@@ -1284,6 +1284,8 @@ lazy val storage = (project in file("storage"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       // Jackson datatype module needed for UC SDK tests (excluded from main compile scope)
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % "2.15.4" % "test",
+      // Real gs:// FileSystem for the env-gated GCSLogStore integration test.
+      "com.google.cloud.bigdataoss" % "gcs-connector" % gcsConnectorVersion % "test" classifier "shaded",
     ) ++ (
       // unitycatalog-hadoop ships from UC 0.5.0 onward; older versions don't publish the
       // artifact, so resolving it would fail. Used by UCDeltaTokenBasedRestClient for

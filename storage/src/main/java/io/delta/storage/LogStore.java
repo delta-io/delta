@@ -120,6 +120,41 @@ public abstract class LogStore {
   /**
    * :: DeveloperApi ::
    *
+   * List the entries of {@code path.getParent()} whose name is lexicographically greater than or
+   * equal to (UTF-8 sorting) {@code path.getName()}, optionally descending into subdirectories.
+   *
+   * <ul>
+   *   <li>Files and directories are both returned; directories have {@code isDirectory() == true}
+   *       and are returned before anything under them.</li>
+   *   <li>{@code path.getName()} only bounds the top level. Use {@code "\u0000"} to list
+   *       everything.</li>
+   *   <li>{@code filter} is applied to every entry's name, at every depth. A skipped directory is
+   *       not returned and nothing under it is listed.</li>
+   *   <li>With {@code recursive == false} the result equals {@link #listFrom(Path, Configuration)}
+   *       minus the filtered entries.</li>
+   *   <li>Throws {@link java.io.FileNotFoundException} if {@code path.getParent()} doesn't exist.
+   *       A subdirectory that disappears while the listing runs is treated as empty.</li>
+   * </ul>
+   *
+   * <p>The default implementation builds on {@link #listFrom(Path, Configuration)}, so every
+   * existing LogStore supports it unchanged. Object-store implementations override it to push the
+   * start offset, directory boundaries and skipped subtrees to the server.</p>
+   *
+   * @throws IOException if there's an issue resolving the FileSystem
+   * @since 4.5.0
+   */
+  public Iterator<FileStatus> listFrom(
+        Path path,
+        boolean recursive,
+        ListFilter filter,
+        Configuration hadoopConf) throws IOException {
+    return io.delta.storage.internal.RecursiveListing.listFrom(
+        this, path, recursive, filter == null ? ListFilter.NONE : filter, hadoopConf);
+  }
+
+  /**
+   * :: DeveloperApi ::
+   *
    * Resolve the fully qualified path for the given `path`.
    *
    * @throws IOException if there's an issue resolving the FileSystem

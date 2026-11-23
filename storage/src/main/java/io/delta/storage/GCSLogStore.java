@@ -17,18 +17,24 @@
 package io.delta.storage;
 
 import com.google.common.base.Throwables;
+import io.delta.storage.internal.GCSListing;
+import io.delta.storage.internal.RecursiveListing;
 import io.delta.storage.internal.ThreadUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.RawLocalFileSystem;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.Iterator;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 
 /**
@@ -53,15 +59,90 @@ import java.util.concurrent.Callable;
  *    <li>Assumes file writing to be all-or-nothing, irrespective of overwrite option.</li>
  * </ul>
  * <p>
+ * Regarding listing, when the gs:// FileSystem is gcs-connector 4.0.4+ (which provides
+ * {@code GoogleHadoopFileSystem.listStatusStartingFrom}), {@code listFrom} sends the start name,
+ * the directory boundary and skipped subtrees to GCS instead of listing the whole directory and
+ * filtering client-side. The result is the same; the cost no longer grows with the number of
+ * files before the start name (for example old commits in {@code _delta_log}) or inside
+ * subdirectories (for example {@code _delta_log/_staged_commits}). Set
+ * {@code delta.enableFastGCSListFrom=false} in the Hadoop configuration to use the previous
+ * implementation.
+ * <p>
  * This class is not meant for direct access but for configuration based on storage system.
  * See https://docs.delta.io/latest/delta-storage.html for details.
  */
 public class GCSLogStore extends HadoopFileSystemLogStore {
 
+    /** Hadoop conf key; server-side listing is on unless this is set to false. */
+    public static final String FAST_LIST_FROM_CONF = "delta.enableFastGCSListFrom";
+
     final String preconditionFailedExceptionMessage = "412 Precondition Failed";
+
+    private final boolean enableFastListFrom;
 
     public GCSLogStore(Configuration hadoopConf) {
         super(hadoopConf);
+        this.enableFastListFrom =
+            hadoopConf == null || hadoopConf.getBoolean(FAST_LIST_FROM_CONF, true);
+    }
+
+    /**
+     * The server-side listing primitive for {@code fs}, or empty to use the previous
+     * implementation. Protected so tests can supply one for a non-GCS FileSystem.
+     */
+    protected Optional<GCSListing.PageSource> fastListingSource(FileSystem fs) {
+        // Local file systems are used by tests; they have no server-side listing.
+        if (fs instanceof LocalFileSystem || fs instanceof RawLocalFileSystem) {
+            return Optional.empty();
+        }
+        return GCSListing.forFileSystem(fs);
+    }
+
+    @Override
+    public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
+        final FileSystem fs = path.getFileSystem(hadoopConf);
+        final Optional<GCSListing.PageSource> source =
+            enableFastListFrom ? fastListingSource(fs) : Optional.empty();
+        if (!source.isPresent()) {
+            return super.listFrom(path, hadoopConf);
+        }
+        return fastListFrom(fs, source.get(), path, false, ListFilter.NONE);
+    }
+
+    @Override
+    public Iterator<FileStatus> listFrom(
+            Path path,
+            boolean recursive,
+            ListFilter filter,
+            Configuration hadoopConf) throws IOException {
+        final ListFilter effectiveFilter = filter == null ? ListFilter.NONE : filter;
+        final FileSystem fs = path.getFileSystem(hadoopConf);
+        final Optional<GCSListing.PageSource> source =
+            enableFastListFrom ? fastListingSource(fs) : Optional.empty();
+        if (!source.isPresent()) {
+            // Builds on listFrom(Path, Configuration), which takes the previous implementation
+            // for this FileSystem as well.
+            return RecursiveListing.listFrom(this, path, recursive, effectiveFilter, hadoopConf);
+        }
+        return fastListFrom(fs, source.get(), path, recursive, effectiveFilter);
+    }
+
+    private Iterator<FileStatus> fastListFrom(
+            FileSystem fs,
+            GCSListing.PageSource source,
+            Path path,
+            boolean recursive,
+            ListFilter filter) throws IOException {
+        final Path resolvedPath = fs.makeQualified(path);
+        final Path parentPath = resolvedPath.getParent();
+        // A key listing of a missing directory is empty rather than an error. Probe explicitly to
+        // keep listFrom's FileNotFoundException contract (an empty result also means "nothing at
+        // or after the start name").
+        if (!fs.exists(parentPath)) {
+            throw new FileNotFoundException(
+                String.format("No such file or directory: %s", parentPath));
+        }
+        return GCSListing.listFrom(source, resolvedPath, recursive, filter);
     }
 
     @Override
