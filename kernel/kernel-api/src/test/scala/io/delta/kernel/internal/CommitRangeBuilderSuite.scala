@@ -890,7 +890,15 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     intercept[NullPointerException](new CommitFileStatus(0L, null))
   }
 
-  private type ExpectedError = (Class[_ <: KernelException], Seq[String])
+  private type ExpectedError = (Class[_ <: Throwable], Seq[String])
+
+  private def assertError(error: Option[Throwable], expected: Option[ExpectedError]): Unit = {
+    assert(error.isDefined == expected.isDefined, error)
+    expected.foreach { case (errorClass, messageParts) =>
+      assert(errorClass.isInstance(error.get), error.get)
+      messageParts.foreach(part => assert(error.get.getMessage.contains(part), error.get))
+    }
+  }
 
   private def startVersionError(start: Long, earliest: Long): ExpectedError =
     classOf[StartVersionNotFoundException] -> Seq(
@@ -902,18 +910,24 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       "versions are not contiguous",
       s"Table version $missing is missing or unavailable for this log operation.")
 
-  /** Drains getCommitFiles into its versions and the error that ended iteration, if any. */
+  /**
+   * Drains getCommitFiles into its versions and the error that ended iteration, if any. Data loss
+   * is reported lazily by hasNext, so an error thrown by next() fails the test.
+   */
   private def drainCommitFiles(commitRange: CommitRange): (Seq[Long], Option[KernelException]) = {
     val iterator = commitRange.getCommitFiles
     try {
       val versions = ArrayBuffer[Long]()
-      val error =
+      var error: Option[KernelException] = None
+      def hasNext: Boolean =
         try {
-          while (iterator.hasNext) versions += iterator.next().getVersion
-          None
+          iterator.hasNext
         } catch {
-          case e: KernelException => Some(e)
+          case e: KernelException =>
+            error = Some(e)
+            false
         }
+      while (hasNext) versions += iterator.next().getVersion
       // The iterator is fused: it never recovers after finishing or failing
       assert(!iterator.hasNext)
       intercept[NoSuchElementException](iterator.next())
@@ -1178,12 +1192,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
 
           val (versions, error) = drainCommitFiles(commitRange)
           assert(versions == (if (failOnDataLoss) testCase.strict else lenient))
-          val expectedError = testCase.error.filter(_ => failOnDataLoss)
-          assert(error.isDefined == expectedError.isDefined, error)
-          expectedError.foreach { case (errorClass, messageParts) =>
-            assert(errorClass.isInstance(error.get))
-            messageParts.foreach(part => assert(error.get.getMessage.contains(part)))
-          }
+          assertError(error, testCase.error.filter(_ => failOnDataLoss))
         }
       }
   }
@@ -1705,9 +1714,14 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     assert(commitRange.getEndVersion == 2)
   }
 
-  Seq(true, false).foreach { commitRangeValidation =>
+  Seq(
+    // (commitRangeValidation, listed versions)
+    (true, 1L to 2L),
+    (false, 1L to 2L),
+    // Catalog-only: nothing is listed, so the staged v1 and v2 are the only commits
+    (false, Seq.empty[Long])).foreach { case (commitRangeValidation, listed) =>
     test("withLogData: published catalog commits removed by metadata cleanup are not trusted - " +
-      s"commitRangeValidation=$commitRangeValidation") {
+      s"commitRangeValidation=$commitRangeValidation, listed=${listed.mkString("[", ",", "]")}") {
       // UC still reports v0 as a catalog commit, but 0.json has been removed by metadata cleanup
       val logData = Seq[ParsedLogData](
         ParsedCatalogCommitData.forCatalogFileStatus(logPath.toString, 0, deltaFileStatus(0)),
@@ -1718,22 +1732,26 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         .withEndBoundary(CommitBoundary.atVersion(2))
         .withLogData(logData.toList.asJava)
         .withCommitRangeValidation(commitRangeValidation)
+      val engine = createMockFSListFromEngine(deltaFileStatuses(listed))
 
-      // Validated ranges fail to build; relaxed ranges fail while listing commit files
-      intercept[StartVersionNotFoundException] {
-        builder.build(createMockFSListFromEngine(deltaFileStatuses(1L to 2L)))
-          .getCommitFiles.toInMemoryList
+      if (commitRangeValidation) {
+        intercept[StartVersionNotFoundException](builder.build(engine))
+      } else {
+        // Relaxed ranges build, then report the missing start while iterating
+        val (versions, error) = drainCommitFiles(builder.build(engine))
+        assert(versions.isEmpty)
+        assertError(error, Some(startVersionError(0, 1)))
       }
     }
   }
 
   test("relaxed range listing reads only up to the end, or the first commit past a missing end") {
     Seq(
-      // (listed versions, yielded versions, expected files listed)
-      (0L to 1000L, 2L to 5L, 4),
+      // (listed versions, yielded versions, expected error, expected files listed)
+      (0L to 1000L, 2L to 5L, None, 4),
       // Versions 2, 3, 4 and version 7, which proves the end version 5 is missing
-      (Seq(2L, 3L, 4L) ++ (7L to 1000L), Seq(2L, 3L, 4L), 4)).foreach {
-      case (listed, yielded, expectedFilesListed) =>
+      (Seq(2L, 3L, 4L) ++ (7L to 1000L), Seq(2L, 3L, 4L), Some(gapError(5)), 4)).foreach {
+      case (listed, yielded, expectedError, expectedFilesListed) =>
         val fileList = deltaFileStatuses(listed)
         val (engine, filesListed) = countingListFromEngine(fileList)
         val commitRange = buildCommitRange(
@@ -1742,7 +1760,9 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
           startBoundary = VersionBoundaryDef(2),
           endBoundary = VersionBoundaryDef(5),
           commitRangeValidation = Some(false))
-        assert(drainCommitFiles(commitRange)._1 == yielded)
+        val (versions, error) = drainCommitFiles(commitRange)
+        assert(versions == yielded)
+        assertError(error, expectedError)
         assert(filesListed() == expectedFilesListed)
     }
   }
@@ -1767,18 +1787,34 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       fileList,
       startBoundary = VersionBoundaryDef(5),
       endBoundary = VersionBoundaryDef(7))
+    assert(commitRange.getEndVersion == 7)
     assert(drainCommitFiles(commitRange)._1 == Seq(5L, 6L, 7L))
     assert(getDeltaFileVersions(commitRange) == Seq(5L, 6L, 7L))
   }
 
   Seq(
-    // (description, listed versions, start, end, expected error message)
-    ("reversed", Seq(7L, 8L), 7L, 5L, "startVersion must be <= endVersion"),
-    ("no commit in range", 0L to 4L, 5L, 7L, "no log files found"),
-    ("missing start", Seq(6L, 7L), 5L, 7L, "Earliest available version is 6"),
-    ("missing end without a later commit", Seq(5L, 6L), 5L, 7L, "endVersion=7"),
-    ("interior gap", Seq(5L, 7L), 5L, 7L, "versions are not contiguous")).foreach {
-    case (description, listed, start, end, expectedMessage) =>
+    // (description, listed versions, start, end, expected error)
+    (
+      "reversed",
+      Seq(7L, 8L),
+      7L,
+      5L,
+      classOf[IllegalArgumentException] -> Seq("startVersion must be <= endVersion")),
+    ("no commit in range", 0L to 4L, 5L, 7L, classOf[KernelException] -> Seq("no log files found")),
+    ("missing start", Seq(6L, 7L), 5L, 7L, startVersionError(5, 6)),
+    (
+      "missing end without a later commit",
+      Seq(5L, 6L),
+      5L,
+      7L,
+      classOf[KernelException] -> Seq("endVersion=7")),
+    (
+      "interior gap",
+      Seq(5L, 7L),
+      5L,
+      7L,
+      classOf[InvalidTableException] -> Seq("versions are not contiguous"))).foreach {
+    case (description, listed, start, end, expectedError) =>
       test(s"validated ranges still reject a $description range") {
         val fileList = deltaFileStatuses(listed)
         val error = intercept[RuntimeException] {
@@ -1788,7 +1824,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
             startBoundary = VersionBoundaryDef(start),
             endBoundary = VersionBoundaryDef(end))
         }
-        assert(error.getMessage.contains(expectedMessage))
+        assertError(Some(error), Some(expectedError))
       }
   }
 }
