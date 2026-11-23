@@ -125,7 +125,7 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) extends Delt
     val fileActionsFromOldRoot = oldAMT.fileActionsFromRoot
     val nonContentFromOldCheckpoint: Seq[Action] =
       Seq[Action](oldAMT.protocol, oldAMT.metadata) ++
-        oldAMT.setTransactions ++ oldAMT.domainMetadatas
+        oldAMT.inlineSetTransactions ++ oldAMT.inlineDomainMetadatas
     // 1.b: the log commits / minor compactions committed after the old AMT, read in parallel (the
     // MinorCompactionHook primitive). Each segment delta file becomes a RangedSingleCommit with its
     // start and end version, so that compacted deltas can be replayed correctly.

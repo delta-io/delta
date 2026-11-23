@@ -28,8 +28,10 @@ import org.apache.spark.sql.SparkSession
  *
  * @param metadata                          the old AMT's inline table metadata.
  * @param protocol                          the old AMT's inline table protocol.
- * @param setTransactions                   the old AMT's inline `SetTransaction` actions.
- * @param domainMetadatas                   the old AMT's inline `DomainMetadata` actions.
+ * @param inlineSetTransactions             the old AMT's inline `SetTransaction` actions only,
+ *                                          those carried directly on its checkpoint action.
+ * @param inlineDomainMetadatas             the old AMT's inline `DomainMetadata` actions only,
+ *                                          those carried directly on its checkpoint action.
  * @param fileActionsFromRoot               the live root-resident file actions (leaf-resident files
  *                                          are carried forward by pointer, not materialized here).
  * @param allLeafs                          the root's `DATA_MANIFEST` leaf pointers, one per leaf.
@@ -40,8 +42,8 @@ import org.apache.spark.sql.SparkSession
 case class BaseAMTActionsResult(
     metadata: Metadata,
     protocol: Protocol,
-    setTransactions: Seq[SetTransaction],
-    domainMetadatas: Seq[DomainMetadata],
+    inlineSetTransactions: Seq[SetTransaction],
+    inlineDomainMetadatas: Seq[DomainMetadata],
     fileActionsFromRoot: Seq[AddFile],
     allLeafs: Seq[DataManifestEntry],
     version: Long,
@@ -73,8 +75,9 @@ class BaseSnapshotActionsProvider(
     BaseAMTActionsResult(
       metadata = snapshot.metadata,
       protocol = snapshot.protocol,
-      setTransactions = snapshot.setTransactions,
-      domainMetadatas = snapshot.domainMetadata,
+      // A snapshot-backed base has no previous AMT, so its full sets count as inline.
+      inlineSetTransactions = snapshot.setTransactions,
+      inlineDomainMetadatas = snapshot.domainMetadata,
       // Safe because of the empty-snapshot invariant above. A nonempty implementation must supply
       // every live base file here without eagerly collecting an unbounded snapshot to the driver.
       fileActionsFromRoot = Seq.empty,
@@ -94,8 +97,8 @@ class BaseAMTCheckpointActionsProvider(
     BaseAMTActionsResult(
       metadata = checkpoint.metaData,
       protocol = checkpoint.protocol,
-      setTransactions = checkpoint.txns,
-      domainMetadatas = checkpoint.domainMetadata,
+      inlineSetTransactions = checkpoint.txns,
+      inlineDomainMetadatas = checkpoint.domainMetadata,
       fileActionsFromRoot = checkpointProvider.readLiveRootDataEntries(spark, deltaLog),
       allLeafs = checkpointProvider.leaves,
       version = checkpoint.contentRoot.version,
