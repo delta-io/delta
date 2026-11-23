@@ -291,6 +291,69 @@ class RestoreTableScalaDeletionVectorSuite
     }
   }
 
+  test("DV metrics: RESTORE derives actions and file metrics from the same snapshot comparison") {
+    import org.apache.spark.sql.delta.commands.{RestoreTableCommand, RestoreTableCommandBase}
+    import org.apache.spark.sql.catalyst.plans.FullOuter
+    import org.apache.spark.sql.catalyst.plans.logical.Join
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "true",
+        DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        spark.range(4).coalesce(1).write.format("delta").save(path)
+        val table = io.delta.tables.DeltaTable.forPath(spark, path)
+        val log = DeltaLog.forTable(spark, path)
+        val original = log.update()
+        assert(DeletionVectorUtils.deletionVectorsReadable(original))
+
+        def restore(version: Long, added: Long, removed: Long): Unit = {
+          val events = Log4jUsageLogger.track {
+            val plans = DeltaTestUtils.withLogicalPlansCaptured(spark, optimizedPlan = false) {
+              table.restoreToVersion(version).collect()
+            }
+            val command = plans.flatMap(_.collect { case c: RestoreTableCommandBase => c }).head
+            val metricsPlans = plans.filter(_.output.exists(_.name == "samePathPairs"))
+            if (command.isInstanceOf[RestoreTableCommand]) {
+              assert(metricsPlans.size === 1)
+              assert(metricsPlans.head.collect { case j: Join => j.joinType }.isEmpty)
+              val comparisons = plans.filter(
+                _.output.map(_.name) == Seq("srcAddFile", "tgtAddFile"))
+              val joins = comparisons.flatMap(_.collect { case j: Join => j.joinType })
+              assert(joins === Seq(FullOuter))
+            } else {
+              assert(metricsPlans.isEmpty)
+            }
+          }
+          val metrics = DeltaMetricsUtils.getLastOperationMetrics(table)
+          assert(metrics("numRestoredFiles") === added && metrics("numRemovedFiles") === removed)
+          val stats = events.filter(_.tags.get("opType").contains("delta.commit.stats"))
+            .map(e => JsonUtils.fromJson[CommitStats](e.blob)).last
+          assert(stats.addFilesHistogram.get.fileCounts.sum === added)
+          assert(stats.removeFilesHistogram.get.fileCounts.sum === removed)
+          assert(stats.addFilesHistogram.get.totalBytes.sum === metrics("restoredFilesSize"))
+          assert(stats.removeFilesHistogram.get.totalBytes.sum === metrics("removedFilesSize"))
+        }
+
+        spark.range(4, 8).coalesce(1).write.format("delta").mode("overwrite").save(path)
+        restore(original.version, added = 1, removed = 1)
+
+        table.delete("id = 0")
+        val withDV = log.update()
+        assert(withDV.allFiles.head().deletionVector != null)
+        // The DV can be on either side of a same-path pair.
+        restore(original.version, added = 0, removed = 0)
+        restore(withDV.version, added = 0, removed = 0)
+
+        table.delete()
+        val empty = log.update()
+        restore(withDV.version, added = 1, removed = 0)
+        restore(empty.version, added = 0, removed = 1)
+      }
+    }
+  }
+
   BOOLEAN_DOMAIN.foreach { dvAwareFileMetricsEnabled =>
     test(s"DV metrics: same-path file metrics enabled = $dvAwareFileMetricsEnabled") {
       withSQLConf(

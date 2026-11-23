@@ -85,12 +85,13 @@ class DeltaLogSuite extends QueryTest
           val events = Log4jUsageLogger.track {
             log.startTransaction().commit(Seq(pairedAdd, pairedRemove, smallRemove.remove,
               largeRemove.remove, createTestAddFile("small-add", size = 300L),
+              createTestAddFile("another-small-add", size = 200L),
               createTestAddFile("large-add", size = 12000L)), DeltaOperations.ManualUpdate)
           }
           val stats = events.filter(_.tags.get("opType").contains("delta.commit.stats"))
             .map(e => JsonUtils.fromJson[CommitStats](e.blob)).last
-          assert(stats.numAdd === 2 && stats.numRemove === 2)
-          assert(stats.bytesNew === 12300L && stats.bytesRemoved.contains(14100L))
+          assert(stats.numAdd === 3 && stats.numRemove === 2)
+          assert(stats.bytesNew === 12500L && stats.bytesRemoved.contains(14100L))
           assert(stats.numDeletionVectorsAdded.contains(1L))
           assert(stats.numDeletionVectorsBytesAdded.exists(_ == dv.sizeInBytes.toLong))
           assert(stats.numDeletionVectorsRemoved.contains(0L))
@@ -98,7 +99,7 @@ class DeltaLogSuite extends QueryTest
           if (histogramsEnabled) {
             val bounds = IndexedSeq(0L, 8192L, 16384L)
             assert(stats.addFilesHistogram.contains(
-              FileSizeHistogram(bounds, Array(1L, 1L, 0L), Array(300L, 12000L, 0L))))
+              FileSizeHistogram(bounds, Array(2L, 1L, 0L), Array(500L, 12000L, 0L))))
             assert(stats.removeFilesHistogram.contains(
               FileSizeHistogram(bounds, Array(1L, 1L, 0L), Array(100L, 14000L, 0L))))
           } else {
@@ -109,34 +110,56 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  test("Mixed same-path commit with more removes than adds and a dataChange=false pair") {
-    withSQLConf(
-        DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> "true",
-        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
-      withTempDir { dir =>
-        val log = DeltaLog.forTable(spark, dir)
-        spark.range(0).write.format("delta").save(dir.getCanonicalPath)
-        // Both encodings delete the same row, so replacing the DV preserves the logical data.
-        val bitmap = RoaringBitmapArray(0L)
-        def dv(format: RoaringBitmapArrayFormat.Value): DeletionVectorDescriptor =
-          DeletionVectorDescriptor.inlineInLog(
-            bitmap.serializeAsByteArray(format), bitmap.cardinality)
-        val paired = createTestAddFile("paired", size = 400L,
-          stats = """{"numRecords":2,"tightBounds":false}""")
-          .copy(deletionVector = dv(RoaringBitmapArrayFormat.Native))
-        val emptyFile = createTestAddFile("empty", size = 100L, stats = """{"numRecords":0}""")
-        log.startTransaction().commit(Seq(paired, emptyFile), DeltaOperations.ManualUpdate)
+  for (metricsEnabled <- Seq(true, false)) {
+    test(s"Mixed same-path commit with dataChange=false, DV-aware metrics = $metricsEnabled") {
+      withSQLConf(
+          DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED.key -> metricsEnabled.toString,
+          DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "true",
+          DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+        withTempDir { dir =>
+          val log = DeltaLog.forTable(spark, dir)
+          spark.range(0).write.format("delta").save(dir.getCanonicalPath)
+          // Both encodings delete the same row, so replacing the DV preserves the logical data.
+          val bitmap = RoaringBitmapArray(0L)
+          def dv(format: RoaringBitmapArrayFormat.Value): DeletionVectorDescriptor =
+            DeletionVectorDescriptor.inlineInLog(
+              bitmap.serializeAsByteArray(format), bitmap.cardinality)
+          val paired = createTestAddFile("paired", size = 400L,
+            stats = """{"numRecords":2,"tightBounds":false}""")
+            .copy(deletionVector = dv(RoaringBitmapArrayFormat.Native))
+          val emptyFile = createTestAddFile("empty", size = 100L, stats = """{"numRecords":0}""")
+          log.startTransaction().commit(Seq(paired, emptyFile), DeltaOperations.ManualUpdate)
 
-        val (add, remove) = paired.removeRows(
-          dv(RoaringBitmapArrayFormat.Portable), updateStats = true, dataChange = false)
-        val events = Log4jUsageLogger.track {
-          val removeEmpty = emptyFile.removeWithTimestamp(dataChange = false)
-          log.startTransaction().commit(Seq(remove, removeEmpty, add), DeltaOperations.ManualUpdate)
+          val (add, remove) = paired.removeRows(
+            dv(RoaringBitmapArrayFormat.Portable), updateStats = true, dataChange = false)
+          val actions = Seq(remove, emptyFile.removeWithTimestamp(dataChange = false), add)
+          val events = Log4jUsageLogger.track {
+            log.startTransaction().commit(actions, DeltaOperations.ManualUpdate)
+          }
+          val stats = events.filter(_.tags.get("opType").contains("delta.commit.stats"))
+            .map(e => JsonUtils.fromJson[CommitStats](e.blob)).last
+          assert(stats.bytesNew === 0L)
+          if (metricsEnabled) {
+            assert(stats.numAdd === 0 && stats.numRemove === 1)
+            assert(stats.bytesRemoved.contains(emptyFile.size))
+            assert(stats.addFilesHistogram.get.fileCounts.sum === 0L)
+            assert(stats.removeFilesHistogram.get.fileCounts.sum === 1L)
+            assert(stats.numDeletionVectorsAdded.contains(1L))
+            assert(stats.numDeletionVectorsRemoved.contains(1L))
+            assert(stats.numDeletionVectorsBytesAdded.contains(
+              add.deletionVector.sizeInBytes.toLong))
+            assert(stats.numDeletionVectorsBytesRemoved.contains(
+              paired.deletionVector.sizeInBytes.toLong))
+          } else {
+            assert(stats.numAdd === 1 && stats.numRemove === 2)
+            assert(stats.addFilesHistogram.get.fileCounts.sum === 1L)
+            assert(stats.removeFilesHistogram.get.fileCounts.sum === 2L)
+            assert(stats.bytesRemoved.isEmpty)
+            assert(stats.numDeletionVectorsAdded.isEmpty && stats.numDeletionVectorsRemoved.isEmpty)
+            assert(stats.numDeletionVectorsBytesAdded.isEmpty)
+            assert(stats.numDeletionVectorsBytesRemoved.isEmpty)
+          }
         }
-        val stats = events.filter(_.tags.get("opType").contains("delta.commit.stats"))
-          .map(e => JsonUtils.fromJson[CommitStats](e.blob)).last
-        assert(stats.numAdd === 0 && stats.numRemove === 1)
-        assert(stats.bytesNew === 0L && stats.bytesRemoved.contains(emptyFile.size))
       }
     }
   }
