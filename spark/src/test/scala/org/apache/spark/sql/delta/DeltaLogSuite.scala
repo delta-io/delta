@@ -124,19 +124,19 @@ class DeltaLogSuite extends QueryTest
         val paired = createTestAddFile("paired", size = 400L,
           stats = """{"numRecords":2,"tightBounds":false}""")
           .copy(deletionVector = dv(RoaringBitmapArrayFormat.Native))
-        val removed = createTestAddFile("removed", size = 100L)
-        log.startTransaction().commit(Seq(paired, removed), DeltaOperations.ManualUpdate)
+        val emptyFile = createTestAddFile("empty", size = 100L, stats = """{"numRecords":0}""")
+        log.startTransaction().commit(Seq(paired, emptyFile), DeltaOperations.ManualUpdate)
 
         val (add, remove) = paired.removeRows(
           dv(RoaringBitmapArrayFormat.Portable), updateStats = true, dataChange = false)
         val events = Log4jUsageLogger.track {
-          log.startTransaction().commit(
-            Seq(remove, removed.remove, add), DeltaOperations.ManualUpdate)
+          val removeEmpty = emptyFile.removeWithTimestamp(dataChange = false)
+          log.startTransaction().commit(Seq(remove, removeEmpty, add), DeltaOperations.ManualUpdate)
         }
         val stats = events.filter(_.tags.get("opType").contains("delta.commit.stats"))
           .map(e => JsonUtils.fromJson[CommitStats](e.blob)).last
         assert(stats.numAdd === 0 && stats.numRemove === 1)
-        assert(stats.bytesNew === 0L && stats.bytesRemoved.contains(removed.size))
+        assert(stats.bytesNew === 0L && stats.bytesRemoved.contains(emptyFile.size))
       }
     }
   }
