@@ -633,8 +633,8 @@ class IdentityColumnScalaSuite
             )
           )
         }
-        assert(ex.getErrorClass === "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE")
-        assert(ex.getMessage.contains("is not supported for IDENTITY columns"))
+        checkError(ex, "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE", "428H2",
+          parameters = Map("dataType" -> unsupportedType.typeName))
       }
     }
   }
@@ -650,8 +650,8 @@ class IdentityColumnScalaSuite
           createTableWithIdColAndIntValueCol(
             tblName, generatedAsIdentityType, startsWith, incrementBy = Some(0))
         }
-        assert(ex.getErrorClass === "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP")
-        assert(ex.getMessage.contains("step cannot be 0."))
+        checkError(ex, "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP", "42611",
+          parameters = Map.empty[String, String])
       }
     }
   }
@@ -661,9 +661,8 @@ class IdentityColumnScalaSuite
       val ex = intercept[DeltaAnalysisException] {
         f
       }
-      assert(ex.getErrorClass === "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION")
-      ex.getMessage.contains(
-        "Identity column cannot be specified with a generated column expression.")
+      checkError(ex, "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION", "42613",
+        parameters = Map.empty[String, String])
     }
     val generatedColumn = io.delta.tables.DeltaTable.columnBuilder(spark, "id")
       .dataType(LongType)
