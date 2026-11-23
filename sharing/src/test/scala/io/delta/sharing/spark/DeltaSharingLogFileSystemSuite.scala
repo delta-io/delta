@@ -77,8 +77,10 @@ class DeltaSharingLogFileSystemSuite extends SparkFunSuite with SharedSparkConte
     assert(decode(encode(table1)) == table1)
   }
 
-  test("disabled log block IDs preserve legacy paths") {
-    withFlatBlockIdsEnabled(Some(false)) {
+  gridTest("disabled log block IDs preserve legacy paths")(
+    Seq(None, Some(false))
+  ) { enabled =>
+    withFlatBlockIdsEnabled(enabled) {
       val logPath = readerLogPath("20261117_005400_1234abcd")
       val paths = Seq(logPath, new Path(logPath, "00000000000000000000.json"),
         new Path(logPath, "00000000000000000000.json_status"),
@@ -91,7 +93,7 @@ class DeltaSharingLogFileSystemSuite extends SparkFunSuite with SharedSparkConte
     }
   }
 
-  Seq(None, Some(true)).foreach { enabled =>
+  Seq(Some(true)).foreach { enabled =>
     test(s"delta log block IDs are flat, bounded, and scoped to one log: enabled=$enabled") {
       withFlatBlockIdsEnabled(enabled) {
         val logPaths = Seq(ucTablePath, s"${"a" * 64}.$ucTablePath").map { tablePath =>
