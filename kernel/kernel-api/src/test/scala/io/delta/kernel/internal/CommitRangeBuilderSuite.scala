@@ -1071,19 +1071,19 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       Seq(5L, 6L),
       maxEndVersion = Some(6)),
     RelaxedCommitFilesTestCase(
+      "max 10 with only a commit past the bound",
+      Seq(12L),
+      5,
+      DefaultBoundaryDef(5),
+      Seq.empty,
+      Some(startVersionError(5, 12)),
+      maxEndVersion = Some(10)),
+    RelaxedCommitFilesTestCase(
       "reversed start 7 and max 5 with the start present",
       Seq(7L, 8L),
       7,
       DefaultBoundaryDef(7),
       Seq.empty,
-      maxEndVersion = Some(5)),
-    RelaxedCommitFilesTestCase(
-      "reversed start 7 and max 5 with a missing start",
-      Seq(8L),
-      7,
-      DefaultBoundaryDef(7),
-      Seq.empty,
-      Some(startVersionError(7, 8)),
       maxEndVersion = Some(5)),
     // Catalog-managed tables
     RelaxedCommitFilesTestCase(

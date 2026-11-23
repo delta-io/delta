@@ -132,8 +132,8 @@ public interface CommitRangeBuilder {
    *
    * <p>This option defaults to {@code true} and only affects ranges built with {@link
    * #withCommitRangeValidation(boolean)} disabled. When {@code true}, iteration fails when a later
-   * commit proves a version in the requested range is missing. When {@code false}, raw commit-file
-   * iteration skips missing versions.
+   * commit proves the start version or a later version in the range is missing. When {@code false},
+   * raw commit-file iteration skips missing versions.
    *
    * @param enabled whether missing versions should fail raw commit-file iteration
    * @return this builder instance
