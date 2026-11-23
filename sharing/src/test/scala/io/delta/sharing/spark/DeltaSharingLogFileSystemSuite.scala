@@ -16,6 +16,7 @@
 
 package io.delta.sharing.spark
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -56,7 +57,7 @@ class DeltaSharingLogFileSystemSuite extends SparkFunSuite with SharedSparkConte
 
   private def withFlatBlockIdsEnabled[T](enabled: Option[Boolean])(f: => T): T = {
     val sparkConf = SparkEnv.get.conf
-    val key = FLAT_LOG_BLOCK_IDS_ENABLED_CONF
+    val key = DeltaSQLConf.DELTA_SHARING_FLAT_LOG_BLOCK_IDS_ENABLED.key
     val previous = sparkConf.getOption(key)
     enabled match {
       case Some(value) => sparkConf.set(key, value.toString)
