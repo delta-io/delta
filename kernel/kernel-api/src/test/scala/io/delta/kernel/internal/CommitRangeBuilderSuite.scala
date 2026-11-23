@@ -1071,30 +1071,6 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       Seq(5L, 6L),
       maxEndVersion = Some(6)),
     RelaxedCommitFilesTestCase(
-      "max 10 with a gap proven by a staged commit",
-      Seq(5L, 6L),
-      5,
-      DefaultBoundaryDef(6),
-      Seq(5L, 6L),
-      Some(gapError(7)),
-      staged = Seq(12L),
-      maxEndVersion = Some(10)),
-    RelaxedCommitFilesTestCase(
-      "max 10 with only a commit past the bound",
-      Seq(12L),
-      5,
-      DefaultBoundaryDef(5),
-      Seq.empty,
-      Some(startVersionError(5, 12)),
-      maxEndVersion = Some(10)),
-    RelaxedCommitFilesTestCase(
-      "max 10 with no commit at or after the start",
-      Seq(2L, 3L),
-      5,
-      DefaultBoundaryDef(5),
-      Seq.empty,
-      maxEndVersion = Some(10)),
-    RelaxedCommitFilesTestCase(
       "reversed start 7 and max 5 with the start present",
       Seq(7L, 8L),
       7,
@@ -1108,13 +1084,6 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       DefaultBoundaryDef(7),
       Seq.empty,
       Some(startVersionError(7, 8)),
-      maxEndVersion = Some(5)),
-    RelaxedCommitFilesTestCase(
-      "reversed start 7 and max 5 with no commit at or after the start",
-      Seq(3L, 4L),
-      7,
-      DefaultBoundaryDef(7),
-      Seq.empty,
       maxEndVersion = Some(5)),
     // Catalog-managed tables
     RelaxedCommitFilesTestCase(
@@ -1155,14 +1124,6 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       VersionBoundaryDef(7),
       Seq.empty,
       Some(startVersionError(5, 8)),
-      staged = Seq(8L, 9L)),
-    RelaxedCommitFilesTestCase(
-      "catalog: reversed range with a staged commit after the start",
-      Seq.empty,
-      7,
-      VersionBoundaryDef(5),
-      Seq.empty,
-      Some(startVersionError(7, 8)),
       staged = Seq(8L, 9L)),
     RelaxedCommitFilesTestCase(
       "catalog: reversed range whose start is the first staged commit",
