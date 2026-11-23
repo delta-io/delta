@@ -1174,7 +1174,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
           val lenient = testCase.lenient.getOrElse(testCase.strict)
           assert(commitRange.getStartVersion == testCase.start)
           assert(commitRange.getEndVersion == testCase.end.expectedVersion)
-          assert(commitRange.isEmpty == lenient.isEmpty)
+          assert(getDeltaFileVersions(commitRange) == lenient)
 
           val (versions, error) = drainCommitFiles(commitRange)
           assert(versions == (if (failOnDataLoss) testCase.strict else lenient))
@@ -1760,14 +1760,13 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     assert(drainCommitFiles(commitRange)._1 == Seq(5L, 6L))
   }
 
-  test("validated ranges are non-empty and yield commit files up to the end") {
+  test("validated ranges yield commit files up to the end") {
     val fileList = deltaFileStatuses(Seq(5L, 6L, 7L, 8L))
     val commitRange = buildCommitRange(
       createMockFSListFromEngine(fileList),
       fileList,
       startBoundary = VersionBoundaryDef(5),
       endBoundary = VersionBoundaryDef(7))
-    assert(!commitRange.isEmpty)
     assert(drainCommitFiles(commitRange)._1 == Seq(5L, 6L, 7L))
     assert(getDeltaFileVersions(commitRange) == Seq(5L, 6L, 7L))
   }

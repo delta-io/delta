@@ -111,11 +111,6 @@ public class CommitRangeImpl implements CommitRange {
   }
 
   @Override
-  public boolean isEmpty() {
-    return deltas.isEmpty();
-  }
-
-  @Override
   public CommitRangeBuilder.CommitBoundary getQueryStartBoundary() {
     return startBoundary;
   }
