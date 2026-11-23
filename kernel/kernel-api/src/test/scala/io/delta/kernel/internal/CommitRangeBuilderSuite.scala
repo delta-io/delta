@@ -74,8 +74,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       logData: Option[Seq[ParsedLogData]] = None,
       ictEnablementInfo: Option[(Long, Long)] = None,
       commitRangeValidation: Option[Boolean] = None,
-      failOnDataLoss: Option[Boolean] = None,
-      maxEndVersion: Option[Long] = None): CommitRange = {
+      failOnDataLoss: Option[Boolean] = None): CommitRange = {
     lazy val mockLatestSnapshot = {
       def getVersionFromFS(fs: FileStatus): Long = FileNames.getFileVersion(new Path(fs.getPath))
       val latestVersion = fileList.map(getVersionFromFS).max
@@ -116,9 +115,6 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     }
     failOnDataLoss.foreach { enabled =>
       commitRangeBuilder = commitRangeBuilder.withFailOnDataLoss(enabled)
-    }
-    maxEndVersion.foreach { v =>
-      commitRangeBuilder = commitRangeBuilder.withMaxEndVersion(v)
     }
     commitRangeBuilder.build(engine)
   }
@@ -955,8 +951,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       strict: Seq[Long],
       error: Option[ExpectedError] = None,
       lenient: Option[Seq[Long]] = None,
-      staged: Seq[Long] = Seq.empty,
-      maxEndVersion: Option[Long] = None)
+      staged: Seq[Long] = Seq.empty)
 
   Seq(
     // Bounded range [5, 7]
@@ -1043,53 +1038,6 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       VersionBoundaryDef(5),
       Seq.empty,
       Some(startVersionError(7, 8))),
-    // withMaxEndVersion: the requested bound, not the resolved end, decides what is proven missing
-    RelaxedCommitFilesTestCase(
-      "max 10 with a gap proven by a commit past the bound",
-      Seq(5L, 6L, 12L),
-      5,
-      DefaultBoundaryDef(6),
-      Seq(5L, 6L),
-      Some(gapError(7)),
-      maxEndVersion = Some(10)),
-    RelaxedCommitFilesTestCase(
-      "max 10 with a gap proven by a commit inside the bound",
-      Seq(5L, 6L, 8L),
-      5,
-      DefaultBoundaryDef(8),
-      Seq(5L, 6L),
-      Some(gapError(7)),
-      lenient = Some(Seq(5L, 6L, 8L)),
-      maxEndVersion = Some(10)),
-    RelaxedCommitFilesTestCase(
-      "max 10 with no later commit",
-      Seq(5L, 6L),
-      5,
-      DefaultBoundaryDef(6),
-      Seq(5L, 6L),
-      maxEndVersion = Some(10)),
-    RelaxedCommitFilesTestCase(
-      "max 6 reached by the range",
-      Seq(5L, 6L, 12L),
-      5,
-      DefaultBoundaryDef(6),
-      Seq(5L, 6L),
-      maxEndVersion = Some(6)),
-    RelaxedCommitFilesTestCase(
-      "max 10 with only a commit past the bound",
-      Seq(12L),
-      5,
-      DefaultBoundaryDef(5),
-      Seq.empty,
-      Some(startVersionError(5, 12)),
-      maxEndVersion = Some(10)),
-    RelaxedCommitFilesTestCase(
-      "reversed start 7 and max 5 with the start present",
-      Seq(7L, 8L),
-      7,
-      DefaultBoundaryDef(7),
-      Seq.empty,
-      maxEndVersion = Some(5)),
     // Catalog-managed tables
     RelaxedCommitFilesTestCase(
       "catalog: published and staged commits merge",
@@ -1149,8 +1097,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
             endBoundary = testCase.end,
             logData = Some(parsedRatifiedStagedCommits(testCase.staged)).filter(_.nonEmpty),
             commitRangeValidation = Some(false),
-            failOnDataLoss = Some(failOnDataLoss),
-            maxEndVersion = testCase.maxEndVersion)
+            failOnDataLoss = Some(failOnDataLoss))
           val lenient = testCase.lenient.getOrElse(testCase.strict)
           assert(commitRange.getStartVersion == testCase.start)
           assert(commitRange.getEndVersion == testCase.end.expectedVersion)
