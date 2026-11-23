@@ -31,6 +31,13 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2RelationShim
 trait DeltaV2TableMarker {
   def getCatalogTable(): Optional[CatalogTable]
   def getTablePath(): Path
+
+  /**
+   * The table id and qualified data path of this table, in the form of `DeltaLog.compositeId`.
+   * Depending on the implementation, the id is the id of the snapshot that the table loaded at
+   * analysis or the current id of the table's log.
+   */
+  def compositeId: (String, Path)
 }
 
 object DeltaV2TableMarker {
