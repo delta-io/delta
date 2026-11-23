@@ -1115,7 +1115,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
   testColumnMapping(s"try modifying restricted max id property should fail") { mode =>
     withTable("t1") {
-      val e = intercept[UnsupportedOperationException] {
+      val e = intercept[DeltaUnsupportedOperationException] {
         createTableWithSQLAPI(
           "t1",
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode,
@@ -1123,8 +1123,11 @@ class DeltaColumnMappingSuite extends QueryTest
           withColumnIds = true,
           nested = true)
       }
-      assert(e.getMessage.contains(s"The Delta table configuration " +
-        s"${DeltaConfigs.COLUMN_MAPPING_MAX_ID.key} cannot be specified by the user"))
+      checkError(
+        exception = e,
+        condition = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        sqlState = "42939",
+        parameters = Map("prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
     }
 
     withTable("t1") {
@@ -1134,16 +1137,19 @@ class DeltaColumnMappingSuite extends QueryTest
           withColumnIds = true,
           nested = true)
 
-      val e2 = intercept[UnsupportedOperationException] {
+      val e2 = intercept[DeltaUnsupportedOperationException] {
         alterTableWithProps("t1", Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> "100"))
       }
 
-      assert(e2.getMessage.contains(s"The Delta table configuration " +
-        s"${DeltaConfigs.COLUMN_MAPPING_MAX_ID.key} cannot be specified by the user"))
+      checkError(
+        exception = e2,
+        condition = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        sqlState = "42939",
+        parameters = Map("prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
     }
 
     withTable("t1") {
-      val e = intercept[UnsupportedOperationException] {
+      val e = intercept[DeltaUnsupportedOperationException] {
         createTableWithDataFrameAPI(
           "t1",
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode,
@@ -1151,8 +1157,11 @@ class DeltaColumnMappingSuite extends QueryTest
           withColumnIds = true,
           nested = true)
       }
-      assert(e.getMessage.contains(s"The Delta table configuration " +
-        s"${DeltaConfigs.COLUMN_MAPPING_MAX_ID.key} cannot be specified by the user"))
+      checkError(
+        exception = e,
+        condition = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        sqlState = "42939",
+        parameters = Map("prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
     }
   }
 
@@ -2291,9 +2300,11 @@ class DeltaColumnMappingSuite extends QueryTest
           option("delta.columnMapping.mode", null).save(tempPath.toString)
       }
       val supportedModes = DeltaColumnMapping.supportedModes.map(_.name).toSeq.mkString(", ")
-      assert(ex.getErrorClass === "DELTA_MODE_NOT_SUPPORTED")
-      assert(ex.getMessage.contains("Specified mode 'null' is not supported. " +
-        s"Supported modes are: $supportedModes"))
+      checkError(
+        exception = ex,
+        condition = "DELTA_MODE_NOT_SUPPORTED",
+        sqlState = "0AKDC",
+        parameters = Map("mode" -> null, "supportedModes" -> supportedModes))
     }
   }
 
