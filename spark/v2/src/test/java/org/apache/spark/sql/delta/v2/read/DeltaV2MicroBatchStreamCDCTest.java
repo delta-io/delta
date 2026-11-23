@@ -1138,7 +1138,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                 (Protocol)
                     Action.fromJson(
                         "{\"protocol\":{\"minReaderVersion\":3,\"minWriterVersion\":7,"
-                            + "\"readerFeatures\":" + readerFeatures
+                            + "\"readerFeatures\":"
+                            + readerFeatures
                             + ",\"writerFeatures\":[\"unknownFeature\"]}}");
           }
           Files.writeString(
@@ -1156,9 +1157,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                   spark, tablePath, Collections.emptyMap(), Option.empty());
           PersistedMetadata merged =
               MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-                      current,
-                      tableManager,
-                      DeltaV2QueryContext$.MODULE$.empty())
+                      current, tableManager, DeltaV2QueryContext$.MODULE$.empty())
                   .get();
           assertEquals(4L, merged.deltaCommitVersion());
           assertEquals(trackedSnapshot.metadata().schema(), merged.dataSchema());
@@ -1170,18 +1169,27 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
                   tablePath, schemaLogPath, merged.deltaCommitVersion());
           try {
             Executable readV1 =
-                () -> getDsv1FileChanges(
-                    DeltaLog.forTable(spark, new Path(tablePath)),
-                    tablePath, 2L, DeltaSourceOffset.BASE_INDEX(), false,
-                    Optional.empty(), Optional.empty());
+                () ->
+                    getDsv1FileChanges(
+                        DeltaLog.forTable(spark, new Path(tablePath)),
+                        tablePath,
+                        2L,
+                        DeltaSourceOffset.BASE_INDEX(),
+                        false,
+                        Optional.empty(),
+                        Optional.empty());
             Executable readV2 =
                 () -> {
                   try (ClosableIterator<IndexedFile> iter =
                       stream.getFileChangesWithRateLimitForCDC(
-                          2L, DeltaSourceOffset.BASE_INDEX(), false,
-                          Optional.empty(), Optional.empty())) {
-                    assertTrue(collectAll(iter).stream()
-                        .anyMatch(file -> file.getVersion() == 5L && file.hasFileAction()));
+                          2L,
+                          DeltaSourceOffset.BASE_INDEX(),
+                          false,
+                          Optional.empty(),
+                          Optional.empty())) {
+                    assertTrue(
+                        collectAll(iter).stream()
+                            .anyMatch(file -> file.getVersion() == 5L && file.hasFileAction()));
                   }
                 };
             for (Executable read : List.of(readV1, readV2)) {
@@ -1398,8 +1406,8 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
     Snapshot seededSnapshot = snapshotManager.loadSnapshotAt(seededVersion);
-    DeltaV2TableManager tableManager = DeltaV2TableManagerCache$.MODULE$.forTable(
-        spark, tablePath, javaOptions, Option.empty());
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(spark, tablePath, javaOptions, Option.empty());
 
     org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(

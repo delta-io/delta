@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Stream;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaRuntimeException;
@@ -49,7 +50,6 @@ import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -1108,11 +1108,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(tablePath, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-        spark,
-        snapshot,
-        options,
-        tableManagerForPath(tablePath),
-        EMPTY_QUERY_CONTEXT);
+        spark, snapshot, options, tableManagerForPath(tablePath), EMPTY_QUERY_CONTEXT);
   }
 
   /** Schema-tracking set but the log has no entry → empty. */
@@ -1394,9 +1390,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current,
-            tableManagerForPath(tablePath),
-            EMPTY_QUERY_CONTEXT);
+            current, tableManagerForPath(tablePath), EMPTY_QUERY_CONTEXT);
 
     if (expectedMergedVersion == EXPECTED_NO_MERGE) {
       assertTrue(result.isEmpty());
@@ -1532,9 +1526,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current,
-            tableManagerForPath(tablePath),
-            EMPTY_QUERY_CONTEXT);
+            current, tableManagerForPath(tablePath), EMPTY_QUERY_CONTEXT);
 
     // v3 is metadata-only → merge advances to v3. v4 has file actions → stop.
     assertTrue(result.isDefined());

@@ -591,9 +591,7 @@ public class MetadataEvolutionHandler {
             /* consecutiveSchemaChangesMerger= */ Option.apply(
                 currentMetadata ->
                     getMergedConsecutiveMetadataChanges(
-                        currentMetadata,
-                        tableManager,
-                        originalStreamingQueryContext)),
+                        currentMetadata, tableManager, originalStreamingQueryContext)),
             /* initMetadataLogEagerly= */ true));
   }
 
