@@ -147,14 +147,17 @@ public interface CommitRangeBuilder {
    * version numbers from timestamps if necessary and determining the actual commit files that fall
    * within the specified range.
    *
-   * <p>With {@link #withCommitRangeValidation(boolean)} disabled, empty and reversed ranges are
-   * allowed and gap checks are deferred to {@link CommitRange#getCommitFiles()}.
+   * <p>With {@link #withCommitRangeValidation(boolean)} disabled, empty ranges are allowed, and so
+   * are reversed ranges given with an explicit {@link #withEndBoundary(CommitBoundary)}. Without
+   * that boundary the start must still not exceed {@link #withMaxEndVersion(long)} or {@link
+   * #withMaxCatalogVersion(long)}. Gap checks are deferred to {@link CommitRange#getCommitFiles()}.
    *
    * @param engine the {@link Engine} to use for file system operations and log parsing
    * @return a new {@link CommitRange} instance configured according to this builder's
    *     specifications
    * @throws IllegalArgumentException if the builder configuration is invalid (e.g., start version
-   *     {@code >} end version, unless commit range validation is disabled)
+   *     {@code >} end version, unless commit range validation is disabled and an explicit end
+   *     boundary is given)
    */
   CommitRange build(Engine engine);
 
