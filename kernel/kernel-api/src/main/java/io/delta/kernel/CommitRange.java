@@ -42,8 +42,10 @@ public interface CommitRange {
   /**
    * Returns an iterator over commit-file metadata in ascending version order.
    *
-   * <p>The iterator must be closed after use. Missing commit versions may be reported while the
-   * iterator advances.
+   * <p>The iterator must be closed after use. With {@link
+   * CommitRangeBuilder#withFailOnDataLoss(boolean)} enabled, the iterator throws when a later
+   * commit proves a version in the requested range is missing, and ends after that error.
+   * Otherwise, available files are yielded across gaps.
    *
    * @return a closeable iterator over the commit files in this range
    */
@@ -61,10 +63,6 @@ public interface CommitRange {
 
   /**
    * Returns the ending version number (inclusive) of this commit range.
-   *
-   * <p>For a range built with {@link CommitRangeBuilder#withCommitRangeValidation(boolean)}
-   * disabled that contains no commit files, this is the requested end version. If no end was
-   * requested, it is the start version, which only anchors the empty range.
    *
    * @return the ending version number of the commit range
    */

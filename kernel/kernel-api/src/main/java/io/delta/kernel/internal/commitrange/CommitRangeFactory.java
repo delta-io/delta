@@ -68,7 +68,7 @@ class CommitRangeFactory {
     Optional<Long> listingEndVersionOpt =
         requiredEndVersionOpt.isPresent() ? requiredEndVersionOpt : ctx.maxEndVersionOpt;
 
-    // R1: Reversed ranges are only rejected when the range is validated; a relaxed range with
+    // Reversed ranges are only rejected when the range is validated; a relaxed range with
     // start > end is simply empty, as in DeltaLog.
     if (ctx.commitRangeValidation) {
       validateVersionRange(startVersion, listingEndVersionOpt);
@@ -81,7 +81,7 @@ class CommitRangeFactory {
     validateDeltasMatchVersionRange(deltas, startVersion, requiredEndVersionOpt);
     // Use the required end version when provided. Otherwise, resolve the end to the latest
     // version, up to maxEndVersion if it is set.
-    // R2: A relaxed range may have no commit files at all. With no required end there is no latest
+    // A relaxed range may have no commit files at all. With no required end there is no latest
     // version to resolve to, so the empty range is anchored at endVersion = startVersion.
     long endVersion =
         requiredEndVersionOpt.orElseGet(
@@ -255,7 +255,7 @@ class CommitRangeFactory {
         LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
             publishedDeltas, ratifiedDeltas);
 
-    // R3: A relaxed range also needs the version of the first logical commit after the requested
+    // A relaxed range also needs the version of the first logical commit after the requested
     // end, unless the range already reaches its end. Resolve it after the catalog/published
     // priority, as the earlier of the first published and the first ratified commit past the end.
     // It is only a version and is never yielded.
@@ -321,7 +321,7 @@ class CommitRangeFactory {
       while (commitFiles.hasNext()) {
         ParsedDeltaData delta = ParsedDeltaData.forFileStatus(commitFiles.next());
         if (endVersionOpt.isPresent() && delta.getVersion() > endVersionOpt.get()) {
-          // R3: This is the first commit after the range. Carry its version, but do not include it
+          // This is the first commit after the range. Carry its version, but do not include it
           // among the range's deltas, and do not read any further.
           nextVersionAfterEnd = Optional.of(delta.getVersion());
           break;
@@ -385,7 +385,7 @@ class CommitRangeFactory {
 
   private void validateDeltasMatchVersionRange(
       List<ParsedDeltaData> deltas, long startVersion, Optional<Long> endVersionOpt) {
-    // R2: A relaxed range may be empty, and otherwise skips completeness checks; whether versions
+    // A relaxed range may be empty, and otherwise skips completeness checks; whether versions
     // are missing is decided lazily by CommitRangeImpl.getCommitFiles.
     if (!ctx.commitRangeValidation) {
       return;

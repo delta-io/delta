@@ -119,9 +119,8 @@ public interface CommitRangeBuilder {
   /**
    * Enables or disables validation that the requested commit range is complete and contiguous.
    *
-   * <p>Validation is enabled by default. When disabled, the range may contain missing versions, may
-   * be empty or have a start version after its end version, and only {@link
-   * CommitRange#getCommitFiles()} is supported.
+   * <p>Validation is enabled by default. When disabled, the range may contain missing versions and
+   * only {@link CommitRange#getCommitFiles()} is supported.
    *
    * @param enabled whether to validate the commit range
    * @return this builder instance
@@ -132,10 +131,9 @@ public interface CommitRangeBuilder {
    * Configures whether raw commit-file iteration fails when a version is missing.
    *
    * <p>This option defaults to {@code true} and only affects ranges built with {@link
-   * #withCommitRangeValidation(boolean)} disabled. When {@code false}, raw commit-file iteration
-   * skips missing versions. When {@code true}, a missing version is reported while iterating, but
-   * only if a later commit proves it is missing: a missing suffix with no later commit is not an
-   * error.
+   * #withCommitRangeValidation(boolean)} disabled. When {@code true}, iteration fails when a later
+   * commit proves a version in the requested range is missing. When {@code false}, raw commit-file
+   * iteration skips missing versions.
    *
    * @param enabled whether missing versions should fail raw commit-file iteration
    * @return this builder instance
@@ -148,6 +146,9 @@ public interface CommitRangeBuilder {
    * <p>This method validates the builder configuration and constructs the commit range by resolving
    * version numbers from timestamps if necessary and determining the actual commit files that fall
    * within the specified range.
+   *
+   * <p>With {@link #withCommitRangeValidation(boolean)} disabled, empty and reversed ranges are
+   * allowed and gap checks are deferred to {@link CommitRange#getCommitFiles()}.
    *
    * @param engine the {@link Engine} to use for file system operations and log parsing
    * @return a new {@link CommitRange} instance configured according to this builder's

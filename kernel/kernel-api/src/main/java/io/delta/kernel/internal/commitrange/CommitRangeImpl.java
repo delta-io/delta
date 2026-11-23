@@ -73,7 +73,7 @@ public class CommitRangeImpl implements CommitRange {
       Optional<Long> listingEndVersionOpt,
       boolean commitRangeValidation,
       boolean failOnDataLoss) {
-    // R2: Only a validated range must be non-empty and ordered. A relaxed range may be empty, and
+    // Only a validated range must be non-empty and ordered. A relaxed range may be empty, and
     // may even have startVersion > endVersion.
     checkArgument(
         !commitRangeValidation || startVersion <= endVersion,
@@ -133,7 +133,7 @@ public class CommitRangeImpl implements CommitRange {
           return false;
         }
         boolean inRange = index < deltas.size();
-        // R4: A missing version is only reported when a later commit that was actually observed
+        // A missing version is only reported when a later commit that was actually observed
         // proves it is missing. That is the next commit in the range, or else the first commit
         // after it. Without one, a missing suffix of the range is not an error.
         Optional<Long> observedVersion =
