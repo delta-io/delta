@@ -6,9 +6,11 @@
 
 Some systems need to store data that belongs to each row without exposing it through the normal
 table schema. Examples include ingestion metadata, stable identifiers, and data used by table
-maintenance. Making these fields visible changes star expansion, positional writes, schema
-inspection, and downstream schema propagation. Storing them outside data files makes them hard to
-preserve when rows are rewritten.
+maintenance. Adding these fields to the visible schema can require changes to existing writers
+and downstream pipelines. For example, a positional insert may need to supply an extra value, and
+a pipeline that copies `SELECT *` may propagate an internal field to its output. Storing these
+fields outside data files makes them hard to preserve when rows are rewritten. Invisible columns
+let systems store those values with each row while keeping them out of the visible schema.
 
 ## Feature summary
 
@@ -56,6 +58,9 @@ including when deriving partition filters.
 | Existing table that enables the feature (mix of old and new files) | Existing columns can change visibility without rewriting their data. Newly added invisible columns may be missing from existing files; the normal missing-column rules apply. |
 | Checkpoint writer that doesn't know the feature | Rejected by the existing writer-feature requirements. Being allowed to read the table does not authorize writing its checkpoints. |
 | Writer after feature removal | May write the current table if it supports the remaining protocol requirements. If history containing invisible columns is retained, the writer must support Checkpoint Protection and validate the protocol of the historical version before checkpointing it. Otherwise, that history must be safely truncated before feature removal. |
+| Read-only UniForm export to Iceberg V2/V3 | Iceberg readers see only visible columns. Delta writers preserve invisible values in the shared data files. Iceberg writes against this export are not allowed. |
+| Native Iceberg V2/V3 reads and writes | The Iceberg schema exposes the complete data schema. Accepted writes preserve invisible values unless explicitly changed; schema updates preserve invisible field definitions and the Delta visibility split. Existing native-writer compatibility requirements still apply. |
+| Native Iceberg V4 reads and writes | The same complete-schema and preservation requirements apply, together with the proposed IcebergNativeV4 requirements, including its inherited IcebergCompatV3 rules and feature allowlist. See [Iceberg compatibility](#iceberg-compatibility). |
 
 ### Engine integration
 
@@ -85,7 +90,7 @@ metadata or relax the table's reader and writer requirements.
 | Version checksum (`.crc`) | The existing `metadata` field contains the table metadata, including `invisibleSchemaString`. No new checksum field or metric is introduced. |
 | Action reconciliation | The latest `metaData` action determines both schemas. The schema strings are not reconciled independently across commits. |
 | Row tracking | Existing row-ID and row-commit-version assignment, preservation, and materialization rules are unchanged. Materialized-column names must remain distinct from names in the complete data schema, including physical names when Column Mapping is enabled. |
-| Change data feed | Existing change-data-file and `add`/`remove` fallback rules apply. Invisible columns follow the same change-data requirements as visible data columns; their default visibility is unchanged. |
+| Change data feed | Existing change-data-file and `add`/`remove` fallback rules apply. Invisible columns follow the same change-data requirements as visible data columns. CDF reads follow the same column visibility rules as ordinary table reads. |
 | Domain metadata | No new metadata domain or dependency on `domainMetadata`. Other features' domains continue to follow their existing rules. |
 | In-commit timestamps | No change to commit timestamps, `commitInfo` placement, or time-travel rules. The schemas come from the metadata of the requested snapshot. |
 | Type widening | See the Type widening requirements under [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). |
@@ -93,7 +98,7 @@ metadata or relax the table's reader and writer requirements.
 | Generated columns, CHECK constraints, invariants, default columns, identity columns | See [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). Generation expressions on partition columns cannot reference invisible fields. Column invariants apply to invisible columns under the same feature-support and enforcement requirements as visible columns. |
 | Clustering and partitioning | See the Clustering and Partitioning requirements under [Constraints and interactions with other features](#constraints-and-interactions-with-other-features). |
 | Statistics and data skipping | Invisible columns use the normal per-column statistics formats and column-resolution rules, including physical names with Column Mapping. Existing requirements for statistics, including those for clustering and deletion vectors, still apply. Readers use statistics for the columns they read; no new statistics format is introduced. |
-| IcebergCompatV1/V2/V3, Iceberg writer compat | Invisible columns are prohibited when IcebergCompatV1/V2/V3 is enabled. This also excludes use with the proposed [IcebergWriterCompatV1](iceberg-writer-compat-v1.md), which requires IcebergCompatV2 to be enabled. |
+| IcebergCompatV1/V2/V3, Iceberg writer compat, IcebergNativeV4 | Invisible columns are prohibited when IcebergCompatV1 is enabled. IcebergCompatV2/V3 and native Iceberg writes are supported under [Iceberg compatibility](#iceberg-compatibility). Read-only exports use the visible schema; native writes use the complete data schema. Existing encoding and feature-compatibility requirements apply to invisible columns too. |
 | Catalog-managed tables | Existing catalog commit, publication, and maintenance requirements apply to updates containing either schema. This feature introduces no new catalog operation. |
 | Collations, variant, timestamp without timezone, other types | No new data-type encoding or comparison rules. Hiding a column does not bypass its type's feature prerequisites or reader and writer requirements. |
 
@@ -295,6 +300,12 @@ When rewriting an existing row, a writer MUST preserve its invisible-column valu
 write explicitly changes them or changes are required to satisfy
 [Generated Columns](#generated-columns) requirements.
 
+An explicit replacement of an entire array value also counts as explicitly changing its invisible
+descendants. Writers MUST apply the same schema-validation and missing-field rules as for visible
+fields, including applicable default, generation, and nullability requirements. Writers are not
+required to match old and new array elements or carry forward invisible values from the replaced
+elements.
+
 These requirements apply to table creation, appends, row updates and deletions, data-file
 rewrites and maintenance, and operations that copy or restore table snapshots. Writers MUST also
 satisfy the table's reader requirements, as required by [Table Features](#table-features).
@@ -331,8 +342,46 @@ satisfy the requirements in [Removing the feature](#removing-the-feature).
   [Default Columns](#default-columns) requirements as a visible column.
 - **Type widening.** Invisible columns support [Type Widening](#type-widening) under the same
   protocol requirements as visible columns.
-- **IcebergCompat.** When any of `icebergCompatV1`, `icebergCompatV2`, or `icebergCompatV3` is
-  enabled, a writer MUST reject a schema containing invisible columns.
+- **Iceberg compatibility.** Invisible columns MAY be used with `icebergCompatV2`,
+  `icebergCompatV3`, and native Iceberg writes under the requirements below. When
+  `icebergCompatV1` is enabled, a writer MUST reject a schema containing invisible columns.
+
+### Iceberg compatibility
+
+Writers MUST apply the applicable Iceberg encoding, field-ID, type, and feature-compatibility
+requirements to the complete data schema. This includes existing restrictions on generated
+columns, identity columns, defaults, and constraints; making a column invisible does not bypass
+them.
+
+**Read-only UniForm exports (Iceberg V2/V3).** Exporters MUST publish only the visible data schema
+in Iceberg. Writes through Iceberg MUST NOT be accepted against this visible-only export. Delta
+writers MUST preserve invisible-column values under the normal Invisible Columns requirements.
+
+Exporters MUST support hiding a visible column, appending rows while it is hidden, and revealing
+it with the same field ID and its stored values intact, without requiring data-file rewrites.
+To allow intervening appends, an exported required field MUST first be made optional in Iceberg
+before it is hidden, following Iceberg's
+[schema-evolution rules](https://iceberg.apache.org/spec/#schema-evolution). It MUST be revealed
+as optional with the same field ID. This changes only the Iceberg export; the Delta column's
+nullability and write-time requirements MUST remain unchanged.
+
+**Native Iceberg reads and writes (V2/V3/V4).** The published Iceberg schema MUST represent the
+complete data schema, including invisible columns with their existing field IDs. Accepted writes
+MUST preserve invisible-column values during file rewrites unless explicitly changed by the write.
+
+Writers applying Iceberg schema updates, including `SetCurrentSchema`, MUST match existing
+invisible fields by ID and preserve their definitions and the Delta visibility split. An update
+that omits or redefines an invisible field, or changes an ancestor's field ID, path, container kind
+(`struct`, `array`, or `map`), or nullability, MUST be rejected. New visible fields MAY be added,
+including to shared ancestor structs, under the existing schema-evolution and column-mapping
+requirements. Updates to the two Delta schema strings MUST be committed together, preserving
+metadata under the normal Invisible Columns requirements, including Delta metadata not
+represented in Iceberg.
+
+These native-write requirements also apply to the proposed
+[IcebergNativeV4](https://github.com/delta-io/delta/pull/7374) feature. Its incorporated
+IcebergCompatV3 requirements apply to the complete data schema; the native-write schema rule
+applies instead of the visible-only rule for read-only UniForm exports.
 
 ## Removing the feature
 
@@ -458,6 +507,39 @@ Table configuration | May `ts` be invisible?
 `day` is a partition column | No
 `day` is not a partition column | Yes
 
+For an array with visible `sku` and invisible `source_sequence`, consider this whole-array
+replacement, shown schematically:
+
+```text
+Existing:    [{sku: "A", source_sequence: 10}, {sku: "B", source_sequence: 20}]
+Replacement: [{sku: "B"}, {sku: "A"}]
+```
+
+The normal rules for omitted fields determine whether the write succeeds and which
+`source_sequence` values are written. The writer is not required to preserve `10` and `20` or
+match elements by `sku` or position.
+
+The following UniForm example uses a `long` column, `source_sequence_number`, with field ID `7`.
+The Delta column is non-nullable throughout. An existing row has value `11`; a row appended while
+the column is invisible has value `22`.
+
+Step | Delta visibility | Iceberg schema for field ID `7` | Values available to Iceberg readers
+-|-|-|-
+Initial export | Visible | Required `source_sequence_number` | `11`
+Before hiding | Visible | Optional `source_sequence_number`, same ID | `11`
+Hide | Invisible | Absent | Column is not exposed
+Append a row with value `22` | Invisible | Absent | Column is not exposed
+Reveal | Visible | Optional `source_sequence_number`, same ID | `11`, `22`
+
+The visibility changes do not rewrite data files. Delta retains the same physical field and
+continues enforcing non-nullability while the column is hidden. A column initially exported as
+optional follows the same sequence without the required-to-optional step.
+
+For native Iceberg writes, the published schema includes `source_sequence_number` even while it
+is invisible in Delta. A schema update adding a visible column with a fresh field ID is allowed
+if it preserves `source_sequence_number`. An update that omits field ID `7` or changes its type
+is rejected.
+
 The following two actions form a complete initial commit, `_delta_log/00000000000000000000.json`,
 for an empty, unpartitioned table with a visible `id` column and an invisible
 `source_sequence_number` column. The actions are formatted across multiple lines for readability;
@@ -526,14 +608,38 @@ are:
   the value of a missing column as `null`.
 
 > ***Add the following requirement to
-> [Writer Requirements for IcebergCompatV1](#writer-requirements-for-icebergcompatv1) and
-> [Writer Requirements for IcebergCompatV2](#writer-requirements-for-icebergcompatv2).
-> Apply the same addition to
-> [Writer Requirements for IcebergCompatV3](iceberg-compat-v3.md#writer-requirements-for-icebergcompatv3)
-> in the proposed IcebergCompatV3 RFC.***
+> [Writer Requirements for IcebergCompatV1](#writer-requirements-for-icebergcompatv1)***
 
 - When enabling this feature or writing to a table where it is enabled, writers MUST reject a
   schema containing [invisible columns](#invisible-columns).
+
+> ***Add the following requirement to
+> [Writer Requirements for IcebergCompatV2](#writer-requirements-for-icebergcompatv2) and
+> [Writer Requirements for IcebergCompatV3](iceberg-compat-v3.md#writer-requirements-for-icebergcompatv3)
+> in the proposed IcebergCompatV3 RFC.***
+
+- When the table supports Invisible Columns, writers MUST apply these requirements to the
+  complete data schema and follow [Iceberg compatibility](#iceberg-compatibility) for exported
+  schemas and accepted Iceberg writes.
+
+> ***Add `invisibleColumns` to the
+> [Allowed Supported list of features](iceberg-writer-compat-v1.md#allowed-supported-list-of-features)
+> in the proposed IcebergWriterCompatV1 RFC and to `Allowed Table Features` in the proposed
+> [IcebergNativeV4 RFC](https://github.com/delta-io/delta/pull/7374).
+> Add the following requirement to their respective writer-requirements sections.***
+
+- When the table supports Invisible Columns, writers MUST follow the native-write requirements
+  in [Iceberg compatibility](#iceberg-compatibility), including complete-schema exposure and
+  preservation of invisible field definitions and visibility during Iceberg schema updates.
+  Column-based checks for disallowed or inactive features MUST inspect the complete data schema.
+  All other feature restrictions remain in effect.
+
+> ***In the proposed IcebergNativeV4 RFC, add the following clarification under
+> `Relationship to Iceberg Compatibility V1, V2, and V3`.***
+
+Incorporated IcebergCompatV3 requirements MUST apply to the complete data schema. For tables with
+Invisible Columns, the native-write requirements in [Iceberg compatibility](#iceberg-compatibility)
+apply instead of the visible-only schema rule for read-only UniForm exports.
 
 ## Appendix changes
 
@@ -570,6 +676,7 @@ no table properties.
   - [Reader Requirements for Invisible Columns](#reader-requirements-for-invisible-columns)
   - [Writer Requirements for Invisible Columns](#writer-requirements-for-invisible-columns)
     - [Constraints and interactions with other features](#constraints-and-interactions-with-other-features)
+    - [Iceberg compatibility](#iceberg-compatibility)
   - [Removing the feature](#removing-the-feature)
   - [Examples](#examples)
 ```
