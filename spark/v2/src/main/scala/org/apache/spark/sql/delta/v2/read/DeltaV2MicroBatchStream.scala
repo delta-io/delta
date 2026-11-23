@@ -71,6 +71,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.connector.read.InputPartition
@@ -132,17 +133,6 @@ private[read] class DeltaV2MicroBatchStream(
 
   /** One-shot flag for {@link #validateCDFEnabledOnTable}. */
   @volatile private var cdfEnabledOnStreamStartValidated: Boolean = false
-
-  /**
-   * When AvailableNow is used, this offset will be the upper bound where this run of the query will
-   * process up. We may run multiple micro batches, but the query will stop itself when it reaches
-   * this offset.
-   */
-  private var lastOffsetForTriggerAvailableNow: Option[DeltaSourceOffset] = None
-
-  private var isLastOffsetForTriggerAvailableNowInitialized: Boolean = false
-
-  private var isTriggerAvailableNow: Boolean = false
 
   // Cached starting version to ensure idempotent behavior for "latest" starting version.
   // getStartingVersion() must return the same value across multiple calls.
@@ -272,33 +262,6 @@ private[read] class DeltaV2MicroBatchStream(
     }
   }
 
-  override def prepareForTriggerAvailableNow(): Unit = {
-    logger.info("The streaming query reports to use Trigger.AvailableNow.")
-    isTriggerAvailableNow = true
-  }
-
-  /**
-   * initialize the internal states for AvailableNow if this method is called first time after
-   * prepareForTriggerAvailableNow.
-   */
-  private def initForTriggerAvailableNowIfNeeded(startOffsetOpt: DeltaSourceOffset): Unit = {
-    if (isTriggerAvailableNow && !isLastOffsetForTriggerAvailableNowInitialized) {
-      isLastOffsetForTriggerAvailableNowInitialized = true
-      initLastOffsetForTriggerAvailableNow(startOffsetOpt)
-    }
-  }
-
-  private def initLastOffsetForTriggerAvailableNow(startOffsetOpt: DeltaSourceOffset): Unit = {
-    // TODO(#6817): Explore unifying TAN offset computation into latestOffsetInternal.
-    // Blocked: latestOffset per-batch shares the same conditions but must NOT bypass rate limiting.
-    lastOffsetForTriggerAvailableNow =
-        latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
-
-    lastOffsetForTriggerAvailableNow.foreach(
-        lastOffset =>
-            logger.info("lastOffset for Trigger.AvailableNow has set to " + lastOffset.json()))
-  }
-
   ////////////
   // offset //
   ////////////
@@ -351,9 +314,12 @@ private[read] class DeltaV2MicroBatchStream(
 
     try {
       val deltaStartOffset: DeltaSourceOffset = DeltaSourceOffset.apply(tableId, startOffset)
-      initForTriggerAvailableNowIfNeeded(deltaStartOffset)
+      initForTriggerAvailableNowIfNeeded(
+          Some(deltaStartOffset))
       // Return null when no data is available for this batch.
-      val endOffset: DeltaSourceOffset = latestOffsetInternal(deltaStartOffset, limit).orNull
+      val endOffset: DeltaSourceOffset =
+          latestOffsetInternal(
+              Some(deltaStartOffset), limit).orNull
       if (endOffset != null) {
         isFirstBatch = false
       }
@@ -376,8 +342,11 @@ private[read] class DeltaV2MicroBatchStream(
    * Internal implementation of latestOffset using DeltaSourceOffset directly, without null checks
    * and state management.
    */
-  private def latestOffsetInternal(
-      deltaStartOffset: DeltaSourceOffset, limit: ReadLimit): Option[DeltaSourceOffset] = {
+  override protected def latestOffsetInternal(
+      startOffset: Option[DeltaSourceOffset], limit: ReadLimit): Option[DeltaSourceOffset] = {
+    // V2 always has a start offset: Spark passes initialOffset() to the first latestOffset call.
+    val deltaStartOffset: DeltaSourceOffset = startOffset.getOrElse(
+        throw SparkException.internalError("V2 latestOffsetInternal requires a start offset"))
     val limits: Optional[DeltaSource.AdmissionLimits] =
         ScalaUtils.toJavaOptional(DeltaSource.AdmissionLimits.apply(options, limit))
     val endOffset: Option[DeltaSourceOffset] =

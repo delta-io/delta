@@ -168,49 +168,6 @@ trait DeltaSourceBase extends Source
   protected val emptyDataFrame: DataFrame =
     DataFrameUtils.ofRows(spark, LocalRelation(schema).copy(isStreaming = true))
 
-  /**
-   * When `AvailableNow` is used, this offset will be the upper bound where this run of the query
-   * will process up. We may run multiple micro batches, but the query will stop itself when it
-   * reaches this offset.
-   */
-  protected var lastOffsetForTriggerAvailableNow: Option[DeltaSourceOffset] = None
-
-  private var isLastOffsetForTriggerAvailableNowInitialized = false
-
-  private var isTriggerAvailableNow = false
-
-  override def prepareForTriggerAvailableNow(): Unit = {
-    logInfo(log"The streaming query reports to use Trigger.AvailableNow.")
-    isTriggerAvailableNow = true
-  }
-
-  /**
-   * initialize the internal states for AvailableNow if this method is called first time after
-   * `prepareForTriggerAvailableNow`.
-   */
-  protected def initForTriggerAvailableNowIfNeeded(
-    startOffsetOpt: Option[DeltaSourceOffset]): Unit = {
-    if (isTriggerAvailableNow && !isLastOffsetForTriggerAvailableNowInitialized) {
-      isLastOffsetForTriggerAvailableNowInitialized = true
-      initLastOffsetForTriggerAvailableNow(startOffsetOpt)
-    }
-  }
-
-  protected def initLastOffsetForTriggerAvailableNow(
-    startOffsetOpt: Option[DeltaSourceOffset]): Unit = {
-    val offset = latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
-    lastOffsetForTriggerAvailableNow = offset
-    lastOffsetForTriggerAvailableNow.foreach { lastOffset =>
-
-    logInfo(log"lastOffset for Trigger.AvailableNow has set to " +
-      log"${MDC(DeltaLogKeys.OFFSET, lastOffset.json)}")
-    }
-  }
-
-  /** An internal `latestOffsetInternal` to get the latest offset. */
-  protected def latestOffsetInternal(
-    startOffset: Option[DeltaSourceOffset], limit: ReadLimit): Option[DeltaSourceOffset]
-
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,
       fromIndex: Long,
