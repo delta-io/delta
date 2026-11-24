@@ -410,7 +410,7 @@ The fields that support inheritance:
 - **`snapshot_id`**: Inherited when null.
 - **`sequence_number`**: Inherited when null and status is `ADDED`.
 - **`file_sequence_number`**: Inherited when null and status is `ADDED`.
-- **`first_row_id`**: Inherited when null.
+- **`first_row_id`**: Inherited when null, whatever the status. Following [First Row ID Inheritance](https://iceberg.apache.org/spec/#first-row-id-inheritance), a null `first_row_id` resolves to the `DATA_MANIFEST` entry's `first_row_id` plus the sum of `record_count` of every earlier entry in the leaf manifest that also has a null `first_row_id`. Entries marked in `manifest_info.dv` still count, so marking an entry does not change the row IDs of later entries.
 - **`dv_snapshot_id`**: Not inherited. Null means no DV is present.
 
 Root manifest entries must always have explicit (non-null) tracking values since there is nothing above them to inherit from.
