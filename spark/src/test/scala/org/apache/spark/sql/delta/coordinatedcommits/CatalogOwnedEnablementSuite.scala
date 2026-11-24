@@ -286,7 +286,7 @@ class CatalogOwnedEnablementSuite
   }
 
   test("Quality of life table features and corresponding metadata should be " +
-      "automatically enabled for CatalogOwned table") {
+      "automatically enabled for CatalogManaged table") {
     withRandomTable(createCatalogManagedTableAtInit = true) { tableName =>
       // [[RowTrackingFeature]], [[DeletionVectorsTableFeature]],
       // and [[V2CheckpointTableFeature]] should be enabled by default.
@@ -353,7 +353,7 @@ class CatalogOwnedEnablementSuite
     }
   }
 
-  test("ALTER TABLE should be blocked if attempts to downgrade Catalog-Owned") {
+  test("ALTER TABLE should be blocked if attempts to downgrade Catalog-Managed") {
     withRandomTable(createCatalogManagedTableAtInit = true)  { tableName =>
       val error = intercept[DeltaTableFeatureException] {
         spark.sql(s"ALTER TABLE $tableName DROP FEATURE '${CatalogManagedTableFeature.name}'")
@@ -379,7 +379,7 @@ class CatalogOwnedEnablementSuite
     }
   }
 
-  test("Dropping CatalogOwned dependent features should be blocked") {
+  test("Dropping CatalogManaged dependent features should be blocked") {
     withRandomTable(createCatalogManagedTableAtInit = true) { tableName =>
       val error1 = intercept[DeltaTableFeatureException] {
         spark.sql(s"ALTER TABLE $tableName DROP FEATURE '${InCommitTimestampTableFeature.name}'")
@@ -421,7 +421,7 @@ class CatalogOwnedEnablementSuite
   }
 
   test("FS_TO_CO_UPGRADE_COMMIT should be recorded in usage_log when creating " +
-       "CatalogOwned table") {
+       "CatalogManaged table") {
     withTable("t1") {
       val usageLog = Log4jUsageLogger.track {
         createTable("t1", properties = Map(
