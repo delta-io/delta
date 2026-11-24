@@ -223,7 +223,7 @@ The row commit version field, despite being a metadata column that is always inc
 gets field id 2147483539, which must only be included in `fieldIds` to indicate that the associated
 column file is the most recently written one. This implies that for file actions that contain any
 non-zero amount of column files, there must be exactly one `ColumnFileDescriptor` that contains this
-field id.
+field id, and it must be the first entry in `columnFiles`.
 
 ## Column File Set Identity
 
@@ -268,8 +268,9 @@ The procedure for writing a column file (i.e. options (3) and (4) from the above
 2. for each field that contains changes in the current write, remove its field id from all
    `ColumnFileDescriptor`s;
 3. remove the commit version field id from any `ColumnFileDescriptor`s that contain it;
-4. add a new `ColumnFileDescriptor` that contains the newly written column file path, along with all
-   field ids that contain changes in the current write and the commit version field id;
+4. insert a new `ColumnFileDescriptor` at the first position of `columnFiles` that contains the
+   newly written column file path, along with all field ids that contain changes in the current
+   write and the commit version field id;
 5. remove all `ColumnFileDescriptor`s that contain no associated field ids as a result of step (2);
 6. update the `defaultRowCommitVersion` to the commit version of the current operation.
 
@@ -475,12 +476,12 @@ WHERE key = 'a'
     "fileCommitVersion": 0,
     "columnFiles": [
       {
-        "path": "column-1.parquet",
-        "fieldIds": [8]
-      },
-      {
         "path": "column-2.parquet",
         "fieldIds": [7, 2147483539]
+      },
+      {
+        "path": "column-1.parquet",
+        "fieldIds": [8]
       }
     ]
   }
@@ -536,6 +537,9 @@ field:
 Field ID | Field Name | Delta Type | Required | Applicable To | Description
 -|-|-|-|-|-
 158 | `column_files` | Array\<159: Struct([ColumnFileDescriptor](#column-file-descriptor))\> | Optional | DATA | Column files for the data file.
+
+`column_files` must keep the order of `columnFiles`, so the column file with field id 2147483539
+is the first entry.
 
 ##### Column File Descriptor
 
