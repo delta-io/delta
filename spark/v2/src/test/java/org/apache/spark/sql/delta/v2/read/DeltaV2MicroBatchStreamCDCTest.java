@@ -17,8 +17,6 @@ package org.apache.spark.sql.delta.v2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -38,14 +36,19 @@ import org.apache.spark.sql.delta.DeltaIllegalStateException;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
+import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
+import org.apache.spark.sql.delta.InvalidProtocolVersionException;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.delta.actions.AddFile;
+import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.IndexedFile;
+import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.storage.HDFSLogStore;
 import org.apache.spark.sql.delta.storage.LogStore;
@@ -61,10 +64,12 @@ import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import scala.Option;
 import scala.Tuple2;
 import scala.collection.JavaConverters;
@@ -1100,6 +1105,111 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"unsupportedVersion", "unsupportedReaderFeature", "writerOnlyFeature"})
+  void testGetFileChangesForCDC_validatesMergedProtocols(String scenario, @TempDir File tempDir)
+      throws Exception {
+    withSQLConf(
+        "spark.databricks.delta.streaming.schemaTracking.enabled",
+        "true",
+        () -> {
+          String tablePath = tempDir.getAbsolutePath();
+          String tableName = "test_cdc_merged_protocol_" + System.nanoTime();
+          createCDFEnabledTable(tablePath, tableName);
+          sql("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName);
+          PathBasedSnapshotManager snapshotManager =
+              new PathBasedSnapshotManager(tablePath, createKernelContext());
+          Snapshot trackedSnapshot = snapshotManager.loadLatestSnapshot();
+          PersistedMetadata current =
+              PersistedMetadata.apply(
+                  trackedSnapshot.metadata().id(),
+                  2L,
+                  trackedSnapshot.metadata(),
+                  trackedSnapshot.protocol(),
+                  tablePath + "/_delta_log/_streaming_metadata");
+
+          Protocol protocol;
+          if (scenario.equals("unsupportedVersion")) {
+            protocol = Protocol$.MODULE$.apply(99, 7);
+          } else {
+            String readerFeatures =
+                scenario.equals("unsupportedReaderFeature") ? "[\"unknownFeature\"]" : "[]";
+            protocol =
+                (Protocol)
+                    Action.fromJson(
+                        "{\"protocol\":{\"minReaderVersion\":3,\"minWriterVersion\":7,"
+                            + "\"readerFeatures\":"
+                            + readerFeatures
+                            + ",\"writerFeatures\":[\"unknownFeature\"]}}");
+          }
+          Files.writeString(
+              new File(tempDir, "_delta_log/00000000000000000003.json").toPath(),
+              protocol.json() + "\n");
+          // Keep snapshot loading readable so only historical protocol validation can fail.
+          Files.writeString(
+              new File(tempDir, "_delta_log/00000000000000000004.json").toPath(),
+              trackedSnapshot.protocol().json() + "\n");
+          DeltaLog.clearCache();
+          sql("INSERT INTO %s VALUES (1, 'a', 10)", tableName);
+
+          DeltaV2TableManager tableManager =
+              DeltaV2TableManagerCache$.MODULE$.forTable(
+                  spark, tablePath, Collections.emptyMap(), Option.empty());
+          PersistedMetadata merged =
+              MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
+                      current, tableManager, DeltaV2QueryContext$.MODULE$.empty())
+                  .get();
+          assertEquals(4L, merged.deltaCommitVersion());
+          assertEquals(trackedSnapshot.metadata().schema(), merged.dataSchema());
+          assertEquals(trackedSnapshot.protocol().json(), merged.protocolJson().get());
+
+          String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+          DeltaV2MicroBatchStream stream =
+              createStreamWithSeededTrackingLog(
+                  tablePath, schemaLogPath, merged.deltaCommitVersion());
+          try {
+            Executable readV1 =
+                () ->
+                    getDsv1FileChanges(
+                        DeltaLog.forTable(spark, new Path(tablePath)),
+                        tablePath,
+                        2L,
+                        DeltaSourceOffset.BASE_INDEX(),
+                        false,
+                        Optional.empty(),
+                        Optional.empty());
+            Executable readV2 =
+                () -> {
+                  try (ClosableIterator<Tuple2<IndexedFile, CDCDataFile>> iter =
+                      stream.getFileChangesWithRateLimitForCDC(
+                          2L,
+                          DeltaSourceOffset.BASE_INDEX(),
+                          false,
+                          Optional.empty(),
+                          Optional.empty())) {
+                    assertTrue(
+                        collectAll(iter).stream()
+                            .map(Tuple2::_1)
+                            .anyMatch(file -> file.version() == 5L && file.hasFileAction()));
+                  }
+                };
+            for (Executable read : List.of(readV1, readV2)) {
+              if (scenario.equals("unsupportedVersion")) {
+                assertThrows(InvalidProtocolVersionException.class, read);
+              } else if (scenario.equals("unsupportedReaderFeature")) {
+                DeltaUnsupportedTableFeatureException error =
+                    assertThrows(DeltaUnsupportedTableFeatureException.class, read);
+                assertEquals("DELTA_UNSUPPORTED_FEATURES_FOR_READ", error.getErrorClass());
+              } else {
+                assertDoesNotThrow(read);
+              }
+            }
+          } finally {
+            stream.stop();
+          }
+        });
+  }
+
   /**
    * Same as {@link #testProcessCommit_emitsBarrierAtSchemaChange} but the divergence is a
    * protocol-only ALTER (minReaderVersion/minWriterVersion bump). Targets the protocol-capture
@@ -1287,7 +1397,6 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(tablePath, createKernelContext(hadoopConf));
-    Engine engine = DefaultEngine.create(hadoopConf);
 
     Map<String, String> javaOptions = new HashMap<>();
     javaOptions.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
@@ -1298,14 +1407,15 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
     Snapshot seededSnapshot = snapshotManager.loadSnapshotAt(seededVersion);
+    DeltaV2TableManager tableManager =
+        DeltaV2TableManagerCache$.MODULE$.forTable(spark, tablePath, javaOptions, Option.empty());
 
     org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =
         MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
                 spark,
                 latestSnapshot,
                 javaOptions,
-                snapshotManager,
-                engine,
+                tableManager,
                 Option.empty(),
                 /* mergeConsecutiveSchemaChanges= */ false,
                 DeltaV2QueryContext$.MODULE$.empty())
@@ -1321,7 +1431,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     StructType tableSchema = seededSnapshot.metadata().schema();
     return new DeltaV2MicroBatchStream(
-        DeltaV2TableManagerCache$.MODULE$.forTable(spark, tablePath, javaOptions, Option.empty()),
+        tableManager,
         latestSnapshot,
         hadoopConf,
         spark,

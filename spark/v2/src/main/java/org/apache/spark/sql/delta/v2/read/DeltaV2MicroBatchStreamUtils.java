@@ -15,9 +15,7 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
-import com.google.common.collect.ImmutableSet;
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
-import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import java.io.IOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.util.*;
@@ -42,18 +40,6 @@ import scala.runtime.AbstractFunction2;
 final class DeltaV2MicroBatchStreamUtils {
 
   private DeltaV2MicroBatchStreamUtils() {}
-
-  public static final Set<DeltaAction> ACTION_SET =
-      ImmutableSet.of(
-          DeltaAction.ADD,
-          DeltaAction.REMOVE,
-          DeltaAction.METADATA,
-          DeltaAction.PROTOCOL,
-          DeltaAction.COMMITINFO);
-
-  /** Action set for CDC reads: {@link #ACTION_SET} plus {@link DeltaAction#CDC}. */
-  public static final Set<DeltaAction> CDC_ACTION_SET =
-      ImmutableSet.<DeltaAction>builder().addAll(ACTION_SET).add(DeltaAction.CDC).build();
 
   /**
    * If the given exception wraps a {@link ClosedByInterruptException} as its direct cause, returns

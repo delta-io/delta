@@ -21,8 +21,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Stream;
+import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaRuntimeException;
 import org.apache.spark.sql.delta.Snapshot;
@@ -52,6 +56,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import scala.Option;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
@@ -110,6 +115,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
   private DeltaOptions emptyDeltaOptions() {
     return new DeltaOptions(EMPTY_SCALA_MAP, spark.sessionState().conf());
+  }
+
+  private DeltaV2TableManager tableManagerForPath(String tablePath) {
+    return DeltaV2TableManagerCache$.MODULE$.forTable(
+        spark, tablePath, Collections.emptyMap(), Option.empty());
   }
 
   /**
@@ -961,8 +971,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         spark,
         snapshot,
         options,
-        snapshotManager,
-        defaultEngine,
+        tableManagerForPath(tablePath),
         Option.empty(),
         /* mergeConsecutiveSchemaChanges= */ false,
         EMPTY_QUERY_CONTEXT);
@@ -1099,7 +1108,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(tablePath, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-        spark, snapshot, options, snapshotManager, defaultEngine, EMPTY_QUERY_CONTEXT);
+        spark, snapshot, options, tableManagerForPath(tablePath), EMPTY_QUERY_CONTEXT);
   }
 
   /** Schema-tracking set but the log has no entry → empty. */
@@ -1138,8 +1147,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
                       spark,
                       dsv1Snapshot,
                       options,
-                      snapshotManager,
-                      defaultEngine,
+                      tableManagerForPath(tablePath),
                       Option.empty(),
                       /* mergeConsecutiveSchemaChanges= */ false,
                       EMPTY_QUERY_CONTEXT)
@@ -1160,8 +1168,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
                   spark,
                   dsv1Snapshot,
                   options,
-                  snapshotManager,
-                  defaultEngine,
+                  tableManagerForPath(tablePath),
                   EMPTY_QUERY_CONTEXT);
           assertTrue(result.isPresent());
           assertEquals(seededVersion, result.get().deltaCommitVersion());
@@ -1383,7 +1390,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current, snapshotManager, defaultEngine, tablePath, EMPTY_QUERY_CONTEXT);
+            current, tableManagerForPath(tablePath), EMPTY_QUERY_CONTEXT);
 
     if (expectedMergedVersion == EXPECTED_NO_MERGE) {
       assertTrue(result.isEmpty());
@@ -1406,6 +1413,79 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     assertEquals(expected.dataSchema(), result.get().dataSchema());
     assertEquals(expected.partitionSchema(), result.get().partitionSchema());
     assertEquals(expected.protocolJson(), result.get().protocolJson());
+  }
+
+  @ParameterizedTest(name = "firstRemainingCommitHasFiles={0}")
+  @ValueSource(booleans = {false, true})
+  public void testGetMergedConsecutive_missingTrackedVersion(
+      boolean firstRemainingCommitHasFiles, @TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
+    createPartitionedColumnMappingTable(tablePath, tableName);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
+    PersistedMetadata current = buildCurrentMetadataAtV0(tablePath, snapshotManager);
+
+    spark.sql(
+        String.format(
+            firstRemainingCommitHasFiles
+                ? "INSERT INTO %s VALUES (1, 'Alice')"
+                : "ALTER TABLE %s ADD COLUMNS (c3 INT)",
+            tableName));
+    // Keep the earliest remaining snapshot reconstructable after removing the tracked commit.
+    DeltaLog.forTable(spark, new Path(tablePath)).createCheckpointAtVersion(1L);
+    spark.sql(String.format("ALTER TABLE %s RENAME COLUMN id TO id_renamed", tableName));
+    Snapshot expected = snapshotManager.loadSnapshotAt(2L);
+    Files.delete(Paths.get(tablePath, "_delta_log", "00000000000000000000.json"));
+
+    Option<PersistedMetadata> result =
+        MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
+            current, tableManagerForPath(tablePath), EMPTY_QUERY_CONTEXT);
+
+    if (firstRemainingCommitHasFiles) {
+      assertTrue(result.isEmpty());
+    } else {
+      assertTrue(result.isDefined());
+      assertEquals(2L, result.get().deltaCommitVersion());
+      assertEquals(expected.metadata().schema(), result.get().dataSchema());
+      assertEquals(expected.metadata().partitionSchema(), result.get().partitionSchema());
+      assertEquals(
+          PersistedMetadata.toProtocolJson(expected.protocol()), result.get().protocolJson().get());
+    }
+  }
+
+  @Test
+  public void testGetMergedConsecutive_cdcFileWithoutAddOrRemove(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT) USING delta LOCATION '%s' "
+                + "TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true', "
+                + "'delta.enableInCommitTimestamps' = 'false')",
+            tableName, tablePath));
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, createKernelContext());
+    PersistedMetadata current = buildCurrentMetadataAtV0(tablePath, snapshotManager);
+    spark.sql(String.format("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName));
+    Snapshot expected = snapshotManager.loadSnapshotAt(1L);
+
+    // Include metadata so ignoring CDC would merge this commit instead of stopping for no change.
+    Files.write(
+        Paths.get(tablePath, "_delta_log", "00000000000000000002.json"),
+        List.of(
+            expected.metadata().json(),
+            "{\"cdc\":{\"path\":\"_change_data/cdc.parquet\",\"partitionValues\":{},"
+                + "\"size\":0,\"dataChange\":false}}"));
+
+    Option<PersistedMetadata> result =
+        MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
+            current, tableManagerForPath(tablePath), EMPTY_QUERY_CONTEXT);
+
+    assertTrue(result.isDefined());
+    assertEquals(1L, result.get().deltaCommitVersion());
+    assertEquals(expected.metadata().schema(), result.get().dataSchema());
   }
 
   /**
@@ -1446,7 +1526,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current, snapshotManager, defaultEngine, tablePath, EMPTY_QUERY_CONTEXT);
+            current, tableManagerForPath(tablePath), EMPTY_QUERY_CONTEXT);
 
     // v3 is metadata-only → merge advances to v3. v4 has file actions → stop.
     assertTrue(result.isDefined());
