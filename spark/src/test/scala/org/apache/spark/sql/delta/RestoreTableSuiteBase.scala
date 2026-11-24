@@ -254,8 +254,8 @@ trait RestoreTableSuiteBase
   for (downgradeAllowed <- DeltaTestUtils.BOOLEAN_DOMAIN)
   test(s"restore downgrade protocol (allowed=$downgradeAllowed)") {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned is not compatible w/ the test since protocol version would be " +
-        "set to (3, 7) by default for CC tables.")
+      cancel("CatalogManaged is not compatible w/ the test since protocol version would be " +
+        "set to (3, 7) by default for CatalogManaged tables.")
     }
     withTempDir { tempDir =>
       val path = tempDir.getAbsolutePath
@@ -289,8 +289,8 @@ trait RestoreTableSuiteBase
     test(
       s"restore downgrade protocol with table features (allowed=$downgradeAllowed)") {
       if (catalogOwnedDefaultCreationEnabledInTests) {
-        cancel("CatalogOwned is not compatible w/ the test since protocol version would be " +
-          "set to (3, 7) by default for CC tables.")
+        cancel("CatalogManaged is not compatible w/ the test since protocol version would be " +
+          "set to (3, 7) by default for CatalogManaged tables.")
       }
       withTempDir { tempDir =>
         val path = tempDir.getAbsolutePath
@@ -330,8 +330,8 @@ trait RestoreTableSuiteBase
       DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
       DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
       if (catalogOwnedDefaultCreationEnabledInTests) {
-        cancel("CatalogOwned is not compatible w/ the test since protocol version would be " +
-          "set to (3, 7) by default for CC tables.")
+        cancel("CatalogManaged is not compatible w/ the test since protocol version would be " +
+          "set to (3, 7) by default for CatalogManaged tables.")
       }
       withTempDir { dir =>
         spark.range(10).write.format("delta").save(dir.getAbsolutePath)
