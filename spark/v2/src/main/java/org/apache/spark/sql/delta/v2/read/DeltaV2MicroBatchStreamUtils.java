@@ -24,13 +24,11 @@ import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
-import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import scala.Function2;
 import scala.Tuple2;
-import scala.collection.Iterator;
 import scala.runtime.AbstractFunction2;
 
 /** Static helpers and constants of {@link DeltaV2MicroBatchStream}. */
@@ -197,22 +195,6 @@ final class DeltaV2MicroBatchStreamUtils {
         /* remove= */ null,
         /* cdc= */ null,
         /* shouldSkip= */ false);
-  }
-
-  /**
-   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for {@code version} before and after the
-   * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
-   * to this version.
-   */
-  static ClosableIterator<IndexedFile> addBeginAndEndIndexOffsetsForVersion(
-      long version, ClosableIterator<IndexedFile> files) {
-    return new IteratorCloseOps<>(files)
-        .withClose(
-            iterator ->
-                Iterator.single(sentinel(version, DeltaSourceOffset.BASE_INDEX()))
-                    .$plus$plus(() -> iterator)
-                    .$plus$plus(
-                        () -> Iterator.single(sentinel(version, DeltaSourceOffset.END_INDEX()))));
   }
 
   /** Pairs a CDC payload with its index. */
