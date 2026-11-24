@@ -955,6 +955,77 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     }
   }
 
+  /**
+   * Verifies that DSv1 and DSv2 throw the same ignore-changes error for a commit that adds and
+   * removes data files, also when its commitInfo has no operation name.
+   */
+  @ParameterizedTest
+  @CsvSource({"withOperation", "withoutOperation"})
+  public void testGetFileChanges_changeCommitErrorMatchesDsv1(
+      String scenario, @TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    createEmptyTestTable(testTablePath, "test_change_error_" + System.nanoTime());
+    String commitInfo =
+        scenario.equals("withOperation")
+            ? "{\"commitInfo\":{\"timestamp\":0,\"operation\":\"UPDATE\",\"operationParameters\":"
+                + "{\"predicate\":\"[\\\"(id = 1)\\\"]\",\"mode\":\"Overwrite\"}}}"
+            : "{\"commitInfo\":{\"timestamp\":0}}";
+    Files.writeString(
+        new File(tempDir, "_delta_log/00000000000000000001.json").toPath(),
+        commitInfo
+            + "\n{\"add\":{\"path\":\"new.parquet\",\"partitionValues\":{},\"size\":1,"
+            + "\"modificationTime\":0,\"dataChange\":true}}\n"
+            + "{\"remove\":{\"path\":\"old.parquet\",\"deletionTimestamp\":0,"
+            + "\"dataChange\":true}}\n");
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    DeltaUnsupportedOperationException dsv1Error =
+        assertThrows(
+            DeltaUnsupportedOperationException.class,
+            () -> {
+              ClosableIterator<IndexedFile> changes =
+                  deltaSource.getFileChanges(
+                      1L,
+                      DeltaSourceOffset.BASE_INDEX(),
+                      false,
+                      endOffset,
+                      /* verifyMetadataAction= */ true);
+              try {
+                while (changes.hasNext()) {
+                  changes.next();
+                }
+              } finally {
+                changes.close();
+              }
+            });
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    DeltaUnsupportedOperationException dsv2Error =
+        assertThrows(
+            DeltaUnsupportedOperationException.class,
+            () -> {
+              try (ClosableIterator<IndexedFile> changes =
+                  stream.getFileChanges(
+                      1L, DeltaSourceOffset.BASE_INDEX(), false, Optional.empty())) {
+                while (changes.hasNext()) {
+                  changes.next();
+                }
+              }
+            });
+
+    assertEquals("DELTA_SOURCE_TABLE_IGNORE_CHANGES", dsv2Error.getErrorClass());
+    assertEquals(dsv1Error.getMessage(), dsv2Error.getMessage());
+    String changeInfo = dsv2Error.getMessageParameters().get("changeInfo");
+    String expectedPrefix = scenario.equals("withOperation") ? "UPDATE (Map(" : "null (";
+    assertTrue(changeInfo.startsWith(expectedPrefix), changeInfo);
+  }
+
   private void assertSentinel(ClosableIterator<IndexedFile> changes, long version, long index) {
     assertTrue(changes.hasNext(), "Expected a commit boundary marker");
     IndexedFile sentinel = changes.next();
@@ -1065,8 +1136,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             testDescription, dsv1SuccessfulCalls.get(), dsv2SuccessfulCalls.get()));
 
     // Verify both error messages reference the same CommitInfo operation name.
-    // We compare only the operation name (e.g. "MERGE", "DELETE") because the full
-    // operationParameters differ in key ordering and value quoting between V1 and V2.
+    // testGetFileChanges_changeCommitErrorMatchesDsv1 compares the full messages.
     String dsv1Op = extractOperationName(dsv1Exception.getMessage());
     String dsv2Op = extractOperationName(dsv2Exception.getMessage());
     assertEquals(

@@ -28,7 +28,12 @@ import java.util.List;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
+import org.apache.spark.sql.delta.InvalidProtocolVersionException;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.VersionNotFoundException;
+import org.apache.spark.sql.delta.actions.Action;
+import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
@@ -283,5 +288,38 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             () -> backend.getSnapshotToValidateProtocol(/* version= */ 1L));
     assertEquals("DELTA_UNSUPPORTED_FEATURES_FOR_READ", e.getErrorClass());
     assertTrue(e.getMessage().contains(feature), e.getMessage());
+  }
+
+  @Test
+  public void protocolReadRejectsAProtocolThatThisClientCannotRead(@TempDir File tempDir) {
+    String path = createTable(tempDir, /* commits= */ 1);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 0L);
+    Snapshot snapshot = backend.update();
+
+    backend.protocolRead(snapshot.protocol(), snapshot);
+    InvalidProtocolVersionException versionError =
+        assertThrows(
+            InvalidProtocolVersionException.class,
+            () ->
+                backend.protocolRead(
+                    Protocol$.MODULE$.apply(Integer.MAX_VALUE, Integer.MAX_VALUE), snapshot));
+    // The same path as in V1 errors: the table data path.
+    assertEquals(snapshot.dataPath().toString(), versionError.tableNameOrPath());
+    Protocol unknownReaderFeature =
+        (Protocol)
+            Action.fromJson(
+                "{\"protocol\":{\"minReaderVersion\":3,\"minWriterVersion\":7,"
+                    + "\"readerFeatures\":[\"unknownFeature\"],"
+                    + "\"writerFeatures\":[\"unknownFeature\"]}}");
+    DeltaUnsupportedTableFeatureException featureError =
+        assertThrows(
+            DeltaUnsupportedTableFeatureException.class,
+            () -> backend.protocolRead(unknownReaderFeature, snapshot));
+    assertEquals("DELTA_UNSUPPORTED_FEATURES_FOR_READ", featureError.getErrorClass());
   }
 }

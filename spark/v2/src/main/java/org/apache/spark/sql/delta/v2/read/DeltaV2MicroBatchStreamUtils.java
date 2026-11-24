@@ -19,11 +19,8 @@ import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import java.io.IOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.util.*;
-import javax.annotation.Nullable;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
-import org.apache.spark.sql.delta.actions.Metadata;
-import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
@@ -78,22 +75,6 @@ final class DeltaV2MicroBatchStreamUtils {
   static boolean isAfterStartBoundary(IndexedFile file, long fromVersion, long fromIndex) {
     return file.version() > fromVersion
         || (file.version() == fromVersion && file.index() > fromIndex);
-  }
-
-  /** Result of commit validation, including skip decision and detected metadata/protocol. */
-  static class CommitValidationResult {
-    final boolean shouldSkipCommit;
-    @Nullable final Metadata metadataAction;
-    @Nullable final Protocol protocolAction;
-
-    CommitValidationResult(
-        boolean shouldSkipCommit,
-        @Nullable Metadata metadataAction,
-        @Nullable Protocol protocolAction) {
-      this.shouldSkipCommit = shouldSkipCommit;
-      this.metadataAction = metadataAction;
-      this.protocolAction = protocolAction;
-    }
   }
 
   /**
