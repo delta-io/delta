@@ -322,7 +322,7 @@ class CoordinatedCommitsSuite
 
 class CatalogOwnedSuite
   extends CommitCoordinatorSuiteBase
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   override def sparkConf: SparkConf = {
     // Make sure all new tables in tests use CatalogManaged table feature by default.

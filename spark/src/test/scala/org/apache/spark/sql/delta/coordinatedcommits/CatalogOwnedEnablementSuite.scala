@@ -31,7 +31,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 
 class CatalogOwnedEnablementSuite
   extends QueryTest
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
   with DeltaTestUtilsBase

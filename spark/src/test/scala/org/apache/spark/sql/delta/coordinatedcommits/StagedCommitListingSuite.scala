@@ -38,7 +38,7 @@ import org.apache.spark.sql.QueryTest
  * recursive-listing LogStore hermetically (no real object store).
  */
 class StagedCommitListingSuite extends QueryTest
-    with CatalogOwnedTestBaseSuite
+    with CatalogManagedTestBaseSuite
     with WithCatalogOwnedBatch100
     with DeltaSQLCommandTest {
 

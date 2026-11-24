@@ -34,7 +34,7 @@ trait CatalogManagedStreamingSuiteBase
   extends QueryTest
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with StreamTest {
 
 
