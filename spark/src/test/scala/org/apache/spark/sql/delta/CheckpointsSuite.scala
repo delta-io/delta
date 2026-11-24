@@ -27,7 +27,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageReco
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.amt.AMTPassthrough
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -58,7 +58,7 @@ class CheckpointsSuite
   with DeltaCheckpointTestUtils
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
