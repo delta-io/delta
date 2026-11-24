@@ -46,7 +46,7 @@ class StagedCommitListingSuite extends QueryTest
     super.sparkConf.set(logStoreClassConfKey, classOf[RecursiveListingLocalLogStore].getName)
 
   /** Runs `f` with Catalog Managed (CCv2) and staged-commit filtering enabled. */
-  private def withCatalogOwnedCommits(f: => Unit): Unit = withDefaultCCTableFeature {
+  private def withCatalogManagedCommits(f: => Unit): Unit = withDefaultCCTableFeature {
     withSQLConf(
       DeltaSQLConf.DELTA_SNAPSHOT_FILESYSTEM_LISTING_FILTER_STAGED_COMMITS_ENABLED.key ->
         "true") {
@@ -90,7 +90,7 @@ class StagedCommitListingSuite extends QueryTest
 
   // Sanity check: the harness actually surfaces staged files, else the tests below pass vacuously.
   test("test harness: recursive listing surfaces _staged_commits files") {
-    withCatalogOwnedCommits {
+    withCatalogManagedCommits {
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         spark.range(0, 10).write.format("delta").save(path)
@@ -115,7 +115,7 @@ class StagedCommitListingSuite extends QueryTest
   }
 
   test("filesystem listing keeps checkpoints and minor compactions") {
-    withCatalogOwnedCommits {
+    withCatalogManagedCommits {
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         spark.range(0, 10).write.format("delta").save(path) // v0
@@ -194,7 +194,7 @@ class StagedCommitListingSuite extends QueryTest
   }
 
   test("orphaned staged commit (not in getCommits) is not read") {
-    withCatalogOwnedCommits {
+    withCatalogManagedCommits {
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         spark.range(0, 10).write.format("delta").save(path) // v0
@@ -228,7 +228,7 @@ class StagedCommitListingSuite extends QueryTest
   }
 
   test("ratified, not-yet-backfilled staged commit is still read via the coordinator") {
-    withCatalogOwnedCommits {
+    withCatalogManagedCommits {
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         spark.range(0, 10).write.format("delta").save(path) // v0

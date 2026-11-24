@@ -75,10 +75,10 @@ object DeltaTestImplicits {
             // The AMT features are WIP. Don't enable them by default in test tables.
             val featuresToExclude =
               ArrayBuffer[TableFeature](AdaptiveMetadataTableFeatureBase.features: _*)
-            val enableCatalogOwnedByDefault = SparkSession.active.conf.getOption(
+            val enableCatalogManagedByDefault = SparkSession.active.conf.getOption(
               TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature))
                 .contains("supported")
-            if (!enableCatalogOwnedByDefault) {
+            if (!enableCatalogManagedByDefault) {
               // CatalogManagedTableFeature is enabled by protocol only without metadata, and should
               // not be enabled by default.
               featuresToExclude += CatalogManagedTableFeature

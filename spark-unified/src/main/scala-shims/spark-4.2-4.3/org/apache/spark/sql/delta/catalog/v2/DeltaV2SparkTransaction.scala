@@ -70,7 +70,7 @@ private[catalog] class DeltaV2SparkTransaction(
  *
  * The contract alone does NOT force the wrapper to forward every call: a method backed by a Java
  * default is silently satisfied by that default. We therefore exhaustively override every method
- * to forward it to `delegate`; the reflection test in DeltaV2CatalogTransactionSuite enforces
+ * to forward it to `delegate`; the reflection test in DeltaV2SparkTransactionCatalogSuite enforces
  * that none is missed.
  *
  * [[ChangelogSupport]] is mixed in directly (as [[DeltaCatalog]] does), rather than via

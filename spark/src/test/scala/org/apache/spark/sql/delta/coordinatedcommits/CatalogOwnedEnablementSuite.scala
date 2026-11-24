@@ -56,7 +56,7 @@ class CatalogOwnedEnablementSuite
    * @param tableName The name of the table to validate.
    * @param expectEnabled Whether the Catalog-Managed table feature should be enabled or not.
    */
-  private def validateCatalogOwnedCompleteEnablement(
+  private def validateCatalogManagedCompleteEnablement(
       tableName: String,
       expectEnabled: Boolean): Unit = {
     val (_, snapshot) = getDeltaLogWithSnapshot(TableIdentifier(tableName))
@@ -99,13 +99,13 @@ class CatalogOwnedEnablementSuite
    * for Catalog Managed enablement.
    *
    * @param tableName The name of the table to be created for the test.
-   * @param createCatalogOwnedTableAtInit Whether to enable Catalog-Managed table feature
-   *                                      at the time of table creation.
+   * @param createCatalogManagedTableAtInit Whether to enable Catalog-Managed table feature
+   *                                        at the time of table creation.
    */
-  private def testCatalogOwnedEnablementSetup(
+  private def testCatalogManagedEnablementSetup(
       tableName: String,
-      createCatalogOwnedTableAtInit: Boolean): Unit = {
-    if (createCatalogOwnedTableAtInit) {
+      createCatalogManagedTableAtInit: Boolean): Unit = {
+    if (createCatalogManagedTableAtInit) {
       createTable(tableName, properties = Map(
         s"delta.feature.${CatalogManagedTableFeature.name}" -> "supported"))
     } else {
@@ -114,9 +114,9 @@ class CatalogOwnedEnablementSuite
     // Insert initial data to the table
     spark.sql(s"INSERT INTO $tableName VALUES 1") // commit 1
     spark.sql(s"INSERT INTO $tableName VALUES 2") // commit 2
-    validateCatalogOwnedCompleteEnablement(
+    validateCatalogManagedCompleteEnablement(
       tableName,
-      expectEnabled = createCatalogOwnedTableAtInit)
+      expectEnabled = createCatalogManagedTableAtInit)
   }
 
   /**
@@ -125,10 +125,10 @@ class CatalogOwnedEnablementSuite
    * @param f The test function to run with the random-generated table name.
    */
   private def withRandomTable(
-      createCatalogOwnedTableAtInit: Boolean)(f: String => Unit): Unit = {
+      createCatalogManagedTableAtInit: Boolean)(f: String => Unit): Unit = {
     val randomTableName = s"testTable_${UUID.randomUUID().toString.replace("-", "")}"
     withTable(randomTableName) {
-      testCatalogOwnedEnablementSetup(randomTableName, createCatalogOwnedTableAtInit)
+      testCatalogManagedEnablementSetup(randomTableName, createCatalogManagedTableAtInit)
       f(randomTableName)
     }
   }
@@ -261,7 +261,7 @@ class CatalogOwnedEnablementSuite
   }
 
   test("Quality of life table feature should be enabled by CREATE CLONE for target table") {
-    withRandomTable(createCatalogOwnedTableAtInit = false) { tableName =>
+    withRandomTable(createCatalogManagedTableAtInit = false) { tableName =>
       withTable("t1", "t2") {
         val qolTableFeatures =
           CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._1)
@@ -276,7 +276,7 @@ class CatalogOwnedEnablementSuite
             tableName = t,
             supportedTableFeatures = qolTableFeatures
           )
-          validateCatalogOwnedCompleteEnablement(tableName = t, expectEnabled = true)
+          validateCatalogManagedCompleteEnablement(tableName = t, expectEnabled = true)
           sql(s"INSERT INTO $t VALUES (3), (4), (5), (6)")
           checkAnswer(sql(s"SELECT * FROM $t"),
             Seq(Row(1), Row(2), Row(3), Row(4), Row(5), Row(6)))
@@ -287,7 +287,7 @@ class CatalogOwnedEnablementSuite
 
   test("Quality of life table features and corresponding metadata should be " +
       "automatically enabled for CatalogOwned table") {
-    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
+    withRandomTable(createCatalogManagedTableAtInit = true) { tableName =>
       // [[RowTrackingFeature]], [[DeletionVectorsTableFeature]],
       // and [[V2CheckpointTableFeature]] should be enabled by default.
       validateQoLFeaturesEnablement(tableName, expected = true)
@@ -306,12 +306,12 @@ class CatalogOwnedEnablementSuite
       val readerAndWriterFeatureNames = snapshot.protocol.readerAndWriterFeatureNames
       assert(readerAndWriterFeatureNames.contains(ChangeDataFeedTableFeature.name) &&
         readerAndWriterFeatureNames.contains(ClusteringTableFeature.name))
-      validateCatalogOwnedCompleteEnablement(tableName = "t1", expectEnabled = true)
+      validateCatalogManagedCompleteEnablement(tableName = "t1", expectEnabled = true)
     }
   }
 
   test("ALTER TABLE should be blocked if attempts to disable ICT") {
-    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
+    withRandomTable(createCatalogManagedTableAtInit = true) { tableName =>
       val error = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('$ICT_ENABLED_KEY' = 'false')")
       }
@@ -324,7 +324,7 @@ class CatalogOwnedEnablementSuite
   }
 
   test("ALTER TABLE should be blocked if attempts to unset ICT") {
-    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
+    withRandomTable(createCatalogManagedTableAtInit = true) { tableName =>
       val error = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         spark.sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('$ICT_ENABLED_KEY')")
       }
@@ -354,7 +354,7 @@ class CatalogOwnedEnablementSuite
   }
 
   test("ALTER TABLE should be blocked if attempts to downgrade Catalog-Owned") {
-    withRandomTable(createCatalogOwnedTableAtInit = true)  { tableName =>
+    withRandomTable(createCatalogManagedTableAtInit = true)  { tableName =>
       val error = intercept[DeltaTableFeatureException] {
         spark.sql(s"ALTER TABLE $tableName DROP FEATURE '${CatalogManagedTableFeature.name}'")
       }
@@ -369,7 +369,7 @@ class CatalogOwnedEnablementSuite
   test("Upgrade should be blocked since it is not supported yet") {
     withRandomTable(
       // Do not enable Catalog-Managed at the beginning when creating table
-      createCatalogOwnedTableAtInit = false
+      createCatalogManagedTableAtInit = false
     ) { tableName =>
       val error = intercept[NotImplementedException] {
         spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
@@ -380,7 +380,7 @@ class CatalogOwnedEnablementSuite
   }
 
   test("Dropping CatalogOwned dependent features should be blocked") {
-    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
+    withRandomTable(createCatalogManagedTableAtInit = true) { tableName =>
       val error1 = intercept[DeltaTableFeatureException] {
         spark.sql(s"ALTER TABLE $tableName DROP FEATURE '${InCommitTimestampTableFeature.name}'")
       }
@@ -406,7 +406,7 @@ class CatalogOwnedEnablementSuite
   }
 
   test("CO_COMMIT should be recorded in usage_log for normal CO commit") {
-    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
+    withRandomTable(createCatalogManagedTableAtInit = true) { tableName =>
       val usageLog = Log4jUsageLogger.track {
         sql(s"INSERT INTO $tableName VALUES 3")
       }
