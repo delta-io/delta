@@ -17,8 +17,10 @@
 package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
+import java.util.concurrent.locks.Lock
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import com.google.common.util.concurrent.Striped
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingProfileProvider}
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
 import io.delta.sharing.client.util.ConfUtils
@@ -69,6 +71,9 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       profileProvider.getCustomQueryId().isDefined &&
       profileProvider.getCustomRefresherWrapper().isDefined
   }
+
+  // Per-log locks, so concurrent identical queries build a log once. Lazy, weak stripes.
+  private val snapshotDeltaLogLocks: Striped[Lock] = Striped.lazyWeakLock(1024)
 
   /**
    * Reuse the log an identical earlier query built (same table and `queryParamsHashId`), and
@@ -216,6 +221,9 @@ object DeltaSharingDeltaLogBuilder extends Logging {
    * Reuse an identical earlier query's synthetic Delta log, or build it and register its presigned
    * URLs against `anchor`, returning the encoded `delta-sharing-log://` [[Path]]. Used by the V1
    * path ([[DeltaSharingFileIndex]]), whose anchor (its FileIndex) already exists at call time.
+   *
+   * When reuse is possible, a miss builds under the log's lock and waiters check again, so
+   * concurrent identical queries build the log once.
    */
   def buildSnapshotDeltaLogPath(
       client: DeltaSharingClient,
@@ -227,6 +235,8 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       limit: Option[Long],
       anchor: AnyRef,
       logPrefix: String): Path = {
+    def tryReuse(): Option[Path] =
+      tryReuseSnapshotDeltaLog(client, tablePath, queryParamsHashId, anchor, logPrefix)
     def build(): Path = {
       val unregistered = buildSnapshotDeltaLog(
         client = client,
@@ -242,8 +252,12 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       unregistered.encodedPath
     }
     if (canReuseSnapshotDeltaLog(client.getProfileProvider)) {
-      tryReuseSnapshotDeltaLog(client, tablePath, queryParamsHashId, anchor, logPrefix)
-        .getOrElse(build())
+      tryReuse().getOrElse {
+        val lock = snapshotDeltaLogLocks.get(
+          DeltaSharingUtils.getTablePathWithIdSuffix(tablePath, queryParamsHashId))
+        lock.lockInterruptibly()
+        try tryReuse().getOrElse(build()) finally lock.unlock()
+      }
     } else {
       build()
     }

@@ -18,6 +18,10 @@ package io.delta.sharing.spark
 
 import java.io.File
 import java.lang.ref.WeakReference
+import java.util.concurrent.{CountDownLatch, TimeUnit}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
+
+import scala.util.Try
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -45,13 +49,17 @@ private[sharing] class TestQuerySpecificFileProfileProvider(conf: Configuration,
   override def getCustomQueryId(): Option[String] =
     Some(TestQuerySpecificFileProfileProvider.queryId)
 
-  override def getCustomRefresherWrapper(): Option[QuerySpecificCachedTable.RefresherWrapper] =
+  override def getCustomRefresherWrapper(): Option[QuerySpecificCachedTable.RefresherWrapper] = {
+    TestQuerySpecificFileProfileProvider.onGetCustomRefresherWrapper()
     Some((refreshToken, refresher) => refresher(refreshToken))
+  }
 }
 
 private[sharing] object TestQuerySpecificFileProfileProvider {
   @volatile var queryId: String = "query-1"
 
+  // Runs on every getCustomRefresherWrapper call, so a test can pause a query there.
+  @volatile var onGetCustomRefresherWrapper: () => Unit = () => ()
 }
 
 /**
@@ -472,4 +480,56 @@ class DeltaSharingDeltaLogBuilderSuite
     }
   }
 
+  test("delta log reuse: identical queries running at the same time build the log once") {
+    withQuerySpecificCache(reuseEnabled = true) { profilePath =>
+      val firstQueryPaused = new CountDownLatch(1)
+      val resumeFirstQuery = new CountDownLatch(1)
+      val paused = new AtomicBoolean(false)
+      val cacheEmptyWhenPaused = new AtomicBoolean(false)
+      // Pause query 1 when CachedTableManager registers its urls: after it wrote the blocks,
+      // holding the lock. (The reuse guard also calls getCustomRefresherWrapper, before the lock.)
+      TestQuerySpecificFileProfileProvider.onGetCustomRefresherWrapper = () => {
+        val registering = Thread.currentThread.getStackTrace.exists(
+          _.getClassName.startsWith(classOf[CachedTableManager].getName))
+        if (registering && paused.compareAndSet(false, true)) {
+          cacheEmptyWhenPaused.set(CachedTableManager.INSTANCE.size() == 0)
+          firstQueryPaused.countDown()
+          assert(resumeFirstQuery.await(60, TimeUnit.SECONDS))
+        }
+      }
+      // Run a query on a new thread, which inherits this thread's active session.
+      def startQuery(queryId: String, anchor: AnyRef): (Thread, () => (Path, Int)) = {
+        val result = new AtomicReference[Try[(Path, Int)]]()
+        val thread =
+          new Thread(() => result.set(Try(runQuery(profilePath, queryId, "hashA", anchor))))
+        thread.start()
+        (thread, () => { thread.join(60000); Option(result.get).getOrElse(fail("query hung")).get })
+      }
+      try {
+        val anchor1 = new Object()
+        val anchor2 = new Object()
+        val (_, query1) = startQuery("query-1", anchor1)
+        assert(firstQueryPaused.await(60, TimeUnit.SECONDS))
+        assert(cacheEmptyWhenPaused.get())
+
+        // Query 2 waits for the lock instead of calling getFiles itself.
+        val (thread2, query2) = startQuery("query-2", anchor2)
+        thread2.join(1000)
+        assert(thread2.isAlive, "query 2 must wait while query 1 builds the log")
+
+        // Query 1 finishes and releases the lock; query 2 reuses its log.
+        resumeFirstQuery.countDown()
+        val (path1, getFiles1) = query1()
+        val (path2, getFiles2) = query2()
+        assert(getFiles1 == 1)
+        assert(getFiles2 == 0)
+        assert(path2 == path1)
+        assert(CachedTableManager.INSTANCE.getQueryStateSize(cacheKey(profilePath, "hashA")) == 2)
+        assert(anchor1 != null && anchor2 != null)
+      } finally {
+        resumeFirstQuery.countDown()
+        TestQuerySpecificFileProfileProvider.onGetCustomRefresherWrapper = () => ()
+      }
+    }
+  }
 }
