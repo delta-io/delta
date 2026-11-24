@@ -579,6 +579,8 @@ private[tablemanager] class StubTableManager(val id: String) extends DeltaV2Tabl
     throw new UnsupportedOperationException("stub")
   override def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot =
     throw new UnsupportedOperationException("stub")
+  override def loadLatestSnapshotSynchronously(queryContext: DeltaV2QueryContext): Snapshot =
+    throw new UnsupportedOperationException("stub")
   override def loadSnapshotAt(version: Long, queryContext: DeltaV2QueryContext): Snapshot =
     throw new UnsupportedOperationException("stub")
   override def getActiveCommitAtTime(

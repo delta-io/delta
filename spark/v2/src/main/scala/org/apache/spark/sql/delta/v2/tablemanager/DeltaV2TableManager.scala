@@ -61,6 +61,12 @@ private[v2] trait DeltaV2TableManager {
   /** Loads the latest snapshot using inputs scoped to the current query. */
   def loadLatestSnapshot(queryContext: DeltaV2QueryContext): Snapshot
 
+  /**
+   * Loads the latest snapshot validated against the log before it returns, even when the table's
+   * staleness limit allows a stale latest. Callers that compare against the latest version need it.
+   */
+  def loadLatestSnapshotSynchronously(queryContext: DeltaV2QueryContext): Snapshot
+
   /** Loads a versioned snapshot using inputs scoped to the current query. */
   def loadSnapshotAt(version: Long, queryContext: DeltaV2QueryContext): Snapshot
 
