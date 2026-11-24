@@ -203,7 +203,6 @@ object CheckpointProvider extends DeltaLogging {
       override def createCheckpointProvider(): AMTCheckpointProvider = {
         val rootInfo = checkpointReadFuture.get(Duration.Inf)
         AMTCheckpointProvider(
-          spark = spark,
           manifestCommitVersion = provider.manifestCommitVersion,
           checkpointAction = provider.checkpointAction,
           rootInfo = rootInfo,

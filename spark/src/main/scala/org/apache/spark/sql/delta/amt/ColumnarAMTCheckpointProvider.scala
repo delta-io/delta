@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, SingleAction}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
@@ -27,8 +26,7 @@ import org.apache.spark.sql.functions.{col, lit}
 
 /**
  * An [[AMTCheckpointProvider]] whose state reconstruction builds each `AddFile` field as a column
- * over the persisted manifest rows (see `AMTManifestReaderImpl.addFileColumn`). Enabled by
- * [[DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED]].
+ * over the persisted manifest rows (see `AMTManifestReaderImpl.addFileColumn`).
  *
  * @param rootInfo The root's leaf pointers and optional prefetched rows.
  */
