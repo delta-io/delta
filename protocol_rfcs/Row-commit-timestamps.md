@@ -163,7 +163,7 @@ The writer requirements for Row Commit Versions apply correspondingly to Row Com
 
 - Writers must set defaultRowCommitTimestamp in add actions for newly written data files to the successful commit's final inCommitTimestamp. If a retry changes that timestamp, writers must update these defaults accordingly.
 - Writers must preserve the previously committed defaultRowCommitTimestamp in recommitted and checkpointed add actions and corresponding remove actions.
-- Writers must assign Row Commit Timestamps to all rows.
+- Writers must ensure every written row has a resolvable Row Commit Timestamp, either from a non-null materialized value or from the file's `defaultRowCommitTimestamp`.
   - Writers must preserve the Row Commit Timestamps of rows that are copied (but not updated) using materialized Row Commit Timestamps.
     - The preserved Row Commit Timestamp must equal the resolved Commit Timestamp of the same logical row before it was copied.
     - Materialized Row Commit Timestamps must be written to the column determined by `delta.rowTracking.materializedRowCommitTimestampColumnName` in the `configuration` of the table's `metaData` action.
