@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.Relocated.StreamExecution
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
