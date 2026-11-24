@@ -887,6 +887,8 @@ class Snapshot(
 
   def outputAttributeSchema: StructType = metadata.dataSchema
 
+  def outputUsesPhysicalNames: Boolean = false
+
   /** Returns the schema of the columns written out to file (overridden in write path) */
   def dataSchema: StructType = metadata.dataSchema
 

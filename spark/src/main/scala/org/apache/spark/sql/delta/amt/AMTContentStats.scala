@@ -121,6 +121,7 @@ private[amt] object AMTContentStats extends DeltaLogging {
       override def tableSchema: StructType = tableMetadata.dataSchema
       override def outputTableStatsSchema: StructType = tableMetadata.dataSchema
       override def outputAttributeSchema: StructType = tableMetadata.dataSchema
+      override def outputUsesPhysicalNames: Boolean = false
       override val statsColumnSpec =
         StatisticsCollection.configuredDeltaStatsColumnSpec(tableMetadata)
       override def columnMappingMode: DeltaColumnMappingMode = tableMetadata.columnMappingMode

@@ -126,6 +126,8 @@ trait StatisticsCollection extends DeltaLogging {
    * The partition columns' definitions are not included in this schema.
    */
   def outputAttributeSchema: StructType
+  /** Whether `outputAttributeSchema` names columns by their physical names. */
+  def outputUsesPhysicalNames: Boolean
   /** The statistic indexed column specification of the target delta table. */
   val statsColumnSpec: DeltaStatsColumnSpec
   /** The column mapping mode of the target delta table. */
@@ -185,17 +187,19 @@ trait StatisticsCollection extends DeltaLogging {
 
   /**
    * statCollectionPhysicalSchema is the schema that is composed of all the columns that have the
-   * stats collected with our current table configuration.
+   * stats collected with our current table configuration, named as in `outputAttributeSchema`.
    */
-  lazy val statCollectionPhysicalSchema: StructType =
-    getIndexedColumns(explodedDataSchemaNames, statsColumnSpec, effectiveSchema, columnMappingMode)
+  lazy val statCollectionPhysicalSchema: StructType = getIndexedColumns(
+    statsColumnSpec,
+    effectiveSchema,
+    if (outputUsesPhysicalNames) columnMappingMode else NoMapping)
 
   /**
    * statCollectionLogicalSchema is the logical schema that is composed of all the columns that have
    * the stats collected with our current table configuration.
    */
   lazy val statCollectionLogicalSchema: StructType =
-    getIndexedColumns(explodedDataSchemaNames, statsColumnSpec, effectiveSchema, NoMapping)
+    getIndexedColumns(statsColumnSpec, effectiveSchema, NoMapping)
 
   /**
    * Traverses the [[statisticsSchema]] for the provided [[statisticsColumn]]
@@ -726,13 +730,10 @@ object StatisticsCollection extends DeltaCommand {
    * Convert the logical name of each field to physical name according to the column mapping mode.
    */
   private[sql] def convertToPhysicalName(
-      fullPath: String,
       field: StructField,
-      schemaNames: Seq[String],
       mappingMode: DeltaColumnMappingMode): StructField = {
-    // If mapping mode is NoMapping or the dataSchemaName already contains the mapped
-    // column name, the schema mapping can be skipped.
-    if (mappingMode == NoMapping || schemaNames.contains(fullPath)) return field
+    // NoMapping means column mapping is disabled or `field` already has the name its data uses.
+    if (mappingMode == NoMapping) return field
     // Check if the physical name exists.
     if (!DeltaColumnMapping.hasPhysicalName(field)) {
       throw DeltaErrors.missingPhysicalName(mappingMode, field.name)
@@ -741,9 +742,7 @@ object StatisticsCollection extends DeltaCommand {
     val physicalName = field.metadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
     field.dataType match {
       case structType: StructType =>
-        val newDataType = StructType(
-          structType.map(child => convertToPhysicalName(fullPath, child, schemaNames, mappingMode))
-        )
+        val newDataType = StructType(structType.map(convertToPhysicalName(_, mappingMode)))
         field.copy(name = physicalName, dataType = newDataType)
       case _ => field.copy(name = physicalName)
     }
@@ -752,50 +751,36 @@ object StatisticsCollection extends DeltaCommand {
   /**
    * Generates a filtered data schema for stats collection.
    * Note: This method is matching the logical name of tables with the columns inside
-   * DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS. The output of the filter schema is translated into
-   * physical name.
+   * DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS. The output of the filter schema takes physical names
+   * unless `mappingMode` is NoMapping, see [[convertToPhysicalName]].
    *
-   * @param schemaNames the full name path of all columns inside `schema`.
    * @param schema the original data schema.
    * @param statsColPaths the specific set of columns to collect stats on.
-   * @param mappingMode the column mapping mode of this statistics collection.
-   * @param parentPath the parent column path of `schema`.
+   * @param mappingMode the column mapping mode of the table, or NoMapping if `schema` already has
+   *                    the names the data uses.
    * @return filtered schema
    */
   private def filterSchema(
-      schemaNames: Seq[String],
       schema: StructType,
       statsColPaths: Seq[Seq[String]],
-      mappingMode: DeltaColumnMappingMode,
-      parentPath: Seq[String] = Seq.empty): StructType = {
+      mappingMode: DeltaColumnMappingMode): StructType = {
     // Find the unique column names at this nesting depth, each with its path remainders (if any)
-    val cols = statsColPaths.groupBy(_.head).mapValues(_.map(_.tail))
+    val pathsByColName = statsColPaths.groupBy(_.head)
+    val cols = pathsByColName.mapValues(_.map(_.tail))
     val newSchema = schema.flatMap { field =>
       val lowerCaseFieldName = field.name.toLowerCase(Locale.ROOT)
       cols.get(lowerCaseFieldName).flatMap { paths =>
         field.dataType match {
           case _ if paths.forall(_.isEmpty) =>
-            // Convert full path to lower cases to avoid schema name contains upper case
-            // characters.
-            val fullPath = (parentPath :+ field.name).mkString(".").toLowerCase(Locale.ROOT)
-            Some(convertToPhysicalName(fullPath, field, schemaNames, mappingMode))
+            Some(convertToPhysicalName(field, mappingMode))
           case fieldSchema: StructType =>
-            // Convert full path to lower cases to avoid schema name contains upper case
-            // characters.
-            val fullPath = (parentPath :+ field.name).mkString(".").toLowerCase(Locale.ROOT)
-            val physicalName = if (mappingMode == NoMapping || schemaNames.contains(fullPath)) {
+            val physicalName = if (mappingMode == NoMapping) {
               field.name
             } else {
               field.metadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
             }
             // Recurse into the child fields of this struct.
-            val newSchema = filterSchema(
-              schemaNames,
-              fieldSchema,
-              paths.filterNot(_.isEmpty),
-              mappingMode,
-              parentPath:+ field.name
-            )
+            val newSchema = filterSchema(fieldSchema, paths.filterNot(_.isEmpty), mappingMode)
             Some(field.copy(name = physicalName, dataType = newSchema))
           case _ =>
             // Filter expected a nested field and this isn't nested. No match
@@ -809,10 +794,10 @@ object StatisticsCollection extends DeltaCommand {
   /**
    * Computes the set of columns to be used for stats collection on a table. Specific named columns
    * take precedence, if provided; otherwise the first numIndexedColsOpt are extracted from the
-   * schema.
+   * schema. Specific named columns take their physical names unless `mappingMode` is NoMapping, see
+   * [[convertToPhysicalName]].
    */
   def getIndexedColumns(
-      schemaNames: Seq[String],
       spec: DeltaStatsColumnSpec,
       schema: StructType,
       mappingMode: DeltaColumnMappingMode): StructType = {
@@ -821,14 +806,15 @@ object StatisticsCollection extends DeltaCommand {
         // convert all index columns to lower case characters to avoid user assigning any upper
         // case characters.
         val indexedColPaths = indexedColNames.map(_.nameParts.map(_.toLowerCase(Locale.ROOT)))
-        filterSchema(schemaNames, schema, indexedColPaths, mappingMode)
+        filterSchema(schema, indexedColPaths, mappingMode)
       }
       .getOrElse {
         val numIndexedCols = spec.numIndexedColsOpt.get
         if (numIndexedCols < 0) {
           schema // negative means don't truncate the schema
         } else {
-          truncateSchema(schema, numIndexedCols)._1
+          val (truncatedSchema, _) = truncateSchema(schema, numIndexedCols)
+          truncatedSchema
         }
       }
   }
