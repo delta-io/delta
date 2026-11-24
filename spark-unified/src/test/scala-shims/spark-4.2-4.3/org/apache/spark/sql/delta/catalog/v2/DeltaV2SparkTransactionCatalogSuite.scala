@@ -34,12 +34,12 @@ import org.apache.spark.sql.test.SharedSparkSession
  * End-to-end coverage of the transactional Delta catalog: a v2 write over a transactional Delta
  * session catalog begins a catalog-scoped [[DeltaV2SparkTransaction]].
  */
-class DeltaV2CatalogTransactionSuite
+class DeltaV2SparkTransactionCatalogSuite
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
-  import DeltaV2CatalogTransactionSuite._
+  import DeltaV2SparkTransactionCatalogSuite._
 
   override protected def sparkConf: SparkConf = {
     val conf = super.sparkConf.set(DeltaSQLConf.V2_TRANSACTIONS_ENABLED.key, "true")
@@ -208,7 +208,7 @@ class DeltaV2CatalogTransactionsNonStrictGuardSuite
     "DELTAV2_TRANSACTIONS_INCONSISTENT_CONFIG.REQUIRES_V2_CONNECTOR"
 }
 
-object DeltaV2CatalogTransactionSuite {
+object DeltaV2SparkTransactionCatalogSuite {
   /**
    * Transactional Delta session catalog that records the last transaction it begins. This allows
    * tests to inspect it. This mirrors Spark's `InMemoryRowLevelOperationTableCatalog`. Can be
