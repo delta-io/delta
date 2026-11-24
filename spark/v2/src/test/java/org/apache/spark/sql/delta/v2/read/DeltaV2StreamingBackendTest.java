@@ -48,6 +48,7 @@ import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
+import org.apache.spark.sql.delta.InvalidProtocolVersionException;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.VersionNotFoundException;
 import org.apache.spark.sql.delta.actions.Action;
