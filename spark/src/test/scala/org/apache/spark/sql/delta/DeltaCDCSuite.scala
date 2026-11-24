@@ -27,7 +27,7 @@ import scala.concurrent.duration._
 import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.cdc.CDCEnabled
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -50,7 +50,7 @@ abstract class DeltaCDCSuiteBase
   with SharedSparkSession
   with CheckCDCAnswer
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with DeltaSQLTestUtils
   with CDFNondeterministicFilterTests {
 

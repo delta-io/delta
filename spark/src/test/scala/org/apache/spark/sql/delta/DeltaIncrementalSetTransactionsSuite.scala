@@ -23,7 +23,7 @@ import java.util.UUID
 import com.databricks.spark.util.UsageRecord
 import org.apache.spark.sql.delta.DeltaTestUtils.{collectUsageLogs, createTestAddFile, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.actions.{AddFile, SetTransaction, SingleAction}
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -38,7 +38,7 @@ class DeltaIncrementalSetTransactionsSuite
   extends QueryTest
     with DeltaSQLCommandTest
     with SharedSparkSession
-    with CatalogOwnedTestBaseSuite {
+    with CatalogManagedTestBaseSuite {
 
   protected override def sparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "true")

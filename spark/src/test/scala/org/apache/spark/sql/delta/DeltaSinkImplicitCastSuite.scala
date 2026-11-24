@@ -21,7 +21,7 @@ import java.sql.{Date, Timestamp}
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
@@ -121,7 +121,7 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
  * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
  */
 class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
   import testImplicits._
 
   test(s"write wider type - long -> int") {
