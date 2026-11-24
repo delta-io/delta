@@ -45,6 +45,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.sources.DeltaSource
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport.collectMetadataActions
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset
 import org.apache.spark.sql.delta.sources.DeltaSourceOffsetLogic
@@ -148,7 +149,8 @@ private[read] class DeltaV2MicroBatchStream(
   /** The Delta log operations that compute offsets. */
   override protected val streamingBackend: DeltaStreamingBackend =
       new DeltaV2StreamingBackend(
-          tableManager, originalStreamingQueryContext, snapshotAtSourceInit.version)
+          tableManager, originalStreamingQueryContext, snapshotAtSourceInit.version,
+          spark, options)
   Objects.requireNonNull(hadoopConf, "hadoopConf is null")
   Objects.requireNonNull(spark, "spark is null")
   Objects.requireNonNull(options, "options is null")
@@ -240,8 +242,6 @@ private[read] class DeltaV2MicroBatchStream(
           spark,
           tableId,
           streamingBackend,
-          tableManager,
-          originalStreamingQueryContext,
           options,
           schemaReadOptions,
           metadataTrackingLog,
@@ -1129,18 +1129,8 @@ private[read] class DeltaV2MicroBatchStream(
         // intermediate schema changes against the stream read schema to capture corners cases such
         // as rename and rename back.
         if (batchEndVersion.isDefined) {
-          for (entry <-
-              CollectionConverters.asScala(StreamingHelper.collectMetadataActions(
-                      batchStartVersion,
-                      Optional.of(Long.box(batchEndVersion.get)),
-                      tableManager,
-                      originalStreamingQueryContext,
-                      options.failOnDataLoss,
-                      spark,
-                      readSnapshotDescriptor)
-                  .entrySet())) {
-            val version: Long = entry.getKey()
-            val metadata: Metadata = entry.getValue()
+          for ((version, metadata) <- collectMetadataActions(
+              streamingBackend, batchStartVersion, batchEndVersion)) {
             checkReadIncompatibleSchemaChanges(
                 metadata,
                 version,

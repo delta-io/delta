@@ -20,13 +20,14 @@ import java.sql.Timestamp
 
 import scala.jdk.CollectionConverters._
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaSingleCommit, Snapshot, SnapshotDescriptor, VersionNotFoundException}
-import org.apache.spark.sql.delta.actions.Protocol
-import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaStreamingBackend}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaOptions, DeltaSingleCommit, Snapshot, SnapshotDescriptor, VersionNotFoundException}
+import org.apache.spark.sql.delta.actions.{Action, Protocol}
+import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSourceOffset, DeltaStreamingBackend}
 import org.apache.spark.sql.delta.storage.ClosableIterator
-import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
+import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.v2.exception.{VersionNotFoundException => V2VersionNotFoundException}
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
+import org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamUtils.wrapIteratorWithCommitIteratorClose
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException
 
@@ -46,7 +47,9 @@ import org.apache.spark.sql.SparkSession
 private[read] class DeltaV2StreamingBackend(
     tableManager: DeltaV2TableManager,
     queryContext: DeltaV2QueryContext,
-    snapshotVersionAtSourceInit: Long)
+    snapshotVersionAtSourceInit: Long,
+    spark: SparkSession,
+    options: DeltaOptions)
   extends DeltaStreamingBackend {
 
   @volatile private var latestSnapshot: Snapshot = _
@@ -146,5 +149,17 @@ private[read] class DeltaV2StreamingBackend(
 
     tableManager.getSingleCommitIterator(
       startVersion, endVersionOpt, queryContext, failOnDataLoss)
+  }
+
+  override def collectActions(
+      startVersion: Long,
+      endVersionOpt: Option[Long]): ClosableIterator[(Long, Action)] = {
+    val commits = tableManager.getSingleCommitIterator(
+      startVersion, endVersionOpt, queryContext, options.failOnDataLoss)
+    val actions = commits.flatMapWithClose { commit =>
+      DeltaSource.createRewindableActionIterator(spark, commit)
+        .withClose(_.map((commit.version, _)))
+    }
+    wrapIteratorWithCommitIteratorClose(actions, commits)
   }
 }

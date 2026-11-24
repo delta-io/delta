@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport.collectMetadataActions
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
@@ -496,7 +497,8 @@ trait DeltaSourceBase extends Source
         // as rename and rename back.
         for {
           endVersion <- batchEndVersionOpt
-          (version, metadata) <- collectMetadataActions(batchStartVersion, endVersion)
+          (version, metadata) <- collectMetadataActions(
+            streamingBackend, batchStartVersion, Some(endVersion))
         } {
           checkReadIncompatibleSchemaChanges(
             metadata,
@@ -561,7 +563,7 @@ case class DeltaSource(
 
   /** The Delta log operations that compute offsets. */
   protected lazy val streamingBackend: DeltaStreamingBackend =
-    new DeltaLogStreamingBackend(deltaLog, () => catalogTableOpt)
+    new DeltaLogStreamingBackend(deltaLog, () => catalogTableOpt, spark, options)
 
   // A metadata snapshot when starting the query.
   protected var initialState: DeltaSourceSnapshot = null
