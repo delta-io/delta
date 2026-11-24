@@ -107,8 +107,12 @@ trait CatalogManagedTestBaseSuite
    */
   def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = None
 
-  def catalogOwnedDefaultCreationEnabledInTests: Boolean =
+  def catalogManagedDefaultCreationEnabledInTests: Boolean =
     catalogManagedCoordinatorBackfillBatchSize.nonEmpty
+
+  /** Old name of [[catalogManagedDefaultCreationEnabledInTests]], for code that still reads it. */
+  final def catalogOwnedDefaultCreationEnabledInTests: Boolean =
+    catalogManagedDefaultCreationEnabledInTests
 
   /**
    * Returns the commit coordinator client for the specified catalog.
@@ -125,7 +129,7 @@ trait CatalogManagedTestBaseSuite
   }
 
   override protected def sparkConf: SparkConf = {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       super.sparkConf.set(defaultCatalogManagedFeatureEnabledKey, "supported")
     } else {
       super.sparkConf
@@ -184,7 +188,7 @@ trait CatalogManagedTestBaseSuite
   override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(
       implicit pos: Position): Unit = {
     super.test(testName, testTags: _*) {
-      if (catalogOwnedDefaultCreationEnabledInTests &&
+      if (catalogManagedDefaultCreationEnabledInTests &&
           testTags.contains(CatalogManagedMaintenanceIncompatible)) {
         cancel("Maintenance operation is not supported for catalog-managed tables")
       }
@@ -297,7 +301,7 @@ trait CatalogManagedTestBaseSuite
   def constructCatalogOwnedSpecificTableProperties(
       spark: SparkSession,
       metadata: Metadata): Map[String, String] = {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       val qolConfs = CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
         .collect {
           case (feature, config, value)
@@ -329,7 +333,7 @@ trait CatalogManagedTestBaseSuite
    */
   def extractCatalogOwnedSpecificPropertiesIfEnabled(
       metadata: Metadata): Iterable[(String, String)] = {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       val CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS =
         CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
           .map { case (_, config, _) => config.key }
@@ -351,7 +355,7 @@ trait CatalogManagedTestBaseSuite
   }
 
   protected def withClassicCheckpointPolicyForCatalogOwned(f: => Unit): Unit = {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       withSQLConf(
         DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.Classic.name) {
         f

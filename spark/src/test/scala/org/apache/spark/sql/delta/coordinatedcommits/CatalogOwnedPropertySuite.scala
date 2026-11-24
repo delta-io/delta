@@ -36,7 +36,7 @@ class CatalogOwnedPropertySuite extends QueryTest
   // Register the mock commit coordinator builder for testing, but don't enable
   // CatalogManaged by default (tests explicitly enable it when needed).
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(3)
-  override def catalogOwnedDefaultCreationEnabledInTests: Boolean = false
+  override def catalogManagedDefaultCreationEnabledInTests: Boolean = false
 
   /**
    * Validate if the table is catalog managed or not by checking the following:
