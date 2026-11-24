@@ -104,6 +104,28 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     return createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
   }
 
+  /** A stream on the given table manager, so that a test can spy on its log store. */
+  private DeltaV2MicroBatchStream createTestStream(
+      DeltaV2TableManager tableManager, Snapshot snapshot) {
+    String snapshotPath = snapshot.dataPath().toString();
+    return new DeltaV2MicroBatchStream(
+        tableManager,
+        snapshot,
+        spark.sessionState().newHadoopConf(),
+        spark,
+        emptyDeltaOptions(),
+        snapshotPath,
+        snapshot.schema(),
+        new StructType(),
+        new StructType(),
+        new StructType(),
+        new org.apache.spark.sql.sources.Filter[0],
+        Map$.MODULE$.empty(),
+        Option.empty(),
+        snapshotPath + "/_checkpoint",
+        DeltaV2QueryContext$.MODULE$.empty());
+  }
+
   private DeltaOptions emptyDeltaOptions() {
     return new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
   }
@@ -120,23 +142,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
                 spark, tablePath, Collections.emptyMap(), Option.empty()));
     Snapshot snapshot = tableManager.loadLatestSnapshot(DeltaV2QueryContext$.MODULE$.empty());
     String snapshotPath = snapshot.dataPath().toString();
-    DeltaV2MicroBatchStream stream =
-        new DeltaV2MicroBatchStream(
-            tableManager,
-            snapshot,
-            spark.sessionState().newHadoopConf(),
-            spark,
-            emptyDeltaOptions(),
-            snapshotPath,
-            snapshot.schema(),
-            new StructType(),
-            new StructType(),
-            new StructType(),
-            new org.apache.spark.sql.sources.Filter[0],
-            Map$.MODULE$.empty(),
-            Option.empty(),
-            snapshotPath + "/_checkpoint",
-            DeltaV2QueryContext$.MODULE$.empty());
+    DeltaV2MicroBatchStream stream = createTestStream(tableManager, snapshot);
     Protocol protocol;
     if (scenario.equals("unsupportedVersion")) {
       protocol = Protocol$.MODULE$.apply(99, 7);
@@ -200,6 +206,80 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       for (ClosableIterator<String> reader : readers) {
         verify(reader, atLeastOnce()).close();
       }
+    } finally {
+      stream.stop();
+    }
+  }
+
+  @ParameterizedTest(name = "inMemory={0}, endAtLastCommitStart={1}")
+  @CsvSource({"true, false", "true, true", "false, false", "false, true"})
+  void fileChangesReadEachCommitOnceWhenItFitsInMemory(
+      boolean inMemory, boolean endAtLastCommitStart, @TempDir File tempDir) throws Exception {
+    int readsPerCommit = inMemory ? 1 : 2;
+    // The production default keeps small commits in memory, and 0 streams every commit.
+    withSQLConf(
+        DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD().key(),
+        inMemory ? DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD().defaultValueString() : "0",
+        () -> checkCommitReads(readsPerCommit, endAtLastCommitStart, tempDir));
+  }
+
+  private void checkCommitReads(int readsPerCommit, boolean endAtLastCommitStart, File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    createEmptyTestTable(tablePath, "stream_reads_" + System.nanoTime());
+    DeltaV2TableManager tableManager =
+        spy(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, tablePath, Collections.emptyMap(), Option.empty()));
+    Snapshot snapshot = tableManager.loadLatestSnapshot(DeltaV2QueryContext$.MODULE$.empty());
+    DeltaV2MicroBatchStream stream = createTestStream(tableManager, snapshot);
+    long firstVersion = snapshot.version() + 1;
+    long lastVersion = firstVersion + 1;
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (1, 'first')", tablePath));
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (2, 'second')", tablePath));
+    String tableId = DeltaLog.forTable(spark, new Path(tablePath)).tableId();
+    long baseIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaSourceOffset lastCommitStart =
+        new DeltaSourceOffset(tableId, lastVersion, baseIndex, /* isInitialSnapshot= */ false);
+    LogStore logStore = spy(tableManager.logStore());
+    List<String> readFiles = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              readFiles.add(invocation.<FileStatus>getArgument(0).getPath().getName());
+              return invocation.callRealMethod();
+            })
+        .when(logStore)
+        .readAsIterator(any(FileStatus.class), any(Configuration.class));
+    doReturn(logStore).when(tableManager).logStore();
+
+    try {
+      List<Long> fileVersions = new ArrayList<>();
+      try (ClosableIterator<IndexedFile> changes =
+          stream.getFileChanges(
+              firstVersion,
+              baseIndex,
+              /* isInitialSnapshot= */ false,
+              endAtLastCommitStart ? Optional.of(lastCommitStart) : Optional.empty())) {
+        while (changes.hasNext()) {
+          IndexedFile file = changes.next();
+          if (file.hasFileAction()) {
+            fileVersions.add(file.version());
+          }
+        }
+      }
+      assertEquals(
+          endAtLastCommitStart ? List.of(firstVersion) : List.of(firstVersion, lastVersion),
+          fileVersions.stream().distinct().collect(Collectors.toList()));
+      // As in V1, a commit below the threshold is read once and replayed from memory, and a
+      // larger one is read again. A batch that ends at the start of a commit also reads that
+      // commit, so an error anywhere in it fails the batch.
+      List<String> expected = new ArrayList<>();
+      for (long version = firstVersion; version <= lastVersion; version++) {
+        for (int read = 0; read < readsPerCommit; read++) {
+          expected.add(String.format("%020d.json", version));
+        }
+      }
+      assertEquals(expected, readFiles);
     } finally {
       stream.stop();
     }
