@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.v2.utils;
 import static io.delta.kernel.internal.actions.AddFile.SCHEMA_WITHOUT_STATS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.data.ColumnVector;
@@ -37,7 +36,6 @@ import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.snapshot.PathBasedSnapshotManager;
-import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import scala.Option;
@@ -170,5 +168,4 @@ public class StreamingHelperTest extends DeltaV2TestBase {
       assertEquals(expectedVersion, kernelSnapshot.version());
     }
   }
-
 }

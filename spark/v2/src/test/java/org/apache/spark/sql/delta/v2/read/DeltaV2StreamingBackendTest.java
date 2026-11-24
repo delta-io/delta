@@ -24,6 +24,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.delta.kernel.CommitFileStatus;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
@@ -39,6 +40,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.spark.sql.catalyst.TableIdentifier;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
@@ -63,11 +68,6 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit$;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.spark.sql.catalyst.TableIdentifier;
-import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
@@ -130,7 +130,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             DeltaV2TableManagerCache$.MODULE$.forTable(
                 spark, path, Collections.emptyMap(), Option.empty()),
             queryContext,
-            /* snapshotVersionAtSourceInit= */ 3L, spark, defaultOptions());
+            /* snapshotVersionAtSourceInit= */ 3L,
+            spark,
+            defaultOptions());
     DeltaSourceOffset endOffset = createEndOffset(backend.update().metadata().id(), 2L);
 
     assertEquals(
@@ -149,7 +151,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             DeltaV2TableManagerCache$.MODULE$.forTable(
                 spark, path, Collections.emptyMap(), Option.empty()),
             queryContext,
-            /* snapshotVersionAtSourceInit= */ 2L, spark, defaultOptions());
+            /* snapshotVersionAtSourceInit= */ 2L,
+            spark,
+            defaultOptions());
     // Finishing version 2 advances the stream's offset to version 3, which does not exist yet.
     DeltaSourceOffset endOffset = createEndOffset(backend.update().metadata().id(), 3L);
 
@@ -169,7 +173,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             DeltaV2TableManagerCache$.MODULE$.forTable(
                 spark, path, Collections.emptyMap(), Option.empty()),
             queryContext,
-            /* snapshotVersionAtSourceInit= */ 0L, spark, defaultOptions());
+            /* snapshotVersionAtSourceInit= */ 0L,
+            spark,
+            defaultOptions());
     DeltaSourceOffset endOffset = createEndOffset(backend.update().metadata().id(), 1L);
 
     assertEquals(
@@ -192,7 +198,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
                   DeltaV2TableManagerCache$.MODULE$.forTable(
                       spark, path, Collections.emptyMap(), Option.empty()),
                   queryContext,
-                  /* snapshotVersionAtSourceInit= */ 0L, spark, defaultOptions());
+                  /* snapshotVersionAtSourceInit= */ 0L,
+                  spark,
+                  defaultOptions());
           DeltaSourceOffset endOffset = createEndOffset(backend.update().metadata().id(), 1L);
 
           spark.range(1).write().format("delta").mode("append").save(path);
@@ -220,7 +228,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
                   DeltaV2TableManagerCache$.MODULE$.forTable(
                       spark, path, Collections.emptyMap(), Option.empty()),
                   queryContext,
-                  /* snapshotVersionAtSourceInit= */ 0L, spark, defaultOptions());
+                  /* snapshotVersionAtSourceInit= */ 0L,
+                  spark,
+                  defaultOptions());
 
           assertEquals(
               Collections.emptyList(),
@@ -246,7 +256,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             DeltaV2TableManagerCache$.MODULE$.forTable(
                 spark, path, Collections.emptyMap(), Option.empty()),
             queryContext,
-            /* snapshotVersionAtSourceInit= */ 0L, spark, defaultOptions());
+            /* snapshotVersionAtSourceInit= */ 0L,
+            spark,
+            defaultOptions());
     assertEquals(0L, backend.update().version());
 
     spark.range(1).write().format("delta").mode("append").save(path);
@@ -271,7 +283,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             DeltaV2TableManagerCache$.MODULE$.forTable(
                 spark, path, Collections.emptyMap(), Option.empty()),
             queryContext,
-            /* snapshotVersionAtSourceInit= */ 1L, spark, defaultOptions());
+            /* snapshotVersionAtSourceInit= */ 1L,
+            spark,
+            defaultOptions());
 
     // The V1 backend returns DeltaLog.unsafeVolatileTableId.
     assertEquals(
@@ -286,7 +300,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             DeltaV2TableManagerCache$.MODULE$.forTable(
                 spark, path, Collections.emptyMap(), Option.empty()),
             queryContext,
-            /* snapshotVersionAtSourceInit= */ 2L, spark, defaultOptions());
+            /* snapshotVersionAtSourceInit= */ 2L,
+            spark,
+            defaultOptions());
 
     VersionNotFoundException e =
         assertThrows(
@@ -322,7 +338,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             DeltaV2TableManagerCache$.MODULE$.forTable(
                 spark, path, Collections.emptyMap(), Option.empty()),
             queryContext,
-            /* snapshotVersionAtSourceInit= */ 0L, spark, defaultOptions());
+            /* snapshotVersionAtSourceInit= */ 0L,
+            spark,
+            defaultOptions());
 
     DeltaUnsupportedTableFeatureException e =
         assertThrows(
@@ -401,8 +419,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             ? Option.apply(
                 spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName)))
             : Option.empty();
-    DeltaV2QueryContext collectorQueryContext =
-        DeltaV2QueryContext$.MODULE$.apply(catalogTableOpt);
+    DeltaV2QueryContext collectorQueryContext = DeltaV2QueryContext$.MODULE$.apply(catalogTableOpt);
     DeltaV2TableManager manager =
         DeltaV2TableManagerCache$.MODULE$.forTable(
             spark, path, Collections.emptyMap(), catalogTableOpt);
@@ -605,8 +622,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
         new IteratorCloseOps<>(ScalaUtils.toClosableIterator(commits))
             .withClose(
                 iterator ->
-                    iterator.map(
-                        file -> DeltaV2SingleCommit$.MODULE$.apply(file, logStore, conf)));
+                    iterator.map(file -> DeltaV2SingleCommit$.MODULE$.apply(file, logStore, conf)));
     when(manager.getSingleCommitIterator(
             7L, Option.apply((Object) 7L), queryContext, failOnDataLoss))
         .thenReturn(v1Commits);
@@ -630,8 +646,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
   @ValueSource(booleans = {false, true})
   void singleVersionCollectorsStopAndCloseIterators(boolean metadata) throws Exception {
     CommitFileStatus kernelCommit =
-        new CommitFileStatus(
-            7L, io.delta.kernel.utils.FileStatus.of("/table/7.json", 1L, 0L));
+        new CommitFileStatus(7L, io.delta.kernel.utils.FileStatus.of("/table/7.json", 1L, 0L));
     CloseableIterator<CommitFileStatus> commits = mockIterator();
     when(commits.hasNext())
         .thenReturn(true)
@@ -698,9 +713,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             });
     when(commits.next())
         .thenReturn(
-            new CommitFileStatus(
-                7L,
-                io.delta.kernel.utils.FileStatus.of("/table/7.json", 1L, 0L)));
+            new CommitFileStatus(7L, io.delta.kernel.utils.FileStatus.of("/table/7.json", 1L, 0L)));
     CloseableIterator<String> actions = mockIterator();
     when(actions.hasNext()).thenAnswer(ignored -> !remainingActions.isEmpty());
     when(actions.next()).thenAnswer(ignored -> remainingActions.remove(0));
@@ -989,10 +1002,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
                   backend, 1L, Option.apply(1L))));
       assertEquals(
           protocol,
-          DeltaSourceMetadataEvolutionSupport$.MODULE$
-              .collectProtocolAtVersion(backend, 1L)
-              .get());
+          DeltaSourceMetadataEvolutionSupport$.MODULE$.collectProtocolAtVersion(backend, 1L).get());
     }
   }
-
 }
