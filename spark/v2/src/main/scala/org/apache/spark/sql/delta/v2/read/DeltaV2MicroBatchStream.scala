@@ -34,7 +34,6 @@ import org.apache.spark.sql.delta.NoMapping
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.TypeWidening
-import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.CommitInfo
@@ -247,6 +246,14 @@ private[read] class DeltaV2MicroBatchStream(
           metadataTrackingLog,
           readSnapshotDescriptor,
           metadataPath)
+
+
+  override protected def getMetadataOrProtocolChangeIndexedFileIterator(
+      metadataChangeOpt: Option[Metadata],
+      protocolChangeOpt: Option[Protocol],
+      version: Long): ClosableIterator[IndexedFile] =
+      metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
+          metadataChangeOpt.orNull, protocolChangeOpt.orNull, version)
 
   locally {
     val shouldValidateSchemaOnRestart: Boolean =
@@ -974,71 +981,15 @@ private[read] class DeltaV2MicroBatchStream(
             throw new RuntimeException("Failed to process commit at version " + version, e)
           }
 
-      // Second pass: Build a lazy iterator of IndexedFiles.
-      //
-      //   BEGIN (BASE_INDEX) + [metadata barrier] + actual file actions + END (END_INDEX)
-      //
-      // These sentinel IndexedFiles have null file actions and are used for proper offset
-      // tracking:
-      //   - BASE_INDEX: marks "before any files in this version", allowing the offset to
-      //                 reference the start of a version.
-      //   - METADATA_CHANGE_INDEX: schema change barrier (stops offset generation here).
-      //   - END_INDEX:  marks end of version, triggers version advancement in
-      //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
-      //
-      // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
-      // If metadata tracking is active, inject schema change barrier sentinel before file
-      // actions. This mirrors v1's getMetadataOrProtocolChangeIndexedFileIterator concatenation
-      // in filterAndGetIndexedFiles.
-      val metadataBarrier: ClosableIterator[IndexedFile] =
-          metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
-              metadataOpt.orNull, protocolOpt.orNull, version)
-
-      val fileActions: ClosableIterator[IndexedFile] =
-          if (shouldSkipCommit) {
-              new ClosableWrapper[IndexedFile](Iterator.empty).toClosable
-          } else getFilesFromCommit(commit, version)
-
-      val inner: ClosableIterator[IndexedFile] =
-          new IteratorCloseOps(fileActions)
-              .withClose(
-                  files =>
-                      Iterator.single(
-                          sentinel(version, DeltaSourceOffset.BASE_INDEX))
-                          .++(metadataBarrier)
-                          .++(files)
-                          .++(
-                              Iterator.single(
-                                  sentinel(version, DeltaSourceOffset.END_INDEX))))
-
-      inner
+      // Second pass reads the commit lazily.
+      new IteratorCloseOps(commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L))
+          .withClose(
+              actionsIter =>
+                  filterAndGetIndexedFiles(
+                      actionsIter, version, shouldSkipCommit, metadataOpt, protocolOpt))
     } catch { case e: Exception =>
       throw (if (e.isInstanceOf[RuntimeException]) e else new RuntimeException(e))
     }
-  }
-
-  private def getFilesFromCommit(
-      commit: DeltaSingleCommit, version: Long): ClosableIterator[IndexedFile] = {
-    val actions: ClosableIterator[Action] =
-        commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)
-    // Assign each IndexedFile a unique index within the commit. We use a mutable array
-    // because variables captured by a lambda must be effectively final (never reassigned).
-    val fileIndex: Array[Long] = Array(0L)
-
-    // Only include AddFiles with dataChange=true. Skip changes that optimize or reorganize
-    // data without changing the logical content.
-    new IteratorCloseOps(actions)
-        .withClose(
-            actionIterator =>
-                actionIterator
-                    .filter(
-                        action =>
-                            action.isInstanceOf[AddFile] && action.asInstanceOf[AddFile].dataChange)
-                    .map(action => {
-                      val index: Long = fileIndex(0)
-                      fileIndex(0) += 1
-                      IndexedFile(version, index, action.asInstanceOf[AddFile])
-                    }))
   }
 
   /**
@@ -1197,9 +1148,8 @@ private[read] class DeltaV2MicroBatchStream(
 
     // TODO: Add range-aware iteration to DeltaSourceSnapshot so V1 and V2 can filter the
     // already-processed prefix before decoding files.
-    val snapshotFiles: ClosableIterator[IndexedFile] =
-        new ClosableWrapper(initialSnapshot.iterator()).toClosable
-    addBeginAndEndIndexOffsetsForVersion(version, snapshotFiles)
+    val snapshotFiles: Iterator[IndexedFile] = initialSnapshot.iterator()
+    new ClosableWrapper(addBeginAndEndIndexOffsetsForVersion(version, snapshotFiles)).toClosable
   }
 
   /**

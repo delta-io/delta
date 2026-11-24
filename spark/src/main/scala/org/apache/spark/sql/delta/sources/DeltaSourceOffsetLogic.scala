@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.storage.ClosableIterator
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -79,6 +80,16 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
   /** The `skipChangeCommits` option. */
   protected def skipChangeCommits: Boolean
 
+
+  /**
+   * When the source tracks metadata changes, returns a metadata change barrier [[IndexedFile]] if
+   * the metadata or protocol change of `version` differs from the stream metadata, see
+   * [[DeltaSourceMetadataEvolutionSupport.getMetadataOrProtocolChangeIndexedFileIterator]].
+   */
+  protected def getMetadataOrProtocolChangeIndexedFileIterator(
+      metadataChangeOpt: Option[Metadata],
+      protocolChangeOpt: Option[Protocol],
+      version: Long): ClosableIterator[IndexedFile]
 
   // ---------------------------------------------------------------------------------------------
   // Metadata tracking
@@ -324,6 +335,54 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
       }
     }
     (skippedCommit, metadataAction, protocolAction)
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Indexed files
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for @version before and after the
+   * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
+   * to this version.
+   */
+  protected def addBeginAndEndIndexOffsetsForVersion(
+      version: Long, iterator: Iterator[IndexedFile]): Iterator[IndexedFile] = {
+    Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, add = null)) ++
+      iterator ++
+      Iterator.single(IndexedFile(version, DeltaSourceOffset.END_INDEX, add = null))
+  }
+
+  /**
+   * Filter the iterator with only add files that contain data change and get indexed files.
+   * @return indexed add files
+   */
+  protected def filterAndGetIndexedFiles(
+      iterator: Iterator[Action],
+      version: Long,
+      shouldSkipCommit: Boolean,
+      metadataOpt: Option[Metadata],
+      protocolOpt: Option[Protocol]): Iterator[IndexedFile] = {
+    val filteredIterator =
+      if (shouldSkipCommit) {
+        Iterator.empty
+      } else {
+        iterator.collect { case a: AddFile if a.dataChange => a }
+      }
+
+    var index = -1L
+    val indexedFiles = new Iterator[IndexedFile] {
+      override def hasNext: Boolean = filteredIterator.hasNext
+      override def next(): IndexedFile = {
+        index += 1 // pre-increment the index (so it starts from 0)
+        val add = filteredIterator.next().copy(stats = null)
+        IndexedFile(version, index, add)
+      }
+    }
+    addBeginAndEndIndexOffsetsForVersion(
+      version,
+      getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
+        indexedFiles)
   }
 
   // ---------------------------------------------------------------------------------------------

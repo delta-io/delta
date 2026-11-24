@@ -659,18 +659,6 @@ case class DeltaSource(
   }
 
   /**
-   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for @version before and after the
-   * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
-   * to this version.
-   */
-  protected def addBeginAndEndIndexOffsetsForVersion(
-      version: Long, iterator: Iterator[IndexedFile]): Iterator[IndexedFile] = {
-    Iterator.single(IndexedFile(version, DeltaSourceOffset.BASE_INDEX, add = null)) ++
-      iterator ++
-      Iterator.single(IndexedFile(version, DeltaSourceOffset.END_INDEX, add = null))
-  }
-
-  /**
    * This method computes the initial snapshot to read when Delta Source was initialized on a fresh
    * stream.
    * @return A tuple where the first element is an iterator of IndexedFiles and the second element
@@ -791,38 +779,6 @@ case class DeltaSource(
   override def getOffset: Option[Offset] = {
     throw new UnsupportedOperationException(
       "latestOffset(Offset, ReadLimit) should be called instead of this method")
-  }
-
-  /**
-   * Filter the iterator with only add files that contain data change and get indexed files.
-   * @return indexed add files
-   */
-  private def filterAndGetIndexedFiles(
-      iterator: Iterator[Action],
-      version: Long,
-      shouldSkipCommit: Boolean,
-      metadataOpt: Option[Metadata],
-      protocolOpt: Option[Protocol]): Iterator[IndexedFile] = {
-    val filteredIterator =
-      if (shouldSkipCommit) {
-        Iterator.empty
-      } else {
-        iterator.collect { case a: AddFile if a.dataChange => a }
-      }
-
-    var index = -1L
-    val indexedFiles = new Iterator[IndexedFile] {
-      override def hasNext: Boolean = filteredIterator.hasNext
-      override def next(): IndexedFile = {
-        index += 1 // pre-increment the index (so it starts from 0)
-        val add = filteredIterator.next().copy(stats = null)
-        IndexedFile(version, index, add)
-      }
-    }
-    addBeginAndEndIndexOffsetsForVersion(
-      version,
-      getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
-        indexedFiles)
   }
 
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame =

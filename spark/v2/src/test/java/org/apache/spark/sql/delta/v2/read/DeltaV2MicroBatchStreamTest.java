@@ -54,6 +54,7 @@ import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.connector.read.streaming.ReadLimit;
 import org.apache.spark.sql.delta.*;
 import org.apache.spark.sql.delta.actions.Action;
+import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.actions.FileAction;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.Protocol$;
@@ -538,7 +539,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       while (kernelChanges.hasNext()) {
         kernelFilesList.add(kernelChanges.next());
       }
-      compareFileChanges(deltaFilesList, kernelFilesList);
+      compareFileChangesAndStats(deltaFilesList, kernelFilesList);
     }
   }
 
@@ -727,7 +728,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       while (kernelChanges.hasNext()) {
         kernelFilesList.add(kernelChanges.next());
       }
-      compareFileChanges(deltaFilesList, kernelFilesList);
+      compareFileChangesAndStats(deltaFilesList, kernelFilesList);
     }
   }
 
@@ -819,6 +820,23 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     }
   }
 
+  /**
+   * Like {@link #compareFileChanges}, and also checks that dsv1 and dsv2 keep the same
+   * {@code AddFile.stats} (both clear them). Not for CDC, where dsv2 keeps the stats.
+   */
+  private static void compareFileChangesAndStats(
+      List<IndexedFile> deltaSourceFiles, List<IndexedFile> kernelFiles) {
+    compareFileChanges(deltaSourceFiles, kernelFiles);
+    for (int i = 0; i < deltaSourceFiles.size(); i++) {
+      AddFile deltaAdd = deltaSourceFiles.get(i).add();
+      AddFile kernelAdd = kernelFiles.get(i).add();
+      assertEquals(
+          deltaAdd != null ? deltaAdd.stats() : null,
+          kernelAdd != null ? kernelAdd.stats() : null,
+          "AddFile stats mismatch at index " + i);
+    }
+  }
+
   // ================================================================================================
   // Tests for commits with no data file changes
   // ================================================================================================
@@ -877,7 +895,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       }
 
       // Compare results
-      compareFileChanges(deltaFilesList, kernelFilesList);
+      compareFileChangesAndStats(deltaFilesList, kernelFilesList);
     }
   }
 
