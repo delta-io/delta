@@ -25,7 +25,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, AMTCheckpointAction, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -46,12 +46,12 @@ import org.apache.spark.sql.types.{ArrayType, BinaryType, BooleanType, ByteType,
  * file lookups, and typed access to the snapshot's [[AMTCheckpointProvider]].
  *
  * AMT requires the `catalogManaged` feature, so tables must be catalog-managed and accessed by
- * name (path-based access is blocked). This mixes in [[CatalogOwnedTestBaseSuite]] to register an
+ * name (path-based access is blocked). This mixes in [[CatalogManagedTestBaseSuite]] to register an
  * in-memory commit coordinator and creates/accesses tables by name.
  */
 trait AMTCheckpointTestBase
   extends QueryTest
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with DeltaSQLCommandTest {
 
   // Register the in-memory commit coordinator so catalog-managed AMT tables can be created locally.
