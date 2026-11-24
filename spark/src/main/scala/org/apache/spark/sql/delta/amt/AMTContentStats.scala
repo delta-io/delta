@@ -390,6 +390,8 @@ private[amt] object AMTContentStats extends DeltaLogging {
         case (DeltaStatistics.NULL_COUNT, schema: StructType) =>
           perColumnStats(NULL_VALUE_COUNT, schema, Nil).getOrElse(lit(null).cast(schema))
         case (DeltaStatistics.TIGHT_BOUNDS, dataType) => tightBounds.cast(dataType)
+        // AMT keeps no `tightStats`, so files read back without it.
+        case (DeltaStatistics.TIGHT_STATS, dataType) => lit(null).cast(dataType)
         case (name, dataType) =>
           // Fails tests, so that a statistic Delta adds gets mapped here; null in production.
           deltaAssert(

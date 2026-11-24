@@ -1736,13 +1736,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Runs all AddFile sanity checks: empty-file detection and null-partition validation.
+   * Runs all AddFile sanity checks: empty-file detection and null-partition validation, and in
+   * tests, that the file's tightness flags agree (see [[StatsTightness]]).
    */
   protected def validateAddFileInvariants(
       addFile: AddFile,
       notNullPartitionCols: Set[String]): Unit = {
     validateAddFileNotEmpty(addFile)
     validateAddFileForNullPartitions(addFile, notNullPartitionCols)
+    if (Utils.isTesting) StatsTightness.checkTightnessFlags(addFile, protocol)
   }
 
   /**
