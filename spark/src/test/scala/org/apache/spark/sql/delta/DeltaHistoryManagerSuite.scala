@@ -357,7 +357,7 @@ trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        if (catalogOwnedCoordinatorBackfillBatchSize.exists(_ > 2)) {
+        if (catalogManagedCoordinatorBackfillBatchSize.exists(_ > 2)) {
           assert(e2.getMessage.contains("No commits found at"))
         } else {
           assert(e2.getMessage.contains("No recreatable commits found at"))
@@ -419,7 +419,7 @@ trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTablesCatalogOwned) {
+    if (isICTEnabledForNewTablesCatalogManaged) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
