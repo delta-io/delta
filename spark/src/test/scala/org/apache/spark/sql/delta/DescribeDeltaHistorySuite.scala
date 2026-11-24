@@ -22,7 +22,7 @@ import java.io.File
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DescribeDeltaHistoryCommand
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -47,7 +47,7 @@ trait DescribeDeltaHistorySuiteBase
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
   with MergeIntoMetricsBase
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with WriteOptionsTestBase {
 
   import deltaImplicits._
