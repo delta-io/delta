@@ -98,10 +98,17 @@ trait CatalogManagedTestBaseSuite
     TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature)
 
   // If this config is not overridden, newly created table is not CatalogManaged by default.
+  // Code reads this member. It defaults to the old name below, so a suite can override either name.
+  def catalogManagedCoordinatorBackfillBatchSize: Option[Int] =
+    catalogOwnedCoordinatorBackfillBatchSize
+
+  /**
+   * Old name of [[catalogManagedCoordinatorBackfillBatchSize]], for suites that still override it.
+   */
   def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = None
 
   def catalogOwnedDefaultCreationEnabledInTests: Boolean =
-    catalogOwnedCoordinatorBackfillBatchSize.nonEmpty
+    catalogManagedCoordinatorBackfillBatchSize.nonEmpty
 
   /**
    * Returns the commit coordinator client for the specified catalog.
@@ -135,7 +142,7 @@ trait CatalogManagedTestBaseSuite
   override protected def beforeEach(): Unit = {
     super.beforeEach()
     CatalogManagedCommitCoordinatorProvider.clearBuilders()
-    catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
+    catalogManagedCoordinatorBackfillBatchSize.foreach { batchSize =>
       CatalogManagedCommitCoordinatorProvider.registerBuilder(
         catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize)
@@ -360,7 +367,7 @@ trait CatalogManagedTestBaseSuite
   }
 
   protected def isICTEnabledForNewTablesCatalogOwned: Boolean = {
-    catalogOwnedCoordinatorBackfillBatchSize.nonEmpty ||
+    catalogManagedCoordinatorBackfillBatchSize.nonEmpty ||
       spark.conf.getOption(
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")
   }
