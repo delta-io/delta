@@ -1,0 +1,19 @@
+This file contains the code used to generate this golden table "spark-geospatial"
+
+Using Delta master (4.5.0-SNAPSHOT) on Spark 4.2, with the preview flag
+spark.databricks.delta.geo.preview.enabled=true, run the following scala script.
+The WKB values are little-endian POINTs: (1 2) = 0101000000000000000000F03F0000000000000040,
+(10 20) = 010100000000000000000024400000000000003440,
+(-5 30) = 010100000000000000000014C00000000000003E40,
+(15 0) = 01010000000000000000002E400000000000000000.
+
+def pt(wkb: String) = s"ST_SetSrid(ST_GeomFromWKB(X'$wkb'), 4326)"
+def pg(wkb: String) = s"ST_GeogFromWKB(X'$wkb')"
+spark.sql(s"""
+  CREATE TABLE delta.`<REPLACE WITH THE TABLE PATH>` USING DELTA AS
+  SELECT * FROM VALUES
+    (1, ${pt(p12)}, ${pg(p1020)}, named_struct('g', ${pt(p12)})),
+    (2, CAST(NULL AS GEOMETRY(4326)), ${pg(pm530)}, CAST(NULL AS STRUCT<g: GEOMETRY(4326)>)),
+    (3, ${pt(p150)}, CAST(NULL AS GEOGRAPHY(4326)), named_struct('g', CAST(NULL AS GEOMETRY(4326))))
+  AS t(id, geom, geog, nested)
+""")
