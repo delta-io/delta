@@ -597,14 +597,9 @@ trait Checkpoints extends DeltaLogging {
           // We have all the deltas needed after the accurate content root version, so we update.
           readManifestCommitAndUpdateAMTCheckpointProvider(initSegment, lastManifestCommit)
         } else {
-          // The initial log segment somehow has a non-AMT provider, while the lastManifestCommit
-          // claims that there is some AMT content root available describing an earlier version.
-          // This might happen across upgrade/downgrade code paths. Throw until we support them.
-          throw new IllegalStateException(
-            s"The LastManifestCommit of version ${lastManifestCommit.version} carries a " +
-              s"content root version ${lastManifestCommit.contentRootVersion} that is before " +
-              s"the initial non-AMT checkpoint version ${otherCheckpointProvider.version}. " +
-              "Refusing to trust the checkpoint.")
+          // Only a downgrade writes a checkpoint newer than the last tree: it keeps
+          // lastManifestCommit until the drop commit. The newer checkpoint is the starting point.
+          initSegment
         }
 
       // A non-AMT / empty provider with no lastManifestCommit: nothing to reconcile.
