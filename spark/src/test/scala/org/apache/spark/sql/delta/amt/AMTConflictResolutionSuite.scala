@@ -20,10 +20,11 @@ import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, ConcurrentWriteException, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, FullAMTWriteFailedWithConflict}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, ConcurrentAMTCheckpointLandedException, ConcurrentWriteException, DeltaLog, DeltaMinorCompactionTestUtils, DeltaOperations, FullAMTWriteFailedWithConflict}
 import org.apache.spark.sql.delta.actions.SetTransaction
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaStatistics.{TIGHT_BOUNDS, TIGHT_STATS}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.DeltaTestBarrier
 
