@@ -89,7 +89,6 @@ class AMTFieldSpecSuite extends AMTCheckpointTestBase {
   private def reconstructAddFiles(
       provider: AMTCheckpointProvider, deltaLog: DeltaLog, metadata: Metadata): DataFrame =
     AMTCheckpointProvider(
-        spark = spark,
         manifestCommitVersion = provider.manifestCommitVersion,
         checkpointAction = updateCheckpointActions(provider.checkpointAction) {
           case _: Metadata => metadata

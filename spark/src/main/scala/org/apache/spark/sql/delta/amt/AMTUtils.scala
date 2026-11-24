@@ -388,11 +388,9 @@ object AMTUtils extends DeltaLogging {
   private[amt] def shouldCacheRootRows(
       spark: SparkSession,
       numEntries: => Long): Boolean = {
-    val columnarEnabled = spark.sessionState.conf
-      .getConf(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED)
     val maxNumEntries = spark.sessionState.conf
       .getConf(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES)
-    columnarEnabled && maxNumEntries > 0 && numEntries < maxNumEntries
+    maxNumEntries > 0 && numEntries < maxNumEntries
   }
 
   /**

@@ -695,23 +695,12 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "entriesPerLeaf must be positive.")
       .createWithDefault(50000)
 
-  val AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED =
-    buildConf("amt.columnarStateReconstruction.enabled")
-      .internal()
-      .doc("When enabled, AMT state reconstruction builds the AddFiles as column expressions " +
-        "over the persisted manifest rows instead of decoding and converting every manifest " +
-        "entry on the executors. Read when the AMT checkpoint provider is created. Set to false " +
-        "to fall back to per-row reconstruction.")
-      .booleanConf
-      .createWithDefault(true)
-
   val AMT_ROOT_CACHE_MAX_NUM_ENTRIES =
     buildConf("amt.rootCache.maxNumEntries")
       .internal()
-      .doc("Cache persisted AMT root rows when columnar state reconstruction is enabled (the " +
-        "default) and the root has fewer entries than this threshold. Discovery reads the entry " +
-        "count from the Parquet footer. Writers use the number of rows written. Set to 0 to " +
-        "disable root row caching and skip the footer count check.")
+      .doc("Cache persisted AMT root rows when the root has fewer entries than this threshold. " +
+        "Discovery reads the entry count from the Parquet footer. Writers use the number of rows " +
+        "written. Set to 0 to disable root row caching and skip the footer count check.")
       .intConf
       .checkValue(_ >= 0, "amt.rootCache.maxNumEntries must be non-negative.")
       .createWithDefault(50000)
