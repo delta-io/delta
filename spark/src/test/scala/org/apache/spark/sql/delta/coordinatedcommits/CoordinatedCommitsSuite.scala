@@ -22,7 +22,7 @@ import java.util.{Iterator => JIterator, Optional}
 import scala.collection.JavaConverters._
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CheckpointPolicy, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_POLICY, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
@@ -760,7 +760,7 @@ abstract class CommitCoordinatorSuiteBase
     sql(s"CREATE TABLE $target LIKE $source USING DELTA")
     val snapshot = DeltaLog.forTable(spark, target).unsafeVolatileSnapshot
     assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-    assert(!snapshot.isCatalogOwned)
+    assert(!snapshot.isCatalogManaged)
   }
 
 }
