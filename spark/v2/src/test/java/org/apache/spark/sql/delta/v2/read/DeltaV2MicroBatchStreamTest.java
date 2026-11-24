@@ -821,8 +821,8 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   /**
-   * Like {@link #compareFileChanges}, and also checks that dsv1 and dsv2 keep the same
-   * {@code AddFile.stats} (both clear them). Not for CDC, where dsv2 keeps the stats.
+   * Like {@link #compareFileChanges}, and also checks that dsv1 and dsv2 keep the same {@code
+   * AddFile.stats} (both clear them). Not for CDC, where dsv2 keeps the stats.
    */
   private static void compareFileChangesAndStats(
       List<IndexedFile> deltaSourceFiles, List<IndexedFile> kernelFiles) {
