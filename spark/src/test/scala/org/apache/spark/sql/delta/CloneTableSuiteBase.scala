@@ -423,7 +423,7 @@ trait CloneTableSuiteBase extends QueryTest
     TAG_HAS_SHALLOW_CLONE, TAG_MODIFY_PROTOCOL, TAG_CHANGE_COLUMN_MAPPING_MODE) { (source, clone) =>
     if (catalogOwnedDefaultCreationEnabledInTests) {
       cancel("table needs to start with custom protocol versions but enabling " +
-        "catalogOwned automatically upgrades table protocol version.")
+        "catalogManaged automatically upgrades table protocol version.")
     }
     // Change protocol versions of (read, write) = (2, 5). We cannot initialize this to (0, 0)
     // because min reader and writer versions are at least 1.
@@ -531,7 +531,7 @@ trait CloneTableSuiteBase extends QueryTest
     ) { (source, target, isShallow) =>
       if (catalogOwnedDefaultCreationEnabledInTests) {
         cancel("table needs to start with default protocol versions but enabling " +
-          "catalogOwned upgrades table protocol version.")
+          "catalogManaged upgrades table protocol version.")
       }
       import DeltaTestUtils.StrictProtocolOrdering
 
@@ -570,7 +570,7 @@ trait CloneTableSuiteBase extends QueryTest
   ) { (source, target, isShallow) =>
     if (catalogOwnedDefaultCreationEnabledInTests) {
       cancel("table needs to start with default protocol versions but enabling " +
-        "catalogOwned upgrades table protocol version.")
+        "catalogManaged upgrades table protocol version.")
     }
     import DeltaTestUtils.StrictProtocolOrdering
 

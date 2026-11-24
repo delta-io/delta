@@ -118,7 +118,7 @@ trait DescribeDeltaHistorySuiteBase
         // existence.
         assert(actualProperties.contains(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP) &&
           actualProperties.contains(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP),
-          "RowTracking should be enabled as part of CatalogOwned QoL features, " +
+          "RowTracking should be enabled as part of CatalogManaged QoL features, " +
           s"expecting ${MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP} and " +
           s"${MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP} to be present. " +
           s"The `actualProperties`: $actualProperties")

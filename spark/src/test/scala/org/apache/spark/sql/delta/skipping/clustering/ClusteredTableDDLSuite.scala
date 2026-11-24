@@ -1350,7 +1350,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
   test("create external clustered table: location has clustered table, schema specified, " +
     "cluster by specified with same clustering column") {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned does not support external table creation.")
+      cancel("CatalogManaged does not support external table creation.")
     }
     val tableName = s"clustered_table_$tableSuffix"
     withTempDir { dir =>
@@ -1370,7 +1370,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
   test("create external clustered table: location has non-clustered table, schema specified, " +
     "cluster by specified") {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned does not support external table creation.")
+      cancel("CatalogManaged does not support external table creation.")
     }
     val tableName = s"clustered_table_$tableSuffix"
     withTempDir { dir =>

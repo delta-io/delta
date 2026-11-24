@@ -242,8 +242,8 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
 
   test("delta table: describe detail shows table features") {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned is not compatible w/ the test since protocol version would be " +
-        "set to (3, 7) by default for CC tables.")
+      cancel("CatalogManaged is not compatible w/ the test since protocol version would be " +
+        "set to (3, 7) by default for CatalogManaged tables.")
     }
     withTable("t1") {
       withSQLConf(
