@@ -54,6 +54,7 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.stats.DeletedRecordCountsHistogram;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
@@ -866,9 +867,19 @@ public class TransactionImpl implements Transaction {
       long commitAtVersion, TransactionMetricsResult metricsResult) {
     // TODO(#8026): Use the incremental operation allowlist for SIMPLE CRCs.
     Optional<Long> numDeletedRecords =
-        updatedDvMetric(CRCInfo::getNumDeletedRecords, metricsResult.getNumDeletedRecordsDelta());
+        baseDvMetric(CRCInfo::getNumDeletedRecords, () -> 0L)
+            .map(base -> base + metricsResult.getNumDeletedRecordsDelta());
     Optional<Long> numDeletionVectors =
-        updatedDvMetric(CRCInfo::getNumDeletionVectors, metricsResult.getNumDeletionVectorsDelta());
+        baseDvMetric(CRCInfo::getNumDeletionVectors, () -> 0L)
+            .map(base -> base + metricsResult.getNumDeletionVectorsDelta());
+    // TODO(#8291): Recover a missing base histogram from allFiles or table feature information.
+    Optional<DeletedRecordCountsHistogram> deletedRecordCountsHistogram =
+        baseDvMetric(CRCInfo::getDeletedRecordCountsHistogram, DeletedRecordCountsHistogram::empty)
+            .flatMap(
+                base ->
+                    metricsResult
+                        .getDeletedRecordCountsHistogramDelta()
+                        .map(delta -> new DeletedRecordCountsHistogram(delta).applyToBase(base)));
     if (isCreateOrReplace) {
       // We don't need to worry about conflicting transaction here since new tables always commit
       // metadata (and thus fail any conflicts)
@@ -888,7 +899,8 @@ public class TransactionImpl implements Transaction {
               Optional.empty(), // setTransactions
               numDeletedRecords,
               numDeletionVectors,
-              Optional.empty())); // allFiles
+              Optional.empty(), // allFiles
+              deletedRecordCountsHistogram));
     }
 
     return currentCrcInfo
@@ -915,10 +927,12 @@ public class TransactionImpl implements Transaction {
                     Optional.empty(), // setTransactions
                     numDeletedRecords,
                     numDeletionVectors,
-                    Optional.empty())); // allFiles
+                    Optional.empty(), // allFiles
+                    deletedRecordCountsHistogram));
   }
 
-  private Optional<Long> updatedDvMetric(Function<CRCInfo, Optional<Long>> getter, long delta) {
+  private <T> Optional<T> baseDvMetric(
+      Function<CRCInfo, Optional<T>> getter, Supplier<T> initialValue) {
     if (!protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)) {
       return Optional.empty();
     }
@@ -927,8 +941,7 @@ public class TransactionImpl implements Transaction {
       return Optional.empty();
     }
     // Only new tables start from zero; existing tables need the metric from the previous CRC.
-    Optional<Long> baseValue = isCreate ? Optional.of(0L) : currentCrcInfo.flatMap(getter);
-    return baseValue.map(value -> value + delta);
+    return isCreate ? Optional.of(initialValue.get()) : currentCrcInfo.flatMap(getter);
   }
 
   private TransactionReport recordTransactionReport(

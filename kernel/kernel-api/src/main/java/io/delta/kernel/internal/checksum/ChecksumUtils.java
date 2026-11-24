@@ -404,7 +404,8 @@ public class ChecksumUtils {
             state.collectedSetTransactions(), finalMetadata, clock, state.setTransactionsThreshold),
         dvMetrics.numDeletedRecords,
         dvMetrics.numDeletionVectors,
-        state.collectedAllFiles());
+        state.collectedAllFiles(),
+        Optional.empty() /* deletedRecordCountsHistogram */);
   }
 
   /**
@@ -649,7 +650,8 @@ public class ChecksumUtils {
             incrementalSetTransactions,
             finalDvMetrics.numDeletedRecords,
             finalDvMetrics.numDeletionVectors,
-            finalAllFiles));
+            finalAllFiles,
+            Optional.empty() /* deletedRecordCountsHistogram */));
   }
 
   /** Processes an add file record and updates the state tracker. */

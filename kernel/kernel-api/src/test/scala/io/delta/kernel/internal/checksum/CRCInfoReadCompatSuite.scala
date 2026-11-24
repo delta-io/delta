@@ -133,6 +133,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
               CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
           case "numDeletionVectorsOpt" => nullColumnVector(
               CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
+          case "deletedRecordCountsHistogramOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("deletedRecordCountsHistogramOpt").getDataType)
           case "allFiles" => nullColumnVector(CRC_FILE_SCHEMA.get("allFiles").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(fileSizeHistogram)
           case "histogramOpt" => histogramColumnVector(histogramOpt)
@@ -239,6 +241,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
               CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
           case "numDeletionVectorsOpt" => nullColumnVector(
               CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
+          case "deletedRecordCountsHistogramOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("deletedRecordCountsHistogramOpt").getDataType)
           case "allFiles" => nullColumnVector(CRC_FILE_SCHEMA.get("allFiles").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ =>
@@ -277,6 +281,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
             nullColumnVector(CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
           case "numDeletionVectorsOpt" =>
             nullColumnVector(CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
+          case "deletedRecordCountsHistogramOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("deletedRecordCountsHistogramOpt").getDataType)
           case "allFiles" => nullColumnVector(CRC_FILE_SCHEMA.get("allFiles").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ => throw new IllegalArgumentException(s"Unknown field: $fieldName")
@@ -311,7 +317,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
       /* setTransactions */ Optional.empty(),
       /* numDeletedRecords */ Optional.empty(),
       /* numDeletionVectors */ Optional.empty(),
-      /* allFiles */ Optional.empty())
+      /* allFiles */ Optional.empty(),
+      /* deletedRecordCountsHistogram */ Optional.empty())
     val row = original.toRow()
     val ictIdx = CRC_FILE_SCHEMA.indexOf("inCommitTimestampOpt")
     assert(!row.isNullAt(ictIdx))
@@ -374,7 +381,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
       /* setTransactions */ Optional.of(txns),
       /* numDeletedRecords */ Optional.empty(),
       /* numDeletionVectors */ Optional.empty(),
-      /* allFiles */ Optional.empty())
+      /* allFiles */ Optional.empty(),
+      /* deletedRecordCountsHistogram */ Optional.empty())
     val row = original.toRow()
     val idx = CRC_FILE_SCHEMA.indexOf("setTransactions")
     assert(!row.isNullAt(idx))
@@ -412,7 +420,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
         /* setTransactions */ Optional.of(dupes),
         /* numDeletedRecords */ Optional.empty(),
         /* numDeletionVectors */ Optional.empty(),
-        /* allFiles */ Optional.empty())
+        /* allFiles */ Optional.empty(),
+        /* deletedRecordCountsHistogram */ Optional.empty())
     }
     assert(ex.getMessage.contains("unique per appId"))
   }
@@ -439,7 +448,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
       /* setTransactions */ Optional.empty(),
       /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(42L)),
       /* numDeletionVectors */ Optional.of(java.lang.Long.valueOf(3L)),
-      /* allFiles */ Optional.empty())
+      /* allFiles */ Optional.empty(),
+      /* deletedRecordCountsHistogram */ Optional.empty())
     val row = withDv.toRow()
     assert(row.getLong(CRC_FILE_SCHEMA.indexOf("numDeletedRecordsOpt")) === 42L)
     assert(row.getLong(CRC_FILE_SCHEMA.indexOf("numDeletionVectorsOpt")) === 3L)
@@ -473,7 +483,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
         /* setTransactions */ Optional.empty(),
         /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(1L)),
         /* numDeletionVectors */ Optional.empty(),
-        /* allFiles */ Optional.empty())
+        /* allFiles */ Optional.empty(),
+        /* deletedRecordCountsHistogram */ Optional.empty())
     }
     assert(ex.getMessage.contains("both be present or both absent"))
   }
@@ -502,7 +513,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
       /* setTransactions */ Optional.empty(),
       /* numDeletedRecords */ Optional.empty(),
       /* numDeletionVectors */ Optional.empty(),
-      /* allFiles */ Optional.of(addFiles))
+      /* allFiles */ Optional.of(addFiles),
+      /* deletedRecordCountsHistogram */ Optional.empty())
     val row = original.toRow()
     val allFilesIdx = CRC_FILE_SCHEMA.indexOf("allFiles")
     assert(!row.isNullAt(allFilesIdx))
@@ -538,7 +550,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
         /* setTransactions */ Optional.empty(),
         /* numDeletedRecords */ Optional.empty(),
         /* numDeletionVectors */ Optional.empty(),
-        Optional.of(oneFile))
+        Optional.of(oneFile),
+        /* deletedRecordCountsHistogram */ Optional.empty())
     }
     assert(ex.getMessage.contains("allFiles size"))
   }

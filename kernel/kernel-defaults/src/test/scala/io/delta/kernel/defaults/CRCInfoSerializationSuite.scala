@@ -93,7 +93,8 @@ class CRCInfoSerializationSuite extends AnyFunSuite {
       Optional.of(Collections.emptyList[SetTransaction]()), /* setTransactions */
       Optional.empty(), /* numDeletedRecords */
       Optional.empty(), /* numDeletionVectors */
-      Optional.empty() /* allFiles */
+      Optional.empty(), /* allFiles */
+      Optional.empty() /* deletedRecordCountsHistogram */
     )
 
     val expected =
@@ -124,7 +125,8 @@ class CRCInfoSerializationSuite extends AnyFunSuite {
       Optional.of(txns), /* setTransactions */
       Optional.empty(), /* numDeletedRecords */
       Optional.empty(), /* numDeletionVectors */
-      Optional.empty() /* allFiles */ )
+      Optional.empty(), /* allFiles */
+      Optional.empty() /* deletedRecordCountsHistogram */ )
 
     val expected =
       """{"tableSizeBytes":100,"numFiles":1,"numMetadata":1,"numProtocol":1,""" +

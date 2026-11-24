@@ -18,6 +18,7 @@ package io.delta.kernel.internal.metrics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.stats.DeletedRecordCountsHistogram;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.metrics.FileSizeHistogramResult;
 import io.delta.kernel.metrics.TransactionMetricsResult;
@@ -70,6 +71,9 @@ public class TransactionMetrics {
   // DV cardinalities. Updates numDeletedRecordsOpt in the post-commit CRC.
   private final Counter numDeletedRecordsDeltaCounter = new Counter();
 
+  private DeletedRecordCountsHistogram deletedRecordCountsHistogramDelta =
+      DeletedRecordCountsHistogram.empty();
+
   private Optional<FileSizeHistogram> tableFileSizeHistogram;
 
   private TransactionMetrics(Optional<FileSizeHistogram> tableFileSizeHistogram) {
@@ -87,6 +91,8 @@ public class TransactionMetrics {
   public void updateForAddFile(
       long addFileSize, Optional<DeletionVectorDescriptor> deletionVector) {
     checkArgument(addFileSize >= 0, "File size must be non-negative, got %s", addFileSize);
+    deletedRecordCountsHistogramDelta.applyDvChange(
+        deletionVector.map(DeletionVectorDescriptor::getCardinality).orElse(0L), 1);
     addFilesCounter.increment();
     addFilesSizeInBytesCounter.increment(addFileSize);
     deletionVector.ifPresent(
@@ -108,6 +114,8 @@ public class TransactionMetrics {
   public void updateForRemoveFile(
       long removeFileSize, Optional<DeletionVectorDescriptor> deletionVector) {
     checkArgument(removeFileSize >= 0, "File size must be non-negative, got %s", removeFileSize);
+    deletedRecordCountsHistogramDelta.applyDvChange(
+        deletionVector.map(DeletionVectorDescriptor::getCardinality).orElse(0L), -1);
     removeFilesCounter.increment();
     removeFilesSizeInBytesCounter.increment(removeFileSize);
     deletionVector.ifPresent(
@@ -125,6 +133,7 @@ public class TransactionMetrics {
    *   <li>Resets addFilesCounter, removeFilesCounter, totalActionsCounter,
    *       addFilesSizeInBytesCounter, removeFilesSizeInBytesCounter,
    *       numDeletionVectorsDeltaCounter, and numDeletedRecordsDeltaCounter to 0
+   *   <li>Clears the deleted-record histogram delta so retried actions are counted once
    *   <li>Sets tableFileSizeHistogram to be empty since we don't know the updated distribution
    *       after the conflicting txn committed
    * </ul>
@@ -141,6 +150,7 @@ public class TransactionMetrics {
     removeFilesSizeInBytesCounter.reset();
     numDeletionVectorsDeltaCounter.reset();
     numDeletedRecordsDeltaCounter.reset();
+    deletedRecordCountsHistogramDelta = DeletedRecordCountsHistogram.empty();
     // For now, on retry we set tableFileSizeHistogram = Optional.empty() because we don't know the
     // correct state of tableFileSizeHistogram after conflicting transaction has committed
     tableFileSizeHistogram = Optional.empty();
@@ -158,6 +168,7 @@ public class TransactionMetrics {
       final long totalRemoveFileSizeInBytes = removeFilesSizeInBytesCounter.value();
       final long numDeletionVectorsDelta = numDeletionVectorsDeltaCounter.value();
       final long numDeletedRecordsDelta = numDeletedRecordsDeltaCounter.value();
+      final long[] histogramDelta = deletedRecordCountsHistogramDelta.getCounts();
       final Optional<FileSizeHistogramResult> tableFileSizeHistogramResult =
           tableFileSizeHistogram.map(FileSizeHistogram::captureFileSizeHistogramResult);
 
@@ -204,6 +215,11 @@ public class TransactionMetrics {
       @Override
       public long getNumDeletedRecordsDelta() {
         return numDeletedRecordsDelta;
+      }
+
+      @Override
+      public Optional<long[]> getDeletedRecordCountsHistogramDelta() {
+        return Optional.of(histogramDelta.clone());
       }
 
       @Override

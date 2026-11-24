@@ -690,7 +690,8 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
         new KernelSetTransaction("unchanged", 0L, Optional.of(0L))).asJava),
       Optional.of(numDeletedRecords),
       Optional.of(numDeletionVectors),
-      Optional.ofNullable(allFiles.map(_.asJava).orNull))
+      Optional.ofNullable(allFiles.map(_.asJava).orNull),
+      /* deletedRecordCountsHistogram */ Optional.empty())
   }
 
   private val includeAllCrc = operationTestCrcFixture(
