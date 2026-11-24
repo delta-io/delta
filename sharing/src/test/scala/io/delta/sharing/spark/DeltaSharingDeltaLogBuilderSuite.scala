@@ -20,12 +20,14 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.FileNames
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 import org.apache.logging.log4j.Level
 
+import org.apache.spark.SparkEnv
 import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
@@ -213,6 +215,47 @@ class DeltaSharingDeltaLogBuilderSuite
       }
       assert(appender.loggingEvents.exists(
         _.getMessage.getFormattedMessage.contains("Delta Sharing (v1): fetched")))
+    }
+  }
+
+  test("isSnapshotDeltaLogReusable needs the cached urls and both log blocks") {
+    withProfile { profilePath =>
+      val (client, dsTable, options, tablePath) = setup(profilePath)
+      CachedTableManager.INSTANCE.clear()
+      // Keeps the registered anchor alive.
+      val anchor = new Object()
+      def buildLog(): Path = DeltaSharingDeltaLogBuilder.buildSnapshotDeltaLogPath(
+        client = client,
+        table = dsTable,
+        options = options,
+        tablePath = tablePath.toString,
+        queryParamsHashId = "hashA",
+        jsonPredicateHints = None,
+        limit = None,
+        anchor = anchor,
+        logPrefix = "Test"
+      )
+      val path = buildLog()
+      def logReusable: Boolean =
+        DeltaSharingLogFileSystem.isSnapshotDeltaLogReusable(DeltaSharingLogFileSystem.decode(path))
+      assert(logReusable)
+
+      // Urls gone, blocks still there.
+      CachedTableManager.INSTANCE.clear()
+      assert(!logReusable)
+
+      // Urls cached, one block gone: first the 0.json block, then the _delta_log listing block.
+      val deltaLogPath = s"$path/_delta_log"
+      Seq(FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString, deltaLogPath).foreach {
+        blockPath =>
+          buildLog()
+          assert(logReusable)
+          SparkEnv.get.blockManager.removeBlock(
+            DeltaSharingLogFileSystem.getDeltaSharingLogBlockId(blockPath))
+          assert(CachedTableManager.INSTANCE.size() == 1)
+          assert(!logReusable)
+      }
+      assert(anchor != null)
     }
   }
 }
