@@ -401,6 +401,10 @@ trait MetadataCleanup extends DeltaLogging {
       metrics: SidecarDeletionMetrics): Unit = {
     val startTimeMs = System.currentTimeMillis()
     // If v2 checkpoints are not enabled on the table, we don't need to attempt the sidecar cleanup.
+    // AMT checkpoints also keep their non-content (txn and domain metadata) sidecars in this
+    // directory, referenced only from the AMT Checkpoint action that this listing does not read.
+    // This cleanup is safe for them only because V2 checkpoints and AMT cannot both be enabled
+    // on a table; any change to that rule must teach this cleanup about AMT sidecars first.
     if (!CheckpointProvider.isV2CheckpointEnabled(snapshotToCleanup)) return
 
     val hadoopConf = newDeltaHadoopConf()

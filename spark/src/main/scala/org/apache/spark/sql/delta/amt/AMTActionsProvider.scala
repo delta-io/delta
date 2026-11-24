@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, SetTransaction, SidecarFile}
 
 import org.apache.spark.sql.SparkSession
 
@@ -29,15 +29,19 @@ import org.apache.spark.sql.SparkSession
  * @param metadata                          the old AMT's inline table metadata.
  * @param protocol                          the old AMT's inline table protocol.
  * @param inlineSetTransactions             the old AMT's inline `SetTransaction` actions only,
- *                                          those carried directly on its checkpoint action.
+ *                                          those carried directly on its checkpoint action; those
+ *                                          in `nonContentSidecars` are not included.
  * @param inlineDomainMetadatas             the old AMT's inline `DomainMetadata` actions only,
- *                                          those carried directly on its checkpoint action.
+ *                                          those carried directly on its checkpoint action; those
+ *                                          in `nonContentSidecars` are not included.
  * @param fileActionsFromRoot               the live root-resident file actions (leaf-resident files
  *                                          are carried forward by pointer, not materialized here).
  * @param allLeafs                          the root's `DATA_MANIFEST` leaf pointers, one per leaf.
  * @param version                           the table version the old AMT describes.
  * @param lastManifestCommitWithFullRewrite the last-full-rewrite marker carried forward into the
  *                                          new tree's `ContentRoot`.
+ * @param nonContentSidecars                the old AMT's typed (txn / domain metadata) sidecars,
+ *                                          referenced but not read here.
  */
 case class BaseAMTActionsResult(
     metadata: Metadata,
@@ -47,7 +51,8 @@ case class BaseAMTActionsResult(
     fileActionsFromRoot: Seq[AddFile],
     allLeafs: Seq[DataManifestEntry],
     version: Long,
-    lastManifestCommitWithFullRewrite: Option[Long])
+    lastManifestCommitWithFullRewrite: Option[Long],
+    nonContentSidecars: Seq[SidecarFile])
 
 /**
  * Loads the previous-AMT state that [[IncrementalAMTWriter]] extends. Abstracting the source lets
@@ -83,7 +88,8 @@ class BaseSnapshotActionsProvider(
       fileActionsFromRoot = Seq.empty,
       allLeafs = Seq.empty,
       version = snapshot.version,
-      lastManifestCommitWithFullRewrite = None)
+      lastManifestCommitWithFullRewrite = None,
+      nonContentSidecars = Seq.empty)
   }
 }
 
@@ -102,6 +108,7 @@ class BaseAMTCheckpointActionsProvider(
       fileActionsFromRoot = checkpointProvider.readLiveRootDataEntries(spark, deltaLog),
       allLeafs = checkpointProvider.leaves,
       version = checkpoint.contentRoot.version,
-      lastManifestCommitWithFullRewrite = checkpoint.contentRoot.lastManifestCommitWithFullRewrite)
+      lastManifestCommitWithFullRewrite = checkpoint.contentRoot.lastManifestCommitWithFullRewrite,
+      nonContentSidecars = checkpoint.sidecars.filter(_.`type`.isDefined))
   }
 }
