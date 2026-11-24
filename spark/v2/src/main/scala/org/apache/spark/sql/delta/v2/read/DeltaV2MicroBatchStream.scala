@@ -146,18 +146,18 @@ private[read] class DeltaV2MicroBatchStream(
   Objects.requireNonNull(originalStreamingQueryContext, "originalStreamingQueryContext is null")
   Objects.requireNonNull(snapshotAtSourceInit, "snapshotAtSourceInit is null")
   /** The Delta log operations that compute offsets. */
-  private val streamingBackend: DeltaStreamingBackend =
+  override protected val streamingBackend: DeltaStreamingBackend =
       new DeltaV2StreamingBackend(
           tableManager, originalStreamingQueryContext, snapshotAtSourceInit.version)
   Objects.requireNonNull(hadoopConf, "hadoopConf is null")
   Objects.requireNonNull(spark, "spark is null")
   Objects.requireNonNull(options, "options is null")
-  private val ignoreFileDeletion: Boolean = this.options.ignoreFileDeletion
+  override protected val ignoreFileDeletion: Boolean = this.options.ignoreFileDeletion
   // Deprecated. Please use `skipChangeCommits` from now on.
   if (this.ignoreFileDeletion) {
     logger.warn(DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(this.spark))
   }
-  private val skipChangeCommits: Boolean = this.options.skipChangeCommits
+  override protected val skipChangeCommits: Boolean = this.options.skipChangeCommits
   // Normalize tablePath to ensure it ends with "/" for consistent path construction
   private val tablePath: String = {
     val normalizedTablePath = Objects.requireNonNull(inputTablePath, "tablePath is null")
@@ -182,7 +182,7 @@ private[read] class DeltaV2MicroBatchStream(
   // been written to the durable schema log during analysis (by DeltaV2Table's call to
   // getPersistedMetadataForMicroBatchStream with mergeConsecutiveSchemaChanges=true), so
   // reading it back from the log here yields the same value V1 obtains.
-  private val readSnapshotDescriptor: SnapshotDescriptor = {
+  override protected val readSnapshotDescriptor: SnapshotDescriptor = {
     val persistedMetadataAtSourceInit: Option[PersistedMetadata] =
         if (metadataTrackingLog.isDefined) metadataTrackingLog.get.getCurrentTrackedMetadata
         else Option.empty
@@ -961,14 +961,18 @@ private[read] class DeltaV2MicroBatchStream(
       //
       // When schema tracking is enabled, skip per-commit metadata verification - the handler
       // manages schema changes through the barrier protocol instead.
-      val validationResult: CommitValidationResult =
-          validateCommitAndDecideSkipping(
-              commit,
-              version,
-              startVersion,
-              snapshotAtSourceInit.dataPath.toString,
-              endOffsetOpt,
-              /* verifyMetadataAction= */ !trackingMetadataChange)
+      val (shouldSkipCommit, metadataOpt, protocolOpt) =
+          try Using.resource(
+              commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) { actionsIter =>
+            validateCommitAndDecideSkipping(
+                actionsIter,
+                version,
+                startVersion,
+                ScalaUtils.toScalaOption(endOffsetOpt),
+                verifyMetadataAction = !trackingMetadataChange)
+          } catch { case e: IOException =>
+            throw new RuntimeException("Failed to process commit at version " + version, e)
+          }
 
       // Second pass: Build a lazy iterator of IndexedFiles.
       //
@@ -988,10 +992,10 @@ private[read] class DeltaV2MicroBatchStream(
       // in filterAndGetIndexedFiles.
       val metadataBarrier: ClosableIterator[IndexedFile] =
           metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
-              validationResult.metadataAction, validationResult.protocolAction, version)
+              metadataOpt.orNull, protocolOpt.orNull, version)
 
       val fileActions: ClosableIterator[IndexedFile] =
-          if (validationResult.shouldSkipCommit) {
+          if (shouldSkipCommit) {
               new ClosableWrapper[IndexedFile](Iterator.empty).toClosable
           } else getFilesFromCommit(commit, version)
 
@@ -1035,108 +1039,6 @@ private[read] class DeltaV2MicroBatchStream(
                       fileIndex(0) += 1
                       IndexedFile(version, index, action.asInstanceOf[AddFile])
                     }))
-  }
-
-  /**
-   * Validates a commit, fail the stream if it's invalid and decides whether to skip it. Mimics
-   * DeltaSource.validateCommitAndDecideSkipping in Scala.
-   *
-   * @param commit the DeltaSingleCommit representing a single commit
-   * @param version the commit version
-   * @param batchStartVersion Starting version of the batch being processed
-   * @param tablePath the path to the Delta table
-   * @param endOffsetOpt optional end offset for boundary checking
-   * @param verifyMetadataAction Whether to verify metadata action compatibility
-   * @return validation result containing skip decision and detected metadata/protocol actions
-   * @throws RuntimeException if the commit is invalid.
-   */
-  private def validateCommitAndDecideSkipping(
-      commit: DeltaSingleCommit,
-      version: Long,
-      batchStartVersion: Long,
-      tablePath: String,
-      endOffsetOpt: Optional[DeltaSourceOffset],
-      verifyMetadataAction: Boolean): CommitValidationResult = {
-    // If endOffset is at the beginning of this version, exit early.
-    if (endOffsetOpt.isPresent()) {
-      val endOffset: DeltaSourceOffset = endOffsetOpt.get()
-      if (endOffset.reservoirVersion == version
-          && endOffset.index == DeltaSourceOffset.BASE_INDEX) {
-        return new CommitValidationResult(false, null, null)
-      }
-    }
-
-    // "Changes" are commits that contain both AddFile and RemoveFile actions (e.g. UPDATE,
-    // MERGE that rewrites data files). Allowing changes means these commits won't cause failures.
-    val shouldAllowChanges: Boolean =
-        options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
-    // "Deletes" are commits that contain only RemoveFile actions without any AddFile actions
-    // (e.g. DELETE that purely removes data). This is a subset of changes, so allowing changes
-    // implies allowing deletes.
-    val shouldAllowDeletes: Boolean = shouldAllowChanges || options.ignoreDeletes
-
-    var hasFileAdd: Boolean = false
-    var shouldSkipCommit: Boolean = false
-    var metadataAction: Metadata = null
-    var protocolAction: Protocol = null
-    var removeFileActionPath: String = null
-    var operation: String = null
-
-    try Using.resource(
-        commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) { actionsIter =>
-      while (actionsIter.hasNext) {
-        val action: Action = actionsIter.next()
-        if (action.isInstanceOf[AddFile] && action.asInstanceOf[AddFile].dataChange) {
-          hasFileAdd = true
-        } else if (action.isInstanceOf[RemoveFile] && action.asInstanceOf[RemoveFile].dataChange) {
-          // skip change commits include delete-only commits
-          shouldSkipCommit = skipChangeCommits
-          if (removeFileActionPath == null) {
-            removeFileActionPath = action.asInstanceOf[RemoveFile].path
-          }
-        } else if (action.isInstanceOf[Metadata]) {
-          metadataAction =
-              validateMetadata(
-                  action.asInstanceOf[Metadata],
-                  metadataAction,
-                  version,
-                  batchStartVersion,
-                  endOffsetOpt,
-                  verifyMetadataAction)
-        } else if (action.isInstanceOf[Protocol]) {
-          Protocol.protocolRead(
-              spark, action.asInstanceOf[Protocol], tablePath, readSnapshotDescriptor)
-          assert(
-            protocolAction == null,
-            s"Should not encounter two protocol actions in the same commit of version $version")
-          protocolAction = action.asInstanceOf[Protocol]
-        } else if (action.isInstanceOf[CommitInfo]) {
-          val commitInfo: CommitInfo = action.asInstanceOf[CommitInfo]
-          operation =
-              if (commitInfo.operation == null) {
-                null
-              } else String.format(
-                  "%s (%s)",
-                  commitInfo.operation,
-                  CollectionConverters.asJava(commitInfo.operationParameters))
-        }
-      }
-    } catch { case e: IOException =>
-      throw new RuntimeException("Failed to process commit at version " + version, e)
-    }
-
-    if (removeFileActionPath != null) {
-      if (hasFileAdd && !shouldAllowChanges) {
-        // Commit contains data changes (adds + removes) and changes are disallowed.
-        val changeInfo: String = if (operation != null) operation else removeFileActionPath
-        throw DeltaErrors.deltaSourceIgnoreChangesError(version, changeInfo, tablePath)
-      } else if (!hasFileAdd && !shouldAllowDeletes) {
-        // Commit contains only removes (deletes) and deletes are disallowed.
-        throw DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFileActionPath, tablePath)
-      }
-    }
-
-    new CommitValidationResult(shouldSkipCommit, metadataAction, protocolAction)
   }
 
   /**

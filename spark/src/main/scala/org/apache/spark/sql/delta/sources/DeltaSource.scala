@@ -540,7 +540,7 @@ case class DeltaSource(
     spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION)
 
   // Deprecated. Please use `skipChangeCommits` from now on.
-  private val ignoreFileDeletion = {
+  protected val ignoreFileDeletion = {
     if (options.ignoreFileDeletion) {
       logConsole(DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(spark))
       recordDeltaEvent(snapshotAtSourceInit, "delta.deprecation.ignoreFileDeletion")
@@ -550,7 +550,7 @@ case class DeltaSource(
 
   /** A check on the source table that skips commits that contain removes from the
    * set of files. */
-  private val skipChangeCommits = options.skipChangeCommits
+  protected val skipChangeCommits = options.skipChangeCommits
 
   protected val excludeRegex: Option[Regex] = options.excludeRegex
 
@@ -823,82 +823,6 @@ case class DeltaSource(
       version,
       getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
         indexedFiles)
-  }
-
-  /**
-   * Check stream for violating any constraints.
-   *
-   * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
-   * metadata changes.
-   *
-   * @return (true if commit should be skipped, a metadata action if found)
-   */
-  protected def validateCommitAndDecideSkipping(
-      actions: Iterator[Action],
-      version: Long,
-      batchStartVersion: Long,
-      batchEndOffsetOpt: Option[DeltaSourceOffset] = None,
-      verifyMetadataAction: Boolean = true
-  ): (Boolean, Option[Metadata], Option[Protocol]) = {
-    // If the batch end is at the beginning of this exact version, then we actually stop reading
-    // just _before_ this version. So then we can ignore the version contents entirely.
-    if (batchEndOffsetOpt.exists(end =>
-      end.reservoirVersion == version && end.index == DeltaSourceOffset.BASE_INDEX)) {
-      return (false, None, None)
-    }
-
-    /** A check on the source table that disallows changes on the source data. */
-    val shouldAllowChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
-    /** A check on the source table that disallows commits that only include deletes to the data. */
-    val shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes || ignoreFileDeletion
-
-    var seenFileAdd = false
-    var skippedCommit = false
-    var metadataAction: Option[Metadata] = None
-    var protocolAction: Option[Protocol] = None
-    var removeFileActionPath: Option[String] = None
-    var operation: Option[String] = None
-    actions.foreach {
-      case a: AddFile if a.dataChange =>
-        seenFileAdd = true
-      case r: RemoveFile if r.dataChange =>
-        skippedCommit = skipChangeCommits
-        if (removeFileActionPath.isEmpty) {
-          removeFileActionPath = Some(r.path)
-        }
-      case m: Metadata =>
-        if (verifyMetadataAction) {
-          checkReadIncompatibleSchemaChanges(
-            m, version, batchStartVersion, batchEndOffsetOpt.map(_.reservoirVersion))
-        }
-        assert(metadataAction.isEmpty,
-          "Should not encounter two metadata actions in the same commit")
-        metadataAction = Some(m)
-      case protocol: Protocol =>
-        deltaLog.protocolRead(protocol)
-        assert(protocolAction.isEmpty,
-          "Should not encounter two protocol actions in the same commit")
-        protocolAction = Some(protocol)
-      case commitInfo: CommitInfo =>
-        operation = Some(s"${commitInfo.operation} (${commitInfo.operationParameters})")
-      case _ => ()
-    }
-    if (removeFileActionPath.isDefined) {
-      if (seenFileAdd && !shouldAllowChanges) {
-        throw DeltaErrors.deltaSourceIgnoreChangesError(
-          version,
-          if (operation.nonEmpty) operation.get else removeFileActionPath.get,
-          snapshotAtSourceInit.dataPath.toString
-        )
-      } else if (!seenFileAdd && !shouldAllowDeletes) {
-        throw DeltaErrors.deltaSourceIgnoreDeleteError(
-          version,
-          removeFileActionPath.get,
-          snapshotAtSourceInit.dataPath.toString
-        )
-      }
-    }
-    (skippedCommit, metadataAction, protocolAction)
   }
 
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame =

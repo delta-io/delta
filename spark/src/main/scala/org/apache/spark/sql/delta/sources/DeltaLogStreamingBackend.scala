@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.sources
 
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaLog, DeltaSingleCommit, Snapshot}
+import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaLog, DeltaSingleCommit, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
 
@@ -67,6 +68,9 @@ private[delta] class DeltaLogStreamingBackend(
       canReturnEarliestCommit = canReturnEarliestCommit)
 
   override def getSnapshotToValidateProtocol(version: Long): Snapshot = getSnapshotAt(version)
+
+  override def protocolRead(protocol: Protocol, readSnapshot: SnapshotDescriptor): Unit =
+    deltaLog.protocolRead(protocol)
 
   override def getSingleCommitIterator(
       startVersion: Long,

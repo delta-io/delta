@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.sql.Timestamp
 
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.{DeltaLogStreamingBackend, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
@@ -31,6 +32,27 @@ class DeltaLogStreamingBackendSuite
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaTableProvider {
+
+  test("protocolRead rejects a protocol that this client cannot read") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format(writeFormat).save(path)
+      val backend = new DeltaLogStreamingBackend(DeltaLog.forTable(spark, path), () => None)
+      val snapshot = backend.update()
+
+      backend.protocolRead(Protocol(1, 2), snapshot)
+      val versionError = intercept[InvalidProtocolVersionException] {
+        backend.protocolRead(Protocol(Integer.MAX_VALUE, Integer.MAX_VALUE), snapshot)
+      }
+      assert(versionError.tableNameOrPath === snapshot.dataPath.toString)
+      val unknownReaderFeature = Protocol(3, 7).withReaderFeatures(Set("unknownFeature"))
+        .withWriterFeatures(Set("unknownFeature"))
+      val featureError = intercept[DeltaUnsupportedTableFeatureException] {
+        backend.protocolRead(unknownReaderFeature, snapshot)
+      }
+      assert(featureError.getErrorClass === "DELTA_UNSUPPORTED_FEATURES_FOR_READ")
+    }
+  }
 
   test("each read gets the catalog table again") {
     withTempDir { dir =>

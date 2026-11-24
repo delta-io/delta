@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.sources
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaOptions, SnapshotDescriptor, TypeWidening}
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -49,6 +49,15 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
   protected def snapshotAtSourceInit: SnapshotDescriptor
 
   /**
+   * The snapshot that the source reads with: [[snapshotAtSourceInit]] with the metadata from the
+   * metadata tracking log, if the stream has one.
+   */
+  protected def readSnapshotDescriptor: SnapshotDescriptor
+
+  /** The Delta log operations that the source uses to read the table. */
+  protected def streamingBackend: DeltaStreamingBackend
+
+  /**
    * The fixed source schema that later metadata must be read-compatible with, see
    * [[DeltaSource.sourceSchema]].
    */
@@ -63,6 +72,12 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
   /** An internal `latestOffsetInternal` to get the latest offset. */
   protected def latestOffsetInternal(
     startOffset: Option[DeltaSourceOffset], limit: ReadLimit): Option[DeltaSourceOffset]
+
+  /** The deprecated `ignoreFileDeletion` option. */
+  protected def ignoreFileDeletion: Boolean
+
+  /** The `skipChangeCommits` option. */
+  protected def skipChangeCommits: Boolean
 
 
   // ---------------------------------------------------------------------------------------------
@@ -229,6 +244,86 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
           includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Commit validation
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Check stream for violating any constraints.
+   *
+   * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
+   * metadata changes.
+   *
+   * @return (true if commit should be skipped, a metadata action if found)
+   */
+  protected def validateCommitAndDecideSkipping(
+      actions: Iterator[Action],
+      version: Long,
+      batchStartVersion: Long,
+      batchEndOffsetOpt: Option[DeltaSourceOffset] = None,
+      verifyMetadataAction: Boolean = true
+  ): (Boolean, Option[Metadata], Option[Protocol]) = {
+    // If the batch end is at the beginning of this exact version, then we actually stop reading
+    // just _before_ this version. So then we can ignore the version contents entirely.
+    if (batchEndOffsetOpt.exists(end =>
+      end.reservoirVersion == version && end.index == DeltaSourceOffset.BASE_INDEX)) {
+      return (false, None, None)
+    }
+
+    /** A check on the source table that disallows changes on the source data. */
+    val shouldAllowChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
+    /** A check on the source table that disallows commits that only include deletes to the data. */
+    val shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes || ignoreFileDeletion
+
+    var seenFileAdd = false
+    var skippedCommit = false
+    var metadataAction: Option[Metadata] = None
+    var protocolAction: Option[Protocol] = None
+    var removeFileActionPath: Option[String] = None
+    var operation: Option[String] = None
+    actions.foreach {
+      case a: AddFile if a.dataChange =>
+        seenFileAdd = true
+      case r: RemoveFile if r.dataChange =>
+        skippedCommit = skipChangeCommits
+        if (removeFileActionPath.isEmpty) {
+          removeFileActionPath = Some(r.path)
+        }
+      case m: Metadata =>
+        if (verifyMetadataAction) {
+          checkReadIncompatibleSchemaChanges(
+            m, version, batchStartVersion, batchEndOffsetOpt.map(_.reservoirVersion))
+        }
+        assert(metadataAction.isEmpty,
+          "Should not encounter two metadata actions in the same commit")
+        metadataAction = Some(m)
+      case protocol: Protocol =>
+        streamingBackend.protocolRead(protocol, readSnapshot = readSnapshotDescriptor)
+        assert(protocolAction.isEmpty,
+          "Should not encounter two protocol actions in the same commit")
+        protocolAction = Some(protocol)
+      case commitInfo: CommitInfo =>
+        operation = Some(s"${commitInfo.operation} (${commitInfo.operationParameters})")
+      case _ => ()
+    }
+    if (removeFileActionPath.isDefined) {
+      if (seenFileAdd && !shouldAllowChanges) {
+        throw DeltaErrors.deltaSourceIgnoreChangesError(
+          version,
+          if (operation.nonEmpty) operation.get else removeFileActionPath.get,
+          snapshotAtSourceInit.dataPath.toString
+        )
+      } else if (!seenFileAdd && !shouldAllowDeletes) {
+        throw DeltaErrors.deltaSourceIgnoreDeleteError(
+          version,
+          removeFileActionPath.get,
+          snapshotAtSourceInit.dataPath.toString
+        )
+      }
+    }
+    (skippedCommit, metadataAction, protocolAction)
   }
 
   // ---------------------------------------------------------------------------------------------
