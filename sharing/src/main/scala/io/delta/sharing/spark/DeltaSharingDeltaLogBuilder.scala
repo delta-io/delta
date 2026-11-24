@@ -18,12 +18,15 @@ package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingProfileProvider}
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
+import io.delta.sharing.client.util.ConfUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.internal.SQLConf
 
 object DeltaSharingDeltaLogBuilder extends Logging {
 
@@ -52,6 +55,48 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       refreshToken: Option[String],
       profileProvider: DeltaSharingProfileProvider,
       refresher: DeltaSharingUtils.RefresherFunction)
+
+  private def isDeltaLogReuseEnabled: Boolean =
+    SQLConf.get.getConf(DeltaSQLConf.DELTA_SHARING_SNAPSHOT_DELTA_LOG_REUSE_ENABLED)
+
+  /**
+   * Whether reuse is possible. Only query-specific cache entries take another query's state, and
+   * CachedTableManager.register creates them only with the IO cache on and a query id; registering
+   * into them also needs a refresher wrapper.
+   */
+  private def canReuseSnapshotDeltaLog(profileProvider: DeltaSharingProfileProvider): Boolean = {
+    isDeltaLogReuseEnabled && ConfUtils.sparkParquetIOCacheEnabled(SQLConf.get) &&
+      profileProvider.getCustomQueryId().isDefined &&
+      profileProvider.getCustomRefresherWrapper().isDefined
+  }
+
+  /**
+   * Reuse the log an identical earlier query built (same table and `queryParamsHashId`), and
+   * register this query in its cache entry so its urls stay refreshed. This query's getMetadata
+   * has already checked access. Requires [[canReuseSnapshotDeltaLog]].
+   *
+   * @return the log's path if reused, else None.
+   */
+  private def tryReuseSnapshotDeltaLog(
+      client: DeltaSharingClient,
+      tablePath: String,
+      queryParamsHashId: String,
+      anchor: AnyRef,
+      logPrefix: String): Option[Path] = {
+    val profileProvider = client.getProfileProvider
+    // Key of the log's blocks and urls: getCustomTablePath doesn't change it with the IO cache on.
+    val tablePathWithHash = DeltaSharingUtils.getTablePathWithIdSuffix(tablePath, queryParamsHashId)
+    if (!DeltaSharingLogFileSystem.isSnapshotDeltaLogReusable(tablePathWithHash)) {
+      return None
+    }
+    CachedTableManager.INSTANCE.registerQueryStatesInQuerySpecificCachedTable(
+      tablePath = tablePathWithHash,
+      refs = Seq(new WeakReference(anchor)),
+      profileProvider = profileProvider)
+    logInfo(s"$logPrefix: reusing the synthetic delta log and presigned urls of " +
+      s"$tablePathWithHash.")
+    Some(DeltaSharingLogFileSystem.encode(tablePathWithHash))
+  }
 
   /**
    * Build the synthetic Delta log for a single-version (snapshot) Delta Sharing read: issue the
@@ -161,14 +206,16 @@ object DeltaSharingDeltaLogBuilder extends Logging {
         } else {
           System.currentTimeMillis() + CachedTableManager.INSTANCE.preSignedUrlExpirationMs
         },
-      refreshToken = unregistered.refreshToken
+      refreshToken = unregistered.refreshToken,
+      // With reuse on, keep the urls after this query ends, for later identical queries.
+      keepUrlsAfterRefsGone = isDeltaLogReuseEnabled
     )
   }
 
   /**
-   * Build the synthetic Delta log and register its presigned URLs against `anchor` in one step,
-   * returning the encoded `delta-sharing-log://` [[Path]]. Used by the V1 path
-   * ([[DeltaSharingFileIndex]]), whose anchor (its FileIndex) already exists at call time.
+   * Reuse an identical earlier query's synthetic Delta log, or build it and register its presigned
+   * URLs against `anchor`, returning the encoded `delta-sharing-log://` [[Path]]. Used by the V1
+   * path ([[DeltaSharingFileIndex]]), whose anchor (its FileIndex) already exists at call time.
    */
   def buildSnapshotDeltaLogPath(
       client: DeltaSharingClient,
@@ -180,17 +227,25 @@ object DeltaSharingDeltaLogBuilder extends Logging {
       limit: Option[Long],
       anchor: AnyRef,
       logPrefix: String): Path = {
-    val unregistered = buildSnapshotDeltaLog(
-      client = client,
-      table = table,
-      options = options,
-      tablePath = tablePath,
-      queryParamsHashId = queryParamsHashId,
-      jsonPredicateHints = jsonPredicateHints,
-      limit = limit,
-      logPrefix = logPrefix
-    )
-    registerPreSignedUrls(unregistered, anchor)
-    unregistered.encodedPath
+    def build(): Path = {
+      val unregistered = buildSnapshotDeltaLog(
+        client = client,
+        table = table,
+        options = options,
+        tablePath = tablePath,
+        queryParamsHashId = queryParamsHashId,
+        jsonPredicateHints = jsonPredicateHints,
+        limit = limit,
+        logPrefix = logPrefix
+      )
+      registerPreSignedUrls(unregistered, anchor)
+      unregistered.encodedPath
+    }
+    if (canReuseSnapshotDeltaLog(client.getProfileProvider)) {
+      tryReuseSnapshotDeltaLog(client, tablePath, queryParamsHashId, anchor, logPrefix)
+        .getOrElse(build())
+    } else {
+      build()
+    }
   }
 }
