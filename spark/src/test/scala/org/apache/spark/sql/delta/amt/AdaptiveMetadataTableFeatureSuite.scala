@@ -39,7 +39,7 @@ import org.apache.spark.sql.delta.{
   V2CheckpointTableFeature
 }
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
@@ -50,7 +50,7 @@ class AdaptiveMetadataTableFeatureSuite
   extends QueryTest
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with DeltaTableProvider {
 
   // Register the in-memory commit coordinator so catalog-managed tables can be created locally.

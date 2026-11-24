@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{CatalogManagedTableFeature, DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
@@ -1127,7 +1127,7 @@ trait ClusteredTableDDLSuiteBase
 
 trait ClusteredTableDDLSuite
   extends ClusteredTableDDLSuiteBase
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
 
 trait ClusteredTableDDLWithNameColumnMapping
   extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableNameMode
