@@ -37,7 +37,8 @@ import org.apache.spark.sql.delta.amt.{AMTPassthrough, AMTUtils}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.DeltaStatistics.TIGHT_BOUNDS
+import org.apache.spark.sql.delta.stats.{DeltaStatistics, StatsTightness}
+import org.apache.spark.sql.delta.stats.DeltaStatistics.{TIGHT_BOUNDS, TIGHT_STATS}
 import org.apache.spark.sql.delta.util.{DeltaEncoder, DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.PartitionUtils
@@ -722,24 +723,8 @@ object Protocol extends DeltaLogging {
         Seq.empty
       }
 
-    // Spark 4.0 does not support the parquet variant logical type annotation. When
-    // the config is enabled, treat the variant table features as unsupported to block
-    // all interactions with variant tables on Spark 4.0 clients.
-    val unsupportedVariantFeatures =
-      if (org.apache.spark.SPARK_VERSION.startsWith("4.0") &&
-          spark.conf.get(DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40)) {
-        Seq(
-          VariantTypeTableFeature,
-          VariantTypePreviewTableFeature,
-          VariantShreddingTableFeature,
-          VariantShreddingPreviewTableFeature)
-      } else {
-        Seq.empty
-      }
-
     val clientSupportedProtocol =
-      Action.supportedProtocolVersion(
-        featuresToExclude = unsupportedTestFeatures ++ unsupportedVariantFeatures)
+      Action.supportedProtocolVersion(featuresToExclude = unsupportedTestFeatures)
     // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
     val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
@@ -981,7 +966,7 @@ object FileAction {
       metadata: Metadata,
       protocol: Protocol,
       spark: SparkSession): Boolean =
-    AMTUtils.amtSupported(protocol) ||
+    AMTUtils.amtSupported(protocol, isPreviewCompatible = true) ||
       spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_OBJECT_IDENTITY_FOR_NON_AMT)
 
   /**
@@ -1008,11 +993,27 @@ object FileAction {
         action.pathAsUri,
         Option(action.deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity)))
   }
+
+  /**
+   * Whether `action` is an [[AddFile]] or a [[RemoveFile]], the file actions an AMT manifest
+   * commit reads from its tree rather than from its log file.
+   */
+  private[delta] def isAddOrRemove(action: Action): Boolean = action match {
+    case _: AddFile | _: RemoveFile => true
+    case _ => false
+  }
 }
 
+/**
+ * The fields [[HasNumRecords]] reads from a file's stats JSON. `tightBounds` and `tightStats` are
+ * the two tightness flags. `tightBounds` doesn't cover timestamp bounds, which may be truncated
+ * to milliseconds. `tightStats`, which only `adaptiveMetadata-dev` tables have, covers them too,
+ * and its files keep timestamp bounds exact. See [[StatsTightness]].
+ */
 case class ParsedStatsFields(
   numLogicalRecords: Option[Long],
-  tightBounds: Option[Boolean])
+  tightBounds: Option[Boolean],
+  tightStats: Option[Boolean])
 
 /**
  * Common trait for AddFile and RemoveFile actions providing methods for the computation of
@@ -1027,15 +1028,17 @@ trait HasNumRecords {
   protected lazy val parsedStatsFields: Option[ParsedStatsFields] = Option(stats).collect {
     case stats if stats.nonEmpty =>
       val node = new ObjectMapper().readTree(stats)
-      val numLogicalRecords = if (node.has("numRecords")) {
-        Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
+      val numLogicalRecords = if (node.has(DeltaStatistics.NUM_RECORDS)) {
+        Some(node.get(DeltaStatistics.NUM_RECORDS)).filterNot(_.isNull).map(_.asLong())
           .map(_ - numDeletedRecords)
       } else None
-      val tightBounds = if (node.has("tightBounds")) {
-        Some(node.get("tightBounds")).filterNot(_.isNull).map(_.asBoolean())
-      } else None
+      def booleanField(name: String): Option[Boolean] =
+        Option(node.get(name)).filterNot(_.isNull).map(_.asBoolean())
 
-      ParsedStatsFields(numLogicalRecords, tightBounds)
+      ParsedStatsFields(
+        numLogicalRecords,
+        booleanField(DeltaStatistics.TIGHT_BOUNDS),
+        booleanField(DeltaStatistics.TIGHT_STATS))
   }
 
   /** Returns the number of logical records, which do not include those marked as deleted. */
@@ -1069,10 +1072,21 @@ trait HasNumRecords {
   @JsonIgnore
   def deletedToPhysicalRecordsRatio: Option[Double] = logicalToPhysicalRecordsRatio.map(1.0d - _)
 
-  /** Returns whether the statistics are tight or wide. */
+  /**
+   * Returns whether the statistics are tight or wide: the effective tight-bounds flag, which falls
+   * back to `tightStats` for a file that has only that flag. The fallback is safe because
+   * `tightStats` is the stricter flag: `tightStats = true` implies tight bounds, and
+   * `tightStats = false` makes the file read as wide, which is always correct. See
+   * [[StatsTightness]].
+   */
   @JsonIgnore
   @transient
-  lazy val tightBounds: Option[Boolean] = parsedStatsFields.flatMap(_.tightBounds)
+  lazy val tightBounds: Option[Boolean] =
+    parsedStatsFields.flatMap(fields => fields.tightBounds.orElse(fields.tightStats))
+
+  /** Returns the file's `tightStats` flag, if present. See [[StatsTightness]]. */
+  @JsonIgnore
+  def tightStats: Option[Boolean] = parsedStatsFields.flatMap(_.tightStats)
 }
 
 /**
@@ -1207,7 +1221,11 @@ case class AddFile(
     Option(deletionVector).map(_.uniqueId(tableRoot, useObjectIdentity))
   }
 
-  /** Update stats to have tightBounds = false, if file has any stats. */
+  /**
+   * Update stats to be wide, if file has any tight stats: sets `tightStats` to false if the stats
+   * have it, and `tightBounds` to false if they have it or lack `tightStats`. Stats without
+   * `tightStats` never gain it; see [[StatsTightness]].
+   */
   def withoutTightBoundStats: AddFile = {
     if (stats == null || stats.isEmpty) {
       this
@@ -1218,38 +1236,41 @@ case class AddFile(
         withoutTightBoundStatsPreservingPrecision
       } else {
         val node = JsonUtils.mapper.readTree(stats).asInstanceOf[ObjectNode]
-        if (node.has("tightBounds") &&
-            !node.get("tightBounds").asBoolean(true)) {
-          this
-        } else {
-          node.put("tightBounds", false)
+        if (StatsTightness.isTight(node)) {
+          widenTightnessFlags(node)
           val newStatsString = JsonUtils.mapper.writer.writeValueAsString(node)
           this.copy(stats = newStatsString)
+        } else {
+          this
         }
       }
     }
   }
 
   /**
-   * Set the top-level `tightBounds` field to false in the stats JSON while preserving
-   * numeric precision.
+   * Marks the stats wide like [[withoutTightBoundStats]], while preserving numeric precision.
    * Return `this` if bounds are already wide.
    */
   private[delta] def withoutTightBoundStatsPreservingPrecision: AddFile = {
     val writer = new StringWriter()
     val factory = JsonUtils.mapper.getFactory
-    var needsUpdate = true
+    // The tightness flags of the stats, which are written last, once widened.
+    val flags = JsonUtils.mapper.createObjectNode()
+    var needsUpdate = false
+    // `tightBounds = false` makes the stats wide whatever `tightStats` says, so the copy can stop.
+    var alreadyWide = false
     Utils.tryWithResource(factory.createParser(stats)) { parser =>
       require(parser.nextToken() == JsonToken.START_OBJECT,
         "Expected file statistics to be a JSON object")
       Utils.tryWithResource(factory.createGenerator(writer)) { generator =>
         generator.writeStartObject()
-        while (needsUpdate && parser.nextToken() != JsonToken.END_OBJECT) {
-          if (parser.currentName() == TIGHT_BOUNDS) {
+        while (!alreadyWide && parser.nextToken() != JsonToken.END_OBJECT) {
+          val name = parser.currentName()
+          if (StatsTightness.TIGHTNESS_FLAGS.contains(name)) {
             parser.nextToken()
-            // `true` is the default if Jackson cannot convert the value to a boolean.
-            // In that case, widen the bounds as in the legacy path.
-            needsUpdate = parser.readValueAsTree[JsonNode]().asBoolean(true)
+            val value = parser.readValueAsTree[JsonNode]()
+            flags.set[JsonNode](name, value)
+            alreadyWide = name == TIGHT_BOUNDS && !value.isNull && !value.asBoolean(true)
           } else {
             // Preserve decimal bounds without rounding through Double.
             // Copy the field name and its value while preserving numeric precision.
@@ -1270,11 +1291,28 @@ case class AddFile(
             } while (depth > 0)
           }
         }
-        generator.writeBooleanField(TIGHT_BOUNDS, false)
+        needsUpdate = StatsTightness.isTight(flags)
+        if (needsUpdate) widenTightnessFlags(flags)
+        StatsTightness.TIGHTNESS_FLAGS.foreach { name =>
+          Option(flags.get(name)).foreach { value =>
+            generator.writeFieldName(name)
+            generator.writeTree(value)
+          }
+        }
         generator.writeEndObject()
       }
     }
     if (needsUpdate) this.copy(stats = writer.toString) else this
+  }
+
+  /**
+   * Sets the tightness flags of the parsed stats JSON `node` wide, in place, as described in
+   * [[withoutTightBoundStats]].
+   */
+  private def widenTightnessFlags(node: ObjectNode): Unit = {
+    val hasTightStats = node.hasNonNull(TIGHT_STATS)
+    if (hasTightStats) node.put(TIGHT_STATS, false)
+    if (node.hasNonNull(TIGHT_BOUNDS) || !hasTightStats) node.put(TIGHT_BOUNDS, false)
   }
 
   /**
@@ -1769,6 +1807,26 @@ case class CommitInfo(
   @JsonIgnore
   override def getVersion: Long = version.get
 
+  /**
+   * Whether this is the CommitInfo of an AMT manifest commit whose tree describes the commit's own
+   * version.
+   *
+   * @param commitVersion the version of the commit this CommitInfo belongs to.
+   */
+  @JsonIgnore
+  def isAMTInlineManifestCommit(commitVersion: Long): Boolean =
+    lastManifestCommit.contains(
+      LastManifestCommit(version = commitVersion, contentRootVersion = commitVersion))
+
+  /**
+   * The commit-level `dataChange`, which must be present for AMT tables.
+   */
+  @JsonIgnore
+  def getDataChangeOrThrow: Boolean =
+    dataChange.getOrElse(throw new IllegalStateException(
+      s"Commit ${version.map(_.toString).getOrElse("unknown")} does not have a dataChange flag " +
+        "in its CommitInfo."))
+
 }
 
 case class JobInfo(
@@ -1826,7 +1884,7 @@ object CommitInfo {
       metadata: Metadata,
       protocol: Protocol,
       spark: SparkSession): Option[Boolean] = {
-    if (AMTUtils.amtEnabled(metadata, protocol) ||
+    if (AMTUtils.amtEnabled(metadata, protocol, isPreviewCompatible = true) ||
         spark.conf.get(DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_WRITE_FOR_NON_AMT_ENABLED)) {
       Some(dataChange)
     } else {

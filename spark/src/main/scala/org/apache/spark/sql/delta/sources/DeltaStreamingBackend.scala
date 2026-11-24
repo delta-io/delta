@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.sources
 
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaSingleCommit, Snapshot}
+import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaSingleCommit, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.storage.ClosableIterator
 
 
@@ -42,6 +43,9 @@ trait DeltaStreamingBackend {
    * Before it, a backend can load the latest snapshot.
    */
   def unsafeVolatileSnapshot: Snapshot
+
+  /** The table id of [[unsafeVolatileSnapshot]]. */
+  def unsafeVolatileTableId: String
 
   /** Returns the snapshot at `version`. */
   def getSnapshotAt(version: Long): Snapshot
@@ -74,6 +78,12 @@ trait DeltaStreamingBackend {
    * cannot read a table feature at `version`.
    */
   def getSnapshotToValidateProtocol(version: Long): Snapshot
+
+  /**
+   * Throws if this client cannot read a table with `protocol`, from a Protocol action in a commit
+   * that the source reads. `readSnapshot` is the snapshot that the source reads with.
+   */
+  def protocolRead(protocol: Protocol, readSnapshot: SnapshotDescriptor): Unit
 
   // TODO: Remove endOffset once Kernel checks missing versions during iteration.
   // Without an end bound, Kernel may validate through the latest version and fail on

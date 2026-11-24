@@ -31,12 +31,13 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTableUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
@@ -154,8 +155,8 @@ case class AlterTableSetPropertiesDeltaCommand(
           true
       }.toMap
 
-      // For Catalog Owned table validation
-      CatalogOwnedTableUtils.validatePropertiesForAlterTableSetPropertiesDeltaCommand(
+      // For Catalog Managed table validation
+      CatalogManagedTableUtils.validatePropertiesForAlterTableSetPropertiesDeltaCommand(
         txn.snapshot, propertyOverrides = filteredConfs)
 
       // If table redirect feature is updated, validates its property.
@@ -236,7 +237,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       }
 
       if (!fromDropFeatureCommand) {
-        CatalogOwnedTableUtils.validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
+        CatalogManagedTableUtils.validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
           txn.snapshot, propKeysToUnset = normalizedKeys)
       }
       val newConfiguration = metadata.configuration.filterNot {
@@ -728,7 +729,11 @@ case class AlterTableDropColumnsDeltaCommand(
       }
       // Disallow dropping clustering columns.
       val clusteringCols = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
-      val droppingClusteringCols = clusteringCols.filter(droppedColumnSet.contains(_))
+      // Dropping a struct drops the clustering columns nested in it.
+      val droppingClusteringCols = clusteringCols.filter { clusteringCol =>
+        val clusteringColParts = UnresolvedAttribute.parseAttributeName(clusteringCol)
+        columnsToDrop.exists(clusteringColParts.startsWith(_))
+      }
       if (droppingClusteringCols.nonEmpty) {
         throw DeltaErrors.dropClusteringColumnNotSupported(droppingClusteringCols)
       }

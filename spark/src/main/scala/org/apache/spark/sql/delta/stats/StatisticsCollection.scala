@@ -42,6 +42,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
 import org.apache.spark.sql.delta.util.DeltaSqlParserUtils
+import org.apache.spark.sql.delta.util.DeltaStatsJsonUtils.to_json_for_delta_stats
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
@@ -222,7 +223,8 @@ trait StatisticsCollection extends DeltaLogging {
   }
 
   /**
-   * Sets the TIGHT_BOUNDS column to false and converts the logical nullCount
+   * Marks the stats wide (TIGHT_STATS is set to false if the stats have it, and TIGHT_BOUNDS if
+   * they have it or lack TIGHT_STATS) and converts the logical nullCount
    * to a tri-state nullCount. The nullCount states are the following:
    *    1) For "all-nulls" columns we set the physical nullCount which is equal to the
    *       physical numRecords.
@@ -248,9 +250,24 @@ trait StatisticsCollection extends DeltaLogging {
     val nullCountCol = col(s"$statsColName.$NULL_COUNT")
     val tightBoundsCol = col(s"$statsColName.$TIGHT_BOUNDS")
     val statsSchema = withStats.schema.apply(statsColName).dataType.asInstanceOf[StructType]
+    // Only the stats of AMT tables have `tightStats`; see [[StatsTightness]].
+    val hasTightStats = statsSchema.names.contains(TIGHT_STATS)
+    val tightStatsCol = col(s"$statsColName.$TIGHT_STATS")
+    // A file's tightness is `tightBounds` when it has one, and `tightStats` otherwise.
+    val effectiveTightBoundsCol = if (hasTightStats) {
+      StatsTightness.effectiveTightBounds(tightBoundsCol, tightStatsCol)
+    } else {
+      tightBoundsCol
+    }
 
     val allStatCols = ALL_STAT_FIELDS.flatMap {
+      // A file with `tightStats` becomes `tightStats = false`, keeping `tightBounds` only if it had
+      // one; any other file becomes `tightBounds = false`.
+      case TIGHT_BOUNDS if hasTightStats =>
+        Some(when(tightBoundsCol.isNotNull || tightStatsCol.isNull, lit(false)).as(TIGHT_BOUNDS))
       case TIGHT_BOUNDS => Some(lit(false).as(TIGHT_BOUNDS))
+      case TIGHT_STATS if hasTightStats =>
+        Some(when(tightStatsCol.isNotNull, lit(false)).as(TIGHT_STATS))
       case NULL_COUNT if statsSchema.names.contains(NULL_COUNT) =>
         // Use the schema of the existing stats column. We only want to modify the existing
         // nullCount stats. Note, when the column mapping mode is enabled, the schema uses
@@ -262,7 +279,7 @@ trait StatisticsCollection extends DeltaLogging {
         // count for ALL_NULLs columns.
         val nullCountColSeq = applyFuncToStatisticsColumn(nullCountSchema, nullCountCol) {
           case (c, _) =>
-            val allNullTightBounds = tightBoundsCol && (c === logicalNumRecordsCol)
+            val allNullTightBounds = effectiveTightBoundsCol && (c === logicalNumRecordsCol)
             Some(when(allNullTightBounds, physicalNumRecordsCol).otherwise(c))
         }
         Some(struct(nullCountColSeq: _*).as(NULL_COUNT))
@@ -284,7 +301,8 @@ trait StatisticsCollection extends DeltaLogging {
     }
 
     withStats
-      .withColumn("stats", when(col(statsColName).isNotNull, to_json(encodedStatsStruct)))
+      .withColumn("stats", when(col(statsColName).isNotNull,
+        to_json_for_delta_stats(encodedStatsStruct, statsSchema)))
       .drop(col(Checkpoints.STRUCT_STATS_COL_NAME)) // Note: does not always exist.
   }
 
@@ -883,7 +901,8 @@ object StatisticsCollection extends DeltaCommand {
       .createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
     val filePathCol = getSafeFilePathColName(rawFileDataFrame.schema)
     val fileDataFrame = rawFileDataFrame.withColumn(filePathCol, col("_metadata.file_path"))
-    val newStats = fileDataFrame.groupBy(col(filePathCol)).agg(to_json(txn.statsCollector))
+    val newStats = fileDataFrame.groupBy(col(filePathCol))
+      .agg(to_json_for_delta_stats(txn.statsCollector, txn.snapshot.statsSchema))
     newStats.collect().map { r =>
       val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
       add.copy(dataChange = false, stats = r.getString(1))

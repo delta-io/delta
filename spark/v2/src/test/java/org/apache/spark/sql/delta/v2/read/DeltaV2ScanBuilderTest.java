@@ -16,9 +16,16 @@
 package org.apache.spark.sql.delta.v2.read;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
@@ -26,8 +33,20 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.OptionalInt;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
+import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.MetadataAttribute$;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.Snapshot;
@@ -49,6 +68,8 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import scala.Option;
 
 /**
@@ -97,8 +118,231 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pruneColumns(expectedSparkSchema);
     Scan scan = builder.build();
 
-    assertTrue(scan instanceof DeltaV2Scan);
+    assertNotNull(asDeltaV2Scan(scan));
     assertEquals(expectedSparkSchema, scan.readSchema());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"id", "dep_id"})
+  public void testDebugFilterRenderingFailurePreservesClassification(
+      String column, @TempDir File tempDir) throws Exception {
+    DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
+    // Only diagnostic rendering fails; the predicate's references and semantics stay real.
+    Expression expression = spy(toCatalystFilter(builder, new GreaterThan(column, 0)));
+    doThrow(new IllegalStateException("diagnostic-rendering-secret")).when(expression).sql();
+    scala.collection.immutable.Seq<Expression> filters =
+        scala.jdk.javaapi.CollectionConverters.asScala(Collections.singletonList(expression))
+            .toList();
+    boolean partitionFilter = column.equals("dep_id");
+
+    List<LogEvent> events =
+        captureBuilderLogs(
+            Level.DEBUG,
+            () -> {
+              assertEquals(partitionFilter ? 0 : 1, builder.pushFilters(filters).size());
+              Expression[] classified =
+                  getCatalystFilters(
+                      builder,
+                      partitionFilter ? "partitionCatalystFilters" : "dataCatalystFilters");
+              assertEquals(1, classified.length);
+              assertSame(expression, classified[0]);
+            });
+
+    assertTrue(
+        events.stream()
+            .anyMatch(e -> e.getMessage().getFormattedMessage().contains("<unavailable:")));
+    assertTrue(
+        events.stream()
+            .anyMatch(
+                e ->
+                    e.getMessage()
+                        .getFormattedMessage()
+                        .contains(IllegalStateException.class.getName())));
+    assertTrue(events.stream().allMatch(e -> e.getThrown() == null));
+    assertTrue(
+        events.stream()
+            .noneMatch(
+                e -> e.getMessage().getFormattedMessage().contains("diagnostic-rendering-secret")));
+  }
+
+  @Test
+  public void testInfoFilterLoggingDoesNotRenderExpressions(@TempDir File tempDir)
+      throws Exception {
+    DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
+    Expression expression = spy(toCatalystFilter(builder, new GreaterThan("id", 0)));
+    doThrow(new IllegalStateException("rendering should stay lazy")).when(expression).sql();
+    scala.collection.immutable.Seq<Expression> filters =
+        scala.jdk.javaapi.CollectionConverters.asScala(Collections.singletonList(expression))
+            .toList();
+
+    List<LogEvent> events =
+        captureBuilderLogs(Level.INFO, () -> assertEquals(1, builder.pushFilters(filters).size()));
+
+    verify(expression, never()).sql();
+    assertTrue(events.isEmpty());
+  }
+
+  @Test
+  public void testBuildFailureLogsOneBoundedWarningAndPreservesCause(@TempDir File tempDir)
+      throws Exception {
+    IllegalArgumentException expected = new IllegalArgumentException("raw-exception-secret");
+    CaseInsensitiveStringMap failingOptions =
+        new CaseInsensitiveStringMap(Collections.emptyMap()) {
+          @Override
+          public Set<Map.Entry<String, String>> entrySet() {
+            throw expected;
+          }
+        };
+    withSQLConf(
+        "spark.sql.redaction.string.regex",
+        "diagnostic-table-secret",
+        () -> {
+          DeltaV2ScanBuilder builder =
+              newFilterScanBuilder(new File(tempDir, "diagnostic-table-secret"), failingOptions);
+          List<LogEvent> events =
+              captureBuilderLogs(
+                  Level.DEBUG,
+                  () ->
+                      assertSame(
+                          expected, assertThrows(IllegalArgumentException.class, builder::build)));
+          assertEquals(1, events.size());
+          LogEvent warning = events.get(0);
+          assertEquals(Level.WARN, warning.getLevel());
+          assertNull(warning.getThrown());
+          String message = warning.getMessage().getFormattedMessage();
+          assertTrue(message.startsWith("Delta V2 scan planning failed for "));
+          assertTrue(message.contains("scan.build.failure"));
+          assertTrue(message.contains(IllegalArgumentException.class.getName()));
+          assertFalse(message.contains("diagnostic-table-secret"));
+          assertFalse(message.contains("raw-exception-secret"));
+        });
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"INFO", "DEBUG"})
+  public void testScanDiagnosticsPreserveDeferredFileSelection(String level, @TempDir File tempDir)
+      throws Exception {
+    DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
+    List<LogEvent> events =
+        captureBuilderLogs(
+            Level.valueOf(level),
+            () -> {
+              DeltaV2Scan scan = asDeltaV2Scan(builder.build());
+              Field planned = DeltaV2Scan.class.getDeclaredField("planned");
+              planned.setAccessible(true);
+              assertFalse(planned.getBoolean(scan));
+              assertEquals(0, scan.toBatch().planInputPartitions().length);
+              assertTrue(planned.getBoolean(scan));
+            });
+    assertEquals(
+        level.equals("DEBUG") ? 1 : 0,
+        events.stream()
+            .filter(
+                e ->
+                    e.getMessage().getFormattedMessage().startsWith("Selected Delta V2 scan files"))
+            .count());
+    assertEquals(
+        level.equals("DEBUG") ? 1 : 0,
+        events.stream()
+            .filter(e -> e.getMessage().getFormattedMessage().startsWith("Built Delta V2 scan"))
+            .count());
+  }
+
+  private List<LogEvent> captureBuilderLogs(Level level, ThrowingRunnable action) throws Exception {
+    Logger logger = (Logger) LogManager.getLogger(DeltaV2ScanBuilder.class);
+    List<LogEvent> events = new CopyOnWriteArrayList<>();
+    AbstractAppender appender =
+        new AbstractAppender("scan-builder-diagnostics", null, null, true, Property.EMPTY_ARRAY) {
+          @Override
+          public void append(LogEvent event) {
+            events.add(event.toImmutable());
+          }
+        };
+    Level previousLevel = logger.getLevel();
+    appender.start();
+    logger.addAppender(appender);
+    logger.setLevel(level);
+    try {
+      action.run();
+      return events;
+    } finally {
+      logger.setLevel(previousLevel);
+      logger.removeAppender(appender);
+      appender.stop();
+    }
+  }
+
+  @Test
+  public void testPruneColumns_preservesMetadataDifferingFromPartitionOnlyByCase(
+      @TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "scan_builder_metadata_partition_case_test";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (_metadata STRING, __Metadata INT) "
+                + "USING delta PARTITIONED BY (__Metadata) LOCATION '%s'",
+            tableName, path));
+    StructType dataSchema = new StructType().add("_metadata", DataTypes.StringType);
+    StructType partitionSchema = new StructType().add("__Metadata", DataTypes.IntegerType);
+    StructType tableSchema = dataSchema.add(partitionSchema.fields()[0]);
+    StructField metadataColumn =
+        DataTypes.createStructField(
+            "__metadata",
+            new StructType().add("file_path", DataTypes.StringType),
+            false,
+            MetadataAttribute$.MODULE$.metadata("_metadata"));
+    StructType expectedDataSchema = dataSchema.add(metadataColumn);
+    StructType requiredSchema = expectedDataSchema.add(partitionSchema.fields()[0]);
+
+    // Names are already resolved before pruning, regardless of the current resolver setting.
+    for (String caseSensitive : new String[] {"true", "false"}) {
+      withSQLConf(
+          "spark.sql.caseSensitive",
+          caseSensitive,
+          () -> {
+            DeltaV2ScanBuilder builder =
+                newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
+            builder.pruneColumns(requiredSchema);
+
+            assertEquals(expectedDataSchema, getRequiredDataSchema(builder));
+          });
+    }
+  }
+
+  @Test
+  public void testPruneColumns_preservesMetadataWithCaseSensitivePartition(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String v1Table = String.format("delta.`%s`", path);
+    String queryPrefix = "SELECT id, _Metadata, _metadata.file_path FROM ";
+    withSQLConf(
+        "spark.sql.caseSensitive",
+        "true",
+        () ->
+            withSQLConf(
+                "spark.databricks.delta.v2.enableMode",
+                "NONE",
+                () -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id INT, _Metadata INT) "
+                              + "USING delta PARTITIONED BY (_Metadata)",
+                          v1Table));
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 2)", v1Table));
+                  List<Row> expectedRows = spark.sql(queryPrefix + v1Table).collectAsList();
+                  assertEquals(1, expectedRows.size());
+                  assertEquals(1, expectedRows.get(0).getInt(0));
+                  assertEquals(2, expectedRows.get(0).getInt(1));
+                  assertNotNull(expectedRows.get(0).getString(2));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () ->
+                          assertEquals(
+                              expectedRows,
+                              spark.sql(queryPrefix + dsv2Table(path)).collectAsList()));
+                }));
   }
 
   @Test
@@ -497,6 +741,10 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
   }
 
   private DeltaV2ScanBuilder newFilterScanBuilder(File tempDir) {
+    return newFilterScanBuilder(tempDir, CaseInsensitiveStringMap.empty());
+  }
+
+  private DeltaV2ScanBuilder newFilterScanBuilder(File tempDir, CaseInsensitiveStringMap options) {
     String path = tempDir.getAbsolutePath();
     String tableName = "filter_builder_" + System.nanoTime();
     // dep_name is a STRING partition column so string predicates can be applied to a partition
@@ -526,7 +774,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
               DataTypes.createStructField("dep_id", DataTypes.IntegerType, true),
               DataTypes.createStructField("dep_name", DataTypes.StringType, true)
             });
-    return newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema);
+    return newScanBuilder(tableName, path, dataSchema, partitionSchema, tableSchema, options);
   }
 
   private StructType getRequiredDataSchema(DeltaV2ScanBuilder builder) throws Exception {
@@ -541,6 +789,22 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
       StructType dataSchema,
       StructType partitionSchema,
       StructType tableSchema) {
+    return newScanBuilder(
+        tableName,
+        path,
+        dataSchema,
+        partitionSchema,
+        tableSchema,
+        CaseInsensitiveStringMap.empty());
+  }
+
+  private DeltaV2ScanBuilder newScanBuilder(
+      String tableName,
+      String path,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType tableSchema,
+      CaseInsensitiveStringMap options) {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, createKernelContext());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
@@ -548,17 +812,18 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     DeltaV2TableManager tableManager =
         DeltaV2TableManagerCache$.MODULE$.forTable(
             spark, path, Collections.emptyMap(), Option.empty());
-    return DeltaV2ScanBuilder.create(
-        tableName,
-        snapshot,
-        engine,
-        Option.empty(),
-        tableManager,
-        dataSchema,
-        partitionSchema,
-        tableSchema,
-        Option.empty(),
-        CaseInsensitiveStringMap.empty());
+    return (DeltaV2ScanBuilder)
+        DeltaV2ScanUtils.newScanBuilder(
+            tableName,
+            snapshot,
+            engine,
+            Option.empty(),
+            tableManager,
+            dataSchema,
+            partitionSchema,
+            tableSchema,
+            Option.empty(),
+            options);
   }
 
   // Limit Pushdown Tests
@@ -589,14 +854,14 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
   public void testPushLimit_propagatedToScan(@TempDir File tempDir) {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
     builder.pushLimit(42);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(Option.apply(42), scan.getPushedLimit());
   }
 
   @Test
   public void testPushLimit_absentByDefault(@TempDir File tempDir) {
     DeltaV2ScanBuilder builder = newFilterScanBuilder(tempDir);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(Option.empty(), scan.getPushedLimit());
   }
 
@@ -606,7 +871,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushLimit(10);
     builder.pushLimit(20);
     assertEquals(OptionalInt.of(20), builder.getPushedLimit());
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(Option.apply(20), scan.getPushedLimit());
   }
 
@@ -625,7 +890,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     // A data filter (on a non-partition column) becomes a post-scan residual.
     pushFilters(builder, new GreaterThan("id", 10));
     builder.pushLimit(10);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(
         Option.empty(),
         scan.getPushedLimit(),
@@ -642,7 +907,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     builder.pushFilters(
         scala.jdk.javaapi.CollectionConverters.<Expression>asScala(java.util.List.of()).toList());
     assertTrue(builder.pushLimit(10));
-    assertEquals(Option.empty(), ((DeltaV2Scan) builder.build()).getPushedLimit());
+    assertEquals(Option.empty(), asDeltaV2Scan(builder.build()).getPushedLimit());
   }
 
   @Test
@@ -654,7 +919,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     pushFilters(builder, new EqualTo("dep_id", 1));
 
     builder.pushLimit(10);
-    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    DeltaV2Scan scan = asDeltaV2Scan(builder.build());
     assertEquals(
         Option.apply(10),
         scan.getPushedLimit(),

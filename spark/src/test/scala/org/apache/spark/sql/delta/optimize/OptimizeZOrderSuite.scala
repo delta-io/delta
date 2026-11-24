@@ -28,7 +28,6 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions.{col, floor, lit, max, struct}
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.LongType
 
 trait OptimizePartitionTableHelper extends QueryTest {
@@ -42,10 +41,10 @@ trait OptimizePartitionTableHelper extends QueryTest {
 /** Tests for Optimize Z-Order by */
 trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
   with TestsStatistics
-  with SharedSparkSession
+  with DeltaSQLCommandTest
   with DeltaSQLTestUtils
   with DeltaColumnMappingTestUtils {
-  import testImplicits._
+  import deltaImplicits._
 
 
   def executeOptimizeTable(table: String, zOrderBy: Seq[String],
@@ -347,7 +346,7 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
  */
 class OptimizeZOrderSQLSuite extends OptimizeZOrderSuiteBase
   with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   def executeOptimizeTable(table: String, zOrderBy: Seq[String],
       condition: Option[String] = None): DataFrame = {

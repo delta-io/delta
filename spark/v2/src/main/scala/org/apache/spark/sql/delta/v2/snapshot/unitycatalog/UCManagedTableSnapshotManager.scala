@@ -123,8 +123,7 @@ class UCManagedTableSnapshotManager(
       timestampMillis,
       canReturnLastCommit,
       mustBeRecreatable,
-      canReturnEarliestCommit
-    )
+      canReturnEarliestCommit)
   }
 
   /**
@@ -157,7 +156,7 @@ class UCManagedTableSnapshotManager(
       version,
       mustBeRecreatable,
       allowOutOfRange,
-      true /* checkUpperBoundFirst */)
+      checkUpperBoundFirst = true)
   }
 
   /**

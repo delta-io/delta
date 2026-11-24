@@ -32,7 +32,7 @@ trait DeleteSQLMixin extends DeleteBaseMixin
 }
 
 trait DeleteSQLTests extends DeleteSQLMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   // For EXPLAIN, which is not supported in OSS
   test("explain", ChecksPhysicalDeltaPlan()) {

@@ -162,7 +162,7 @@ trait MergeIntoMaterializeSourceMixin
 }
 
 trait MergeIntoMaterializeSourceErrorTests extends MergeIntoMaterializeSourceMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   // Test error message that we check if blocks of materialized source RDD were evicted.
   test("missing RDD blocks error message") {
@@ -325,7 +325,7 @@ trait MergeIntoMaterializeSourceErrorTests extends MergeIntoMaterializeSourceMix
 }
 
 trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   private def getHints(df: => DataFrame): Seq[(Seq[ResolvedHint], JoinHint)] = {
     val plans = withAllPlansCaptured(spark) {

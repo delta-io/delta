@@ -756,7 +756,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
   // do not cover this path or guarantee that required sidecar types survive decoding.
   Seq(false, true).foreach { withSidecars =>
     test(s"Checkpoint - Spark decodes the action array with sidecars=$withSidecars") {
-      import testImplicits._
+      import deltaImplicits._
 
       val sidecars = if (withSidecars) {
         Seq(

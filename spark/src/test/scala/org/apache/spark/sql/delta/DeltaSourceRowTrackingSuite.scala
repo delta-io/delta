@@ -36,7 +36,7 @@ trait DeltaSourceRowTrackingSuiteBase
   with DeltaColumnMappingTestUtils
   with StreamTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("_metadata.row_id is not available in streaming") {
     // DSv1 streaming (DeltaSource / StreamingRelation) does not expose _metadata.row_id;

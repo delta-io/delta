@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.v2.interop
 import java.lang.{Long => JLong}
 import java.util.{List => JList, Objects, Optional}
 
+import scala.util.control.NonFatal
+
 import io.delta.kernel.CommitRange
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.DeltaHistoryManager
@@ -29,6 +31,8 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChan
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 
 import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.v2.DeltaV2Logging
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.annotation.Experimental
 
@@ -241,7 +245,7 @@ trait DeltaV2SnapshotManager {
   }
 }
 
-object DeltaV2SnapshotManager {
+object DeltaV2SnapshotManager extends DeltaV2Logging {
 
   /**
    * Inputs for loading an inclusive range of table changes.
@@ -280,6 +284,15 @@ object DeltaV2SnapshotManager {
     Objects.requireNonNull(kernelSnapshot, "kernelSnapshot is null")
     Objects.requireNonNull(kernelContext, "kernelContext is null")
     Objects.requireNonNull(tablePath, "tablePath is null")
-    new DeltaV2Snapshot(kernelSnapshot, kernelContext)
+    try {
+      new DeltaV2Snapshot(kernelSnapshot, kernelContext)
+    } catch {
+      case NonFatal(e) =>
+        recordDeltaEventForTablePath(
+          tablePath = new Path(tablePath),
+          opType = "snapshot.wrap.failure",
+          data = Map("version" -> kernelSnapshot.getVersion))
+        throw e
+    }
   }
 }

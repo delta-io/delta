@@ -41,11 +41,12 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `add` action supports a `backReference` field:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, the `add` action supports the `backReference` and `amtPassthrough` fields:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the leaf-manifest entry this add supersedes in place, without a paired `remove` (e.g., a stats backfill). Null otherwise, including a DV update, where the backreference is on the paired `remove`. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
+| <ins>amtPassthrough</ins> | <ins>Struct</ins> | <ins>Content entry fields that describe the physical file and have no native `add` field. See [Passthrough Fields](#passthrough-fields).</ins> |
 
 ### Remove File
 
@@ -59,6 +60,7 @@ This design enables:
 | <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues` and `size` are always present on the `remove`.</ins> |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the file's entry in a leaf manifest. Null when the file has no leaf-manifest entry — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Int). See [Backreferences](#backreferences).</ins> |
 | <ins>stats</ins> | <ins>String</ins> | <ins>Must be present. Statistics of the removed file, with `numRecords` required at minimum; column statistics are included when recorded for the file. Copied from the matching `add.stats`, or converted from the file's tree entry (`record_count`, `content_stats`).</ins> |
+| <ins>amtPassthrough</ins> | <ins>Struct</ins> | <ins>Copied from the removed file's `add` or content entry. See [Passthrough Fields](#passthrough-fields).</ins> |
 
 <ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
 
@@ -354,7 +356,6 @@ The root manifest contains entries of the following types:
 |----------|------------|------------|----------|---------------|-------------|
 | 147 | `tracking` | Struct ([Tracking](#tracking)) | Required | All | Tracking information for this entry |
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
-| 157 | `format_version` | Int | Required | All | Iceberg writer format version; 0: for ≤v3, 4 for V4. |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
 | 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
@@ -366,6 +367,7 @@ The root manifest contains entries of the following types:
 | 140 | `sort_order_id` | Int | Optional | DATA | Sort order ID for this file. If missing or unknown, the order is assumed to be unsorted. |
 | 148 | `deletion_vector` | Struct ([Deletion Vector](#deletion-vector)) | Optional | DATA | Deletion vector for the data file |
 | 150 | `manifest_info` | Struct ([Manifest Info](#manifest-info)) | Optional | DATA_MANIFEST | Manifest-level summary and MDV |
+| 131 | `key_metadata` | Binary | Optional | All | Implementation-specific key metadata for encryption |
 | 132 | `split_offsets` | Array\<Long\> (element ID 133) | Optional | DATA | Row group split offsets. Must be sorted ascending. |
 
 ### Tracking
@@ -383,14 +385,14 @@ The root manifest contains entries of the following types:
 
 **Status values:** `status` is required and always materialized (never null). Each entry has exactly one status.
 
-Only `EXISTING` and `ADDED` entries are live (visible to scans). `DELETED` and `REPLACED` entries are not live and exist only for change data feed (CDF) reconstruction. A file path has at most one live entry in the tree at any time.
+Only `EXISTING`, `ADDED`, and `MODIFIED` entries are live (visible to scans). `DELETED` and `REPLACED` entries are not live and exist only for change data feed (CDF) reconstruction. A file path has at most one live entry in the tree at any time.
 
 - `EXISTING` (0): Unchanged from previous commit. Live.
 - `ADDED` (1): New in this commit. Live.
 - `DELETED` (2): Removed in this commit. Not live.
 - `REPLACED` (3): Superseded (e.g., DV added/changed). Not live. A
   new DATA entry with updated metadata exists elsewhere in the tree as the live entry for this file path.
-- `MODIFIED` (4): When a data file's deletion vector is updated.
+- `MODIFIED` (4): When a data file's deletion vector is updated. Live.
 
 Non-live entries are transient: they are dropped in the next manifest commit that rewrites the affected manifest (root or leaf).
 
@@ -430,27 +432,27 @@ Tracks where a DV blob can be read. Only for `content_type` = DATA entries.
 
 ### Manifest Info
 
-Summary information for `content_type` = DATA_MANIFEST entries. Includes file/row counts and the Manifest Deletion Vector (MDV).
+Summary information for `content_type` = DATA_MANIFEST entries. Includes the manifest format version, file/row counts, and the Manifest Deletion Vector (MDV). Field IDs and semantics follow the [`manifest_info` struct](https://iceberg.apache.org/spec/#manifest-info-fields) in the Iceberg V4 specification.
 
 | Field ID | Field Name | Delta Type | Required | Description |
 |----------|------------|------------|----------|-------------|
+| 521 | `format_version` | Int | Required | Iceberg format version used to write the manifest. Should be set to 4, referring to Iceberg V4. |
 | 504 | `added_files_count` | Int | Required | Number of files added |
 | 505 | `existing_files_count` | Int | Required | Number of existing files |
 | 506 | `deleted_files_count` | Int | Required | Number of deleted files |
-| 520 | `replaced_files_count` | Int | Required | Number of replaced files |
-| 524 | `modified_files_count` | Int | Required | Number of modified files |
+| 523 | `replaced_files_count` | Int | Required | Number of replaced files |
+| 525 | `modified_files_count` | Int | Required | Number of modified files |
 | 512 | `added_rows_count` | Long | Required | Number of rows in added files |
 | 513 | `existing_rows_count` | Long | Required | Number of rows in existing files |
 | 514 | `deleted_rows_count` | Long | Required | Number of rows in deleted files |
-| 521 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
-| 525 | `modified_rows_count` | Long | Required | Number of rows in modified files |
+| 524 | `replaced_rows_count` | Long | Required | Number of rows in replaced files |
+| 526 | `modified_rows_count` | Long | Required | Number of rows in modified files |
 | 516 | `min_sequence_number` | Long | Required | Minimum data sequence number of all live entries in the manifest |
-| 522 | `dv` | Binary | Optional | MDV bitmap marking deleted positions in leaf manifest. Must be non-null if and only if `dv_cardinality` is non-null. |
-| 523 | `dv_cardinality` | Long | Optional | Number of entries marked as deleted in the MDV. Must be non-null if and only if `dv` is non-null. |
+| 522 | `dv` | Binary | Optional | MDV bitmap of positions in the referenced leaf manifest that are not live. The number of marked positions is stored in the bitmap header (see the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec). |
 
 ### Manifest Deletion Vectors (MDVs)
 
-MDVs track which entries in a leaf manifest have been deleted or replaced. The `dv` field in `manifest_info` contains all invalidated positions (cumulative, used for reading). The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF). All three bitmaps are encoded using the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec:
+MDVs track which entries in a leaf manifest are not live. The `dv` field in `manifest_info` contains all invalidated positions (cumulative, used for reading). The `deleted_positions` and `replaced_positions` fields in `tracking` represent what changed in the current commit only (used for CDF). All three bitmaps are encoded using the [Mumbling bitmap](https://iceberg.apache.org/mumbling-spec/) spec:
 
 - **`manifest_info.dv`**: Cumulative set of all invalidated positions. Grows
   monotonically. Used by readers to skip entries.
@@ -521,6 +523,23 @@ When folding a log `add` into a manifest, writers convert `add.stats` to `conten
 `value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightStats` carries Delta's wide-stats-under-deletion-vectors semantics to `tight_stats`, consistent with `DATA_MANIFEST` entries having `tight_stats = false` when an MDV is present. Both flags cover the bounds and null counts of every column, and neither covers `string` bounds.
 
 For a `DATA` entry whose `tight_stats` is `false` or absent, `null_value_count` has the same meaning as a wide `nullCount` (see [Per-file Statistics](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics)). A value of 0 means that no live row is null in that column, and a value equal to `record_count` means that every live row is null. Any other value carries no information, and readers must treat it as absent.
+
+## Passthrough Fields
+
+The `amtPassthrough` struct on `add` and `remove` actions holds content entry fields that describe the physical file and have no native `add` field:
+
+| Field Name | Data Type | Mapped Content Entry Field | Description |
+|------------|-----------|---------------------|-------------|
+| `spec_id` | Int | 141 `spec_id` | Partition spec ID of the file |
+| `sort_order_id` | Int | 140 `sort_order_id` | Sort order ID of the file |
+| `key_metadata` | Binary | 131 `key_metadata` | Encryption key metadata of the file |
+| `split_offsets` | Array\<Long\> | 132 `split_offsets` | Split offsets of the file |
+
+All fields are optional. Writers should omit the struct when every field is null. In JSON, `key_metadata` is a base64-encoded string.
+
+Delta does not transform these fields. A writer that commits an `add` or `remove` for a file that is live in the table must copy them unchanged from the file's current `add` or content entry.
+
+When converting an `add` or `remove` to a content entry, writers copy each non-null passthrough field into its entry field. When producing an `add` from a content entry, readers and writers copy each non-null entry field into the passthrough after resolving inheritance.
 
 ## Snapshot ID Generation
 
@@ -606,7 +625,7 @@ A standalone checkpoint uses the classic single-file checkpoint naming (`n.check
 
 ## Manifest Deletion Vectors (MDVs)
 
-MDVs reduce the write amplification: instead of rewriting a leaf manifest to remove a file, the root manifest records an MDV that marks row positions in the leaf manifest as deleted.
+MDVs reduce the write amplification: instead of rewriting a leaf manifest to remove a file, the root manifest records an MDV that marks positions in the leaf manifest that are not live.
 
 MDVs are stored in `manifest_info.dv` on `DATA_MANIFEST` entries in the root manifest. See [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs) for field definitions and CDF bitmap semantics.
 
@@ -620,7 +639,6 @@ DATA_MANIFEST entry:
     status: EXISTING
   manifest_info:
     dv: <bitmap marking positions 2, 17>
-    dv_cardinality: 2
 ```
 
 When reading a leaf manifest, readers must check the `DATA_MANIFEST` entry for a non-null `manifest_info.dv`. If present, deserialize the bitmap and skip entries at positions marked in it.
@@ -641,6 +659,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Maintain a two-level tree (root -> leaves) and not create nested manifest references.
 - Record a `backReference` for every file read from the tree, and use the accumulated backreferences to build MDVs and re-add entries when producing a manifest commit (see [Backreferences](#backreferences) and [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
 - Populate manifest entries with partition values, content stats, deletion vectors, and tracking and sequence numbers (see [Content Entry Schema](#content-entry-schema) and [Row Tracking Compatibility](#row-tracking-compatibility)).
+- Carry `amtPassthrough` on `add` and `remove` actions, preserving its fields as described in [Passthrough Fields](#passthrough-fields).
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
 - Assign field IDs to the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes; ID allocation is the same as in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2).
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.

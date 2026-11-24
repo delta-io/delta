@@ -100,6 +100,7 @@ object DeltaV2SourceSuite {
     "incremental: first commit file missing, fails",
     "incremental: commit file gap between versions, fails",
     "incremental: first commit file missing, failOnDataLoss=false succeeds",
+    "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
     "initial snapshot: commit file missing but checkpoint intact, succeeds",
     "initial snapshot: checkpoint missing but all commit files intact, succeeds",
     "initial snapshot: both checkpoint and commit file missing, fails",
@@ -183,10 +184,6 @@ object DeltaV2SourceSuite {
     // nullability change fails instead of adopting the current table schema.
     "handling nullability schema changes",
 
-    // === Data Loss Detection ===
-    // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
-    // throw InvalidTableException because non-contiguous versions are not a log-retention scenario.
-    "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
     // These tests directly use DeltaSource, not applicable to the v2 path.
     "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
       " getBatch readChangeFeed=true midVersionEndOffset=true",

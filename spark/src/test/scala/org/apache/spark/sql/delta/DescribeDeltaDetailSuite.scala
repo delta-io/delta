@@ -37,7 +37,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
   with CatalogOwnedTestBaseSuite
   with DeltaTestUtilsForTempViews {
 
-  import testImplicits._
+  import deltaImplicits._
 
   val catalogAndSchema = {
     s"$SESSION_CATALOG_NAME.default."

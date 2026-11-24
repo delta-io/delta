@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.{InternalRow, SQLConfHelper}
 import org.apache.spark.sql.catalyst.analysis.Resolver
 import org.apache.spark.sql.catalyst.expressions._
@@ -192,6 +192,12 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                   columnName
                 )
             }
+          case (from: ArrayType, to: ArrayType)
+              if from != to &&
+                castingBehavior.isInstanceOf[MergeOrUpdateCastingBehavior] &&
+                castingBehavior.resolveStructsByName &&
+                containsNestedStruct(from) && containsNestedStruct(to) =>
+            castArrayByName(fromExpression, from, to, castingBehavior, columnName)
           case (from: MapType, to: MapType) if !Cast.canCast(from, to) || (
               // Structs can be nested into the MapType, so if we need to do by-name casts,
               // we need to recurse into the children here.
@@ -314,6 +320,36 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
             cast(fromExpression, dataType, castingBehavior, columnName)
           case _ => fromExpression
         }
+    }
+  }
+
+  /** Convert uncovered array shapes while retaining each descendant collection's controls. */
+  private def castArrayByName(
+      fromExpression: Expression,
+      from: ArrayType,
+      to: ArrayType,
+      castingBehavior: CastingBehavior,
+      columnName: String): Expression = {
+    def castArray(expression: Expression): Expression =
+      castIfNeeded(expression, to, castingBehavior, columnName)
+
+    // As for direct arrays of structs, convert operands before applying set/removal operations.
+    fromExpression match {
+      case ArrayUnion(left, right) => ArrayUnion(castArray(left), castArray(right))
+      case ArrayIntersect(left, right) => ArrayIntersect(castArray(left), castArray(right))
+      case ArrayExcept(left, right) => ArrayExcept(castArray(left), castArray(right))
+      case ArrayRemove(left, right) =>
+        ArrayRemove(
+          castArray(left), castIfNeeded(right, to.elementType, castingBehavior, columnName))
+      case ArrayDistinct(child) => ArrayDistinct(castArray(child))
+      case _ =>
+        val element = NamedLambdaVariable("element", from.elementType, from.containsNull)
+        val converted = castIfNeeded(element, to.elementType, castingBehavior, columnName)
+        cast(
+          ArrayTransform(fromExpression, LambdaFunction(converted, Seq(element))),
+          to.asNullable,
+          castingBehavior,
+          columnName)
     }
   }
 
@@ -634,6 +670,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       generatedColumns: Seq[StructField],
       updateExprs: Seq[Option[Expression]],
       postEvolutionTargetSchema: Option[StructType] = None): Seq[Expression] = {
+    val sparkSession = SparkSession.active
     val targetSchema = postEvolutionTargetSchema.getOrElse(updateTarget.schema)
     assert(
       targetSchema.size == updateExprs.length,
@@ -657,7 +694,18 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
           generatedColumns.find(f => conf.resolver(f.name, targetCol.name)) match {
             case Some(field) =>
               val expr = GeneratedColumn.getGenerationExpression(field).get
-              resolveReferencesForExpressions(SparkSession.active, expr :: Nil, fakePlan).head
+              try {
+                resolveReferencesForExpressions(sparkSession, expr :: Nil, fakePlan).head
+              } catch {
+                case e: AnalysisException
+                    if e.getErrorClass == "DELTA_CANNOT_RESOLVE_EXPRESSION" &&
+                      !fakePlan.resolved &&
+                      conf.getConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN) =>
+                  // An unresolved update expression, such as an invalid cast, blocks resolution.
+                  // CheckAnalysis reports the error of that expression. If it finds none, keep `e`.
+                  sparkSession.sessionState.analyzer.checkAnalysis(fakePlan)
+                  throw e
+              }
             case None =>
               // Should not happen
               throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression(targetCol.name)

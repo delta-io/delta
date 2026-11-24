@@ -18,6 +18,9 @@ package org.apache.spark.sql.delta.util
 
 import org.apache.spark.sql.delta.shims.VariantStatsShims
 import org.apache.spark.sql.delta.util.Codec.Base85Codec
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.functions.to_json
+import org.apache.spark.sql.types.DataType
 import org.apache.spark.types.variant.{Variant, VariantUtil}
 import org.apache.spark.unsafe.types.VariantVal
 
@@ -26,6 +29,15 @@ import org.apache.spark.unsafe.types.VariantVal
  * This is used for storing variant statistics in Delta checkpoints and stats.
  */
 object DeltaStatsJsonUtils {
+
+  /**
+   * `to_json` of the stats `e` of a table whose stats schema is `statsSchema`, with `options`.
+   * Code that writes Delta stats JSON uses it, so that the JSON options a table's stats need are
+   * decided in one place.
+   */
+  def to_json_for_delta_stats(
+      e: Column, statsSchema: DataType, options: Map[String, String] = Map.empty): Column =
+    to_json(e, options)
 
   /**
    * Encode a Variant as a Z85 string.

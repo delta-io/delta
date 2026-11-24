@@ -117,7 +117,7 @@ trait MergeIntoScalaMixin extends MergeIntoSuiteBaseMixin
 
 trait MergeIntoScalaTests extends MergeIntoScalaMixin {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("basic scala API") {
     withTable("source") {
@@ -355,7 +355,10 @@ trait MergeIntoScalaTests extends MergeIntoScalaMixin {
           .whenMatched().updateAll()
           .whenNotMatched().insertAll()
           .execute()
-        // assert(t.toDF.schema == StructType.fromDDL("id LONG, newCol1 STRING"))
+        val expectedRows = (0L until 10L).map(id => Row(id, null)) :+ Row(11L, "newVal11")
+        val tableAfterMerge = spark.read.format("delta").load(targetPath)
+        assert(tableAfterMerge.schema === StructType.fromDDL("id LONG, newCol1 STRING"))
+        checkAnswer(tableAfterMerge, expectedRows)
 
         // SC-35564 - ideally this shouldn't throw an error, but right now we can't fix it without
         // causing a regression.
@@ -365,7 +368,9 @@ trait MergeIntoScalaTests extends MergeIntoScalaMixin {
             .whenNotMatched().insertAll()
             .execute()
         }
-        ex.getMessage.contains("schema of your Delta table has changed in an incompatible way")
+        assert(ex.getMessage.contains(
+          "schema of your Delta table has changed in an incompatible way"))
+        checkAnswer(spark.read.format("delta").load(targetPath), expectedRows)
       }
     }
   }

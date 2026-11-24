@@ -113,7 +113,7 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
   with TypeWideningTestCases {
   self: QueryTest with TypeWideningTestMixin with DeltaDMLTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
   import scala.collection.JavaConverters._
 
   for {

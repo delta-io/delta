@@ -155,17 +155,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
   }
 
-  /**
-   * In Unity Catalog environments, disable variant table feature support for Spark 4.0 clients
-   * that lack the parquet variant logical type annotation.
-   */
-  private def setVariantBlockingConfigIfUC(): Unit = {
-    if (isUnityCatalog) {
-      spark.conf.set(
-        DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key, "true")
-    }
-  }
-
   /** Converts Spark's generated- and identity-column metadata into the keys persisted by Delta. */
   private def convertColumnMetadata(schema: StructType): StructType = {
     StructType(schema.fields.map { field =>
@@ -433,7 +422,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   override def loadTable(ident: Identifier): Table = recordFrameProfile(
       "DeltaCatalog", "loadTable") {
-    setVariantBlockingConfigIfUC()
     try {
       val table = deltaCatalogClient
         .map(_.loadTable(ident))
@@ -629,7 +617,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         // TODO: we should extract write options from table properties for all the cases. We
         //       can remove the UC check when we have confidence.
         val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
-        setVariantBlockingConfigIfUC()
         val (props, writeOptions) = if (isUC) {
           val effectiveProperties = maybeStageDeltaCreate(ident, properties)
           val (props, writeOptions) = getTablePropsAndWriteOptions(effectiveProperties)

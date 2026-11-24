@@ -25,18 +25,22 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaSingleCommit;
 import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
+import org.apache.spark.sql.delta.InvalidProtocolVersionException;
+import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.VersionNotFoundException;
+import org.apache.spark.sql.delta.actions.Action;
+import org.apache.spark.sql.delta.actions.Protocol;
+import org.apache.spark.sql.delta.actions.Protocol$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.v2.DeltaV2TestBase;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext$;
-import org.apache.spark.sql.delta.v2.interop.DeltaV2SingleCommit;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import scala.Option;
@@ -46,9 +50,9 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
 
   private final DeltaV2QueryContext queryContext = DeltaV2QueryContext$.MODULE$.empty();
 
-  @AfterEach
-  void clearTableManagerCache() {
-    DeltaV2TableManagerCache$.MODULE$.clearCache();
+  @Override
+  protected boolean clearTableManagerCacheAfterEach() {
+    return true;
   }
 
   private static String createTable(File dir, int commits) {
@@ -69,9 +73,7 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
     try (commits) {
       List<Long> versions = new ArrayList<>();
       while (commits.hasNext()) {
-        try (DeltaV2SingleCommit commit = (DeltaV2SingleCommit) commits.next()) {
-          versions.add(commit.version());
-        }
+        versions.add(commits.next().version());
       }
       return versions;
     }
@@ -220,6 +222,21 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void unsafeVolatileTableIdMatchesDeltaLog(@TempDir File tempDir) {
+    String path = createTable(tempDir, /* commits= */ 2);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 1L);
+
+    // The V1 backend returns DeltaLog.unsafeVolatileTableId.
+    assertEquals(
+        DeltaLog.forTable(spark, path).unsafeVolatileTableId(), backend.unsafeVolatileTableId());
+  }
+
+  @Test
   public void checkVersionExistsThrowsDeltaVersionNotFound(@TempDir File tempDir) {
     String path = createTable(tempDir, /* commits= */ 3);
     DeltaV2StreamingBackend backend =
@@ -271,5 +288,38 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
             () -> backend.getSnapshotToValidateProtocol(/* version= */ 1L));
     assertEquals("DELTA_UNSUPPORTED_FEATURES_FOR_READ", e.getErrorClass());
     assertTrue(e.getMessage().contains(feature), e.getMessage());
+  }
+
+  @Test
+  public void protocolReadRejectsAProtocolThatThisClientCannotRead(@TempDir File tempDir) {
+    String path = createTable(tempDir, /* commits= */ 1);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 0L);
+    Snapshot snapshot = backend.update();
+
+    backend.protocolRead(snapshot.protocol(), snapshot);
+    InvalidProtocolVersionException versionError =
+        assertThrows(
+            InvalidProtocolVersionException.class,
+            () ->
+                backend.protocolRead(
+                    Protocol$.MODULE$.apply(Integer.MAX_VALUE, Integer.MAX_VALUE), snapshot));
+    // The same path as in V1 errors: the table data path.
+    assertEquals(snapshot.dataPath().toString(), versionError.tableNameOrPath());
+    Protocol unknownReaderFeature =
+        (Protocol)
+            Action.fromJson(
+                "{\"protocol\":{\"minReaderVersion\":3,\"minWriterVersion\":7,"
+                    + "\"readerFeatures\":[\"unknownFeature\"],"
+                    + "\"writerFeatures\":[\"unknownFeature\"]}}");
+    DeltaUnsupportedTableFeatureException featureError =
+        assertThrows(
+            DeltaUnsupportedTableFeatureException.class,
+            () -> backend.protocolRead(unknownReaderFeature, snapshot));
+    assertEquals("DELTA_UNSUPPORTED_FEATURES_FOR_READ", featureError.getErrorClass());
   }
 }

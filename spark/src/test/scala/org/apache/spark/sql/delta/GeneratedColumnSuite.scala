@@ -37,6 +37,7 @@ import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.quietly
+import org.apache.spark.sql.errors.QueryExecutionErrors.toSQLType
 import org.apache.spark.sql.functions.{lit, make_dt_interval, struct, typedLit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
@@ -105,7 +106,6 @@ trait GeneratedColumnSuiteBase
       isStreaming: Boolean = false)(updateFunc: (String, String) => Seq[Row]): Unit = {
     def testBody(): Unit = {
       // The default test table has a Void column.
-      assume(isStreaming || DeltaTestUtilsBase.nullTypeColumnsSupported)
       val table = testName
       withTempDir { path =>
         withTable(table) {
@@ -444,6 +444,68 @@ trait GeneratedColumnSuiteBase
     }
   }
 
+  test("UPDATE and MERGE with type-incompatible SET on table with generated columns report " +
+      "DATATYPE_MISMATCH") {
+    withTableName("update_type_mismatch_generated") { table =>
+      createTable(table, None, "c1 INT, arr ARRAY<INT>, g INT", Map("g" -> "c1 + 10"), Nil)
+      val updateSql = s"UPDATE $table SET arr = map('key', 'val')"
+      // MERGE update expressions also reference source columns.
+      val mergeSql =
+        s"""MERGE INTO $table t
+           |USING (SELECT 1 AS c1, map('key', 'val') AS m) s
+           |ON t.c1 = s.c1
+           |WHEN MATCHED THEN UPDATE SET arr = s.m""".stripMargin
+      // With fix enabled: the correct type mismatch error is surfaced.
+      withSQLConf(
+        DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN.key -> "true",
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> "ANSI"
+      ) {
+        Seq(updateSql -> "\"map(key, val)\"", mergeSql -> "\"m\"").foreach {
+          case (query, sqlExpr) =>
+            checkError(
+              intercept[AnalysisException](sql(query)),
+              "DATATYPE_MISMATCH.CAST_WITHOUT_SUGGESTION",
+              sqlState = Some("42K09"),
+              parameters = Map(
+                "sqlExpr" -> sqlExpr,
+                "srcType" -> toSQLType("MAP<STRING, STRING>"),
+                "targetType" -> toSQLType("ARRAY<INT>")),
+              queryContext = Array(ExpectedContext(query, 0, query.length - 1)))
+        }
+      }
+      // With fix disabled: the old misleading error is produced.
+      withSQLConf(
+        DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN.key -> "false",
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> "ANSI"
+      ) {
+        Seq(updateSql, mergeSql).foreach { query =>
+          checkError(
+            intercept[AnalysisException](sql(query)),
+            "DELTA_CANNOT_RESOLVE_EXPRESSION",
+            parameters = Map("expression" -> "('c1 + 10)"))
+        }
+      }
+    }
+  }
+
+  test("UPDATE and MERGE under STRICT accept upcasts and preserve generated column values") {
+    withTableName("update_upcast_generated") { table =>
+      createTable(table, None, "c1 INT, b BIGINT, g INT", Map("g" -> "c1 + 10"), Nil)
+      sql(s"INSERT INTO $table VALUES(1, 1, 11)")
+      // STRICT wraps the SET expressions in UpCast, which stays unresolved until analysis.
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "STRICT") {
+        sql(s"UPDATE $table SET b = 5")
+        checkAnswer(spark.table(table), Row(1, 5L, 11) :: Nil)
+        sql(
+          s"""MERGE INTO $table t
+             |USING (SELECT 1 AS c1, 6 AS b) s
+             |ON t.c1 = s.c1
+             |WHEN MATCHED THEN UPDATE SET b = s.b""".stripMargin)
+        checkAnswer(spark.table(table), Row(1, 6L, 11) :: Nil)
+      }
+    }
+  }
+
   test("update a struct source column") {
     withTableName("update_struct_column") { table =>
       createTable(table,
@@ -564,8 +626,11 @@ trait GeneratedColumnSuiteBase
     val f2 = withGenerationExpression(StructField("c2", IntegerType), "c10 + 10")
     val schema = StructType(f1 :: f2 :: Nil)
     val e = intercept[DeltaAnalysisException](validateGeneratedColumns(spark, schema))
-    errorContains(e.getMessage,
-      "A generated column cannot use a non-existent column or another generated column")
+    checkError(
+      exception = e,
+      condition = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES",
+      sqlState = "42621",
+      parameters = Map.empty[String, String])
   }
 
   test("validateGeneratedColumns: no generated columns") {
@@ -588,8 +653,11 @@ trait GeneratedColumnSuiteBase
     val f3 = withGenerationExpression(StructField("c3", IntegerType), "c2 + 10")
     val schema = StructType(f1 :: f2 :: f3 :: Nil)
     val e = intercept[DeltaAnalysisException](validateGeneratedColumns(spark, schema))
-    errorContains(e.getMessage,
-      "A generated column cannot use a non-existent column or another generated column")
+    checkError(
+      exception = e,
+      condition = "DELTA_INVALID_GENERATED_COLUMN_REFERENCES",
+      sqlState = "42621",
+      parameters = Map.empty[String, String])
   }
 
   test("validateGeneratedColumns: supported expressions") {
@@ -605,19 +673,25 @@ trait GeneratedColumnSuiteBase
 
   test("validateGeneratedColumns: unsupported expressions") {
     spark.udf.register("myudf", (s: Array[Int]) => s)
-    for ((exprString, error) <- Seq(
-      "myudf(foo)" -> "Found myudf(foo). A generated column cannot use a user-defined function",
-      "rand()" ->
-        "Found rand(). A generated column cannot use a non deterministic expression",
-      "max(foo)" -> "Found max(foo). A generated column cannot use an aggregate expression",
-      "explode(foo)" -> "explode(foo) cannot be used in a generated column",
-      "current_timestamp" -> "current_timestamp() cannot be used in a generated column"
+    for ((exprString, condition, parameters) <- Seq(
+      ("myudf(foo)", "DELTA_UDF_IN_GENERATED_COLUMN", Map("udfExpr" -> "myudf(foo)")),
+      ("rand()", "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_GENERATED_COLUMN",
+        Map("expr" -> "rand()")),
+      ("max(foo)", "DELTA_AGGREGATE_IN_GENERATED_COLUMN", Map("sqlExpr" -> "max(foo)")),
+      ("explode(foo)", "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN",
+        Map("expression" -> "explode(foo)")),
+      ("current_timestamp", "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN",
+        Map("expression" -> "current_timestamp()"))
     )) {
       val f1 = StructField("foo", ArrayType(IntegerType, true))
       val f2 = withGenerationExpression(StructField("bar", IntegerType), exprString)
       val schema = StructType(f1 :: f2 :: Nil)
       val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
-      errorContains(e.getMessage, error)
+      checkError(
+        exception = e,
+        condition = condition,
+        sqlState = "42621",
+        parameters = parameters)
     }
   }
 
@@ -1183,7 +1257,6 @@ trait GeneratedColumnSuiteBase
 
   test("creating a table with a different schema should fail") {
     // Uses the default test table schema, which has a Void column.
-    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withTempPath { path =>
       // Currently SQL is the only way to define a table using generated columns. So we create a
       // temp table and drop it to get a path for such table.
@@ -2165,8 +2238,11 @@ trait GeneratedColumnSuiteBase
             val e = intercept[AnalysisException] {
               df2.write.format("delta").mode("append").saveAsTable("tbl")
             }
-            e.getMessage.contains(
-              "A column, variable, or function parameter with name `c2` cannot be resolved")
+            checkError(
+              exception = e,
+              condition = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+              parameters = Map("objectName" -> "`c2`", "proposal" -> "`c1`"))
+            checkAnswer(spark.read.table(tbl), df1.withColumn("c3", 'c1 + 1))
           }
         }
       }

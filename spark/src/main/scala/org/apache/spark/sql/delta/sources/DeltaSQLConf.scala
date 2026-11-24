@@ -662,6 +662,31 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val AMT_UPGRADE_ENABLED =
+    buildConf("amt.upgrade.enabled")
+      .internal()
+      .doc("When true, setting `delta.enableAdaptiveMetadata` to true on an existing table " +
+        "upgrades it to AMT.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val AMT_UPGRADE_BUILD_FIRST_TREE =
+    buildConf("amt.upgrade.buildFirstTree")
+      .internal()
+      .doc("When true, the post-commit checkpoint hook of the enablement commit of an upgrade " +
+        "runs an OPTIMIZE CHECKPOINT that builds the first AMT tree. When false, the first tree " +
+        "comes from a later scheduled checkpoint.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val AMT_UPGRADE_CHECK_INLINE_DVS =
+    buildConf("amt.upgrade.checkInlineDVs")
+      .internal()
+      .doc("When true, the upgrade to AMT scans all files of the table and rejects the table if " +
+        "a file has an inline deletion vector.")
+      .booleanConf
+      .createWithDefault(true)
+
   val AMT_ENTRIES_PER_LEAF =
     buildConf("amt.entriesPerLeaf")
       .internal()
@@ -675,20 +700,21 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("When enabled, AMT state reconstruction builds the AddFiles as column expressions " +
         "over the persisted manifest rows instead of decoding and converting every manifest " +
-        "entry on the executors. Read when the AMT checkpoint provider is created.")
+        "entry on the executors. Read when the AMT checkpoint provider is created. Set to false " +
+        "to fall back to per-row reconstruction.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val AMT_ROOT_CACHE_MAX_NUM_ENTRIES =
     buildConf("amt.rootCache.maxNumEntries")
       .internal()
-      .doc("Cache the persisted AMT root rows only when the entry count from the Parquet " +
-        "footer, including DATA and DATA_MANIFEST entries, is less than this threshold. " +
-        "Otherwise collect only leaf pointers during discovery and read the root again for " +
-        "reconstruction. Set to 0 to disable root row caching and skip the footer count check.")
+      .doc("Cache persisted AMT root rows when columnar state reconstruction is enabled (the " +
+        "default) and the root has fewer entries than this threshold. Discovery reads the entry " +
+        "count from the Parquet footer. Writers use the number of rows written. Set to 0 to " +
+        "disable root row caching and skip the footer count check.")
       .intConf
       .checkValue(_ >= 0, "amt.rootCache.maxNumEntries must be non-negative.")
-      .createWithDefault(12000)
+      .createWithDefault(50000)
 
   val AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT =
     buildConf("amt.largeCommitActionsCountThresholdForInlineManifestCommit")
@@ -984,6 +1010,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN =
+    buildConf("generatedColumn.eagerAnalyzePlan")
+      .internal()
+      .doc("When enabled, UPDATE and MERGE on a table with generated columns report the " +
+        "analysis error of an update expression. When disabled, they report " +
+        "DELTA_CANNOT_RESOLVE_EXPRESSION for a generation expression instead.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS =
     buildConf("merge.insert.fixCaseSensitiveDuplicateColumns")
       .internal()
@@ -1149,49 +1184,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
-  //////////////////////////////////////////////
-  // DynamoDB Commit Coordinator-specific configs
-  /////////////////////////////////////////////
-
-  val COORDINATED_COMMITS_DDB_AWS_CREDENTIALS_PROVIDER_NAME =
-    buildConf("coordinatedCommits.commitCoordinator.dynamodb.awsCredentialsProviderName")
-      .internal()
-      .doc("The fully qualified class name of the AWS credentials provider to use for " +
-        "interacting with DynamoDB in the DynamoDB Commit Coordinator Client. e.g. " +
-        "com.amazonaws.auth.DefaultAWSCredentialsProviderChain.")
-      .stringConf
-      .createWithDefault("com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
-
-  val COORDINATED_COMMITS_DDB_SKIP_PATH_CHECK =
-    buildConf("coordinatedCommits.commitCoordinator.dynamodb.skipPathCheckEnabled")
-      .internal()
-      .doc("When enabled, the DynamoDB Commit Coordinator will not enforce that the table path " +
-        "of the current Delta table matches the stored in the corresponding DynamoDB table. This " +
-        "should only be used when the observed table path for the same physical table varies " +
-        "depending on how it is accessed (e.g. abfs://path1 vs abfss://path1). Leaving this " +
-        "enabled can be dangerous as every physical copy of a Delta table with try to write to" +
-        " the same DynamoDB table.")
-      .booleanConf
-      .createWithDefault(false)
-
-  val COORDINATED_COMMITS_DDB_READ_CAPACITY_UNITS =
-    buildConf("coordinatedCommits.commitCoordinator.dynamodb.readCapacityUnits")
-      .internal()
-      .doc("Controls the provisioned read capacity units for the DynamoDB table backing the " +
-        "DynamoDB Commit Coordinator. This configuration is only used when the DynamoDB table " +
-        "is first provisioned and cannot be used configure an existing table.")
-      .intConf
-      .createWithDefault(5)
-
-  val COORDINATED_COMMITS_DDB_WRITE_CAPACITY_UNITS =
-    buildConf("coordinatedCommits.commitCoordinator.dynamodb.writeCapacityUnits")
-      .internal()
-      .doc("Controls the provisioned write capacity units for the DynamoDB table backing the " +
-        "DynamoDB Commit Coordinator. This configuration is only used when the DynamoDB table " +
-        "is first provisioned and cannot be used configure an existing table.")
-      .intConf
-      .createWithDefault(5)
-
   val COMMIT_FILES_ITERATOR_BACKFILL_GAP_FIX_ENABLED =
     buildConf("coordinatedCommits.commitFilesIterator.backfillGapFix.enabled")
       .internal()
@@ -1200,10 +1192,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "and Phase 2 (coordinator query), preventing silent data loss.")
       .booleanConf
       .createWithDefault(true)
-
-  //////////////////////////////////////////////
-  // DynamoDB Commit Coordinator-specific configs end
-  /////////////////////////////////////////////
 
   val IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED =
     buildConf("inCommitTimestamp.retainEnablementInfoFix.enabled")
@@ -3053,11 +3041,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
     buildConf("createDataFrame.dropNullColumns")
       .internal()
-      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame. Defaults to " +
-        "dropping (no NullType column support) on Spark 4.0, which lacks the Parquet read " +
-        "support for materializing NullType columns, and to keeping them on Spark 4.1+.")
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
       .booleanConf
-      .createWithDefault(org.apache.spark.SPARK_VERSION.startsWith("4.0"))
+      .createWithDefault(false)
 
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
@@ -3795,17 +3781,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT =
-    buildConf("spark.sql.delta.sharing.cdfStreamingAutoResolveResponseFormat")
-      .doc("When true, auto-resolve the Delta Sharing streaming CDF source format by calling " +
-        "getMetadata on the table and using the server's responded format (parquet or delta). " +
-        "When false, use the responseFormat option from the user. Gates the streaming CDF " +
-        "(readChangeFeed=true) path independently from the non-CDF streaming path controlled " +
-        "by spark.sql.delta.sharing.streamingAutoResolveResponseFormat.")
-      .internal()
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_SHARING_STREAMING_ENABLE_HISTORICAL_PROTOCOL =
     buildConf("spark.sql.delta.sharing.streamingEnableHistoricalProtocol")
       .doc("When true, a Delta Sharing streaming query (non-CDF, incremental getFiles) requests " +
@@ -3836,16 +3811,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "on the sharing server, passing that version to the wrapped DeltaSource. When false, the " +
         "wrapped DeltaSource resolves the timestamp again on the local delta log, where an empty " +
         "version range fails with DELTA_TIMESTAMP_GREATER_THAN_COMMIT.")
-      .internal()
-      .booleanConf
-      .createWithDefault(false)
-
-  val DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF =
-    buildConf("spark.sql.delta.sharing.enableAutoResolveForCdf")
-      .doc("When true, Delta Sharing CDF queries without an explicit responseFormat will " +
-        "call getMetadata on the sharing server and pick the parquet or delta CDF code path " +
-        "based on the server's responded format. When false, CDF queries without a response " +
-        "format fall back to the legacy parquet path.")
       .internal()
       .booleanConf
       .createWithDefault(false)
@@ -3932,18 +3897,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
     .booleanConf
     .createWithDefault(true)
-
-  val DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 =
-    buildConf("variant.disableVariantTableFeatureForSpark40")
-    .internal()
-    .doc(
-      """
-        | If true, disables support for the 'variantType' and 'variantType-preview' table
-        | features on Spark 4.0 clients. Spark 4.0 does not support the parquet variant
-        | logical type annotation, which causes interoperability issues with Spark 4.1+.
-        |""".stripMargin)
-    .booleanConf
-    .createWithDefault(false)
 
   val COLLECT_VARIANT_DATA_SKIPPING_STATS =
     buildConf("variantShredding.collectVariantDataSkippingStats")
@@ -4123,6 +4076,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  // Named modes used by [[V2_ENABLE_MODE]].
+  val V2_ENABLE_MODE_NONE: String = "NONE"
+  val V2_ENABLE_MODE_AUTO: String = "AUTO"
+  val V2_ENABLE_MODE_STRICT: String = "STRICT"
+
   /**
    * Controls which connector implementation to use for Delta table operations.
    *
@@ -4149,8 +4107,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           "NONE (use v1 connector for all cases), AUTO (use v2 only for v2 " +
           "supported operations, default), STRICT (should ONLY be enabled for testing).")
       .stringConf
-      .checkValues(Set("AUTO", "NONE", "STRICT"))
-      .createWithDefault("AUTO")
+      .checkValues(Set(V2_ENABLE_MODE_AUTO, V2_ENABLE_MODE_NONE, V2_ENABLE_MODE_STRICT))
+      .createWithDefault(V2_ENABLE_MODE_AUTO)
 
   val V2_TRANSACTIONS_ENABLED =
     buildConf("v2.transactions.enabled")

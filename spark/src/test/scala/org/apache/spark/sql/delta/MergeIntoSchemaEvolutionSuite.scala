@@ -95,6 +95,8 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest with DeltaSQLCommandTest {
       expectErrorWithoutEvolutionContains: String = null,
       confs: Seq[(String, String)] = Seq(),
       partitionCols: Seq[String] = Seq.empty): Unit = {
+    val testConfs = Seq[(String, String)](
+    ) ++ confs
 
     def executeMergeAndAssert(df: DataFrame, schema: StructType, error: String): Unit = {
       append(targetData, partitionCols)
@@ -124,14 +126,14 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest with DeltaSQLCommandTest {
 
     val tagsWithSchemaEvolution = testTags :+ DSv2DMLSchemaEvolution
     test(s"schema evolution - $name - with evolution disabled", tagsWithSchemaEvolution: _*) {
-      withConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
+      withConf(testConfs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
         executeMergeAndAssert(expectedWithoutEvolution, expectedSchemaWithoutEvolution,
           expectErrorWithoutEvolutionContains)
       }
     }
 
     test(s"schema evolution - $name", tagsWithSchemaEvolution: _*) {
-      withConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
+      withConf((testConfs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
         executeMergeAndAssert(expected, expectedSchema, expectErrorContains)
       }
     }
@@ -192,7 +194,7 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest with DeltaSQLCommandTest {
 trait MergeIntoSchemaEvolutionCoreTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   testEvolution("new column with only insert *")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -261,7 +263,7 @@ trait MergeIntoSchemaEvolutionCoreTests extends MergeIntoSchemaEvolutionMixin {
 trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Schema evolution with UPDATE SET alone
   testEvolution("new column with update set")(
@@ -692,39 +694,36 @@ trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutio
     expectErrorWithoutEvolutionContains = "All nested columns must match"
   )
 
-  // NullType columns are only supported on Spark 4.1+; register these tests only when supported.
-  if (DeltaTestUtilsBase.nullTypeColumnsSupported) {
-    testEvolution("void columns are allowed")(
-      targetData = Seq((1, 1)).toDF("key", "value"),
-      sourceData = Seq((1, 100, null), (2, 200, null)).toDF("key", "value", "extra"),
-      clauses = update("*") :: insert("*") :: Nil,
-      expected = Seq((1, 100, null), (2, 200, null)).toDF("key", "value", "extra"),
-      expectedWithoutEvolution = Seq((1, 100), (2, 200)).toDF("key", "value"),
-      confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false")
-    )
+  testEvolution("void columns are allowed")(
+    targetData = Seq((1, 1)).toDF("key", "value"),
+    sourceData = Seq((1, 100, null), (2, 200, null)).toDF("key", "value", "extra"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = Seq((1, 100, null), (2, 200, null)).toDF("key", "value", "extra"),
+    expectedWithoutEvolution = Seq((1, 100), (2, 200)).toDF("key", "value"),
+    confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false")
+  )
 
-    testEvolution("void evolution in target non-key column")(
-      targetData = Seq((2, null), (1, null)).toDF("key2", "value"),
-      sourceData = Seq((1, 1), (0, 3)).toDF("key1", "value"),
-      cond = "s.key1 = key2",
-      clauses = update("key2 = 20 + key1, value = 20 + s.value") ::
-        insert("(key2, value) VALUES (key1 - 10, s.value + 10)") :: Nil,
-      expected = Seq[(Integer, Integer)]((2, null), (21, 21), (-10, 13)).toDF("key2", "value"),
-      expectErrorWithoutEvolutionContains = "cannot cast",
-      confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false")
-    )
+  testEvolution("void evolution in target non-key column")(
+    targetData = Seq((2, null), (1, null)).toDF("key2", "value"),
+    sourceData = Seq((1, 1), (0, 3)).toDF("key1", "value"),
+    cond = "s.key1 = key2",
+    clauses = update("key2 = 20 + key1, value = 20 + s.value") ::
+      insert("(key2, value) VALUES (key1 - 10, s.value + 10)") :: Nil,
+    expected = Seq[(Integer, Integer)]((2, null), (21, 21), (-10, 13)).toDF("key2", "value"),
+    expectErrorWithoutEvolutionContains = "cannot cast",
+    confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false")
+  )
 
-    testEvolution("void evolution in target key column")(
-      targetData = Seq((null, 2), (null, 4)).toDF("key", "value"),
-      sourceData = Seq((1, 1), (0, 3), (1, 6)).toDF("key", "value"),
-      clauses = update("t.key = 20 + s.key, value = 20 + s.value") ::
-        insert("(key, value) VALUES (s.key - 10, s.value + 10)") :: Nil,
-      expected = Seq[(Integer, Integer)]((null, 2), (null, 4), (-9, 11), (-10, 13), (-9, 16))
-        .toDF("key", "value"),
-      expectErrorWithoutEvolutionContains = "cannot cast",
-      confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false")
-    )
-  }
+  testEvolution("void evolution in target key column")(
+    targetData = Seq((null, 2), (null, 4)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (0, 3), (1, 6)).toDF("key", "value"),
+    clauses = update("t.key = 20 + s.key, value = 20 + s.value") ::
+      insert("(key, value) VALUES (s.key - 10, s.value + 10)") :: Nil,
+    expected = Seq[(Integer, Integer)]((null, 2), (null, 4), (-9, 11), (-10, 13), (-9, 16))
+      .toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "cannot cast",
+    confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false")
+  )
 
   testEvolution("void columns are not allowed")(
     confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "true"),
@@ -806,7 +805,7 @@ trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutio
 trait MergeIntoSchemaEvolutionBaseExistingColumnTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // No schema evolution
   testEvolution("old column updated from new column")(
@@ -1042,7 +1041,7 @@ trait MergeIntoSchemaEvolutionBaseExistingColumnTests extends MergeIntoSchemaEvo
 
 trait MergeIntoSchemaEvoStoreAssignmentPolicyTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
-  import testImplicits._
+  import deltaImplicits._
 
   // Upcasting is always allowed.
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
@@ -1166,7 +1165,7 @@ trait MergeIntoSchemaEvoStoreAssignmentPolicyTests extends MergeIntoSchemaEvolut
 trait MergeIntoSchemaEvolutionNotMatchedBySourceTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Test schema evolution with NOT MATCHED BY SOURCE clauses.
   testEvolution("new column with insert * and conditional update not matched by source")(
@@ -1233,7 +1232,7 @@ trait MergeIntoSchemaEvolutionNotMatchedBySourceTests extends MergeIntoSchemaEvo
 trait MergeIntoNestedStructInMapEvolutionTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // scalastyle:off line.size.limit
   // Struct evolution inside of map values.
@@ -1585,7 +1584,7 @@ trait MergeIntoNestedStructInMapEvolutionTests extends MergeIntoSchemaEvolutionM
 trait MergeIntoNestedStructEvolutionInsertTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Nested Schema evolution with INSERT alone
   testNestedStructsEvolution("new nested source field added when inserting top-level column")(
@@ -2788,7 +2787,7 @@ trait MergeIntoNestedStructEvolutionInsertTests extends MergeIntoSchemaEvolution
 trait MergeIntoNestedStructEvolutionUpdateOnlyTests extends MergeIntoSchemaEvolutionMixin {
   self: MergeIntoTestUtils =>
 
-  import testImplicits._
+  import deltaImplicits._
 
   // Nested Schema evolution with UPDATE alone
   testNestedStructsEvolution("new nested source field not in update is ignored")(
@@ -2829,136 +2828,133 @@ trait MergeIntoNestedStructEvolutionUpdateOnlyTests extends MergeIntoSchemaEvolu
         .add("b", IntegerType)),
     expectErrorWithoutEvolutionContains = "No such struct field")
 
-  // NullType columns are only supported on Spark 4.1+; register these tests only when supported.
-  if (DeltaTestUtilsBase.nullTypeColumnsSupported) {
-    testNestedStructsEvolution("nested void columns are allowed")(
-      target = """{ "key": "A", "value": { "a": { "x": 1 }, "b": 1 } }""",
-      source = """{ "key": "A", "value": { "a": { "x": 2, "z": null } } }""",
-      targetSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new StructType().add("x", IntegerType))
-            .add("b", IntegerType)),
-      sourceSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new StructType().add("x", IntegerType).add("z", NullType))),
-      clauses = update("*") :: Nil,
-      result = """{ "key": "A", "value": { "a": { "x": 2, "z": null }, "b": 1 } }""",
-      resultSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new StructType().add("x", IntegerType).add("z", NullType))
-            .add("b", IntegerType)),
-      expectErrorWithoutEvolutionContains = "All nested columns must match",
-      confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
+  testNestedStructsEvolution("nested void columns are allowed")(
+    target = """{ "key": "A", "value": { "a": { "x": 1 }, "b": 1 } }""",
+    source = """{ "key": "A", "value": { "a": { "x": 2, "z": null } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType))
+          .add("b", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType).add("z", NullType))),
+    clauses = update("*") :: Nil,
+    result = """{ "key": "A", "value": { "a": { "x": 2, "z": null }, "b": 1 } }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType).add("z", NullType))
+          .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "All nested columns must match",
+    confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
 
-    testNestedStructsEvolution("evolving nested void column into a struct type")(
-      target = """{ "key": "A", "value": { "a": null, "b": 1 } }""",
-      source = """{ "key": "A", "value": { "a": { "x": 1, "z": 3 } } }""",
-      targetSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", NullType)
-            .add("b", IntegerType)),
-      sourceSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new StructType().add("x", IntegerType).add("z", IntegerType))),
-      clauses = update("*") :: Nil,
-      result = """{ "key": "A", "value": { "a": { "x": 1, "z": 3 }, "b": 1 } }""",
-      resultSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new StructType().add("x", IntegerType).add("z", IntegerType))
-            .add("b", IntegerType)),
-      expectErrorWithoutEvolutionContains = "All nested columns must match",
-      confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
+  testNestedStructsEvolution("evolving nested void column into a struct type")(
+    target = """{ "key": "A", "value": { "a": null, "b": 1 } }""",
+    source = """{ "key": "A", "value": { "a": { "x": 1, "z": 3 } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", NullType)
+          .add("b", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType).add("z", IntegerType))),
+    clauses = update("*") :: Nil,
+    result = """{ "key": "A", "value": { "a": { "x": 1, "z": 3 }, "b": 1 } }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType).add("z", IntegerType))
+          .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "All nested columns must match",
+    confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
 
-    testNestedStructsEvolution("evolving nested void column into a struct type with void field")(
-      target = """{ "key": "A", "value": { "a": null, "b": 1 } }""",
-      source = """{ "key": "A", "value": { "a": { "x": 1, "z": null } } }""",
-      targetSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", NullType)
-            .add("b", IntegerType)),
-      sourceSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new StructType().add("x", IntegerType).add("z", NullType))),
-      clauses = update("*") :: Nil,
-      result = """{ "key": "A", "value": { "a": { "x": 1, "z": null }, "b": 1 } }""",
-      resultSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new StructType().add("x", IntegerType).add("z", NullType))
-            .add("b", IntegerType)),
-      expectErrorWithoutEvolutionContains = "All nested columns must match",
-      confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
+  testNestedStructsEvolution("evolving nested void column into a struct type with void field")(
+    target = """{ "key": "A", "value": { "a": null, "b": 1 } }""",
+    source = """{ "key": "A", "value": { "a": { "x": 1, "z": null } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", NullType)
+          .add("b", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType).add("z", NullType))),
+    clauses = update("*") :: Nil,
+    result = """{ "key": "A", "value": { "a": { "x": 1, "z": null }, "b": 1 } }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new StructType().add("x", IntegerType).add("z", NullType))
+          .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "All nested columns must match",
+    confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
 
-    testNestedStructsEvolution("evolving nested void column into an array type")(
-      target = """{ "key": "A", "value": { "a": null, "b": 1 } }""",
-      source = """{ "key": "A", "value": { "a": [{ "x": 1, "z": 3 }, null, { "x": 2 }] } }""",
-      targetSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", NullType)
-            .add("b", IntegerType)),
-      sourceSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new ArrayType(
-              new StructType().add("x", IntegerType).add("z", IntegerType), containsNull = true))),
-      clauses = update("*") :: Nil,
-      result =
-       """{ "key": "A", "value": { "a": [{ "x": 1, "z": 3 }, null, { "x": 2 }], "b": 1 } }""",
-      resultSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new ArrayType(
-              new StructType().add("x", IntegerType).add("z", IntegerType), containsNull = true))
-            .add("b", IntegerType)),
-      expectErrorWithoutEvolutionContains = "All nested columns must match",
-      confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
+  testNestedStructsEvolution("evolving nested void column into an array type")(
+    target = """{ "key": "A", "value": { "a": null, "b": 1 } }""",
+    source = """{ "key": "A", "value": { "a": [{ "x": 1, "z": 3 }, null, { "x": 2 }] } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", NullType)
+          .add("b", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new ArrayType(
+            new StructType().add("x", IntegerType).add("z", IntegerType), containsNull = true))),
+    clauses = update("*") :: Nil,
+    result =
+     """{ "key": "A", "value": { "a": [{ "x": 1, "z": 3 }, null, { "x": 2 }], "b": 1 } }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new ArrayType(
+            new StructType().add("x", IntegerType).add("z", IntegerType), containsNull = true))
+          .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "All nested columns must match",
+    confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
 
-    testNestedStructsEvolution("evolving nested void column into a map type")(
-      target = """{ "key": "A", "value": { "a": null, "b": 1 } }""",
-      source = """{ "key": "A", "value": { "a": { "x": 1, "z": 3 } } }""",
-      targetSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", NullType)
-            .add("b", IntegerType)),
-      sourceSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new MapType(StringType, IntegerType, valueContainsNull = true))),
-      clauses = update("*") :: Nil,
-      result = """{ "key": "A", "value": { "a": { "x": 1, "z": 3 }, "b": 1 } }""",
-      resultSchema = new StructType()
-        .add("key", StringType)
-        .add("value",
-          new StructType()
-            .add("a", new MapType(StringType, IntegerType, valueContainsNull = true))
-            .add("b", IntegerType)),
-      expectErrorWithoutEvolutionContains = "All nested columns must match",
-      confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
-  }
+  testNestedStructsEvolution("evolving nested void column into a map type")(
+    target = """{ "key": "A", "value": { "a": null, "b": 1 } }""",
+    source = """{ "key": "A", "value": { "a": { "x": 1, "z": 3 } } }""",
+    targetSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", NullType)
+          .add("b", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new MapType(StringType, IntegerType, valueContainsNull = true))),
+    clauses = update("*") :: Nil,
+    result = """{ "key": "A", "value": { "a": { "x": 1, "z": 3 }, "b": 1 } }""",
+    resultSchema = new StructType()
+      .add("key", StringType)
+      .add("value",
+        new StructType()
+          .add("a", new MapType(StringType, IntegerType, valueContainsNull = true))
+          .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "All nested columns must match",
+    confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"))
 
   testNestedStructsEvolution("nested void columns are not allowed")(
     confs = Seq(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "true"),

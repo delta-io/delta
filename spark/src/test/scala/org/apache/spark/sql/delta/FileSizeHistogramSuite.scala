@@ -37,7 +37,7 @@ class FileSizeHistogramSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
 
   override protected def sparkConf: SparkConf = {
     // enable the feature in tests

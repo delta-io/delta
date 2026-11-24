@@ -37,7 +37,7 @@ trait DeltaParquetFileFormatSuiteBase
     with SharedSparkSession
     with DeletionVectorsTestUtils
     with DeltaSQLCommandTest {
-  import testImplicits._
+  import deltaImplicits._
 
   /** Helper method to run the test with vectorized and non-vectorized Parquet readers */
   protected def testWithBothParquetReaders(name: String)(f: => Any): Unit = {
@@ -99,7 +99,7 @@ trait DeltaParquetFileFormatSuiteBase
 
 
 class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
-  import testImplicits._
+  import deltaImplicits._
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -224,7 +224,7 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
 }
 
 class DeltaParquetFileFormatWithPredicatePushdownSuite extends DeltaParquetFileFormatSuiteBase {
-  import testImplicits._
+  import deltaImplicits._
 
   override def beforeAll(): Unit = {
     super.beforeAll()

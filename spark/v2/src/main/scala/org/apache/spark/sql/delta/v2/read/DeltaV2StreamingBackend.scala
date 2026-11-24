@@ -20,7 +20,8 @@ import java.sql.Timestamp
 
 import scala.jdk.CollectionConverters._
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaSingleCommit, Snapshot, VersionNotFoundException}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaSingleCommit, Snapshot, SnapshotDescriptor, VersionNotFoundException}
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaStreamingBackend}
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
@@ -29,10 +30,11 @@ import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException
 
+import org.apache.spark.sql.SparkSession
 
 /**
- * The [[DeltaStreamingBackend]] backend that reads the table through Kernel. `checkVersionExists`
- * and `getSnapshotToValidateProtocol` throw the same Delta errors as
+ * The [[DeltaStreamingBackend]] backend that reads the table through Kernel. `checkVersionExists`,
+ * `getSnapshotToValidateProtocol` and `protocolRead` throw the same Delta errors as
  * [[org.apache.spark.sql.delta.sources.DeltaLogStreamingBackend]]. The other methods can
  * throw Kernel errors.
  *
@@ -57,6 +59,8 @@ private[read] class DeltaV2StreamingBackend(
   // Loads the latest snapshot if no refreshing call has run yet.
   override def unsafeVolatileSnapshot: Snapshot =
     Option(latestSnapshot).getOrElse(update())
+
+  override def unsafeVolatileTableId: String = unsafeVolatileSnapshot.metadata.id
 
   override def getSnapshotAt(version: Long): Snapshot =
     tableManager.loadSnapshotAt(version, queryContext)
@@ -101,6 +105,11 @@ private[read] class DeltaV2StreamingBackend(
           e.getTablePath, e.getUnsupportedFeatures.asScala)
     }
   }
+
+  // The same client check as `DeltaLog.protocolRead`, which also uses the active session.
+  override def protocolRead(protocol: Protocol, readSnapshot: SnapshotDescriptor): Unit =
+    Protocol.protocolRead(
+      SparkSession.active, protocol, readSnapshot.dataPath.toString, readSnapshot)
 
   override def getSingleCommitIterator(
       startVersion: Long,

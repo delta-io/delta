@@ -911,9 +911,9 @@ private[delta] class ConflictChecker(
             value.toBoolean // only allow enabling, not disabling
         case DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key => isNew
         case DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key => isNew
-        // Catalog-owned enablement configuration
+        // Catalog-managed enablement configuration
         case UCCommitCoordinatorClient.UC_TABLE_ID_KEY
-            if currentTransactionInfo.protocol.isFeatureSupported(CatalogOwnedTableFeature) =>
+            if currentTransactionInfo.protocol.isFeatureSupported(CatalogManagedTableFeature) =>
           isNew
         case _ => true
       }

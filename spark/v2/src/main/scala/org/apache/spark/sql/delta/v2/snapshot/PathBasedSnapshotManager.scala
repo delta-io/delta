@@ -125,7 +125,7 @@ class PathBasedSnapshotManager(tablePath: String, kernelContext: KernelContext)
       version,
       mustBeRecreatable,
       allowOutOfRange,
-      false /* checkUpperBoundFirst */)
+      checkUpperBoundFirst = false)
   }
 
   override def getTableChanges(

@@ -112,13 +112,14 @@ private[delta] case class IndexedFile(
 trait DeltaSourceBase extends Source
     with SupportsAdmissionControl
     with SupportsTriggerAvailableNow
-    with DeltaLogging { self: DeltaSource =>
+    with DeltaLogging
+    with DeltaSourceOffsetLogic { self: DeltaSource =>
 
   /**
    * Configuration options for handling schema changes behavior. Controls unsafe operations like
    * column mapping changes, partition column changes, nullability changes, and type widening.
    */
-  protected lazy val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
+  override protected lazy val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
     val schemaReadOptions = DeltaStreamUtils.SchemaReadOptions.fromSparkSession(
       spark = spark,
       isStreamingFromColumnMappingTable =
@@ -160,62 +161,12 @@ trait DeltaSourceBase extends Source
    */
   @volatile protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
-  override val schema: StructType = {
-    val readSchemaWithCdc = if (options.readChangeFeed) {
-      CDCReader.cdcReadSchema(readSchemaAtSourceInit)
-    } else {
-      readSchemaAtSourceInit
-    }
-    DeltaTableUtils.removeInternalDeltaMetadata(
-      spark, DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaWithCdc))
-  }
+  override val schema: StructType =
+    DeltaSource.sourceSchema(spark, options, readSchemaAtSourceInit)
 
   // A dummy empty dataframe that can be returned at various point during streaming
   protected val emptyDataFrame: DataFrame =
     DataFrameUtils.ofRows(spark, LocalRelation(schema).copy(isStreaming = true))
-
-  /**
-   * When `AvailableNow` is used, this offset will be the upper bound where this run of the query
-   * will process up. We may run multiple micro batches, but the query will stop itself when it
-   * reaches this offset.
-   */
-  protected var lastOffsetForTriggerAvailableNow: Option[DeltaSourceOffset] = None
-
-  private var isLastOffsetForTriggerAvailableNowInitialized = false
-
-  private var isTriggerAvailableNow = false
-
-  override def prepareForTriggerAvailableNow(): Unit = {
-    logInfo(log"The streaming query reports to use Trigger.AvailableNow.")
-    isTriggerAvailableNow = true
-  }
-
-  /**
-   * initialize the internal states for AvailableNow if this method is called first time after
-   * `prepareForTriggerAvailableNow`.
-   */
-  protected def initForTriggerAvailableNowIfNeeded(
-    startOffsetOpt: Option[DeltaSourceOffset]): Unit = {
-    if (isTriggerAvailableNow && !isLastOffsetForTriggerAvailableNowInitialized) {
-      isLastOffsetForTriggerAvailableNowInitialized = true
-      initLastOffsetForTriggerAvailableNow(startOffsetOpt)
-    }
-  }
-
-  protected def initLastOffsetForTriggerAvailableNow(
-    startOffsetOpt: Option[DeltaSourceOffset]): Unit = {
-    val offset = latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
-    lastOffsetForTriggerAvailableNow = offset
-    lastOffsetForTriggerAvailableNow.foreach { lastOffset =>
-
-    logInfo(log"lastOffset for Trigger.AvailableNow has set to " +
-      log"${MDC(DeltaLogKeys.OFFSET, lastOffset.json)}")
-    }
-  }
-
-  /** An internal `latestOffsetInternal` to get the latest offset. */
-  protected def latestOffsetInternal(
-    startOffset: Option[DeltaSourceOffset], limit: ReadLimit): Option[DeltaSourceOffset]
 
   protected def getFileChangesWithRateLimit(
       fromVersion: Long,
@@ -270,7 +221,7 @@ trait DeltaSourceBase extends Source
         isInitialSnapshot,
         endOffset = Some(endOffset)
       )
-      try {
+      Utils.tryWithSafeFinally {
         // Versions before startVersion have already been processed, so we treat
         // startVersion - 1 as already "seen".
         var maxVersionSeen = startVersion - 1
@@ -311,7 +262,7 @@ trait DeltaSourceBase extends Source
           log"endOffset=${MDC(DeltaLogKeys.END_INDEX, endOffset)} took timeMs=" +
           log"${MDC(DeltaLogKeys.DURATION, duration)} ms")
         result
-      } finally {
+      } {
         fileActionsIter.close()
       }
     }
@@ -560,151 +511,6 @@ trait DeltaSourceBase extends Source
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true
   }
-
-  /**
-   * Narrow waist to verify a metadata action for read-incompatible schema changes, specifically:
-   * 1. Any column mapping related schema changes (rename / drop) columns
-   * 2. Standard read-compatibility changes including:
-   *    a) No missing columns
-   *    b) No data type changes
-   *    c) No read-incompatible nullability changes
-   * If the check fails, we throw an exception to exit the stream.
-   * If lazy log initialization is required, we also run a one time scan to safely initialize the
-   * metadata tracking log upon any non-additive schema change failures.
-   * @param metadata Metadata that contains a potential schema change
-   * @param version Version for the metadata action
-   * @param validatedDuringStreamStart Whether this check is being done during stream start.
-   */
-  protected def checkReadIncompatibleSchemaChanges(
-      metadata: Metadata,
-      version: Long,
-      batchStartVersion: Long,
-      batchEndVersionOpt: Option[Long] = None,
-      validatedDuringStreamStart: Boolean = false): Unit = {
-    log.info(s"checking read incompatibility with schema at version $version, " +
-      s"inside batch[$batchStartVersion, ${batchEndVersionOpt.getOrElse("latest")}]")
-
-    val (newMetadata, oldMetadata) = if (version < snapshotAtSourceInit.version) {
-      (snapshotAtSourceInit.metadata, metadata)
-    } else {
-      (metadata, snapshotAtSourceInit.metadata)
-    }
-
-    // Table ID has changed during streaming
-    if (newMetadata.id != oldMetadata.id) {
-      throw DeltaErrors.differentDeltaTableReadByStreamingSource(
-        newTableId = newMetadata.id, oldTableId = oldMetadata.id)
-    }
-
-    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart)
-
-    // Other standard read compatibility changes
-    if (!validatedDuringStreamStart ||
-        !schemaReadOptions.
-            forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
-
-      val schemaChange = if (options.readChangeFeed) {
-        CDCReader.cdcReadSchema(metadata.schema)
-      } else {
-        metadata.schema
-      }
-
-      // There is a schema change. All of files after this commit will use `schemaChange`. Hence, we
-      // check whether we can use `schema` (the fixed source schema we use in the same run of the
-      // query) to read these new files safely.
-      val backfilling = version < snapshotAtSourceInit.version
-      // Partition column change will be ignored if user enable the unsafe flag
-      val newPartitionColumns =
-        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-        else newMetadata.partitionColumns
-      val oldPartitionColumns =
-        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-        else oldMetadata.partitionColumns
-
-      val checkResult = DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
-        schemaChange, schema,
-        newPartitionColumns, oldPartitionColumns,
-        backfilling,
-        schemaReadOptions)
-
-      if (!DeltaStreamUtils.SchemaCompatibilityResult.isCompatible(checkResult)) {
-        val isRetryable =
-          DeltaStreamUtils.SchemaCompatibilityResult.isRetryableIncompatible(checkResult)
-        recordDeltaEvent(
-          snapshotAtSourceInit,
-          "delta.streaming.source.schemaChanged",
-          data = Map(
-            "currentVersion" -> snapshotAtSourceInit.version,
-            "newVersion" -> version,
-            "retryable" -> isRetryable,
-            "backfilling" -> backfilling,
-            "readChangeDataFeed" -> options.readChangeFeed,
-            "typeWideningEnabled" -> schemaReadOptions.typeWideningEnabled,
-            "enableSchemaTrackingForTypeWidening" ->
-                schemaReadOptions.enableSchemaTrackingForTypeWidening,
-            "containsWideningTypeChanges" ->
-              TypeWidening.containsWideningTypeChanges(schema, schemaChange)
-          )
-        )
-
-        throw DeltaErrors.schemaChangedException(
-          schema,
-          schemaChange,
-          retryable = isRetryable,
-          Some(version),
-          includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
-      }
-    }
-  }
-
-  /**
-   * Checks for non-additive schema changes (column renames, drops, type widening) and blocks
-   * the stream by throwing an exception if detected.
-   *
-   * Blocks when type widening tracking is enabled and widening changes exist, or when column
-   * mapping changes (rename/drop) are detected, unless `allowUnsafeStreamingReadOnColumnMapping
-   * SchemaChanges` is enabled. Upon blocking, the error requests the user to provide a schema
-   * tracking location to enable schema tracking. On restart, users must acknowledge changes via
-   * reader options or SQL confs.
-   * See [[DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked]].
-   *
-   * Note: Should not be called when schema tracking is active (trackingMetadataChange = true).
-   *
-   * @param oldMetadata Previous metadata (typically from stream initialization)
-   * @param newMetadata New metadata with potential schema changes
-   * @param validatedDuringStreamStart Whether validating during stream start vs. execution,
-   *                                   which affects the error message.
-   * @throws DeltaAnalysisException if non-additive schema changes require blocking
-   */
-  private def checkNonAdditiveSchemaChanges(
-      oldMetadata: Metadata,
-      newMetadata: Metadata,
-      validatedDuringStreamStart: Boolean): Unit = {
-    val shouldTrackSchema: Boolean =
-      if (schemaReadOptions.typeWideningEnabled &&
-          schemaReadOptions.enableSchemaTrackingForTypeWidening &&
-        TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
-        // If schema tracking is enabled for type widening, we will detect widening type changes and
-        // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
-        // DROP/RENAME for column mapping.
-        true
-      } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
-        false
-      } else {
-        // Column mapping schema changes
-        assert(!trackingMetadataChange, "should not check schema change while tracking it")
-        !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
-          schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges)
-      }
-
-    if (shouldTrackSchema) {
-      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-        spark,
-        oldMetadata.schema,
-        newMetadata.schema,
-        detectedDuringStreaming = !validatedDuringStreamStart)
-    }
-  }
 }
 
 /**
@@ -718,13 +524,13 @@ trait DeltaSourceBase extends Source
  * the same answer as a batch query that had processed the entire dataset at any given point.
  */
 case class DeltaSource(
-    spark: SparkSession,
+    override val spark: SparkSession,
     deltaLog: DeltaLog,
     catalogTableOpt: Option[CatalogTable],
-    options: DeltaOptions,
-    snapshotAtSourceInit: SnapshotDescriptor,
+    override val options: DeltaOptions,
+    override val snapshotAtSourceInit: SnapshotDescriptor,
     metadataPath: String,
-    metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog] = None,
+    override val metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog] = None,
     filters: Seq[Expression] = Nil)
   extends DeltaSourceBase
   with DeltaSourceCDCSupport
@@ -734,7 +540,7 @@ case class DeltaSource(
     spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION)
 
   // Deprecated. Please use `skipChangeCommits` from now on.
-  private val ignoreFileDeletion = {
+  protected val ignoreFileDeletion = {
     if (options.ignoreFileDeletion) {
       logConsole(DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(spark))
       recordDeltaEvent(snapshotAtSourceInit, "delta.deprecation.ignoreFileDeletion")
@@ -744,7 +550,7 @@ case class DeltaSource(
 
   /** A check on the source table that skips commits that contain removes from the
    * set of files. */
-  private val skipChangeCommits = options.skipChangeCommits
+  protected val skipChangeCommits = options.skipChangeCommits
 
   protected val excludeRegex: Option[Regex] = options.excludeRegex
 
@@ -1019,82 +825,6 @@ case class DeltaSource(
         indexedFiles)
   }
 
-  /**
-   * Check stream for violating any constraints.
-   *
-   * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
-   * metadata changes.
-   *
-   * @return (true if commit should be skipped, a metadata action if found)
-   */
-  protected def validateCommitAndDecideSkipping(
-      actions: Iterator[Action],
-      version: Long,
-      batchStartVersion: Long,
-      batchEndOffsetOpt: Option[DeltaSourceOffset] = None,
-      verifyMetadataAction: Boolean = true
-  ): (Boolean, Option[Metadata], Option[Protocol]) = {
-    // If the batch end is at the beginning of this exact version, then we actually stop reading
-    // just _before_ this version. So then we can ignore the version contents entirely.
-    if (batchEndOffsetOpt.exists(end =>
-      end.reservoirVersion == version && end.index == DeltaSourceOffset.BASE_INDEX)) {
-      return (false, None, None)
-    }
-
-    /** A check on the source table that disallows changes on the source data. */
-    val shouldAllowChanges = options.ignoreChanges || ignoreFileDeletion || skipChangeCommits
-    /** A check on the source table that disallows commits that only include deletes to the data. */
-    val shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes || ignoreFileDeletion
-
-    var seenFileAdd = false
-    var skippedCommit = false
-    var metadataAction: Option[Metadata] = None
-    var protocolAction: Option[Protocol] = None
-    var removeFileActionPath: Option[String] = None
-    var operation: Option[String] = None
-    actions.foreach {
-      case a: AddFile if a.dataChange =>
-        seenFileAdd = true
-      case r: RemoveFile if r.dataChange =>
-        skippedCommit = skipChangeCommits
-        if (removeFileActionPath.isEmpty) {
-          removeFileActionPath = Some(r.path)
-        }
-      case m: Metadata =>
-        if (verifyMetadataAction) {
-          checkReadIncompatibleSchemaChanges(
-            m, version, batchStartVersion, batchEndOffsetOpt.map(_.reservoirVersion))
-        }
-        assert(metadataAction.isEmpty,
-          "Should not encounter two metadata actions in the same commit")
-        metadataAction = Some(m)
-      case protocol: Protocol =>
-        deltaLog.protocolRead(protocol)
-        assert(protocolAction.isEmpty,
-          "Should not encounter two protocol actions in the same commit")
-        protocolAction = Some(protocol)
-      case commitInfo: CommitInfo =>
-        operation = Some(s"${commitInfo.operation} (${commitInfo.operationParameters})")
-      case _ => ()
-    }
-    if (removeFileActionPath.isDefined) {
-      if (seenFileAdd && !shouldAllowChanges) {
-        throw DeltaErrors.deltaSourceIgnoreChangesError(
-          version,
-          if (operation.nonEmpty) operation.get else removeFileActionPath.get,
-          snapshotAtSourceInit.dataPath.toString
-        )
-      } else if (!seenFileAdd && !shouldAllowDeletes) {
-        throw DeltaErrors.deltaSourceIgnoreDeleteError(
-          version,
-          removeFileActionPath.get,
-          snapshotAtSourceInit.dataPath.toString
-        )
-      }
-    }
-    (skippedCommit, metadataAction, protocolAction)
-  }
-
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame =
     recordDeltaOperation(
       snapshotAtSourceInit.deltaLog, opType = "delta.streaming.source.getBatch") {
@@ -1365,6 +1095,23 @@ object DeltaSource extends DeltaLogging {
   }
 
   /**
+   * Returns the schema of a Delta streaming source: the read schema, plus the CDC columns when the
+   * source reads the change data feed, without internal Delta metadata.
+   */
+  def sourceSchema(
+      spark: SparkSession,
+      options: DeltaOptions,
+      readSchemaAtSourceInit: StructType): StructType = {
+    val readSchemaWithCdc = if (options.readChangeFeed) {
+      CDCReader.cdcReadSchema(readSchemaAtSourceInit)
+    } else {
+      readSchemaAtSourceInit
+    }
+    DeltaTableUtils.removeInternalDeltaMetadata(
+      spark, DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaWithCdc))
+  }
+
+  /**
    * Returns the version that the `startingVersion` or `startingTimestamp` option selects, or None
    * if neither option is set.
    *
@@ -1514,13 +1261,13 @@ object DeltaSource extends DeltaLogging {
    * Scan and get the last item of the iterator.
    */
   def iteratorLast[T](iter: ClosableIterator[T]): Option[T] = {
-    try {
+    Utils.tryWithSafeFinally {
       var last: Option[T] = None
       while (iter.hasNext) {
         last = Some(iter.next())
       }
       last
-    } finally {
+    } {
       iter.close()
     }
   }

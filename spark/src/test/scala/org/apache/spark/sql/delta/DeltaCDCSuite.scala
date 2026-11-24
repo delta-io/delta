@@ -54,7 +54,7 @@ abstract class DeltaCDCSuiteBase
   with DeltaSQLTestUtils
   with CDFNondeterministicFilterTests {
 
-  import testImplicits._
+  import deltaImplicits._
 
   /** Represents path or metastore table name */
   abstract case class TblId(id: String)
@@ -361,9 +361,10 @@ abstract class DeltaCDCSuiteBase
 
       val ts0 = dateFormat.format(new Date(1000))
       val ts1 = dateFormat.format(new Date(3000))
-      intercept[AnalysisException] {
+      val error = intercept[AnalysisException] {
         cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1)).collect()
-      }.getMessage.contains("before the earliest version")
+      }
+      assert(error.getMessage.contains("before the earliest version"))
     }
   }
 
@@ -421,10 +422,14 @@ abstract class DeltaCDCSuiteBase
 
       val ts0 = dateFormat.format(new Date(3000))
       val ts1 = dateFormat.format(new Date(1000))
-      intercept[DeltaIllegalArgumentException] {
+      val error = intercept[DeltaIllegalArgumentException] {
         cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
           .collect()
-      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+      }
+      checkError(
+        exception = error,
+        condition = "DELTA_INVALID_CDC_RANGE",
+        parameters = Map("start" -> "1", "end" -> "0"))
     }
   }
 
@@ -439,10 +444,14 @@ abstract class DeltaCDCSuiteBase
 
       val ts0 = dateFormat.format(new Date(5000))
       val ts1 = dateFormat.format(new Date(3000))
-      intercept[DeltaIllegalArgumentException] {
+      val error = intercept[DeltaIllegalArgumentException] {
         cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
           .collect()
-      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+      }
+      checkError(
+        exception = error,
+        condition = "DELTA_INVALID_CDC_RANGE",
+        parameters = Map("start" -> "2", "end" -> "0"))
     }
   }
 
@@ -1339,8 +1348,8 @@ trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase with ChangelogSyntaxSupp
 
   // Filter by name in a test() override and ignore() the matches; everything else runs. The V2
   // changelog read path uses the `SELECT ... CHANGES` clause, which only the Spark 4.2 parser
-  // supports; supportsChangelogSyntax is a compile-time shim (true on spark-4.2, false on
-  // spark-4.0-4.1) so tests cancel on older versions.
+  // supports; supportsChangelogSyntax is a compile-time shim (true on spark-4.2+, false on
+  // spark-4.1) so tests cancel on older versions.
   override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
       implicit pos: org.scalactic.source.Position): Unit = {
     if (excludedV2Exact.contains(testName) || excludedV2Prefixes.exists(testName.startsWith)) {

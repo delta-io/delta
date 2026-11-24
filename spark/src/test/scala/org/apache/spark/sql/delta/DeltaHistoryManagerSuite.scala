@@ -168,7 +168,7 @@ trait DeltaTimeTravelTestHelpers extends QueryTest
 /** Delta time travel tests, built on the shared [[DeltaTimeTravelTestHelpers]]. */
 trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("time travel with partition changes and data skipping - should instantiate old schema") {
     withTempDir { dir =>
