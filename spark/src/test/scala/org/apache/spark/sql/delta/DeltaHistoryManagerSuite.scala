@@ -30,7 +30,7 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, modifyCommitTimestamp}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -54,7 +54,7 @@ trait DeltaTimeTravelTestHelpers extends QueryTest
     with GivenWhenThen
     with DeltaSQLCommandTest
     with StatsUtils
-    with CatalogOwnedTestBaseSuite {
+    with CatalogManagedTestBaseSuite {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }

@@ -23,7 +23,7 @@ import scala.collection.mutable
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorBuilder, CatalogManagedCommitCoordinatorProvider, CatalogManagedTableUtils, CatalogOwnedTestBaseSuite, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorBuilder, CatalogManagedCommitCoordinatorProvider, CatalogManagedTableUtils, CatalogManagedTestBaseSuite, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.storage.LogStore.logStoreClassConfKey
@@ -47,7 +47,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.storage.StorageLevel
 
 class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
-  with DeltaSQLCommandTest with CatalogOwnedTestBaseSuite {
+  with DeltaSQLCommandTest with CatalogManagedTestBaseSuite {
 
   protected override def sparkConf = {
     // Disable loading protocol and metadata from checksum file. Otherwise, creating a Snapshot

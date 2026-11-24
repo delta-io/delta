@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorProvider,
-  CatalogManagedTableUtils, CatalogOwnedTestBaseSuite, CommitCoordinatorProvider,
+  CatalogManagedTableUtils, CatalogManagedTestBaseSuite, CommitCoordinatorProvider,
   CommitCoordinatorUtilBase, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -49,7 +49,7 @@ class InCommitTimestampSuite
     with DeltaSQLCommandTest
     with DeltaSQLTestUtils
     with DeltaTestUtilsBase
-    with CatalogOwnedTestBaseSuite
+    with CatalogManagedTestBaseSuite
     with StreamTest {
   import InCommitTimestampTestUtils._
 
