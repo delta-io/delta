@@ -2334,37 +2334,6 @@ trait DeltaErrorsBase
       messageParameters = Array.empty)
   }
 
-  /**
-   * An internal invariant of the V2 connector does not hold. The error message has no
-   * parameters, so no internal text reaches the user. `detail` describes the check that failed
-   * and is kept, with `cause`, in the cause of the returned exception for debugging. The returned
-   * exception is an [[IllegalArgumentException]], so callers that catch that type still work.
-   */
-  def deltaV2IllegalArgument(detail: String, cause: Throwable): DeltaIllegalArgumentException =
-    new DeltaIllegalArgumentException(
-      errorClass = "DELTA_V2_INTERNAL_ERROR.ILLEGAL_ARGUMENT",
-      cause = new IllegalArgumentException(detail, cause))
-
-  def deltaV2IllegalArgument(detail: String): DeltaIllegalArgumentException =
-    deltaV2IllegalArgument(detail, cause = null)
-
-  /** Like [[deltaV2IllegalArgument]], for an [[IllegalStateException]]. */
-  def deltaV2IllegalState(detail: String, cause: Throwable): DeltaIllegalStateException =
-    new DeltaIllegalStateException(
-      errorClass = "DELTA_V2_INTERNAL_ERROR.ILLEGAL_STATE",
-      cause = new IllegalStateException(detail, cause))
-
-  def deltaV2IllegalState(detail: String): DeltaIllegalStateException =
-    deltaV2IllegalState(detail, cause = null)
-
-  /** Like [[deltaV2IllegalArgument]], for an [[UnsupportedOperationException]]. */
-  def deltaV2UnsupportedOperation(detail: String): DeltaUnsupportedOperationException = {
-    val error = new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_V2_INTERNAL_ERROR.UNSUPPORTED_OPERATION")
-    error.initCause(new UnsupportedOperationException(detail))
-    error
-  }
-
   def duplicateColumnsOnUpdateTable(originalException: Throwable): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_DUPLICATE_COLUMNS_ON_UPDATE_TABLE",

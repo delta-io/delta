@@ -24,7 +24,7 @@ import scala.util.control.NonFatal
 import io.delta.kernel.engine.Engine
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext
 
-import org.apache.spark.sql.delta.{DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScan
@@ -184,8 +184,7 @@ private[read] class DeltaV2ScanBuilder(
         tablePath = tablePathForLogging,
         opType = "scan.pushLimit.failure",
         data = Map("limit" -> limit))
-      throw DeltaErrors.deltaV2IllegalArgument(
-        "Pushed limit must be non-negative, but got: " + limit)
+      throw new IllegalArgumentException("Pushed limit must be non-negative, but got: " + limit)
     }
     if (SQLConf.get.getConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)) {
       pushedLimit = OptionalInt.of(limit)
