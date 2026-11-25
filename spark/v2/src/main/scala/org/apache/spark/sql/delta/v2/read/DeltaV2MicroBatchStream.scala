@@ -34,7 +34,6 @@ import org.apache.spark.sql.delta.NoMapping
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.TypeWidening
-import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.CommitInfo
@@ -58,7 +57,6 @@ import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseOp
-import org.apache.spark.sql.delta.storage.SupportsRewinding
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
 import org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamInterruptUtils._
@@ -482,7 +480,7 @@ private[read] class DeltaV2MicroBatchStream(
     val zoneId: ZoneId = DateTimeUtils.getZoneId(sqlConf.sessionLocalTimeZone)
     val caster: PartitionValueCaster = new PartitionValueCaster(partitionSchema, zoneId)
 
-    try withKernelInterruptTranslation {
+    withKernelInterruptTranslation {
       Using.resource(
           if (isCDC) {
               getFileChangesWithRateLimitForCDC(
@@ -506,12 +504,6 @@ private[read] class DeltaV2MicroBatchStream(
           }
         }
       }
-    } catch { case e: IOException =>
-      throw new UncheckedIOException(
-          String.format(
-              "Failed to get file changes for table %s from version %d index %d to offset %s",
-              tablePath, Long.box(fromVersion), Long.box(fromIndex), endOffset),
-          e)
     }
 
     PartitionUtils.planInputPartitions(
@@ -718,7 +710,7 @@ private[read] class DeltaV2MicroBatchStream(
     if (isInitialSnapshot) {
       // Read snapshot files, then delta logs from fromVersion + 1.
       // Create each iterator on demand.
-      // filterDeltaLogs handles the case when no commits exist after fromVersion.
+      // filterAndIndexDeltaLogs handles the case when no commits exist after fromVersion.
       result =
           new IteratorFlatMapCloseOp(CollectionConverters.asScala(Arrays.asList(1, 2).iterator()))
               .flatMapWithClose(
@@ -726,11 +718,20 @@ private[read] class DeltaV2MicroBatchStream(
                     if (part == 1) {
                       getSnapshotAt(fromVersion)
                     } else {
-                      filterDeltaLogs(fromVersion + 1, endOffset)
+                      filterAndIndexDeltaLogs(
+                          fromVersion + 1,
+                          fromVersion,
+                          ScalaUtils.toScalaOption(endOffset),
+                          /* verifyMetadataAction= */ true)
                     }
                   })
     } else {
-      result = filterDeltaLogs(fromVersion, endOffset)
+      result =
+          filterAndIndexDeltaLogs(
+              fromVersion,
+              fromVersion,
+              ScalaUtils.toScalaOption(endOffset),
+              /* verifyMetadataAction= */ true)
     }
 
     applyBoundaryFiltering(result, fromVersion, fromIndex, endOffset)
@@ -892,25 +893,6 @@ private[read] class DeltaV2MicroBatchStream(
     cdfEnabledOnStreamStartValidated = true
   }
 
-  private def filterDeltaLogs(
-      startVersion: Long,
-      endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
-    // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
-    require(
-      options.failOnDataLoss || !trackingMetadataChange,
-      "Using schema from schema tracking log cannot tolerate missing commit files.")
-    val commits: ClosableIterator[DeltaSingleCommit] =
-        streamingBackend.getSingleCommitIterator(
-            startVersion,
-            options.failOnDataLoss,
-            ScalaUtils.toScalaOption(endOffset))
-    val files: ClosableIterator[IndexedFile] =
-        new IteratorFlatMapCloseOp(commits)
-            .flatMapWithClose(
-                commit => processCommitToIndexedFiles(commit, startVersion, endOffset))
-    wrapIteratorWithCommitIteratorClose(files, commits)
-  }
-
   private def filterDeltaLogsWithRateLimitForCDC(
       startVersion: Long,
       lastProcessedVersion: Long,
@@ -948,57 +930,6 @@ private[read] class DeltaV2MicroBatchStream(
                         lastProcessedVersion,
                         lastProcessedIndex))
     wrapIteratorWithCommitIteratorClose(files, commits)
-  }
-
-  /**
-   * Processes a single commit and returns an iterator of IndexedFiles wrapped with BEGIN/END
-   * sentinels.
-   */
-  private def processCommitToIndexedFiles(
-      commit: DeltaSingleCommit,
-      startVersion: Long,
-      endOffsetOpt: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
-    try {
-      val version: Long = commit.version
-
-      // First pass: Validate the commit and decide whether to skip it.
-      //
-      // We must validate the ENTIRE commit before emitting ANY files. This is a correctness
-      // requirement: commits could contain both AddFiles and RemoveFiles.
-      // If we emitted AddFiles before discovering a RemoveFile (dataChange=true) later in the
-      // commit, downstream would produce incorrect results.
-      //
-      // When schema tracking is enabled, skip per-commit metadata verification - the handler
-      // manages schema changes through the barrier protocol instead.
-      //
-      // Commits below DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD are read once and kept in memory.
-      // Such a commit is read when its iterator is created, so create it inside the try.
-      val (actions, (shouldSkipCommit, metadataOpt, protocolOpt)) =
-          try {
-            val actions: ClosableIterator[Action] with SupportsRewinding[Action] =
-                DeltaSource.createRewindableActionIterator(spark, commit)
-            (actions, Using.resource(actions) { actionsIter =>
-              validateCommitAndDecideSkipping(
-                  actionsIter,
-                  version,
-                  startVersion,
-                  ScalaUtils.toScalaOption(endOffsetOpt),
-                  verifyMetadataAction = !trackingMetadataChange)
-            })
-          } catch { case e: IOException =>
-            throw new RuntimeException("Failed to process commit at version " + version, e)
-          }
-
-      // Second pass reads the commit lazily, from memory if the first pass cached it.
-      actions.rewind()
-      new IteratorCloseOps(actions)
-          .withClose(
-              actionsIter =>
-                  filterAndGetIndexedFiles(
-                      actionsIter, version, shouldSkipCommit, metadataOpt, protocolOpt))
-    } catch { case e: Exception =>
-      throw (if (e.isInstanceOf[RuntimeException]) e else new RuntimeException(e))
-    }
   }
 
   /**

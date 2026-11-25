@@ -22,8 +22,10 @@ import java.nio.file.Files
 import java.sql.Timestamp
 
 import org.apache.spark.sql.delta.actions.Protocol
-import org.apache.spark.sql.delta.sources.{DeltaLogStreamingBackend, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaLogStreamingBackend, DeltaSQLConf, IndexedFile}
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport.{collectMetadataActions, collectMetadataAtVersion, collectProtocolActions, collectProtocolAtVersion}
+import org.apache.spark.sql.delta.storage.ClosableIterator
+import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 import com.fasterxml.jackson.core.JsonParseException
@@ -136,6 +138,18 @@ class DeltaLogStreamingBackendSuite
       assert(versions(1) === Seq(1, 2))
       // A start after the latest version returns no commits.
       assert(versions(3).isEmpty)
+    }
+  }
+
+  test("closeCommitsWithFiles returns the files unchanged") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(1).write.format(writeFormat).save(path)
+      val backend = new DeltaLogStreamingBackend(DeltaLog.forTable(spark, path), () => None)
+      val files: ClosableIterator[IndexedFile] = Iterator[IndexedFile]().toClosable
+      val commits = backend.getSingleCommitIterator(0, failOnDataLoss = true)
+      // A DeltaLog commit iterator holds nothing to close, so the files need no wrapper.
+      assert(backend.closeCommitsWithFiles(files, commits) eq files)
     }
   }
 

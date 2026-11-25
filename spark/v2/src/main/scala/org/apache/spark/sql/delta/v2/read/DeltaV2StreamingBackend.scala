@@ -22,7 +22,7 @@ import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistoryManager, DeltaOptions, DeltaSingleCommit, Snapshot, SnapshotDescriptor, VersionNotFoundException}
 import org.apache.spark.sql.delta.actions.{Action, Protocol}
-import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSourceOffset, DeltaStreamingBackend}
+import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSourceOffset, DeltaStreamingBackend, IndexedFile}
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.v2.exception.{VersionNotFoundException => V2VersionNotFoundException}
@@ -162,4 +162,10 @@ private[read] class DeltaV2StreamingBackend(
     }
     wrapIteratorWithCommitIteratorClose(actions, commits)
   }
+
+  // The Kernel commits hold open resources, so closing the files also closes them.
+  override def closeCommitsWithFiles(
+      files: ClosableIterator[IndexedFile],
+      commits: ClosableIterator[DeltaSingleCommit]): ClosableIterator[IndexedFile] =
+    DeltaV2MicroBatchStreamUtils.wrapIteratorWithCommitIteratorClose(files, commits)
 }
