@@ -2,7 +2,7 @@
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/4032**
 
 This protocol change adds support for Variant shredding for the Variant data type.
-Shredding allows Variant data to be be more efficiently stored and queried.
+Shredding allows Variant data to be more efficiently stored and queried.
 
 --------
 
