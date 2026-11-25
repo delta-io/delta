@@ -733,7 +733,9 @@ private[read] class DeltaV2MicroBatchStream(
               /* verifyMetadataAction= */ true)
     }
 
-    applyBoundaryFiltering(result, fromVersion, fromIndex, endOffset)
+    result = filterFilesAfterStartOffset(result, fromVersion, fromIndex)
+      result = takeFilesUntilEndOffset(result, ScalaUtils.toScalaOption(endOffset))
+    result
   }
 
   /**
@@ -809,39 +811,11 @@ private[read] class DeltaV2MicroBatchStream(
   }
 
   /**
-   * Applies start/end boundary filtering to an iterator of {@link IndexedFile}s.
-   *
-   * @param result The unfiltered iterator
-   * @param fromVersion The starting version (exclusive with fromIndex)
-   * @param fromIndex The starting index within fromVersion (exclusive)
-   * @param endOffset The end offset (inclusive), or empty to read all available commits
-   * @return The filtered iterator
-   */
-  private def applyBoundaryFiltering(
-      result: ClosableIterator[IndexedFile],
-      fromVersion: Long,
-      fromIndex: Long,
-      endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
-    // Check start boundary (exclusive)
-    val filtered =
-        new IteratorCloseOps(result)
-            .withClose(
-                iterator =>
-                    iterator.filter(file => isAfterStartBoundary(file, fromVersion, fromIndex)))
-
-    applyEndBoundaryFiltering(filtered, endOffset)
-  }
-
-  /**
    * Applies end boundary filtering only. Used by CDC paths where start boundary filtering is
    * applied before admission to avoid wasting budget on already-processed files.
    */
-  private def applyEndBoundaryFiltering(
-      result: ClosableIterator[IndexedFile],
-      endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
-    applyEndBoundaryFiltering(result, endOffset, identity[IndexedFile])
-  }
-
+  // TODO: Share the CDC start and end filters with filterFilesAfterStartOffset and
+  // takeFilesUntilEndOffset in DeltaSourceOffsetLogic.
   private def applyEndBoundaryFiltering[T](
       result: ClosableIterator[T],
       endOffset: Optional[DeltaSourceOffset],

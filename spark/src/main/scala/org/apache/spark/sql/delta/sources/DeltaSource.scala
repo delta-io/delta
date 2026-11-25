@@ -599,26 +599,9 @@ case class DeltaSource(
         filterAndIndexDeltaLogs(fromVersion, fromVersion, endOffset, verifyMetadataAction)
       }
 
-      iter = iter.withClose { it =>
-        it.filter { file =>
-          file.version > fromVersion || file.index > fromIndex
-        }
-      }
+      iter = filterFilesAfterStartOffset(iter, fromVersion, fromIndex)
 
-      // If endOffset is provided, we are getting a batch on a constructed range so we should use
-      // the endOffset as the limit.
-      // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
-      // Trigger.availableNow() as limit. We know endOffset <= lastOffsetForTriggerAvailableNow.
-        val lastOffsetForThisScan = endOffset.orElse(lastOffsetForTriggerAvailableNow)
-
-        lastOffsetForThisScan.foreach { bound =>
-          iter = iter.withClose { it =>
-            it.takeWhile { file =>
-              file.version < bound.reservoirVersion ||
-                (file.version == bound.reservoirVersion && file.index <= bound.index)
-            }
-          }
-        }
+        iter = takeFilesUntilEndOffset(iter, endOffset)
       iter
     }
     logInfo(log"Getting file changes for delta_log_path=" +
