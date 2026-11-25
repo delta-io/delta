@@ -67,7 +67,6 @@ import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.utils.PartitionUtils
 import org.apache.spark.sql.delta.v2.utils.PartitionValueCaster
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils
-import org.apache.spark.sql.delta.v2.utils.StreamingHelper
 import org.apache.hadoop.conf.Configuration
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
