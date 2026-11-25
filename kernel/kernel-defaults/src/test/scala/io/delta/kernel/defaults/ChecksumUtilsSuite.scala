@@ -32,7 +32,7 @@ import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile => KernelAddFile, CommitInfo => KernelCommitInfo, DeletionVectorDescriptor, DomainMetadata => KernelDomainMetadata, Format, Metadata => KernelMetadata, Protocol => KernelProtocol, SetTransaction => KernelSetTransaction}
 import io.delta.kernel.internal.actions.SingleAction._
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumUtils, CRCInfo}
-import io.delta.kernel.internal.stats.FileSizeHistogram
+import io.delta.kernel.internal.stats.{DeletedRecordCountsHistogram, FileSizeHistogram}
 import io.delta.kernel.internal.util.{ManualClock, VectorUtils}
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -609,24 +609,27 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     7,
     Set("deletionVectors").asJava,
     Set("deletionVectors", "domainMetadata", "appendOnly").asJava)
-  private val operationTestFiles = (1 to 10).map { i =>
+  private def operationTestFile(i: Int, dvCardinality: Option[Long]): KernelAddFile =
     new KernelAddFile(KernelAddFile.createAddFileRowWithStatsJson(
       s"file-$i.parquet",
       VectorUtils.stringStringMapValue(Collections.emptyMap[String, String]()),
       i * 100L,
       0L,
       true,
-      Optional.of(new DeletionVectorDescriptor(
-        "p",
-        s"file:/deletion_vector_$i.bin",
-        Optional.empty(),
-        32,
-        i)),
+      Optional.ofNullable(dvCardinality.map { cardinality =>
+        new DeletionVectorDescriptor(
+          "p",
+          s"file:/deletion_vector_${i}_$cardinality.bin",
+          Optional.empty(),
+          32,
+          cardinality)
+      }.orNull),
       Optional.empty(),
       Optional.empty(),
       Optional.empty(),
       Optional.of("""{"numRecords":100,"tightBounds":false}""")))
-  }
+
+  private val operationTestFiles = (1 to 10).map(i => operationTestFile(i, Some(i.toLong)))
   private val operationTestActions0: Seq[Row] = Seq(
     createMetadataSingleAction(operationTestMetadata0.toRow),
     createProtocolSingleAction(operationTestProtocol0.toRow),
@@ -663,7 +666,8 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       numDeletedRecords: Long,
       numDeletionVectors: Long,
       allFiles: Option[Seq[KernelAddFile]],
-      version: Long = 2L): CRCInfo = {
+      version: Long = 2L,
+      deletedRecordCounts: Seq[Long] = Seq(0L, 5L, 1L)): CRCInfo = {
     // Every fixture file fits in the first bin; use the explicit expected totals for that bin.
     val histogram = FileSizeHistogram.createDefaultHistogram().captureFileSizeHistogramResult()
     histogram.getFileCounts()(0) = numFiles
@@ -691,7 +695,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       Optional.of(numDeletedRecords),
       Optional.of(numDeletionVectors),
       Optional.ofNullable(allFiles.map(_.asJava).orNull),
-      /* deletedRecordCountsHistogram */ Optional.empty())
+      Optional.of(new DeletedRecordCountsHistogram(deletedRecordCounts.toArray.padTo(10, 0L))))
   }
 
   private val includeAllCrc = operationTestCrcFixture(
@@ -700,10 +704,125 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     45L,
     6L,
     Some(Seq(4, 5, 8, 9, 6, 7).map(operationTestFiles)))
-  private val ignoreCommit1AddsCrc = operationTestCrcFixture(3000L, 4L, 30L, 4L, None)
-  private val ignoreCommit1RemovesCrc = operationTestCrcFixture(4800L, 8L, 48L, 8L, None)
-  private val ignoreCommit2AddsCrc = operationTestCrcFixture(2600L, 4L, 26L, 4L, None)
-  private val ignoreCommit2RemovesCrc = operationTestCrcFixture(5200L, 8L, 52L, 8L, None)
+  private val ignoreCommit1AddsCrc = operationTestCrcFixture(
+    3000L,
+    4L,
+    30L,
+    4L,
+    None,
+    deletedRecordCounts = Seq(0L, 3L, 1L))
+  private val ignoreCommit1RemovesCrc = operationTestCrcFixture(
+    4800L,
+    8L,
+    48L,
+    8L,
+    None,
+    deletedRecordCounts = Seq(0L, 7L, 1L))
+  private val ignoreCommit2AddsCrc = operationTestCrcFixture(
+    2600L,
+    4L,
+    26L,
+    4L,
+    None,
+    deletedRecordCounts = Seq(0L, 4L))
+  private val ignoreCommit2RemovesCrc = operationTestCrcFixture(
+    5200L,
+    8L,
+    52L,
+    8L,
+    None,
+    deletedRecordCounts = Seq(0L, 7L, 1L))
+
+  private def readWrittenCrc(path: String, engine: Engine, version: Long): CRCInfo =
+    ChecksumReader.tryReadChecksumFile(
+      engine,
+      FileStatus.of(Paths.get(path, "_delta_log", f"$version%020d.crc").toString)).get()
+
+  Seq(
+    ("complete allFiles", 9L, true),
+    ("zero deleted records", 0L, false),
+    ("no allFiles", 9L, false)).foreach {
+    case (base, cardinality, keepAllFiles) =>
+      test(s"FULL CRC replays when the base DV histogram is missing: $base") {
+        withTempDirAndMetricsEngine { (path, engine) =>
+          val plain = operationTestFile(1, None)
+          val old = operationTestFile(2, Some(cardinality))
+          writeCommitWithOperation(
+            path,
+            0,
+            "CREATE TABLE",
+            createMetadataSingleAction(operationTestMetadata0.toRow),
+            createProtocolSingleAction(operationTestProtocol0.toRow),
+            createAddFileSingleAction(plain.toRow),
+            createAddFileSingleAction(old.toRow))
+          val table = Table.forPath(engine, path)
+          table.getLatestSnapshot(engine).writeChecksum(engine, ChecksumWriteMode.FULL)
+          val baseCrc = readWrittenCrc(path, engine, 0)
+          val initialCounts = if (cardinality == 0) Seq(2L) else Seq(1L, 1L)
+          assert(baseCrc.getDeletedRecordCountsHistogram.get().getCounts.toSeq ===
+            initialCounts.padTo(10, 0L))
+          assert(baseCrc.getAllFiles.get().size() === 2)
+
+          val crcPath = Paths.get(path, "_delta_log", f"${0L}%020d.crc")
+          val legacy = OBJ_MAPPER.readTree(Files.readAllBytes(crcPath)).asInstanceOf[ObjectNode]
+          legacy.remove("deletedRecordCountsHistogramOpt")
+          if (!keepAllFiles) legacy.remove("allFiles")
+          engine.getFileSystemClient.delete(crcPath.toString)
+          Files.write(crcPath, OBJ_MAPPER.writeValueAsBytes(legacy))
+
+          // Remove the plain file and replace the other file's DV with one in the 100-999 bucket.
+          val updated = operationTestFile(2, Some(100L))
+          writeCommitWithOperation(
+            path,
+            1,
+            "DELETE",
+            createRemoveFileSingleAction(plain.toRemoveFileRow(true, Optional.of(1L))),
+            createRemoveFileSingleAction(old.toRemoveFileRow(true, Optional.of(1L))),
+            createAddFileSingleAction(updated.toRow))
+          val snapshot = table.getLatestSnapshot(engine)
+          // Table statistics only require file count and size, even with an incomplete base CRC.
+          engine.resetMetrics()
+          assert(snapshot.getStatistics.getTableStats(engine).get().getNumFiles === 1L)
+          assertMetrics(engine, Seq(1), Nil)
+          engine.resetMetrics()
+          snapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
+          assertMetrics(engine, Seq(1, 0), Nil, expChecksumReadSet = Seq(0))
+          assert(readWrittenCrc(path, engine, 1).getDeletedRecordCountsHistogram
+            .get().getCounts.toSeq === Seq(0L, 0L, 0L, 1L).padTo(10, 0L))
+        }
+      }
+  }
+
+  test("FULL CRC builds the DV histogram incrementally across a protocol upgrade") {
+    withTempDirAndMetricsEngine { (path, engine) =>
+      initialTestTable(path, engine)
+      val table = Table.forPath(engine, path)
+      table.getSnapshotAsOfVersion(engine, 0).writeChecksum(engine, ChecksumWriteMode.FULL)
+      val nonDvSnapshot = table.getLatestSnapshot(engine)
+      engine.resetMetrics()
+      nonDvSnapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
+      assertMetrics(engine, Seq(1), Nil, expChecksumReadSet = Seq(0))
+      val base = readWrittenCrc(path, engine, 1)
+      assert(base.getNumFiles > 0)
+      assert(!base.getDeletedRecordCountsHistogram.isPresent)
+
+      updateTableMetadata(
+        engine,
+        path,
+        tableProperties = Map("delta.enableDeletionVectors" -> "true"))
+      writeCommitWithOperation(
+        path,
+        3,
+        "WRITE",
+        createAddFileSingleAction(operationTestFiles.last.toRow))
+      val snapshot = table.getLatestSnapshot(engine)
+      engine.resetMetrics()
+      snapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
+      assertMetrics(engine, Seq(3, 2), Nil, expChecksumReadSet = Seq(1))
+      assert(readWrittenCrc(path, engine, 3).getDeletedRecordCountsHistogram
+        .get().getCounts.toSeq === Seq(base.getNumFiles, 0L, 1L).padTo(10, 0L))
+    }
+  }
 
   test("FULL mode using incremental computation with respect to operation types") {
     val normalOperations = Seq(

@@ -478,7 +478,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         200,
         Some(histogramForSize100Files(2)),
         Some(2L),
-        Some(11L))
+        Some(11L),
+        expectedDvHistogram = Some(Seq(0L, 2L)))
     }
   }
 
@@ -596,7 +597,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         300,
         Some(histogramForSize100Files(3)),
         Some(11L),
-        Some(35L))
+        Some(35L),
+        expectedDvHistogram = Some(Seq(1L, 2L)))
     }
   }
 }
