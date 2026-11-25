@@ -50,7 +50,8 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
  * @param file_size_in_bytes On-disk size of `location` in bytes.
  * @param content_stats Column-level statistics for the file.
  * @param tight_stats Whether `content_stats` are exact for the file's live rows; absent means not
- *                    tight. AMT always sets it, as `false` for now.
+ *                    tight. It holds the file's `tightStats` (see [[AMTContentStats]]). An entry
+ *                    without stats, or of a table whose stats have no `tightStats`, keeps `false`.
  * @param manifest_info Manifest stats plus inline DV; set iff content_type is DATA_MANIFEST.
  * @param key_metadata Encryption key metadata for the file, if encrypted.
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
@@ -446,7 +447,8 @@ sealed trait AMTAction {
  * @param sort_order_id Id of the sort order the file was written with.
  * @param content_stats Column-level statistics for the file.
  * @param tight_stats Whether `content_stats` are exact for the file's live rows; absent means not
- *                    tight. AMT always sets it, as `false` for now.
+ *                    tight. It holds the file's `tightStats` (see [[AMTContentStats]]). An entry
+ *                    without stats, or of a table whose stats have no `tightStats`, keeps `false`.
  * @param key_metadata Encryption key metadata for the file, if encrypted.
  * @param split_offsets Row-group split offsets (Iceberg field 132); Delta does not generate or
  *                      consume these, but the field is kept in the schema to carry it forward
