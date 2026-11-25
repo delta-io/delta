@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaOptions, SnapshotDescriptor, TypeWidening}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaOptions, DeltaSingleCommit, SnapshotDescriptor, TypeWidening}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -383,6 +383,52 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
       version,
       getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
         indexedFiles)
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Commit loop
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Returns matching files that were added on or after startVersion among delta logs.
+   * `fromVersion` is the start version of the whole scan. If the backend's commits hold
+   * resources, closing the result also closes them, see
+   * [[DeltaStreamingBackend.closeCommitsWithFiles]].
+   */
+  protected def filterAndIndexDeltaLogs(
+      startVersion: Long,
+      fromVersion: Long,
+      endOffset: Option[DeltaSourceOffset],
+      verifyMetadataAction: Boolean
+  ): ClosableIterator[IndexedFile] = {
+    // TODO: handle the case when failOnDataLoss = false and we are missing change log files
+    //    in that case, we need to recompute the start snapshot and evolve the schema if needed
+    require(options.failOnDataLoss || !trackingMetadataChange,
+      "Using schema from schema tracking log cannot tolerate missing commit files.")
+    def indexCommit(commit: DeltaSingleCommit): ClosableIterator[IndexedFile] = {
+      val version = commit.version
+      // First pass reads the whole commit and closes the iterator.
+      val iter = DeltaSource.createRewindableActionIterator(spark, commit)
+      val (shouldSkipCommit, metadataOpt, protocolOpt) = iter
+        .processAndClose { actionsIter =>
+          validateCommitAndDecideSkipping(
+            actionsIter, version,
+            fromVersion, endOffset,
+            verifyMetadataAction && !trackingMetadataChange
+          )
+        }
+      // Rewind the iterator to the beginning, if the actions are cached in memory, they will
+      // be reused again.
+      iter.rewind()
+      // Second pass reads the commit lazily.
+      iter.withClose { actionsIter =>
+        filterAndGetIndexedFiles(
+          actionsIter, version, shouldSkipCommit, metadataOpt, protocolOpt)
+      }
+    }
+    val commits =
+      streamingBackend.getSingleCommitIterator(startVersion, options.failOnDataLoss, endOffset)
+    streamingBackend.closeCommitsWithFiles(commits.flatMapWithClose(indexCommit), commits)
   }
 
   // ---------------------------------------------------------------------------------------------

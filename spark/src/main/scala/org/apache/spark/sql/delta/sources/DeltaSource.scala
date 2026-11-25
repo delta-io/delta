@@ -588,45 +588,15 @@ case class DeltaSource(
       verifyMetadataAction: Boolean = true
   ): ClosableIterator[IndexedFile] = {
 
-    /** Returns matching files that were added on or after startVersion among delta logs. */
-    def filterAndIndexDeltaLogs(startVersion: Long): ClosableIterator[IndexedFile] = {
-      // TODO: handle the case when failOnDataLoss = false and we are missing change log files
-      //    in that case, we need to recompute the start snapshot and evolve the schema if needed
-      require(options.failOnDataLoss || !trackingMetadataChange,
-        "Using schema from schema tracking log cannot tolerate missing commit files.")
-      streamingBackend.getSingleCommitIterator(
-        startVersion, options.failOnDataLoss).flatMapWithClose {
-        commit =>
-          val version = commit.version
-          // First pass reads the whole commit and closes the iterator.
-          val iter = DeltaSource.createRewindableActionIterator(spark, commit)
-          val (shouldSkipCommit, metadataOpt, protocolOpt) = iter
-            .processAndClose { actionsIter =>
-              validateCommitAndDecideSkipping(
-                actionsIter, version,
-                fromVersion, endOffset,
-                verifyMetadataAction && !trackingMetadataChange
-              )
-            }
-          // Rewind the iterator to the beginning, if the actions are cached in memory, they will
-          // be reused again.
-          iter.rewind()
-          // Second pass reads the commit lazily.
-          iter.withClose { actionsIter =>
-            filterAndGetIndexedFiles(
-              actionsIter, version, shouldSkipCommit, metadataOpt, protocolOpt)
-          }
-      }
-    }
-
     val (result, duration) = Utils.timeTakenMs {
       var iter = if (isInitialSnapshot) {
         Iterator(1, 2).flatMapWithClose { // so that the filterAndIndexDeltaLogs call is lazy
           case 1 => getSnapshotAt(fromVersion)._1.toClosable
-          case 2 => filterAndIndexDeltaLogs(fromVersion + 1)
+          case 2 => filterAndIndexDeltaLogs(
+            fromVersion + 1, fromVersion, endOffset, verifyMetadataAction)
         }
       } else {
-        filterAndIndexDeltaLogs(fromVersion)
+        filterAndIndexDeltaLogs(fromVersion, fromVersion, endOffset, verifyMetadataAction)
       }
 
       iter = iter.withClose { it =>

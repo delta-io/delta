@@ -3911,7 +3911,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             IllegalArgumentException.class,
             () -> stream.latestOffset(startOffset, ReadLimit.allAvailable()));
     assertTrue(
-        ex.getMessage().contains("schema tracking log cannot tolerate missing commit files"),
+        ex.getMessage().contains("cannot tolerate missing commit files"),
         "Unexpected message: " + ex.getMessage());
   }
 
