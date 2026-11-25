@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, D
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.NoRedirectRule
 import org.apache.spark.sql.delta.redirect.RedirectSpec
@@ -41,6 +42,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
 import org.apache.spark.{ReadOnlySparkConf, SparkConf, SparkEnv, SparkException, SparkThrowable}
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -2332,6 +2334,73 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTAV2_TRANSACTIONS_INCONSISTENT_CONFIG.REQUIRES_V2_CONNECTOR",
       messageParameters = Array.empty)
+  }
+
+  /**
+   * A step of the plan to read a V2 table cannot run, for example a Kernel plan node with a
+   * missing field, an unknown operator or a wrong number of inputs. `step` is a fixed name, written
+   * at the throw site, of the plan element that failed, such as `ValuesNode.rows`; it is the only
+   * message parameter, so no internal text reaches the user. `detail` describes the failure for
+   * debugging: it is logged here, with `cause`, and is not part of the returned exception, which
+   * keeps `cause` as its cause. The returned exception is an [[IllegalArgumentException]], as
+   * thrown at these sites before, so callers that catch that type still work.
+   */
+  def deltaV2InvalidReadPlan(
+      step: String,
+      detail: String,
+      cause: Throwable): DeltaIllegalArgumentException = {
+    logInvalidReadPlan(step, detail, cause)
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_V2_INTERNAL_ERROR.INVALID_READ_PLAN",
+      messageParameters = Array(step),
+      cause = cause)
+  }
+
+  def deltaV2InvalidReadPlan(step: String, detail: String): DeltaIllegalArgumentException =
+    deltaV2InvalidReadPlan(step, detail, cause = null)
+
+  /** Like [[deltaV2InvalidReadPlan]], for a site that threw an [[IllegalStateException]]. */
+  def deltaV2InvalidReadPlanState(
+      step: String,
+      detail: String,
+      cause: Throwable): DeltaIllegalStateException = {
+    logInvalidReadPlan(step, detail, cause)
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_V2_INTERNAL_ERROR.INVALID_READ_PLAN",
+      messageParameters = Array(step),
+      cause = cause)
+  }
+
+  def deltaV2InvalidReadPlanState(step: String, detail: String): DeltaIllegalStateException =
+    deltaV2InvalidReadPlanState(step, detail, cause = null)
+
+  /**
+   * Like [[deltaV2InvalidReadPlan]], for a plan element that the V2 connector does not run, such
+   * as an operator that this version cannot run. The returned exception is an
+   * [[UnsupportedOperationException]], as thrown at these sites before.
+   */
+  def deltaV2UnrunnableReadPlanStep(
+      step: String,
+      detail: String): DeltaUnsupportedOperationException = {
+    logInvalidReadPlan(step, detail, cause = null)
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_V2_INTERNAL_ERROR.INVALID_READ_PLAN",
+      messageParameters = Array(step))
+  }
+
+  /**
+   * The snapshot that the V2 connector loaded for a read is missing or is not a V2 snapshot.
+   * Like [[deltaV2InvalidReadPlan]], the message has no internal text: `detail` is only logged.
+   */
+  def deltaV2InvalidSnapshot(detail: String): DeltaIllegalStateException = {
+    logWarning(log"Delta V2 snapshot is not valid: ${MDC(DeltaLogKeys.ERROR, detail)}")
+    new DeltaIllegalStateException(errorClass = "DELTA_V2_INTERNAL_ERROR.INVALID_SNAPSHOT")
+  }
+
+  /** Logs the detail of `DELTA_V2_INTERNAL_ERROR.INVALID_READ_PLAN`, which the message omits. */
+  private def logInvalidReadPlan(step: String, detail: String, cause: Throwable): Unit = {
+    logWarning(log"Delta V2 read plan step ${MDC(DeltaLogKeys.OP_NAME, step)} cannot run: " +
+      log"${MDC(DeltaLogKeys.ERROR, detail)}", cause)
   }
 
   def duplicateColumnsOnUpdateTable(originalException: Throwable): Throwable = {
