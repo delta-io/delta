@@ -21,7 +21,7 @@ import java.io.FileNotFoundException
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -34,7 +34,7 @@ import org.apache.spark.util.Utils
 
 trait DescribeDeltaDetailSuiteBase extends QueryTest
   with SharedSparkSession
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with DeltaTestUtilsForTempViews {
 
   import deltaImplicits._
