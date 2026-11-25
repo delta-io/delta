@@ -22,7 +22,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DeltaLog, RangedSingleCommit}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, ContentRoot, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile, SetTransaction, SidecarType}
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -120,12 +120,29 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) extends Delt
     assertWindowCoversRange(intermediateLogCommits, oldAMTVersion, attemptVersion)
 
     // ---- Step 1: gather the actions of all three parts and process them. ----
-    // 1.a: old AMT root -- its live root-resident files, plus its inline non-content state
-    // (protocol, metadata, setTxns, domainMetadata). Leaf-resident files are NOT read here.
+    // 1.a: old AMT root -- its live root-resident files, plus its full non-content state
+    // (protocol, metadata, setTxns, domainMetadata): the inline entries and the entries of its
+    // non-content sidecars, read here on the driver. Leaf-resident files are NOT read here.
     val fileActionsFromOldRoot = oldAMT.fileActionsFromRoot
+    // Note: We are collecting all non-content actions from sidecars on driver. For non-amt
+    // tables, we already do this when a user access any domain metadata or set transaction.
+    val oldSidecarTxns =
+      AMTNonContentSidecarReader.readTxnSidecars(deltaLog, oldAMT.nonContentSidecars)
+    val oldSidecarDomainMetadata =
+      AMTNonContentSidecarReader.readDomainMetadataSidecars(deltaLog, oldAMT.nonContentSidecars)
+    // Each key of the old checkpoint is inline or in exactly one sidecar. A duplicated key makes
+    // the old state ambiguous (the replay would keep whichever entry it sees last, which can be
+    // an older txn version), so the commit fails instead of writing a new checkpoint from it.
+    if (oldAMT.nonContentSidecars.nonEmpty) {
+      assertNoDuplicateKeys(SidecarType.Type.Txn, oldAMTVersion,
+        (oldAMT.inlineSetTransactions ++ oldSidecarTxns).map(_.appId))
+      assertNoDuplicateKeys(SidecarType.Type.DomainMetadata, oldAMTVersion,
+        (oldAMT.inlineDomainMetadatas ++ oldSidecarDomainMetadata).map(_.domain))
+    }
     val nonContentFromOldCheckpoint: Seq[Action] =
       Seq[Action](oldAMT.protocol, oldAMT.metadata) ++
-        oldAMT.inlineSetTransactions ++ oldAMT.inlineDomainMetadatas
+        oldAMT.inlineSetTransactions ++ oldSidecarTxns ++
+        oldAMT.inlineDomainMetadatas ++ oldSidecarDomainMetadata
     // 1.b: the log commits / minor compactions committed after the old AMT, read in parallel (the
     // MinorCompactionHook primitive). Each segment delta file becomes a RangedSingleCommit with its
     // start and end version, so that compacted deltas can be replayed correctly.
@@ -542,6 +559,28 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) extends Delt
       s"intermediateLogCommits must cover exactly [${oldAMTVersion + 1}, $attemptVersion); " +
         s"missing ${(expected -- covered).toList.sorted}, " +
         s"unexpected ${(covered -- expected).toList.sorted}.")
+  }
+
+  /**
+   * Fails if a key of one non-content sidecarType (a [[SidecarType]] value) appears more than
+   * once in `keys`, the inline entries and the sidecar entries of the old checkpoint.
+   */
+  private def assertNoDuplicateKeys(
+      sidecarType: String,
+      oldAMTVersion: Long,
+      keys: Seq[String]): Unit = {
+    val duplicates = AMTNonContentSidecarReader.duplicateKeys(keys)
+    AMTUtils.invariantCheckWithLogging(
+      checkInvariant = duplicates.isEmpty,
+      opTypeSuffix = AMTUsageLogs.ALERT_NON_CONTENT_SIDECAR_DUPLICATE_KEY,
+      message = s"The AMT checkpoint at version $oldAMTVersion carries ${duplicates.size} " +
+        s"duplicated $sidecarType keys across its inline entries and non-content sidecars: " +
+        s"${duplicates.take(10).mkString(", ")}.",
+      deltaLog = deltaLog,
+      data = Map(
+        "sidecarType" -> sidecarType,
+        "numDuplicates" -> duplicates.size,
+        "duplicates" -> duplicates.take(10)))
   }
 }
 

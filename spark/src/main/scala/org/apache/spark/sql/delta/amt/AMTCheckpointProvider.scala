@@ -226,12 +226,17 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   /**
    * The full action set of this checkpoint as a distributed [[Dataset]] of [[SingleAction]]: the
    * live file `AddFile`s reconstructed from the AMT(root + leaves), unioned with the inline
-   * non-content actions (protocol, metadata, domain metadata, txns) built on the driver.
+   * non-content actions (protocol, metadata, domain metadata, txns) built on the driver, and
+   * the txns and domain metadata carried by the checkpoint's non-content sidecars (read lazily).
    */
   private def allActions(spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
     val nonFileActions = spark.createDataset(nonContentSingleActions)
-    liveAddSingleActions(spark, deltaLog).union(nonFileActions)
+    val allActionsDFExceptNonContentSidecars =
+      liveAddSingleActions(spark, deltaLog).union(nonFileActions)
+    AMTNonContentSidecarReader.loadSidecarActions(spark, deltaLog, checkpointAction)
+      .map(allActionsDFExceptNonContentSidecars.union)
+      .getOrElse(allActionsDFExceptNonContentSidecars)
   }
 
   /** The inline, non-content actions carried directly on the [[Checkpoint]] action. */
