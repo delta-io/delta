@@ -145,7 +145,8 @@ class DeltaLogStreamingBackendSuite
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       spark.range(1).write.format(writeFormat).save(path)
-      val backend = new DeltaLogStreamingBackend(DeltaLog.forTable(spark, path), () => None)
+      val backend = new DeltaLogStreamingBackend(
+        DeltaLog.forTable(spark, path), () => None, spark, defaultOptions)
       val files: ClosableIterator[IndexedFile] = Iterator[IndexedFile]().toClosable
       val commits = backend.getSingleCommitIterator(0, failOnDataLoss = true)
       // A DeltaLog commit iterator holds nothing to close, so the files need no wrapper.
