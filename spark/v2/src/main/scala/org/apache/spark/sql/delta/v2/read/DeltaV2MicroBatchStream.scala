@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.NoMapping
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.TypeWidening
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.CommitInfo
@@ -57,6 +58,7 @@ import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps
 import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorFlatMapCloseOp
+import org.apache.spark.sql.delta.storage.SupportsRewinding
 import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
 import org.apache.spark.sql.delta.v2.read.DeltaV2MicroBatchStreamInterruptUtils._
@@ -968,21 +970,28 @@ private[read] class DeltaV2MicroBatchStream(
       //
       // When schema tracking is enabled, skip per-commit metadata verification - the handler
       // manages schema changes through the barrier protocol instead.
-      val (shouldSkipCommit, metadataOpt, protocolOpt) =
-          try Using.resource(
-              commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L)) { actionsIter =>
-            validateCommitAndDecideSkipping(
-                actionsIter,
-                version,
-                startVersion,
-                ScalaUtils.toScalaOption(endOffsetOpt),
-                verifyMetadataAction = !trackingMetadataChange)
+      //
+      // Commits below DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD are read once and kept in memory.
+      // Such a commit is read when its iterator is created, so create it inside the try.
+      val (actions, (shouldSkipCommit, metadataOpt, protocolOpt)) =
+          try {
+            val actions: ClosableIterator[Action] with SupportsRewinding[Action] =
+                DeltaSource.createRewindableActionIterator(spark, commit)
+            (actions, Using.resource(actions) { actionsIter =>
+              validateCommitAndDecideSkipping(
+                  actionsIter,
+                  version,
+                  startVersion,
+                  ScalaUtils.toScalaOption(endOffsetOpt),
+                  verifyMetadataAction = !trackingMetadataChange)
+            })
           } catch { case e: IOException =>
             throw new RuntimeException("Failed to process commit at version " + version, e)
           }
 
-      // Second pass reads the commit lazily.
-      new IteratorCloseOps(commit.getActionsIterator(/* maxInMemoryFileSizeBytes= */ 0L))
+      // Second pass reads the commit lazily, from memory if the first pass cached it.
+      actions.rewind()
+      new IteratorCloseOps(actions)
           .withClose(
               actionsIter =>
                   filterAndGetIndexedFiles(
