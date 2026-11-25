@@ -158,7 +158,7 @@ class StagedCommitListingSuite extends QueryTest
     }
   }
 
-  testWithCatalogOwned(backfillBatchSize = 1)(
+  testWithCatalogManaged(backfillBatchSize = 1)(
       "rollout flag controls staged-commit filtering for a backfilled version") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath

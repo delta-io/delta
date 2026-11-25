@@ -231,10 +231,10 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
           metadata.configuration ++ Map("foo" -> "bar")
         )
         txn.commit(newMetadata :: Nil, DeltaOperations.ManualUpdate)
-        val catalogOwnedProperties = constructCatalogOwnedSpecificTableProperties(
+        val catalogManagedProperties = constructCatalogManagedSpecificTableProperties(
           spark, newMetadata)
         checkResult(sql(s"DESCRIBE DETAIL $tableName"),
-          Seq(Map("foo" -> "bar") ++ catalogOwnedProperties),
+          Seq(Map("foo" -> "bar") ++ catalogManagedProperties),
           Seq("properties")
         )
       }

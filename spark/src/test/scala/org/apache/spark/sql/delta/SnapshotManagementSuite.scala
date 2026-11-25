@@ -610,7 +610,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       }
       val latestSnapshot = log.update()
       val versionOneIsBackfilledByCatalogManagedBatch =
-        catalogOwnedCoordinatorBackfillBatchSize.exists(_ <= 1)
+        catalogManagedCoordinatorBackfillBatchSize.exists(_ <= 1)
       // This test appends version 1, and CatalogManaged batch sizes above 1 keep it staged.
       // Without a commit-coordinator client, this path-based refresh lists only filesystem deltas.
       if (!catalogOwnedDefaultCreationEnabledInTests ||

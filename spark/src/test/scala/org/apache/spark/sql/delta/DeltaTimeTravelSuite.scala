@@ -104,7 +104,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val filePath = DeltaCommitFileProvider
         .apply(snapshot = deltaLog.unsafeVolatileSnapshot)
         .deltaFile(version = startVersion)
-      if (isICTEnabledForNewTablesCatalogOwned) {
+      if (isICTEnabledForNewTablesCatalogManaged) {
         InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
         InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, startVersion, Some(ts))
       } else {
@@ -180,7 +180,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
   historyTest("describe history timestamps are adjusted according to file timestamp") {
       (deltaLog, clock) =>
-    if (isICTEnabledForNewTablesCatalogOwned) {
+    if (isICTEnabledForNewTablesCatalogManaged) {
       // File timestamp adjustment is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
     }
@@ -220,7 +220,7 @@ class DeltaTimeTravelSuite extends QueryTest
         // Since we are creating a table w/ three initial commits, the table would have
         // unbackfilled commits if the backfill batch size is greater or equal to three.
         // See [[generateCommitsCheap]] for details.
-        catalogOwnedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
+        catalogManagedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
       // We throw an "incorrect" exception for CC tables if there exist any unbackfilled commits
       // and the backfilled commits have been manually deleted. E.g., the 0.json we are deleting
       // in this UT.
@@ -638,7 +638,7 @@ class DeltaTimeTravelSuite extends QueryTest
           // Since we are creating a table w/ three initial commits, the table would have
           // unbackfilled commits if the backfill batch size is greater or equal to three.
           // See [[generateCommits]] for details.
-          catalogOwnedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
+          catalogManagedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
         // We throw an "incorrect" exception for CC tables if there exist any unbackfilled commits
         // and the backfilled commits have been manually deleted. E.g., the 0.json we are deleting
         // in this UT.
@@ -653,7 +653,7 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTablesCatalogOwned) {
+    if (isICTEnabledForNewTablesCatalogManaged) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")

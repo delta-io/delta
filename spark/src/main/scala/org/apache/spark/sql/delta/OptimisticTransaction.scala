@@ -928,8 +928,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       if (!isCreatingNewTable &&
           p.readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name) &&
           !existingFeatureNames.contains(CatalogManagedTableFeature.name)) {
-        throw new NotImplementedException("Upgrading to CatalogOwned table is not yet " +
-          s"supported. Please create a new table with the CatalogOwned table feature.")
+        throw new NotImplementedException("Upgrading to CatalogManaged table is not yet " +
+          s"supported. Please create a new table with the CatalogManaged table feature.")
       }
     }
 

@@ -347,7 +347,7 @@ class DeltaLogSuite extends QueryTest
   }
 
   test("error - versions not contiguous") {
-    if (catalogOwnedCoordinatorBackfillBatchSize.contains(100L)) {
+    if (catalogManagedCoordinatorBackfillBatchSize.contains(100L)) {
       cancel("Backfill size of 100 is not compatible w/ the test.")
     }
     withTempDir { dir =>

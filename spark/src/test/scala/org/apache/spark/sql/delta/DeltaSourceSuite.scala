@@ -946,7 +946,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           // the new table is created. In production, UC handles table lifecycle management, so
           // explicit coordinator cleanup is not needed.
           if (catalogOwnedDefaultCreationEnabledInTests) {
-            deleteCatalogOwnedTableFromCommitCoordinator(tablePath)
+            deleteCatalogManagedTableFromCommitCoordinator(tablePath)
           }
           val deltaLog = DeltaLog.forTable(spark, tablePath)
           // All Delta tables in tests use the same tableId by default. Here we pass a new tableId
