@@ -19,8 +19,11 @@ package org.apache.spark.sql.delta.v2.read
 import java.net.URI
 import java.sql.Timestamp
 
+import org.apache.spark.sql.delta.DeltaLog
+
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.execution.datasources.FileFormat
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 
 private[read] trait DeltaV2MetadataReadE2ETests {
@@ -183,10 +186,57 @@ private[read] trait DeltaV2MetadataReadE2ETests {
       assertExpectedScan(df, "metadata alongside star read")
     }
   }
+
+  Seq(
+    ("string", "STRING", "'%s'", 1, "none"),
+    ("struct", "STRUCT<file_path: STRING>", "named_struct('file_path', '%s')", 1, "none"),
+    ("multiple", "STRING", "'%s'", 2, "none"),
+    ("name-mapped", "STRING", "'%s'", 1, "name"),
+    ("id-mapped", "STRING", "'%s'", 1, "id")
+  ).foreach { case (label, dataType, userValueTemplate, collisionCount, columnMappingMode) =>
+    test(s"renamed metadata preserves user columns on a $label name collision") {
+      val table = s"v2_scan_e2e_metadata_collision_${label.replace('-', '_')}"
+      val userColumns = Seq("_metadata", "__metadata").take(collisionCount)
+      val definitions = userColumns.map(name => s"$name $dataType").mkString(", ")
+      val values = userColumns.map(name => userValueTemplate.format(s"user-$name")).mkString(", ")
+      val metadataName = "_" * collisionCount + "_metadata"
+      withTable(table) {
+        withV1Mode {
+          sql(s"CREATE TABLE $table (id LONG, $definitions) USING $tableProvider " +
+            "TBLPROPERTIES ('delta.enableRowTracking' = 'true', " +
+            s"'delta.columnMapping.mode' = '$columnMappingMode')")
+          sql(s"INSERT INTO $table VALUES (1, $values), (2, $values)")
+        }
+        val metadataProjection = s"$metadataName.file_path, $metadataName.row_id, " +
+          s"$metadataName.row_commit_version"
+        val metadataQuery = s"SELECT id, $metadataProjection FROM $table"
+        val query = s"SELECT id, ${userColumns.mkString(", ")}, $metadataProjection FROM $table"
+        val (expected, expectedMetadata, expectedData) = withV1Mode {
+          (sql(query).collect().toSeq,
+            sql(metadataQuery).collect().toSeq,
+            sql(s"SELECT * FROM $table").collect().toSeq)
+        }
+        DeltaLog.clearCache()
+        Seq(true, false).foreach { nestedPruning =>
+          withConf(SQLConf.NESTED_SCHEMA_PRUNING_ENABLED.key -> nestedPruning.toString) {
+            val metadataOnly = sql(metadataQuery)
+            checkAnswer(metadataOnly, expectedMetadata)
+            assertExpectedScan(metadataOnly, s"$label renamed metadata read")
+            val df = sql(query)
+            checkAnswer(df, expected)
+            assertExpectedScan(df, s"$label user and generated metadata read")
+            val dataOnly = sql(s"SELECT * FROM $table")
+            assert(dataOnly.schema.fieldNames.toSeq == Seq("id") ++ userColumns)
+            checkAnswer(dataOnly, expectedData)
+            assertExpectedScan(dataOnly, s"$label user metadata columns")
+          }
+        }
+      }
+    }
+  }
 }
 
-/** Covers Spark base `_metadata` field values and schemas shared across Delta V2 scan paths.
- * Row-tracking-only metadata fields stay outside this suite.
+/** Covers file metadata and collision-renamed row tracking across Delta V2 scan paths.
  */
 class DeltaV2MetadataReadE2ESuite
   extends DeltaV2ScanE2ETestUtils

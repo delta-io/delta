@@ -396,6 +396,8 @@ class DeltaV2Table private (
     if (isTimeTravel) READ_ONLY_CAPABILITIES else CAPABILITIES
   }
 
+  override def canRenameConflictingMetadataColumns(): Boolean = true
+
   /**
    * Returns the version of the snapshot loaded when this table was constructed, as a String.
    *
