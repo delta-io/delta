@@ -52,6 +52,10 @@ public class CommitRangeImpl implements CommitRange {
   private final long startVersion;
   private final long endVersion;
   private final List<ParsedDeltaData> deltas;
+  // Version of the first logical commit after the range, if one was observed while the range
+  // stopped short of its end. Only used to prove that a version in the range is missing; that
+  // commit is never part of the range.
+  private final Optional<Long> nextVersionAfterEnd;
   private final boolean commitRangeValidation;
   private final boolean failOnDataLoss;
 
@@ -62,9 +66,14 @@ public class CommitRangeImpl implements CommitRange {
       long startVersion,
       long endVersion,
       List<ParsedDeltaData> deltas,
+      Optional<Long> nextVersionAfterEnd,
       boolean commitRangeValidation,
       boolean failOnDataLoss) {
-    checkArgument(startVersion <= endVersion, "must have startVersion <= endVersion");
+    // Only a validated range must be non-empty and ordered. A relaxed range may be empty, and
+    // may even have startVersion > endVersion.
+    checkArgument(
+        !commitRangeValidation || startVersion <= endVersion,
+        "must have startVersion <= endVersion");
     checkArgument(
         !commitRangeValidation || deltas.size() == endVersion - startVersion + 1,
         "deltaFiles size must match size of range");
@@ -74,6 +83,8 @@ public class CommitRangeImpl implements CommitRange {
     this.startVersion = startVersion;
     this.endVersion = endVersion;
     this.deltas = requireNonNull(deltas, "deltas cannot be null");
+    this.nextVersionAfterEnd =
+        requireNonNull(nextVersionAfterEnd, "nextVersionAfterEnd cannot be null");
     this.commitRangeValidation = commitRangeValidation;
     this.failOnDataLoss = failOnDataLoss;
   }
@@ -114,23 +125,24 @@ public class CommitRangeImpl implements CommitRange {
         if (done) {
           return false;
         }
-        if (index < deltas.size()) {
-          long actualVersion = deltas.get(index).getVersion();
-          if (failOnDataLoss && actualVersion != expectedVersion) {
-            done = true;
-            if (index == 0) {
-              throw startVersionNotFound(
-                  dataPath.toString(), startVersion, Optional.of(actualVersion));
-            }
-            throw missingCommitVersion(dataPath.toString(), expectedVersion);
+        boolean inRange = index < deltas.size();
+        // A missing version is only reported when a later commit that was actually observed
+        // proves it is missing. Without one, a missing suffix of the range is not an error.
+        Optional<Long> observedVersion =
+            inRange ? Optional.of(deltas.get(index).getVersion()) : nextVersionAfterEnd;
+        if (failOnDataLoss
+            && observedVersion.isPresent()
+            && observedVersion.get() != expectedVersion) {
+          done = true;
+          if (index == 0) {
+            throw startVersionNotFound(dataPath.toString(), startVersion, observedVersion);
           }
-          return true;
-        }
-        done = true;
-        if (failOnDataLoss && expectedVersion <= endVersion) {
           throw missingCommitVersion(dataPath.toString(), expectedVersion);
         }
-        return false;
+        if (!inRange) {
+          done = true;
+        }
+        return inRange;
       }
 
       @Override

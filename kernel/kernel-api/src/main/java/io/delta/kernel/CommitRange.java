@@ -42,8 +42,10 @@ public interface CommitRange {
   /**
    * Returns an iterator over commit-file metadata in ascending version order.
    *
-   * <p>The iterator must be closed after use. Missing commit versions may be reported while the
-   * iterator advances.
+   * <p>The iterator must be closed after use. With {@link
+   * CommitRangeBuilder#withFailOnDataLoss(boolean)} enabled, the iterator throws when a later
+   * commit proves a version is missing, and ends after that error. Otherwise, available files are
+   * yielded across gaps.
    *
    * @return a closeable iterator over the commit files in this range
    */
