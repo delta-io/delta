@@ -277,6 +277,8 @@ class AMTAddFileReconstructionSuite extends AMTSyntheticTreeTestBase {
           tags = Some(Map("tag" -> "value")))
       val files = reconstructedAddFiles(tree, Seq(entry.wrap))
 
+      // This is a preview AMT table, whose stats have no `tightStats`, so `tightBounds` comes back
+      // from `tight_stats`.
       assertAddFiles(files, AddFile(
         path = "data/part=x/a.parquet",
         partitionValues = Map(part -> "x"),
