@@ -18,7 +18,7 @@ Delta Lake is an open-source storage framework that enables building a [Lakehous
 The following are some of the more popular Delta Lake integrations, refer to [delta.io/integrations](https://delta.io/integrations/) for the complete list:
 
 * [Apache Spark™](https://docs.delta.io/): This connector allows Apache Spark™ to read from and write to Delta Lake.
-* [Apache Flink (Preview)](https://github.com/delta-io/delta/tree/master/connectors/flink): This connector allows Apache Flink to write to Delta Lake.
+* [Apache Flink (Preview)](https://github.com/delta-io/delta/tree/master/flink): This connector allows Apache Flink to write to Delta Lake.
 * [PrestoDB](https://prestodb.io/docs/current/connector/deltalake.html): This connector allows PrestoDB to read from Delta Lake.
 * [Trino](https://trino.io/docs/current/connector/delta-lake.html): This connector allows Trino to read from and write to Delta Lake.
 * [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html): This library allows Scala and Java-based projects (including Apache Flink, Apache Hive, Apache Beam, and PrestoDB) to read from and write to Delta Lake.
@@ -54,8 +54,8 @@ See the [online documentation](https://docs.delta.io/latest/) for the latest rel
 ## API Documentation
 
 * [Scala API docs](https://docs.delta.io/latest/delta-apidoc.html)
-* [Java API docs](https://docs.delta.io/latest/api/java/index.html)
-* [Python API docs](https://docs.delta.io/latest/api/python/index.html)
+* [Java API docs](https://docs.delta.io/api/latest/java/spark/index.html)
+* [Python API docs](https://docs.delta.io/api/latest/python/spark/index.html)
 
 ## Compatibility
 [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html) library is a single-node Java library that can be used to read from and write to Delta tables. Specifically, this library provides APIs to interact with a table’s metadata in the transaction log, implementing the Delta Transaction Log Protocol to achieve the transactional guarantees of the Delta Lake format.
