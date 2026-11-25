@@ -3804,6 +3804,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SHARING_SNAPSHOT_DELTA_LOG_REUSE_ENABLED =
+    buildConf("spark.sql.delta.sharing.snapshotDeltaLogReuse.enabled")
+      .doc("If true, a Delta Sharing V1 snapshot query reuses the delta log and pre-signed urls " +
+        "of an identical earlier query on this cluster, skipping the queryTable RPC. Needs " +
+        "spark.delta.sharing.client.sparkParquetIOCache.enabled.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   ///////////////////
   // IDENTITY COLUMN
   ///////////////////
