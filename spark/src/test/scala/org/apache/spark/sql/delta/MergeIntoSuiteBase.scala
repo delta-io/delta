@@ -38,6 +38,7 @@ import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArra
 import org.apache.spark.sql.catalyst.plans.logical.{SubqueryAlias, View}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 trait MergeIntoSuiteBaseMixin
@@ -1668,6 +1669,73 @@ trait MergeIntoNestedDataTests extends MergeIntoSuiteBaseMixin {
         |{ "key": "B", "value": [{ "a": { "y": 20, "x": [{ "c": 10, "d": 30}, { "c": 3, "d": 40}]}, "b": 2 }]}""".stripMargin)
   // scalastyle:on line.size.limit
 
+  private val nestedArrayByNameConfs = Seq(
+    DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key -> "true",
+    DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS.key -> "true",
+    DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false",
+    SQLConf.STORE_ASSIGNMENT_POLICY.key -> "ANSI",
+    DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false")
+
+  for (depth <- Seq(2, 3); star <- BOOLEAN_DOMAIN) {
+    def wrapArray(value: String): String =
+      (0 until depth).foldLeft(value)((v, _) => s"[$v]")
+
+    def schema(element: StructType): StructType = {
+      val array = (0 until depth).foldLeft[DataType](element)((t, _) => ArrayType(t))
+      new StructType().add("key", IntegerType).add("value", array)
+    }
+
+    val value = """{"a":"A","b":"B"}"""
+    val values = Seq("null", "[]", "[null]", "[[]]", wrapArray("null"),
+      wrapArray(s"$value,$value"))
+    // Every value is assigned to an existing row and inserted as a new row.
+    val source = (values ++ values).zipWithIndex.map { case (v, i) =>
+      s"""{"key":$i,"value":$v}"""
+    }.mkString("\n")
+    val target = values.indices.map { i =>
+      s"""{"key":$i,"value":${wrapArray("""{"a":"oldA","b":"oldB"}""")}}"""
+    }.mkString("\n")
+
+    testNestedDataSupport(s"nested arrays resolve structs by name - depth=$depth star=$star")(
+      source = source,
+      target = target,
+      sourceSchema = schema(new StructType().add("b", StringType).add("a", StringType)),
+      targetSchema = schema(new StructType().add("a", StringType).add("b", StringType)),
+      update = if (star) "*" else "value = s.value",
+      insert = if (star) "*" else "(key, value) VALUES (s.key, s.value)",
+      result = source,
+      confs = nestedArrayByNameConfs)
+  }
+
+  for (function <- Seq("array_union", "array_intersect", "array_except",
+      "array_remove", "array_distinct")) {
+    val sourceArray = ArrayType(ArrayType(
+      new StructType().add("a", StringType).add("b", StringType)))
+    val targetArray = ArrayType(ArrayType(
+      new StructType().add("b", IntegerType).add("a", IntegerType)))
+    val expression = function match {
+      case "array_distinct" => "array_distinct(s.value)"
+      case "array_remove" => "array_remove(s.value, s.other[0])"
+      case "array_intersect" => "array_intersect(array(s.value[0]), s.other)"
+      case _ => s"$function(s.value, s.other)"
+    }
+    // Distinct strings become equal after casting, so the operation must follow conversion.
+    val expected = if (Set("array_except", "array_remove").contains(function)) "[]"
+      else """[[{"a":1,"b":2}]]"""
+
+    testNestedDataSupport(s"nested arrays convert operands before $function")(
+      source = """{"key":1,"value":[[{"a":"01","b":"02"}],[{"a":"1","b":"2"}]],
+        |"other":[[{"a":"1","b":"2"}]]}""".stripMargin.replace("\n", ""),
+      target = """{"key":1,"value":[[{"a":9,"b":8}]]}""",
+      sourceSchema = new StructType().add("key", IntegerType)
+        .add("value", sourceArray).add("other", sourceArray),
+      targetSchema = new StructType().add("key", IntegerType).add("value", targetArray),
+      update = s"value = $expression",
+      insert = "(key, value) VALUES (s.key, s.value)",
+      result = s"""{"key":1,"value":$expected}""",
+      confs = nestedArrayByNameConfs)
+  }
+
   // Note that value.b has to be in the right position for this test to avoid throwing an error
   // trying to write its integer value into the value.a struct.
   testNestedDataSupport("update resolution by position with conf")(
@@ -2755,9 +2823,13 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
           condition = "s.key1 = t.key2",
           update = "key2 = key1, t.key2 = key1",
           insert = "(key2, value) VALUES (3, 4)")
-      }.getMessage
+      }
 
-      errorContains(e, "there is a conflict from these set columns")
+      checkError(
+        exception = e,
+        condition = "DELTA_CONFLICT_SET_COLUMN",
+        sqlState = "42701",
+        parameters = Map("columnList" -> "[`key2`, `key2`]"))
     }
   }
 

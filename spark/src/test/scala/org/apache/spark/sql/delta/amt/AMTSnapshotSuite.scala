@@ -1156,7 +1156,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       }
     }
     val provider = AMTCheckpointProvider(
-      spark, base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
+      base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
 
     val dropped =
       twoPositions.map(locs(twoLeaf)).toSet ++
@@ -1351,7 +1351,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         leaf.manifest_info.copy(dv = Some(mdvBytesFor(deletedPos)))) +:
         base.leaves.tail
     val provider = AMTCheckpointProvider(
-      spark, base.manifestCommitVersion, base.checkpointAction, patchedLeaves, base.tableRoot)
+      base.manifestCommitVersion, base.checkpointAction, patchedLeaves, base.tableRoot)
 
     val reconstructed = reconstructedPaths(provider, snapshot.deltaLog)
     assert(reconstructed.size == baseCount - 1,
@@ -1420,7 +1420,7 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       } else leaf
     }
     val provider = AMTCheckpointProvider(
-      spark, base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
+      base.manifestCommitVersion, base.checkpointAction, patched, base.tableRoot)
 
     val survivors = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
       .getOrElse(fail("AMT provider must contribute leaf-derived file actions."))

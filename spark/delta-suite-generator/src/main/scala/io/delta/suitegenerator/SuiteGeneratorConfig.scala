@@ -225,9 +225,24 @@ object SuiteGeneratorConfig {
    * generation of a suite for it.
    */
   lazy val TEST_GROUPS: List[TestGroup] = List(
-    // scalastyle:off line.size.limit
-    // V1 data-skipping suites. The base trait (DataSkippingDeltaV1Tests) and the dimension mixins
-    // used here all live in DataSkippingDeltaTests.scala.
+    dataSkippingGroup,
+    mergeGroup,
+    mergeAmtGroup,
+    updateGroup,
+    updateAmtGroup,
+    deleteGroup,
+    deleteAmtGroup,
+    insertGroup,
+    insertAmtGroup,
+    readCdcV2Group
+  )
+
+  // Each group is its own member so that no single method exceeds the JVM 64 KB limit
+  // under coverage instrumentation.
+  // scalastyle:off line.size.limit
+  // V1 data-skipping suites. The base trait (DataSkippingDeltaV1Tests) and the dimension mixins
+  // used here all live in DataSkippingDeltaTests.scala.
+  private def dataSkippingGroup: TestGroup =
     TestGroup(
       packageName = "dataskipping",
       imports = List(
@@ -254,7 +269,9 @@ object SuiteGeneratorConfig {
           )
         )
       )
-    ),
+    )
+
+  private def mergeGroup: TestGroup =
     TestGroup(
       packageName = "merge",
       imports = List(
@@ -331,7 +348,9 @@ object SuiteGeneratorConfig {
           )
         )
       )
-    ),
+    )
+
+  private def mergeAmtGroup: TestGroup =
     TestGroup(
       packageName = "mergeamt",
       imports = List(
@@ -355,7 +374,9 @@ object SuiteGeneratorConfig {
           List(List(Dims.NAME_BASED, Dims.MERGE_AMT, Dims.MERGE_ROW_TRACKING_DV.asOptional))
         )
       )
-    ),
+    )
+
+  private def updateGroup: TestGroup =
     TestGroup(
       packageName = "update",
       imports = List(
@@ -398,7 +419,9 @@ object SuiteGeneratorConfig {
           )
         )
       )
-    ),
+    )
+
+  private def updateAmtGroup: TestGroup =
     TestGroup(
       packageName = "updateamt",
       imports = List(
@@ -416,7 +439,9 @@ object SuiteGeneratorConfig {
           List(List(Dims.UPDATE_ROW_TRACKING_DV.asOptional, Dims.ROW_TRACKING_UPDATE_AMT))
         )
       )
-    ),
+    )
+
+  private def deleteGroup: TestGroup =
     TestGroup(
       packageName = "delete",
       imports = List(
@@ -455,7 +480,9 @@ object SuiteGeneratorConfig {
           )
         )
       )
-    ),
+    )
+
+  private def deleteAmtGroup: TestGroup =
     TestGroup(
       packageName = "deleteamt",
       imports = List(
@@ -475,7 +502,9 @@ object SuiteGeneratorConfig {
           List(List(Dims.PERSISTENT_DV, Dims.ROW_TRACKING_DELETE_AMT))
         )
       )
-    ),
+    )
+
+  private def insertGroup: TestGroup =
     TestGroup(
       packageName = "insert",
       imports = List(
@@ -489,7 +518,9 @@ object SuiteGeneratorConfig {
           )
         )
       )
-    ),
+    )
+
+  private def insertAmtGroup: TestGroup =
     TestGroup(
       packageName = "insertamt",
       imports = List(
@@ -502,7 +533,9 @@ object SuiteGeneratorConfig {
           List(List(Dims.INSERT_AMT))
         )
       )
-    ),
+    )
+
+  private def readCdcV2Group: TestGroup =
     TestGroup(
       packageName = "readcdcv2",
       imports = List(
@@ -524,8 +557,7 @@ object SuiteGeneratorConfig {
         )
       )
     )
-    // scalastyle:on line.size.limit
-  )
+  // scalastyle:on line.size.limit
 
   /**
    * Decides if a suite with the given base test and mixins should be generated or not. This is used

@@ -16,17 +16,15 @@
 package org.apache.spark.sql.delta.v2.tablemanager
 
 import java.io.File
-import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
-import java.util.{Collections, EnumSet, Optional}
+import java.util.{Collections, EnumSet}
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Protocol}
+import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo}
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.v2.exception.VersionNotFoundException
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext
 import org.apache.spark.sql.delta.v2.interop.DeltaV2SnapshotManager.GetTableChangesParam
-import org.apache.spark.sql.delta.v2.utils.StreamingHelper
 import io.delta.kernel.exceptions.{
   InvalidTableException => KernelInvalidTableException,
   StartVersionNotFoundException => KernelStartVersionNotFoundException
@@ -354,72 +352,6 @@ class DeltaV2TableManagerImplSuite
           }
         }
       }
-  }
-
-  test("metadata and protocol collectors reject duplicate actions") {
-    Seq("metaData", "protocol").foreach { actionName =>
-      withTempDir { dir =>
-        val path = dir.getCanonicalPath
-        spark.range(1).write.format("delta").save(path)
-        val snapshot = DeltaLog.forTable(spark, path).update()
-        val actions: Seq[Action] = if (actionName == "metaData") {
-          Seq(
-            snapshot.metadata.copy(description = "first metadata"),
-            snapshot.metadata.copy(description = "second metadata"))
-        } else {
-          Seq(Protocol(1, 1), Protocol(1, 2))
-        }
-        Files.writeString(
-          new File(dir, "_delta_log/00000000000000000001.json").toPath,
-          actions.map(_.json).mkString("", "\n", "\n"),
-          UTF_8)
-
-        forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-          val queryContext = DeltaV2QueryContext(catalogTableOpt)
-          val error = intercept[IllegalArgumentException] {
-            if (actionName == "metaData") {
-              StreamingHelper.collectMetadataActions(
-                1L, Optional.of(Long.box(1L)), manager, queryContext, true, spark, snapshot)
-            } else {
-              StreamingHelper.collectProtocolActions(
-                1L, Optional.of(Long.box(1L)), manager, queryContext, true, spark, snapshot)
-            }
-          }
-          assert(error.getMessage ===
-            s"Should not encounter two $actionName actions in the same commit of version 1")
-        }
-      }
-    }
-  }
-
-  test("collectors parse log actions without converting metadata schemas through Kernel") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      spark.range(1).write.format("delta").save(path)
-      val snapshot = DeltaLog.forTable(spark, path).update()
-      val metadata = snapshot.metadata.copy(
-        schemaString = """{"type":"struct","fields":[""" +
-          """{"name":"value","type":"UnsupportedType","nullable":true,"metadata":{}}]}""")
-      Files.writeString(
-        new File(dir, "_delta_log/00000000000000000001.json").toPath,
-        Seq(snapshot.protocol, metadata).map(_.json).mkString("", "\n", "\n"), UTF_8)
-      // Keep the latest snapshot valid so collection inspects the historical commit.
-      Files.writeString(
-        new File(dir, "_delta_log/00000000000000000002.json").toPath,
-        Seq(snapshot.metadata, snapshot.protocol).map(_.json).mkString("", "\n", "\n"), UTF_8)
-
-      forPathAndCatalogManagers(path) { (manager, catalogTableOpt) =>
-        val queryContext = DeltaV2QueryContext(catalogTableOpt)
-        val metadataActions = StreamingHelper.collectMetadataActions(
-          1L, Optional.of(Long.box(1L)), manager, queryContext, true, spark, snapshot)
-        assert(metadataActions.size() === 1)
-        assert(metadataActions.get(1L).schemaString === metadata.schemaString)
-        val protocols = StreamingHelper.collectProtocolActions(
-          1L, Optional.of(Long.box(1L)), manager, queryContext, true, spark, snapshot)
-        assert(protocols.size() === 1)
-        assert(protocols.get(1L) === snapshot.protocol)
-      }
-    }
   }
 
   test("cached composite reuses the table manager and KernelContext") {

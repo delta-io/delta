@@ -56,15 +56,15 @@ object CatalogManagedTableUtils extends DeltaLogging {
    * This helper method is used to control whether a transaction should use CC.
    *
    * @param txn The OptimisticTransaction to modify protocol and metadata on
-   * @param withCatalogOwnedTableFeature If true, adds CatalogManagedTableFeature to the protocol
-   *                                      and ensures ICT enablement. If false, removes it.
+   * @param withCatalogManagedTableFeature If true, adds CatalogManagedTableFeature to the protocol
+   *                                       and ensures ICT enablement. If false, removes it.
    *
    * @note When adding CatalogManagedTableFeature, this method also forces a metadata update
    *       to ensure ICT (In-Commit Timestamp) is properly enabled. See the below comment
    *       for details.
    */
-  def setTxnProtocol(txn: OptimisticTransaction, withCatalogOwnedTableFeature: Boolean): Unit = {
-    if (withCatalogOwnedTableFeature) {
+  def setTxnProtocol(txn: OptimisticTransaction, withCatalogManagedTableFeature: Boolean): Unit = {
+    if (withCatalogManagedTableFeature) {
       val p = txn.protocol.withFeature(feature = CatalogManagedTableFeature)
       txn.updateProtocol(protocol = p)
       // Force a metadata update to trigger ICT (In-Commit Timestamp) enablement.

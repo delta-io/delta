@@ -32,11 +32,16 @@ import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,15 +68,35 @@ class CommitRangeFactory {
     Optional<Long> listingEndVersionOpt =
         requiredEndVersionOpt.isPresent() ? requiredEndVersionOpt : ctx.maxEndVersionOpt;
 
-    validateVersionRange(startVersion, listingEndVersionOpt);
     logResolvedVersions(startVersion, requiredEndVersionOpt);
-    List<ParsedDeltaData> deltas =
-        getDeltasForVersionRangeWithCatalogPriority(
-            engine, startVersion, listingEndVersionOpt, ratifiedCommits);
-    validateDeltasMatchVersionRange(deltas, startVersion, requiredEndVersionOpt);
+    List<ParsedDeltaData> deltas;
+    Optional<Long> nextVersionAfterEnd = Optional.empty();
+    // Without an explicit end boundary the end is capped by maxEndVersion or maxCatalogVersion,
+    // and the start must not exceed that cap, even for a relaxed range.
+    if (ctx.commitRangeValidation || !ctx.endBoundaryOpt.isPresent()) {
+      validateVersionRange(startVersion, listingEndVersionOpt);
+    }
+    if (ctx.commitRangeValidation) {
+      deltas =
+          getDeltasForVersionRangeWithCatalogPriority(
+              engine, startVersion, listingEndVersionOpt, ratifiedCommits);
+      validateDeltasMatchVersionRange(deltas, startVersion, requiredEndVersionOpt);
+    } else {
+      // A relaxed range may be empty or reversed and skips completeness checks; whether versions
+      // are missing is decided lazily by CommitRangeImpl.getCommitFiles.
+      ListedDeltas listed =
+          getRelaxedDeltasForVersionRange(
+              engine, startVersion, listingEndVersionOpt, ratifiedCommits);
+      deltas = listed.deltas;
+      nextVersionAfterEnd = listed.nextVersionAfterEnd;
+    }
     // Use the required end version when provided. Otherwise, resolve the end to the latest
     // version, up to maxEndVersion if it is set.
-    long endVersion = requiredEndVersionOpt.orElseGet(() -> extractLatestVersion(deltas));
+    // A relaxed range may have no commit files at all. With no required end there is no latest
+    // version to resolve to, so the empty range is anchored at endVersion = startVersion.
+    long endVersion =
+        requiredEndVersionOpt.orElseGet(
+            () -> deltas.isEmpty() ? startVersion : extractLatestVersion(deltas));
     if (!requiredEndVersionOpt.isPresent()) {
       logger.info("{}: Resolved end-boundary to the latest version {}", tablePath, endVersion);
     }
@@ -82,6 +107,7 @@ class CommitRangeFactory {
         startVersion,
         endVersion,
         deltas,
+        nextVersionAfterEnd,
         ctx.commitRangeValidation,
         ctx.failOnDataLoss);
   }
@@ -235,6 +261,79 @@ class CommitRangeFactory {
   }
 
   /**
+   * Relaxed counterpart of {@link #getDeltasForVersionRangeWithCatalogPriority}: the same
+   * catalog-over-published merge, but the range may be empty or reversed, gaps are not rejected,
+   * and it also reports the version of the first logical commit after listingEndVersionOpt, if any.
+   * That version is only evidence that a requested version is missing and is never yielded as a
+   * commit of the range.
+   */
+  private ListedDeltas getRelaxedDeltasForVersionRange(
+      Engine engine,
+      long startVersion,
+      Optional<Long> listingEndVersionOpt,
+      List<ParsedCatalogCommitData> ratifiedCommits) {
+    long endBound = listingEndVersionOpt.orElse(Long.MAX_VALUE);
+
+    // List without an end version so a reversed range and the first commit past the end are
+    // visible, and stop after the first commit at or past the end. With no end bound, read to the
+    // latest commit.
+    List<ParsedDeltaData> published = new ArrayList<>();
+    try (CloseableIterator<FileStatus> commitFiles =
+        listDeltaLogFilesAsIter(
+            engine,
+            Collections.singleton(FileNames.DeltaLogFileType.COMMIT),
+            tablePath,
+            startVersion,
+            Optional.empty(),
+            false /* mustBeRecreatable */)) {
+      while (commitFiles.hasNext()) {
+        ParsedDeltaData delta = ParsedDeltaData.forFileStatus(commitFiles.next());
+        published.add(delta);
+        if (delta.getVersion() >= endBound) {
+          break;
+        }
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to close the commit file listing", e);
+    }
+
+    // Drop the leading catalog commits that are already published, as in the validated path. The
+    // catalog keeps reporting them after metadata cleanup deletes their files, so only the file
+    // listing decides whether they exist. Commits past the end are kept here and only cut from the
+    // range below, as they can still be the evidence for a missing version.
+    List<ParsedDeltaData> ratified =
+        dropLeadingPublishedCommits(
+            ratifiedCommits.stream()
+                .filter(commit -> commit.getVersion() >= startVersion)
+                .collect(Collectors.toList()));
+
+    List<ParsedDeltaData> publishedInRange = versionsUpTo(published, endBound);
+    List<ParsedDeltaData> ratifiedInRange = versionsUpTo(ratified, endBound);
+    validatePublishedPlusRatifiedDeltas(publishedInRange, ratifiedInRange);
+    List<ParsedDeltaData> deltas =
+        LogDataUtils.combinePublishedAndRatifiedDeltasWithCatalogPriority(
+            publishedInRange, ratifiedInRange);
+
+    // The first logical commit after the end, from either source. A range that reaches its end
+    // needs no such evidence.
+    boolean reachesEnd = !deltas.isEmpty() && ListUtils.getLast(deltas).getVersion() == endBound;
+    Optional<Long> nextVersionAfterEnd =
+        listingEndVersionOpt.isPresent() && !reachesEnd
+            ? Stream.concat(published.stream(), ratified.stream())
+                .map(ParsedLogData::getVersion)
+                .filter(version -> version > endBound)
+                .min(Long::compare)
+            : Optional.empty();
+    return new ListedDeltas(deltas, nextVersionAfterEnd);
+  }
+
+  private static List<ParsedDeltaData> versionsUpTo(List<ParsedDeltaData> deltas, long maxVersion) {
+    return deltas.stream()
+        .filter(delta -> delta.getVersion() <= maxVersion)
+        .collect(Collectors.toList());
+  }
+
+  /**
    * Drops the leading catalog commits that are already published. Metadata cleanup may have removed
    * those files, so the listing is authoritative for them. Published catalog commits after the
    * first staged one are kept, since ordered backfill guarantees they still exist.
@@ -336,5 +435,16 @@ class CommitRangeFactory {
             throw endVersionNotFound(tablePath.toString(), endVersion, latestVersion);
           }
         });
+  }
+
+  /** Deltas of the requested range and the version of the first logical commit after it. */
+  private static class ListedDeltas {
+    final List<ParsedDeltaData> deltas;
+    final Optional<Long> nextVersionAfterEnd;
+
+    ListedDeltas(List<ParsedDeltaData> deltas, Optional<Long> nextVersionAfterEnd) {
+      this.deltas = deltas;
+      this.nextVersionAfterEnd = nextVersionAfterEnd;
+    }
   }
 }

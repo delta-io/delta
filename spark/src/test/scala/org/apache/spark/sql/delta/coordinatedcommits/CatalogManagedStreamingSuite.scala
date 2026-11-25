@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.streaming.StreamTest
 
@@ -34,7 +35,7 @@ trait CatalogManagedStreamingSuiteBase
   extends QueryTest
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with StreamTest {
 
 
@@ -70,6 +71,11 @@ trait CatalogManagedStreamingSuiteBase
   /** Runs test-data setup through V1 when a subclass forces Delta V2. */
   protected def withV1Mode(f: => Unit): Unit = f
 
+  protected def useDsv2: Boolean = false
+
+  /** Resolves a streaming source in the connector mode selected by the suite. */
+  protected def resolveStreamingSource(read: => DataFrame): DataFrame = read
+
   /**
    * Provides a checkpoint location for streaming tests. Defaults to a local temp dir; subclasses
    * can override it to run the same test bodies against a different storage backend.
@@ -87,9 +93,9 @@ trait CatalogManagedStreamingSuiteBase
       withTempTable(createTable = false) { sourceTableName =>
         sql(s"CREATE TABLE $sourceTableName (value INT) USING delta")
 
-        val df = spark.readStream
-          .format("delta")
-          .table(sourceTableName)
+        val df = resolveStreamingSource {
+          spark.readStream.format("delta").table(sourceTableName)
+        }
 
         resetTrackingClient()
 

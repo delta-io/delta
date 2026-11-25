@@ -20,7 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.metering.ScanReport
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -48,7 +48,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     with DataSkippingDeltaTestsUtils
     with GivenWhenThen
     with ScanReportHelper
-    with CatalogOwnedTestBaseSuite
+    with CatalogManagedTestBaseSuite
     with DeltaSQLTestUtils {
 
   val defaultNumIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(

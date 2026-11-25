@@ -88,7 +88,7 @@ trait CommitCoordinatorUtilBase {
   protected val locRefCount: mutable.Map[String, Int] = mutable.Map.empty
 }
 
-trait CatalogOwnedTestBaseSuite
+trait CatalogManagedTestBaseSuite
   extends SparkFunSuite
   with DeltaTestUtilsBase
   with CommitCoordinatorUtilBase
@@ -472,6 +472,9 @@ trait CatalogOwnedTestBaseSuite
   }
 }
 
+/** Old name of [[CatalogManagedTestBaseSuite]], for suites that still extend it. */
+trait CatalogOwnedTestBaseSuite extends CatalogManagedTestBaseSuite
+
 trait CoordinatedCommitsTestUtils
   extends DeltaTestUtilsBase
   with CommitCoordinatorUtilBase { self: SparkFunSuite with SharedSparkSession =>
@@ -793,14 +796,14 @@ trait CoordinatedCommitsBaseSuite
   }
 }
 
-trait WithCatalogOwnedBatch1 { self: CatalogOwnedTestBaseSuite =>
+trait WithCatalogOwnedBatch1 { self: CatalogManagedTestBaseSuite =>
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-trait WithCatalogOwnedBatch2 { self: CatalogOwnedTestBaseSuite =>
+trait WithCatalogOwnedBatch2 { self: CatalogManagedTestBaseSuite =>
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-trait WithCatalogOwnedBatch100 { self: CatalogOwnedTestBaseSuite =>
+trait WithCatalogOwnedBatch100 { self: CatalogManagedTestBaseSuite =>
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

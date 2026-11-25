@@ -21,7 +21,7 @@ import java.sql.Timestamp
 import scala.collection.JavaConverters._
 import scala.util.{Success, Try}
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DomainMetadataUtils, IdentityColumn, Snapshot}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaLog, DeltaOperations, DomainMetadataUtils, IdentityColumn, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -226,7 +226,15 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           schemaWithHighWaterMarksToMerge = latestSnapshot.metadata.schema
         )
 
-        txn.updateMetadata(snapshotToRestore.metadata.copy(schemaString = mergedSchema.json))
+        // RESTORE keeps the AMT property of the latest version, as it keeps the AMT feature in the
+        // protocol below. Else a restore to a version before the upgrade turns AMT writes off.
+        val amtKey = DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key
+        val restoredMetadata = snapshotToRestore.metadata.copy(
+          schemaString = mergedSchema.json,
+          configuration = snapshotToRestore.metadata.configuration - amtKey ++
+            latestSnapshot.metadata.configuration.get(amtKey).map(amtKey -> _))
+
+        txn.updateMetadata(restoredMetadata)
 
         val sourceProtocol = snapshotToRestore.protocol
         val targetProtocol = latestSnapshot.protocol

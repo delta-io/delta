@@ -18,10 +18,12 @@ package org.apache.spark.sql.delta.sources
 
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaLog, DeltaSingleCommit, Snapshot}
+import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaLog, DeltaOptions, DeltaSingleCommit, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.{Action, Protocol}
 import org.apache.spark.sql.delta.storage.ClosableIterator
-import org.apache.spark.sql.delta.storage.ClosableIterator.ClosableWrapper
+import org.apache.spark.sql.delta.storage.ClosableIterator._
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
@@ -32,7 +34,9 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  */
 private[delta] class DeltaLogStreamingBackend(
     deltaLog: DeltaLog,
-    catalogTableOpt: () => Option[CatalogTable]) extends DeltaStreamingBackend {
+    catalogTableOpt: () => Option[CatalogTable],
+    spark: SparkSession,
+    options: DeltaOptions) extends DeltaStreamingBackend {
 
   override def update(): Snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt())
 
@@ -68,9 +72,23 @@ private[delta] class DeltaLogStreamingBackend(
 
   override def getSnapshotToValidateProtocol(version: Long): Snapshot = getSnapshotAt(version)
 
+  override def protocolRead(protocol: Protocol, readSnapshot: SnapshotDescriptor): Unit =
+    deltaLog.protocolRead(protocol)
+
   override def getSingleCommitIterator(
       startVersion: Long,
       failOnDataLoss: Boolean,
       endOffset: Option[DeltaSourceOffset]): ClosableIterator[DeltaSingleCommit] =
     deltaLog.getSingleCommitIterator(startVersion, catalogTableOpt(), failOnDataLoss).toClosable
+
+  override def collectActions(
+      startVersion: Long,
+      endVersionOpt: Option[Long]): ClosableIterator[(Long, Action)] = {
+    getSingleCommitIterator(startVersion, options.failOnDataLoss).takeWhile { commit =>
+      endVersionOpt.forall(commit.version <= _)
+    }.flatMapWithClose { commit =>
+      DeltaSource.createRewindableActionIterator(spark, commit)
+        .withClose(_.map((commit.version, _)))
+    }
+  }
 }

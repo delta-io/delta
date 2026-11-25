@@ -23,7 +23,7 @@ import scala.collection.mutable
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorBuilder, CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorBuilder, CatalogManagedCommitCoordinatorProvider, CatalogManagedTableUtils, CatalogManagedTestBaseSuite, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.storage.LogStore.logStoreClassConfKey
@@ -47,7 +47,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.storage.StorageLevel
 
 class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
-  with DeltaSQLCommandTest with CatalogOwnedTestBaseSuite {
+  with DeltaSQLCommandTest with CatalogManagedTestBaseSuite {
 
   protected override def sparkConf = {
     // Disable loading protocol and metadata from checksum file. Otherwise, creating a Snapshot
@@ -810,7 +810,7 @@ object ConcurrentBackfillCommitCoordinatorClient {
   var beginConcurrentBackfills = false
 }
 
-object ConcurrentBackfillCommitCoordinatorBuilder extends CatalogOwnedCommitCoordinatorBuilder {
+object ConcurrentBackfillCommitCoordinatorBuilder extends CatalogManagedCommitCoordinatorBuilder {
   val batchSize = 5
   private var concurrentBackfillCommitCoordinatorClient =
     ConcurrentBackfillCommitCoordinatorClient(synchronousBackfillThreshold = 2, batchSize)
@@ -851,7 +851,7 @@ class SnapshotManagementParallelListingSuite extends QueryTest
   private val testTableIdentifier = TableIdentifier(
     "snapshot_listing_catalog_managed",
     Some("default"),
-    Some(CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING))
+    Some(CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING))
   private val qualifiedTableName = testTableIdentifier.unquotedString
 
   override protected def sparkConf: SparkConf =
@@ -860,9 +860,9 @@ class SnapshotManagementParallelListingSuite extends QueryTest
   override protected def beforeEach(): Unit = {
     super.beforeEach()
     ConcurrentBackfillCommitCoordinatorBuilder.resetClient()
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
+    CatalogManagedCommitCoordinatorProvider.registerBuilder(
+      CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
       ConcurrentBackfillCommitCoordinatorBuilder)
     ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills = false
     ConcurrentBackfillCommitCoordinatorClient.deferBackfills = false
@@ -870,7 +870,7 @@ class SnapshotManagementParallelListingSuite extends QueryTest
   }
 
   private def writeDeltaData(tableName: String, endVersion: Long): Unit = {
-    val featureKey = s"delta.feature.${CatalogOwnedTableFeature.name}"
+    val featureKey = s"delta.feature.${CatalogManagedTableFeature.name}"
     spark.range(10).write.format("delta").option(featureKey, "supported").saveAsTable(tableName)
     (1L to endVersion).foreach(
       _ => spark.range(10).write.format("delta").mode("append").saveAsTable(tableName))
@@ -921,7 +921,7 @@ class SnapshotManagementParallelListingSuite extends QueryTest
           withTable(qualifiedTableName) {
             writeDeltaData(qualifiedTableName, endVersion)
             val deltaLog = DeltaLog.forTable(spark, testTableIdentifier)
-            assert(deltaLog.update().isCatalogOwned)
+            assert(deltaLog.update().isCatalogManaged)
 
             // Invalidate cache to ensure re-listing.
             DeltaLog.invalidateCache(spark, deltaLog.dataPath)
@@ -945,7 +945,7 @@ class SnapshotManagementParallelListingSuite extends QueryTest
       withTable(qualifiedTableName) {
         writeDeltaData(qualifiedTableName, endVersion)
         val deltaLog = DeltaLog.forTable(spark, testTableIdentifier)
-        assert(deltaLog.update().isCatalogOwned)
+        assert(deltaLog.update().isCatalogManaged)
 
         // Delete 5.json to create a permanent gap between file-system i.e. [0, 4] and
         // commit-store [6, 8] which would even an additional listing won't be able to reconcile.

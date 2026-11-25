@@ -377,7 +377,7 @@ abstract class CloneTableBase(
    * Helper function to determine [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]]
    * for the target table.
    */
-  private def determineCatalogOwnedUCTableId(
+  private def determineCatalogManagedUCTableId(
       targetSnapshot: SnapshotDescriptor): Map[String, String] = {
     // For REPLACE TABLE command, extract the UC table ID from the target table
     // if it exists.
@@ -409,14 +409,21 @@ abstract class CloneTableBase(
       spark,
       targetSnapshot,
       coordinatedCommitsConfigurationOverrides)
-    val finalCatalogOwnedMetadata = finalCoordinatedCommitsConfigurations ++
-      determineCatalogOwnedUCTableId(targetSnapshot)
+    val finalCatalogManagedMetadata = finalCoordinatedCommitsConfigurations ++
+      determineCatalogManagedUCTableId(targetSnapshot)
 
     // Merge source configuration, table property overrides and coordinated-commits configurations.
     metadata = metadata.copy(configuration =
       metadata.configuration ++
         validatedConfigurationsWithoutCoordinatedCommits ++
-        finalCatalogOwnedMetadata)
+        finalCatalogManagedMetadata)
+    // An existing target keeps its AMT property, as it keeps the AMT feature in its protocol. Else
+    // a RESTORE to a version before the upgrade, or a REPLACE CLONE, turns AMT writes off.
+    if (tableExists(targetSnapshot)) {
+      val amtKey = DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key
+      metadata = metadata.copy(configuration = metadata.configuration - amtKey ++
+        targetSnapshot.metadata.configuration.get(amtKey).map(amtKey -> _))
+    }
     // An AMT source makes a new target AMT only through the protocol, which the defaults applied
     // while creating its metadata (e.g. the catalog-managed QoL features) do not see. Request AMT
     // in the configuration too, so that they skip the features AMT is incompatible with. An
@@ -466,7 +473,7 @@ abstract class CloneTableBase(
     // metadata anymore.
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
     // For CREATE CLONE, check the default spark configuration for Catalog-Managed.
-    val catalogOwnedEnabledByDefaultConf =
+    val catalogManagedEnabledByDefaultConf =
       if (CatalogManagedTableUtils.defaultCatalogManagedEnabled(spark)
           && !tableExists(txn.snapshot)) {
         // Append [[CatalogManagedTableFeature]] to the `configWithOverrides` below if table
@@ -479,7 +486,7 @@ abstract class CloneTableBase(
         Map.empty
       }
     val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations ++
-      catalogOwnedEnabledByDefaultConf
+      catalogManagedEnabledByDefaultConf
     val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
     var (minReaderVersion, minWriterVersion, enabledFeatures) =
       Protocol.minProtocolComponentsFromMetadata(spark, metadataWithOverrides)

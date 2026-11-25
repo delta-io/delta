@@ -107,6 +107,8 @@ import org.apache.hadoop.fs.Path;
 public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
   private static final int HTTP_BAD_REQUEST = 400;
+  private static final int HTTP_UNAUTHORIZED = 401;
+  private static final int HTTP_FORBIDDEN = 403;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
 
@@ -1002,6 +1004,15 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
             false /* conflict */,
             String.format("Invalid updateTable request for %s.%s.%s: %s",
                 catalog, schema, table, responseBody),
+            e);
+      case HTTP_UNAUTHORIZED:
+      case HTTP_FORBIDDEN:
+        // Only a new token or a grant fixes these, so a retry cannot succeed.
+        throw new CommitFailedException(
+            false /* retryable */,
+            false /* conflict */,
+            String.format("Not authorized to update %s.%s.%s (HTTP %s): %s",
+                catalog, schema, table, statusCode, responseBody),
             e);
       case HTTP_CONFLICT:
         throw new CommitFailedException(

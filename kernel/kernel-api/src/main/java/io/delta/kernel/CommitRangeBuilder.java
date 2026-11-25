@@ -131,8 +131,9 @@ public interface CommitRangeBuilder {
    * Configures whether raw commit-file iteration fails when a version is missing.
    *
    * <p>This option defaults to {@code true} and only affects ranges built with {@link
-   * #withCommitRangeValidation(boolean)} disabled. When {@code false}, raw commit-file iteration
-   * skips missing versions.
+   * #withCommitRangeValidation(boolean)} disabled. When {@code true}, iteration fails when a later
+   * commit proves a version is missing. When {@code false}, raw commit-file iteration skips missing
+   * versions.
    *
    * @param enabled whether missing versions should fail raw commit-file iteration
    * @return this builder instance
@@ -146,11 +147,17 @@ public interface CommitRangeBuilder {
    * version numbers from timestamps if necessary and determining the actual commit files that fall
    * within the specified range.
    *
+   * <p>With {@link #withCommitRangeValidation(boolean)} disabled, empty ranges are allowed, and so
+   * are reversed ranges given with an explicit {@link #withEndBoundary(CommitBoundary)}. Without
+   * that boundary the start must still not exceed {@link #withMaxEndVersion(long)} or {@link
+   * #withMaxCatalogVersion(long)}. Gap checks are deferred to {@link CommitRange#getCommitFiles()}.
+   *
    * @param engine the {@link Engine} to use for file system operations and log parsing
    * @return a new {@link CommitRange} instance configured according to this builder's
    *     specifications
    * @throws IllegalArgumentException if the builder configuration is invalid (e.g., start version
-   *     {@code >} end version)
+   *     {@code >} end version, unless commit range validation is disabled and an explicit end
+   *     boundary is given)
    */
   CommitRange build(Engine engine);
 

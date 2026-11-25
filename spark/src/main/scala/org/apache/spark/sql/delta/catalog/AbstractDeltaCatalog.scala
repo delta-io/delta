@@ -82,7 +82,7 @@ class DeltaCatalogV1 extends AbstractDeltaCatalog
  * (unwanted) state.
  *
  * Only declare a method here if it is NOT on a Spark catalog interface. The wrapper's forwarding
- * completeness is enforced by the reflection test in `DeltaV2CatalogTransactionSuite`.
+ * completeness is enforced by the reflection test in `DeltaV2SparkTransactionCatalogSuite`.
  */
 trait DeltaCatalogLike
   extends TableCatalog

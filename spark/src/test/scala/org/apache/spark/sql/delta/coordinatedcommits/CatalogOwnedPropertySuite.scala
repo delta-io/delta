@@ -31,7 +31,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 class CatalogOwnedPropertySuite extends QueryTest
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   // Register the mock commit coordinator builder for testing, but don't enable
   // CatalogManaged by default (tests explicitly enable it when needed).

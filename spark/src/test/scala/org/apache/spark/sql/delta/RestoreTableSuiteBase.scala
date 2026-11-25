@@ -26,7 +26,7 @@ import scala.concurrent.duration._
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -43,7 +43,7 @@ trait RestoreTableSuiteBase
   with SharedSparkSession
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   import deltaImplicits._
 
@@ -254,8 +254,8 @@ trait RestoreTableSuiteBase
   for (downgradeAllowed <- DeltaTestUtils.BOOLEAN_DOMAIN)
   test(s"restore downgrade protocol (allowed=$downgradeAllowed)") {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned is not compatible w/ the test since protocol version would be " +
-        "set to (3, 7) by default for CC tables.")
+      cancel("CatalogManaged is not compatible w/ the test since protocol version would be " +
+        "set to (3, 7) by default for CatalogManaged tables.")
     }
     withTempDir { tempDir =>
       val path = tempDir.getAbsolutePath
@@ -289,8 +289,8 @@ trait RestoreTableSuiteBase
     test(
       s"restore downgrade protocol with table features (allowed=$downgradeAllowed)") {
       if (catalogOwnedDefaultCreationEnabledInTests) {
-        cancel("CatalogOwned is not compatible w/ the test since protocol version would be " +
-          "set to (3, 7) by default for CC tables.")
+        cancel("CatalogManaged is not compatible w/ the test since protocol version would be " +
+          "set to (3, 7) by default for CatalogManaged tables.")
       }
       withTempDir { tempDir =>
         val path = tempDir.getAbsolutePath
@@ -330,8 +330,8 @@ trait RestoreTableSuiteBase
       DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
       DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
       if (catalogOwnedDefaultCreationEnabledInTests) {
-        cancel("CatalogOwned is not compatible w/ the test since protocol version would be " +
-          "set to (3, 7) by default for CC tables.")
+        cancel("CatalogManaged is not compatible w/ the test since protocol version would be " +
+          "set to (3, 7) by default for CatalogManaged tables.")
       }
       withTempDir { dir =>
         spark.range(10).write.format("delta").save(dir.getAbsolutePath)

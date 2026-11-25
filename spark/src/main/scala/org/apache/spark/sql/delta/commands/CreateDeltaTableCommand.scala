@@ -460,10 +460,10 @@ case class CreateDeltaTableCommand(
           // [[CatalogManagedTableFeature]] here to the existing source table protocol.
           val finalizedProtocol = if (CatalogManagedTableUtils.defaultCatalogManagedEnabled(
               spark = sparkSession)) {
-            val minCatalogOwnedProtocol = Protocol(
+            val minCatalogManagedProtocol = Protocol(
               CatalogManagedTableFeature.minReaderVersion,
               CatalogManagedTableFeature.minWriterVersion).withFeature(CatalogManagedTableFeature)
-            protocol.merge(minCatalogOwnedProtocol)
+            protocol.merge(minCatalogManagedProtocol)
           } else {
             protocol
           }

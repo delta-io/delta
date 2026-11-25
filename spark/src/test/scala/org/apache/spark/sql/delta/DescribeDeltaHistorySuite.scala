@@ -22,7 +22,7 @@ import java.io.File
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DescribeDeltaHistoryCommand
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -47,7 +47,7 @@ trait DescribeDeltaHistorySuiteBase
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
   with MergeIntoMetricsBase
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with WriteOptionsTestBase {
 
   import deltaImplicits._
@@ -118,7 +118,7 @@ trait DescribeDeltaHistorySuiteBase
         // existence.
         assert(actualProperties.contains(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP) &&
           actualProperties.contains(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP),
-          "RowTracking should be enabled as part of CatalogOwned QoL features, " +
+          "RowTracking should be enabled as part of CatalogManaged QoL features, " +
           s"expecting ${MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP} and " +
           s"${MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP} to be present. " +
           s"The `actualProperties`: $actualProperties")

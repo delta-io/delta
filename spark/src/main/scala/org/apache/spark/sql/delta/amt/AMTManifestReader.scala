@@ -67,11 +67,11 @@ trait AMTManifestReaderImpl {
   }
 
   /**
-   * Like `AMTCheckpointProviderImpl.loadLeafDataEntriesWithRowIdPrefix`, but returns the persisted
-   * rows of the entries, with their entry context (see [[withLeafEntryContext]]), rather than
-   * decoded ones, and keeps entries of every status: callers filter by status after the row-ID
-   * prefix. Compatible with multiple trees, as long as no leaf is listed twice: the row-index
-   * filters are keyed by leaf path, and the prefix is computed per leaf path.
+   * The persisted rows of the DATA entries of the given leaves, of every status, with their
+   * `first_row_id` prefix sum over each unfiltered leaf and their entry context (see
+   * [[withLeafEntryContext]]). Each leaf's row-index filter, if any, applies after the prefix sum;
+   * callers filter by status. Compatible with multiple trees, as long as no leaf is listed twice:
+   * the row-index filters are keyed by leaf path, and the prefix is computed per leaf path.
    */
   private[amt] def leafEntriesWithRowIdPrefix(
       spark: SparkSession,
@@ -162,20 +162,16 @@ trait AMTManifestReaderImpl {
   /**
    * The `first_row_id` prefix sum of a manifest row: the total `record_count` of the entries that
    * precede it in the same manifest, have `ADDED` status, and carry a null `first_row_id`.
-   *
-   * @param fieldPrefix The prefix of the row's manifest fields: `entry.` for rows decoded by
-   *                    `AMTCheckpointProviderImpl.loadEntriesWithExtendedMetadata`, none for
-   *                    persisted rows.
    */
-  private[amt] def precedingNullRowIdRecords(fieldPrefix: String = ""): Column = {
+  private[amt] def precedingNullRowIdRecords(): Column = {
     val precedingRowsOfManifest = Window
       .partitionBy(col("leafPath"))
       .orderBy(col("pos"))
       .rowsBetween(Window.unboundedPreceding, -1)
     val contribution = when(
-      col(fieldPrefix + "tracking.status") === lit(Tracking.Status.Added) &&
-        col(fieldPrefix + "tracking.first_row_id").isNull,
-      col(fieldPrefix + "record_count")).otherwise(lit(0L))
+      col("tracking.status") === lit(Tracking.Status.Added) &&
+        col("tracking.first_row_id").isNull,
+      col("record_count")).otherwise(lit(0L))
     // The frame is empty for the first row of a manifest, where the sum is null and the offset 0.
     coalesce(sum(contribution).over(precedingRowsOfManifest), lit(0L))
   }
@@ -510,10 +506,7 @@ trait AMTManifestReaderImpl {
 }
 
 object AMTManifestReader {
-  /**
-   * Name of the [[AMTCheckpointProvider.AMTDataEntryExtended.precedingNullFirstRowIdRecords]]
-   * column.
-   */
+  /** Name of the column with an entry's `first_row_id` prefix sum. */
   private[amt] val PRECEDING_RECORDS_COLUMN: String = "precedingNullFirstRowIdRecords"
 
   // The entry context of an entry row (see [[withRootEntryContext]] and [[withLeafEntryContext]]).

@@ -17,6 +17,10 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import org.apache.spark.sql.delta.test.V2ForceTest
+import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table
+
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 
 /** Runs the catalog-managed streaming tests through the strict Delta V2 connector. */
 class CatalogManagedStreamingV2Suite
@@ -24,6 +28,19 @@ class CatalogManagedStreamingV2Suite
   with V2ForceTest {
 
   override protected def assertNoV1Fallback: Boolean = true
+
+  override protected def useDsv2: Boolean = true
+
+
+  override protected def resolveStreamingSource(read: => DataFrame): DataFrame = {
+    val df = read
+    val plan = df.queryExecution.analyzed
+    assert(plan.exists {
+      case relation: StreamingRelationV2 => relation.table.isInstanceOf[DeltaV2Table]
+      case _ => false
+    }, s"Expected a Delta V2 streaming source, found:\n$plan")
+    df
+  }
 
   override protected def withV1Mode(f: => Unit): Unit = inV1Mode(f)
 

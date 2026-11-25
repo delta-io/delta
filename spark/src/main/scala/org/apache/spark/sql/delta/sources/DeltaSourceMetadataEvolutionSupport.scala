@@ -21,9 +21,10 @@ import java.util.Locale
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport.{collectMetadataActions, collectMetadataAtVersion, collectProtocolActions, collectProtocolAtVersion}
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
@@ -92,14 +93,6 @@ import org.apache.spark.sql.types.StructType
  */
 trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaSource =>
 
-  override protected def trackingMetadataChange: Boolean =
-    DeltaSourceMetadataEvolutionSupport.shouldTrackMetadataChange(
-      schemaReadOptions, metadataTrackingLog)
-
-  protected def readyToInitializeMetadataTrackingEagerly: Boolean =
-    DeltaSourceMetadataEvolutionSupport.shouldInitializeMetadataTrackingEagerly(
-      schemaReadOptions, metadataTrackingLog)
-
 
   /**
    * This is called from getFileChangesWithRateLimit() during latestOffset().
@@ -150,21 +143,6 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
   }
 
   /**
-   * Collect all actions between start and end version, both inclusive
-   */
-  private def collectActions(
-      startVersion: Long,
-      endVersion: Long
-  ): ClosableIterator[(Long, Action)] = {
-    streamingBackend.getSingleCommitIterator(startVersion, options.failOnDataLoss).takeWhile {
-      commit => commit.version <= endVersion
-    }.flatMapWithClose { commit =>
-      DeltaSource.createRewindableActionIterator(spark, commit)
-        .withClose(_.map((commit.version, _)))
-    }
-  }
-
-  /**
    * Given the version range for an ALREADY fetched batch, check if there are any
    * read-incompatible schema changes or protocol changes.
    * In this case, the streaming engine wants to getBatch(X,Y) on an existing Y that is already
@@ -180,7 +158,8 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    */
   private def validateAndResolveMetadataForLogInitialization(
       startVersion: Long, endVersion: Long): (Metadata, Protocol) = {
-    val metadataChanges = collectMetadataActions(startVersion, endVersion).map(_._2)
+    val metadataChanges = collectMetadataActions(
+      streamingBackend, startVersion, Some(endVersion)).map(_._2)
     val startSnapshot = getSnapshotFromDeltaLog(startVersion)
     val startMetadata = startSnapshot.metadata
 
@@ -206,7 +185,8 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 
     // Check protocol changes and use the most supportive protocol
     val startProtocol = startSnapshot.protocol
-    val protocolChanges = collectProtocolActions(startVersion, endVersion).map(_._2)
+    val protocolChanges = collectProtocolActions(
+      streamingBackend, startVersion, Some(endVersion)).map(_._2)
 
     var mostSupportiveProtocol = startProtocol
     protocolChanges.foreach { p =>
@@ -222,49 +202,6 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 
     (mostRecentMetadataChangeOpt.getOrElse(startMetadata), mostSupportiveProtocol)
   }
-
-  /**
-   * Collect a metadata action at the commit version if possible.
-   */
-  private def collectMetadataAtVersion(version: Long): Option[Metadata] = {
-    collectActions(version, version).processAndClose { iter =>
-      iter.map(_._2).collectFirst {
-        case a: Metadata => a
-      }
-    }
-  }
-
-  protected def collectMetadataActions(
-      startVersion: Long,
-      endVersion: Long): Seq[(Long, Metadata)] = {
-    collectActions(startVersion, endVersion).processAndClose { iter =>
-      iter.collect {
-        case (version, a: Metadata) => (version, a)
-      }.toSeq
-    }
-  }
-
-  /**
-   * Collect a protocol action at the commit version if possible.
-   */
-  private def collectProtocolAtVersion(version: Long): Option[Protocol] = {
-    collectActions(version, version).processAndClose { iter =>
-      iter.map(_._2).collectFirst {
-        case a: Protocol => a
-      }
-    }
-  }
-
-  protected def collectProtocolActions(
-      startVersion: Long,
-      endVersion: Long): Seq[(Long, Protocol)] = {
-    collectActions(startVersion, endVersion).processAndClose { iter =>
-      iter.collect {
-        case (version, a: Protocol) => (version, a)
-      }.toSeq
-    }
-  }
-
 
   /**
    * If the given previous Delta source offset is a schema change offset, returns the appropriate
@@ -284,8 +221,8 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     // occurred, simply block as no-op.
     if (previousOffset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
       hasMetadataOrProtocolChangeComparedToStreamMetadata(
-        collectMetadataAtVersion(previousOffset.reservoirVersion),
-        collectProtocolAtVersion(previousOffset.reservoirVersion),
+        collectMetadataAtVersion(streamingBackend, previousOffset.reservoirVersion),
+        collectProtocolAtVersion(streamingBackend, previousOffset.reservoirVersion),
         previousOffset.reservoirVersion)) {
       return Some(previousOffset)
     }
@@ -350,8 +287,8 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       (offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX ||
         offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX)) {
       // The offset must point to a metadata or protocol change action
-      val changedMetadataOpt = collectMetadataAtVersion(offset.reservoirVersion)
-      val changedProtocolOpt = collectProtocolAtVersion(offset.reservoirVersion)
+      val changedMetadataOpt = collectMetadataAtVersion(streamingBackend, offset.reservoirVersion)
+      val changedProtocolOpt = collectProtocolAtVersion(streamingBackend, offset.reservoirVersion)
 
       // Evolve the schema when the schema is indeed different from the current stream schema. We
       // need to check this because we could potentially generate two offsets before schema
@@ -405,6 +342,54 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 }
 
 object DeltaSourceMetadataEvolutionSupport extends Logging {
+  /**
+   * Collect a metadata action at the commit version if possible.
+   */
+  def collectMetadataAtVersion(
+      streamingBackend: DeltaStreamingBackend,
+      version: Long): Option[Metadata] = {
+    streamingBackend.collectActions(version, Some(version)).processAndClose { iter =>
+      iter.map(_._2).collectFirst {
+        case a: Metadata => a
+      }
+    }
+  }
+
+  def collectMetadataActions(
+      streamingBackend: DeltaStreamingBackend,
+      startVersion: Long,
+      endVersionOpt: Option[Long]): Seq[(Long, Metadata)] = {
+    streamingBackend.collectActions(startVersion, endVersionOpt).processAndClose { iter =>
+      iter.collect {
+        case (version, a: Metadata) => (version, a)
+      }.toList
+    }
+  }
+
+  /**
+   * Collect a protocol action at the commit version if possible.
+   */
+  def collectProtocolAtVersion(
+      streamingBackend: DeltaStreamingBackend,
+      version: Long): Option[Protocol] = {
+    streamingBackend.collectActions(version, Some(version)).processAndClose { iter =>
+      iter.map(_._2).collectFirst {
+        case a: Protocol => a
+      }
+    }
+  }
+
+  def collectProtocolActions(
+      streamingBackend: DeltaStreamingBackend,
+      startVersion: Long,
+      endVersionOpt: Option[Long]): Seq[(Long, Protocol)] = {
+    streamingBackend.collectActions(startVersion, endVersionOpt).processAndClose { iter =>
+      iter.collect {
+        case (version, a: Protocol) => (version, a)
+      }.toList
+    }
+  }
+
   /**
    * Returns the read-time snapshot descriptor obtained by overlaying persisted stream metadata on
    * the source's initial snapshot descriptor.

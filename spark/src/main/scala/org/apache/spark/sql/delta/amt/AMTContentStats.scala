@@ -43,6 +43,15 @@ import org.apache.spark.sql.types.{BooleanType, ByteType, DataType, DateType, De
  * Only the statistics Delta actually collects get a slot: `null_value_count`, `lower_bound` and
  * `upper_bound`. The remaining spec-optional statistics (`value_count`, `nan_value_count`,
  * `total_bytes`) are omitted.
+ *
+ * Stats tightness is file-level. Iceberg's `tight_stats` (field 151, a sibling of `content_stats`
+ * on the entry) holds Delta's `tightStats`, and is null if the file's stats lack it. An entry
+ * without stats, such as a manifest pointer, keeps the `tight_stats` it was built with, `false`.
+ * Delta's legacy `tightBounds` has no Iceberg counterpart and is dropped, so a file without
+ * `tightStats` reads back with `tightBounds = false`. That is never wrong, since an absent
+ * `tightBounds` would mean tight.
+ * TODO(v4amt): keep `tightBounds` in a Delta-private field of the entry, so that a file without
+ * `tightStats` keeps its tightness through AMT.
  */
 private[amt] object AMTContentStats extends DeltaLogging {
 
@@ -242,7 +251,10 @@ private[amt] object AMTContentStats extends DeltaLogging {
       metadata = new MetadataBuilder().putLong(ParquetUtils.FIELD_ID_METADATA_KEY, id).build())
 
   /**
-   * Delta's stats JSON string -> the typed `content_stats` struct.
+   * Delta's stats JSON string -> the typed `content_stats` struct, and the file's `tightStats` ->
+   * the entry's `tight_stats`. The file's `tightBounds` is dropped; see [[AMTContentStats]]. On a
+   * table that collects no per-column stats, the entry keeps the `tight_stats` it was built with,
+   * `false`: with no bounds or null counts, there is nothing for the flag to describe.
    *
    * `df` is a DataFrame of [[AMTSingleAction]] rows whose `content_stats` column still holds the
    * encoder's shape (the raw Delta stats JSON). An entry with no statistics gets a null struct.
@@ -276,7 +288,18 @@ private[amt] object AMTContentStats extends DeltaLogging {
     val contentStatsSchema = AMTContentStats.persistedSchema(metadata, protocol)
     val contentStats = when(rawJson.isNull, lit(null).cast(contentStatsSchema))
       .otherwise(struct(perColumn: _*))
-    replaceContentStats(withParsedStats, contentStats).drop(PARSED_STATS_COLUMN)
+    val fileTightStats =
+      if (statsSchema.fieldNames.contains(DeltaStatistics.TIGHT_STATS)) {
+        statsParsed.getField(DeltaStatistics.TIGHT_STATS)
+      } else {
+        // Stats without `tightStats`, such as those of preview AMT tables, keep the `tight_stats`
+        // the entry was built with, as before `tightStats`.
+        col(TIGHT_STATS_FIELD)
+      }
+    val tightStats = when(rawJson.isNull, col(TIGHT_STATS_FIELD)).otherwise(fileTightStats)
+    // `tightStats` reads the raw stats JSON in `content_stats`, so set it before replacing them.
+    val withTightStats = withParsedStats.withColumn(TIGHT_STATS_FIELD, tightStats)
+    replaceContentStats(withTightStats, contentStats).drop(PARSED_STATS_COLUMN)
   }
 
   /**
@@ -284,10 +307,10 @@ private[amt] object AMTContentStats extends DeltaLogging {
    * holds.
    *
    * `numRecords` is not persisted in `content_stats` (the entry carries it as Iceberg field 103
-   * `record_count`); for an entry that has per-column stats it is folded back in here. An entry
-   * with no per-column stats (a table that collects none, a data file written without stats, or
-   * a manifest pointer) reconstructs to `null`; [[toStatsJson]] supplies its record count and
-   * `tightBounds`.
+   * `record_count`); for an entry that has per-column stats it is folded back in here, and so is
+   * the file's `tightStats` (see [[AMTContentStats]]). An entry with no per-column stats (a table
+   * that collects none, a data file written without stats, or a manifest pointer) reconstructs to
+   * `null`; [[toStatsJson]] supplies its record count and `tightBounds`.
    */
   def forRead(df: DataFrame, metadata: Metadata, protocol: Protocol): DataFrame = {
     val jsonStats = statsJson(df.sparkSession, metadata, protocol)
@@ -331,7 +354,8 @@ private[amt] object AMTContentStats extends DeltaLogging {
    * collation statistics), are null. A matched statistic of another type is cast: with column
    * mapping in `id` mode, a column keeps its physical path only through a type widening, and Delta
    * only allows widenings that up-cast. `numRecords` is the entry's `record_count` and
-   * `tightBounds` is [[tightBounds]], both set even when the entry has no `content_stats`.
+   * `tightBounds` and `tightStats` come from `tight_stats` as the comment in the method describes.
+   * `numRecords` is set even when the entry has no `content_stats`.
    *
    * @param stats       the stats the manifests were written with
    * @param omitMissing whether a struct of statistics none of which `content_stats` persists, e.g.
@@ -346,6 +370,19 @@ private[amt] object AMTContentStats extends DeltaLogging {
     // With no per-column stats, `content_stats` is dropped from the persisted schema.
     val typedStatsOpt = if (columns.isEmpty) None else Some(col(CONTENT_STATS_FIELD))
     val columnByPath = columns.map(column => column.path -> column).toMap
+    // AMT drops `tightBounds` (see [[AMTContentStats]]), so on a table whose stats have
+    // `tightStats`, a file without `tightStats` gets `tightBounds = false`, and a file with it gets
+    // none. An entry without `content_stats` reads back with `tightBounds` alone, as
+    // [[toStatsJson]] and [[addFileStatsJson]] spell it: it has no bounds for either flag to
+    // describe. On other tables, such as preview AMT tables, `tightBounds` is `tight_stats`.
+    val hasContentStats = typedStatsOpt.map(_.isNotNull).getOrElse(lit(false))
+    val fileTightBounds = if (statsSchema.fieldNames.contains(DeltaStatistics.TIGHT_STATS)) {
+      when(hasContentStats, when(col(TIGHT_STATS_FIELD).isNull, lit(false)))
+        .otherwise(tightStatsAsTightBounds)
+    } else {
+      tightStatsAsTightBounds
+    }
+    val fileTightStats = when(hasContentStats, col(TIGHT_STATS_FIELD))
 
     // The persisted `statName` of the column at `path` as a `dataType`, or None if AMT keeps none
     // for it. Each column's stats are a sub-struct of `content_stats` keyed by its `fieldName`.
@@ -389,7 +426,8 @@ private[amt] object AMTContentStats extends DeltaLogging {
           perColumnStats(UPPER_BOUND, schema, Nil).getOrElse(lit(null).cast(schema))
         case (DeltaStatistics.NULL_COUNT, schema: StructType) =>
           perColumnStats(NULL_VALUE_COUNT, schema, Nil).getOrElse(lit(null).cast(schema))
-        case (DeltaStatistics.TIGHT_BOUNDS, dataType) => tightBounds.cast(dataType)
+        case (DeltaStatistics.TIGHT_BOUNDS, dataType) => fileTightBounds.cast(dataType)
+        case (DeltaStatistics.TIGHT_STATS, dataType) => fileTightStats.cast(dataType)
         case (name, dataType) =>
           // Fails tests, so that a statistic Delta adds gets mapped here; null in production.
           deltaAssert(
@@ -408,8 +446,10 @@ private[amt] object AMTContentStats extends DeltaLogging {
    * `tightBounds` as tight, whereas Iceberg treats an absent `tight_stats` as not tight, so an
    * absent flag reads back as `false`.
    */
-  private def tightBounds: Column =
-    coalesce(col(TIGHT_STATS_FIELD), lit(false)).as(DeltaStatistics.TIGHT_BOUNDS)
+  private def tightBounds: Column = tightStatsAsTightBounds.as(DeltaStatistics.TIGHT_BOUNDS)
+
+  /** [[tightBounds]] without its column name, to use inside an expression. */
+  private def tightStatsAsTightBounds: Column = coalesce(col(TIGHT_STATS_FIELD), lit(false))
 
   /**
    * Projects one statistic of one column out of a parsed Delta stats struct (used on write),

@@ -62,10 +62,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
   protected var hasWritten = false
 
-  private[delta] val deltaDataSubdir =
-    if (spark.sessionState.conf.getConf(DeltaSQLConf.WRITE_DATA_FILES_TO_SUBDIR)) {
-      Some("data")
-    } else None
+  private[delta] val deltaDataSubdir = TransactionalWrite.deltaDataSubdir(spark.sessionState.conf)
 
   // It's okay to make this a lazy val. Once this is read, the metadata will be marked as read
   // and can't be changed again within the transaction, otherwise it will throw an exception.
@@ -586,6 +583,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 }
 
 object TransactionalWrite {
+  private[delta] def deltaDataSubdir(conf: SQLConf): Option[String] =
+    if (conf.getConf(DeltaSQLConf.WRITE_DATA_FILES_TO_SUBDIR)) Some("data") else None
+
   def shouldOptimizeWrite(metadata: Metadata, sessionConf: SQLConf): Boolean = {
     sessionConf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED)
       .orElse(DeltaConfigs.OPTIMIZE_WRITE.fromMetaData(metadata))

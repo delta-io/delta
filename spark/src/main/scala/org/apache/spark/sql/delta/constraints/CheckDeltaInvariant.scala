@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.constraints
 
 import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
 import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
+import org.apache.commons.text.StringEscapeUtils
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, NonSQLExpression}
@@ -94,7 +95,9 @@ case class CheckDeltaInvariant(
         |java.util.List<Object> $valList = new java.util.ArrayList<Object>();
         |""".stripMargin
     columnExtractors.map {
-      case (name, extractor) =>
+      case (rawName, extractor) =>
+        // Preserve column names as data inside generated Java string literals.
+        val name = StringEscapeUtils.escapeJava(rawName)
         val colValue = extractor.genCode(ctx)
         code"""
           |$colList.add("$name");

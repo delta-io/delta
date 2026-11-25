@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.sources
 
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaSingleCommit, Snapshot}
+import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaSingleCommit, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.{Action, Protocol}
 import org.apache.spark.sql.delta.storage.ClosableIterator
 
 
@@ -78,6 +79,12 @@ trait DeltaStreamingBackend {
    */
   def getSnapshotToValidateProtocol(version: Long): Snapshot
 
+  /**
+   * Throws if this client cannot read a table with `protocol`, from a Protocol action in a commit
+   * that the source reads. `readSnapshot` is the snapshot that the source reads with.
+   */
+  def protocolRead(protocol: Protocol, readSnapshot: SnapshotDescriptor): Unit
+
   // TODO: Remove endOffset once Kernel checks missing versions during iteration.
   // Without an end bound, Kernel may validate through the latest version and fail on
   // gaps beyond the batch's end offset before iteration begins.
@@ -92,4 +99,11 @@ trait DeltaStreamingBackend {
       startVersion: Long,
       failOnDataLoss: Boolean,
       endOffset: Option[DeltaSourceOffset] = None): ClosableIterator[DeltaSingleCommit]
+
+  /**
+   * Collect all actions between start and end version, both inclusive
+   */
+  def collectActions(
+      startVersion: Long,
+      endVersionOpt: Option[Long]): ClosableIterator[(Long, Action)]
 }

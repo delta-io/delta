@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, ScanReportHelper}
@@ -39,7 +39,7 @@ trait DeltaLimitPushDownTests extends QueryTest
     with DeletionVectorsTestUtils
     with StatsUtils
     with DeltaSQLCommandTest
-    with CatalogOwnedTestBaseSuite {
+    with CatalogManagedTestBaseSuite {
 
   import deltaImplicits._
 

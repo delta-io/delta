@@ -46,8 +46,42 @@ class DeltaSharingLogFileSystemSuite extends SparkFunSuite with SharedSparkConte
   private val table1 = "table1"
   private val table2 = "table2"
 
+  private val ucTable = "system.lakeflow_pipeline_events_preview.pipeline_events"
+  private val ucTablePath = s"uc-deltasharing://$ucTable#$ucTable"
+
+  private def readerLogPath(readerId: String, customTablePath: String = ucTablePath): Path = {
+    val readerPath = DeltaSharingUtils.getTablePathWithIdSuffix(customTablePath, readerId)
+    new Path(encode(readerPath), "_delta_log")
+  }
+
+
   test("encode and decode") {
     assert(decode(encode(table1)) == table1)
+  }
+
+
+  test("delta log block IDs are flat, bounded, and scoped to one log") {
+      val logPaths = Seq(ucTablePath, s"${"a" * 64}.$ucTablePath").map { tablePath =>
+        readerLogPath("20261117_005400_1234abcd", tablePath)
+      }
+      assert(s"test_${logPaths.last}/00000000000000000000.json".length > 255)
+      val suffixes = Seq("listing", "00000000000000000000.json", "00000000000000000001.json",
+        "00000000000000000001.json_status", "00000000000000000000.checkpoint.parquet",
+        "00000000000000000000.checkpoint.0000000001.0000000002.parquet", "_last_checkpoint")
+      val ids = logPaths.flatMap { logPath =>
+        val prefix = getDeltaSharingLogBlockId(logPath.toString).name.stripSuffix("listing")
+        assert(prefix.matches(s"${DELTA_SHARING_LOG_BLOCK_ID_PREFIX}[0-9a-f]{64}_"))
+        suffixes.map { suffix =>
+          val path = if (suffix == "listing") logPath else new Path(logPath, suffix)
+          val id = getDeltaSharingLogBlockId(path.toString)
+          assert(id == getDeltaSharingLogBlockId(path.toString))
+          assert(id.name == prefix + suffix)
+          assert(!id.name.contains("/"))
+          assert(id.name.getBytes("UTF-8").length < 255)
+          id
+        }
+      }
+      assert(ids.distinct.size == ids.size)
   }
 
   test("file system should be cached") {
@@ -77,6 +111,43 @@ class DeltaSharingLogFileSystemSuite extends SparkFunSuite with SharedSparkConte
       tellMaster = true
     )
     assert(scala.io.Source.fromInputStream(fs.open(path)).mkString == content)
+  }
+
+  test("delta log cleanup selects only matching versions and log") {
+      val logPath = readerLogPath("20261117_005400_1234abcd")
+      val jsonPaths = (0 to 1).map(version => new Path(logPath, f"$version%020d.json"))
+      val ids = jsonPaths.map(path => getDeltaSharingLogBlockId(path.toString))
+      val listingId = getDeltaSharingLogBlockId(logPath.toString)
+      val lastCheckpointId = getDeltaSharingLogBlockId(
+        new Path(logPath, "_last_checkpoint").toString)
+      val otherLog = readerLogPath("20261117_005401_5678abcd")
+      val otherId = getDeltaSharingLogBlockId(
+        new Path(otherLog, "00000000000000000000.json").toString)
+      val blockManager = SparkEnv.get.blockManager
+
+      try {
+        (ids :+ otherId).foreach { id =>
+          assert(blockManager.putSingle(id, "{}\n", StorageLevel.MEMORY_ONLY))
+        }
+        assert(blockManager.putIterator(listingId,
+          jsonPaths.map(path => DeltaSharingLogFileStatus(path.toString, 3, 0)).iterator,
+          StorageLevel.MEMORY_ONLY))
+
+        tryToCleanUpPreviousBlocks(logPath.toString, maxVersion = 0)
+        assert(blockManager.getStatus(ids.head).isEmpty)
+        assert(blockManager.getStatus(ids.last).isDefined)
+        assert(blockManager.getStatus(otherId).isDefined)
+        assert(blockManager.getStatus(listingId).isDefined)
+        assert(blockManager.getStatus(lastCheckpointId).isDefined)
+
+        tryToCleanUpDeltaLog(logPath.toString)
+        Seq(ids.last, listingId, lastCheckpointId).foreach { id =>
+          assert(blockManager.getStatus(id).isEmpty)
+        }
+        assert(blockManager.getStatus(otherId).isDefined)
+      } finally {
+        (ids ++ Seq(listingId, lastCheckpointId, otherId)).foreach(blockManager.removeBlock(_))
+      }
   }
 
   test("exists works ok") {
