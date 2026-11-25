@@ -147,7 +147,6 @@ class AMTNonContentSidecarSuite extends AMTCheckpointTestBase {
   private def withEditedCheckpoint(snapshot: Snapshot)(edit: Checkpoint => Checkpoint): Snapshot = {
     val provider = amtProvider(snapshot).getOrElse(fail("expected an AMT checkpoint provider"))
     val edited = AMTCheckpointProvider(
-      spark = spark,
       manifestCommitVersion = provider.manifestCommitVersion,
       checkpointAction = edit(provider.checkpointAction),
       leaves = provider.leaves,
