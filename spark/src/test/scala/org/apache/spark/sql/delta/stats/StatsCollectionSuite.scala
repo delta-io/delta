@@ -890,6 +890,79 @@ class StatsCollectionSuite
     }
   }
 
+  test("dataSkippingStatsColumns with a nested field of a struct whose logical name is another " +
+      "struct's physical name") {
+    {
+      val tableName = "delta_table"
+      withTable(tableName) {
+        // Upgrading to column mapping keeps `s` as the physical name of `s_old`.
+        sql(s"CREATE TABLE $tableName (id INT, s STRUCT<x: INT>) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN s TO s_old")
+        sql(s"ALTER TABLE $tableName ADD COLUMNS (s STRUCT<x: INT>)")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.dataSkippingStatsColumns' = 's.x')")
+        sql(s"INSERT INTO $tableName (id, s_old, s) VALUES " +
+          "(1, named_struct('x', 100), named_struct('x', 5))")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(getPhysicalName("s_old", deltaLog) == "s")
+        val sPhysicalName = getPhysicalName("s", deltaLog)
+        val xPhysicalName = getPhysicalName("s.x", deltaLog)
+        val stats = JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats)
+        Seq("minValues", "maxValues").foreach { kind =>
+          val values = stats(kind).asInstanceOf[Map[String, Any]]
+          assert(values.keySet == Set(sPhysicalName), s"$kind in $stats")
+          val sValues = values(sPhysicalName).asInstanceOf[Map[String, Any]]
+          assert(sValues.keySet == Set(xPhysicalName), s"$kind of s in $stats")
+          assert(sValues(xPhysicalName).toString == "5", s"$kind of s.x in $stats")
+        }
+        checkAnswer(sql(s"SELECT id FROM $tableName WHERE s.x = 5"), Row(1))
+      }
+    }
+  }
+
+  test("dataSkippingStatsColumns with special characters in a logical name that is another " +
+      "column's physical name") {
+    {
+      val tableName = "delta_table"
+      // Without column mapping a name can't contain a comma, so only `c` has one.
+      val (a, b, c) = ("a.!@#$%^", "b!@#$%^", "c.,!@#$%^")
+      withTable(tableName) {
+        // Upgrading to column mapping keeps `a` and `b` as the physical names of `a_old` and
+        // `b_old`.
+        sql(s"CREATE TABLE $tableName (id INT, `$a` INT, `$b` INT) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN `$a` TO a_old")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN `$b` TO b_old")
+        sql(s"ALTER TABLE $tableName ADD COLUMNS (`$a` INT, `$b` INT, `$c` INT)")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES (" +
+          s"'delta.dataSkippingStatsColumns' = '`$a`, `$b`, `$c`, a_old, b_old')")
+        sql(s"INSERT INTO $tableName (id, a_old, b_old, `$a`, `$b`, `$c`) " +
+          "VALUES (1, 100, 200, 5, 6, 7)")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(getPhysicalName("a_old", deltaLog) == a)
+        assert(getPhysicalName("b_old", deltaLog) == b)
+        val expected = Map(
+          getPhysicalName(s"`$a`", deltaLog) -> "5",
+          getPhysicalName(s"`$b`", deltaLog) -> "6",
+          getPhysicalName(s"`$c`", deltaLog) -> "7",
+          a -> "100",
+          b -> "200")
+        val stats = JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats)
+        Seq("minValues", "maxValues").foreach { kind =>
+          val values = stats(kind).asInstanceOf[Map[String, Any]]
+          assert(values.map { case (k, v) => k -> v.toString } == expected, s"$kind in $stats")
+        }
+        Seq(a -> 5, b -> 6, c -> 7).foreach { case (name, value) =>
+          checkAnswer(sql(s"SELECT id FROM $tableName WHERE `$name` = $value"), Row(1))
+        }
+      }
+    }
+  }
+
   test("Change Columns with delta statistics column") {
     Seq(
       "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
