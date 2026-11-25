@@ -3754,6 +3754,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_SHARING_SNAPSHOT_RESPONSE_VERSION_ENABLED =
+    SQLConf.buildConf("spark.databricks.deltaSharing.snapshotResponseVersion.enabled")
+      .doc("Use the getFiles response version for batch Delta Sharing log and URL cache paths.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_SHARING_FORCE_DELTA_FORMAT =
     buildConf("spark.sql.delta.sharing.forceDeltaFormat")
       .doc("Force queries to use delta format when no responseFormat is specified.")
