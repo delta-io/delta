@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.util.threads.NonFateSharingFuture
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -100,26 +101,67 @@ trait AMTCheckpointProviderBase
  * A [[CheckpointProvider]] backed by an AMT (Adaptive Metadata Tree) manifest tree.
  *
  * This provider is only for inline manifest-commit checkpoints, and this is not intended for
- * standalone checkpoint which also refers to an AMT.
+ * standalone checkpoint which also refers to an AMT. State reconstruction builds each `AddFile`
+ * field as a column over the persisted manifest rows (see `AMTManifestReaderImpl.addFileColumn`).
  *
  * @param manifestCommitVersion The version of the manifest commit that wrote this checkpoint.
  * @param checkpointAction The inline-emitted Checkpoint action this tree was committed with;
  *                         carries the version, contentRoot, and inline non-file state.
- * @param leaves           The root's `DATA_MANIFEST` pointer entries, one per reachable leaf.
- *                         Each entry's `location` is stored table-root-relative; use
- *                         [[liveLeafManifestAbsolutePaths]] to resolve it against the table root.
  * @param tableRoot        The table's data path.
+ * @param rootInfo         The root's leaf pointers and optional prefetched rows.
  */
-abstract class AMTCheckpointProvider(
+final class AMTCheckpointProvider(
     override val manifestCommitVersion: Long,
     override val checkpointAction: Checkpoint,
-    val leaves: Seq[DataManifestEntry],
-    override val tableRoot: Path)
+    override val tableRoot: Path,
+    private val rootInfo: AMTRootInfo)
   extends AMTCheckpointProviderBase
   with AMTCheckpointProviderImpl
 {
+  /**
+   * The root's `DATA_MANIFEST` pointer entries, one per reachable leaf. Each entry's `location` is
+   * stored table-root-relative; use [[liveLeafManifestAbsolutePaths]] to resolve it against the
+   * table root.
+   */
+  val leaves: Seq[DataManifestEntry] = rootInfo.leaves
+
   override private[delta] def numLeaves: Long =
     checkpointAction.contentRoot.numLeaves.getOrElse(leaves.size.toLong)
+
+  override protected def rootLiveAddSingleActions(
+      spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] =
+    toAddSingleActions(
+      manifestReader.withStatuses(rootEntries(spark, deltaLog), Tracking.Status.liveEntryStatuses),
+      baseRowId = col("tracking.first_row_id"))
+
+  /**
+   * Like `AMTManifestReaderImpl.rootEntries`, but reuses the prefetched root if possible, with
+   * the same columns, so that the rows union with leaf entry rows.
+   */
+  private[amt] def rootEntries(spark: SparkSession, deltaLog: DeltaLog): DataFrame =
+    rootInfo.toDF(spark).map { root =>
+      val persistedSchema =
+        AMTSingleAction.persistedSchema(checkpointAction.metaData, checkpointAction.protocol)
+      val columns = persistedSchema.fieldNames.toIndexedSeq.map(col) :+
+        lit(SparkPath.fromPath(rootFile.getPath).urlEncoded).as("leafPath") :+
+        // The shared back-reference expression requires a non-null pos, unused for root entries.
+        lit(0L).as("pos")
+      manifestReader.withRootEntryContext(manifestReader.dataEntries(root.select(columns: _*)))
+    }.getOrElse(manifestReader.rootEntries(deltaLog, Seq(rootFile)))
+
+  override protected def leafLiveAddSingleActions(
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction] =
+    toAddSingleActions(
+      manifestReader.withStatuses(
+        manifestReader.leafEntriesWithRowIdPrefix(spark, deltaLog, liveLeavesWithManifestFilters),
+        Tracking.Status.liveEntryStatuses),
+      baseRowId = manifestReader.inheritedBaseRowId)
+
+  /** Reuses prefetched root for incremental writes as well as snapshot state reconstruction. */
+  override private[amt] def readLiveRootDataEntries(
+      spark: SparkSession, deltaLog: DeltaLog): Seq[AddFile] =
+    rootLiveAddSingleActions(spark, deltaLog).collect().toSeq.map(_.add)
 }
 
 /**
@@ -581,8 +623,7 @@ object AMTCheckpointProvider extends DeltaLogging {
       checkpointAction: Checkpoint,
       rootInfo: AMTRootInfo,
       tableRoot: Path): AMTCheckpointProvider =
-    new ColumnarAMTCheckpointProvider(
-      manifestCommitVersion, checkpointAction, tableRoot, rootInfo)
+    new AMTCheckpointProvider(manifestCommitVersion, checkpointAction, tableRoot, rootInfo)
 
   /**
    * Builds a provider from an emitted [[Checkpoint]] action by reading the leaf pointers out of the
