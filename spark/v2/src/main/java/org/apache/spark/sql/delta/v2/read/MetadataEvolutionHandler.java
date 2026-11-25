@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
@@ -54,15 +55,16 @@ import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.delta.v2.interop.DeltaV2QueryContext;
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
-import org.apache.spark.sql.delta.v2.utils.StreamingHelper;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Option;
+import scala.Tuple2;
 import scala.collection.Iterator;
 import scala.collection.immutable.List$;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
+import scala.jdk.javaapi.CollectionConverters;
 
 /**
  * V2 port of V1's {@code DeltaSourceMetadataEvolutionSupport} trait. Handles metadata evolution
@@ -92,14 +94,11 @@ public class MetadataEvolutionHandler {
   private final SparkSession spark;
   private final String tableId;
   private final DeltaStreamingBackend streamingBackend;
-  private final DeltaV2TableManager tableManager;
-  private final DeltaV2QueryContext originalStreamingQueryContext;
   private final DeltaOptions options;
   private final DeltaStreamUtils.SchemaReadOptions schemaReadOptions;
   private final Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog;
 
   // Read-time state captured at source initialization
-  private final SnapshotDescriptor readSnapshotAtSourceInit;
   private final Metadata readMetadataAtSourceInit;
   private final Protocol readProtocolAtSourceInit;
   private final String metadataPath;
@@ -111,8 +110,6 @@ public class MetadataEvolutionHandler {
       SparkSession spark,
       String tableId,
       DeltaStreamingBackend streamingBackend,
-      DeltaV2TableManager tableManager,
-      DeltaV2QueryContext originalStreamingQueryContext,
       DeltaOptions options,
       DeltaStreamUtils.SchemaReadOptions schemaReadOptions,
       Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog,
@@ -121,12 +118,10 @@ public class MetadataEvolutionHandler {
     this.spark = Objects.requireNonNull(spark);
     this.tableId = Objects.requireNonNull(tableId);
     this.streamingBackend = Objects.requireNonNull(streamingBackend);
-    this.tableManager = Objects.requireNonNull(tableManager);
-    this.originalStreamingQueryContext = Objects.requireNonNull(originalStreamingQueryContext);
     this.options = Objects.requireNonNull(options);
     this.schemaReadOptions = Objects.requireNonNull(schemaReadOptions);
     this.metadataTrackingLog = Objects.requireNonNull(metadataTrackingLog);
-    this.readSnapshotAtSourceInit = Objects.requireNonNull(readSnapshotAtSourceInit);
+    Objects.requireNonNull(readSnapshotAtSourceInit);
     this.readMetadataAtSourceInit = Objects.requireNonNull(readSnapshotAtSourceInit.metadata());
     this.readProtocolAtSourceInit = Objects.requireNonNull(readSnapshotAtSourceInit.protocol());
     this.metadataPath = Objects.requireNonNull(metadataPath);
@@ -225,8 +220,16 @@ public class MetadataEvolutionHandler {
 
     if (previousOffset.index() == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX()) {
       // Check if schema evolution has actually occurred; if not, block.
-      Metadata metadata = collectMetadataAtVersion(previousOffset.reservoirVersion());
-      Protocol protocol = collectProtocolAtVersion(previousOffset.reservoirVersion());
+      Metadata metadata =
+          ScalaUtils.toJavaOptional(
+                  DeltaSourceMetadataEvolutionSupport$.MODULE$.collectMetadataAtVersion(
+                      streamingBackend, previousOffset.reservoirVersion()))
+              .orElse(null);
+      Protocol protocol =
+          ScalaUtils.toJavaOptional(
+                  DeltaSourceMetadataEvolutionSupport$.MODULE$.collectProtocolAtVersion(
+                      streamingBackend, previousOffset.reservoirVersion()))
+              .orElse(null);
       if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
           metadata, protocol, previousOffset.reservoirVersion())) {
         return Optional.of(previousOffset);
@@ -257,8 +260,16 @@ public class MetadataEvolutionHandler {
       return;
     }
 
-    Metadata changedMetadata = collectMetadataAtVersion(offset.reservoirVersion());
-    Protocol changedProtocol = collectProtocolAtVersion(offset.reservoirVersion());
+    Metadata changedMetadata =
+        ScalaUtils.toJavaOptional(
+                DeltaSourceMetadataEvolutionSupport$.MODULE$.collectMetadataAtVersion(
+                    streamingBackend, offset.reservoirVersion()))
+            .orElse(null);
+    Protocol changedProtocol =
+        ScalaUtils.toJavaOptional(
+                DeltaSourceMetadataEvolutionSupport$.MODULE$.collectProtocolAtVersion(
+                    streamingBackend, offset.reservoirVersion()))
+            .orElse(null);
 
     updateMetadataTrackingLogAndFailTheStreamIfNeeded(
         changedMetadata, changedProtocol, offset.reservoirVersion(), /* replace= */ false);
@@ -371,40 +382,6 @@ public class MetadataEvolutionHandler {
             spark);
   }
 
-  /** Collect the metadata action at a specific version. Returns null if none. */
-  private Metadata collectMetadataAtVersion(long version) {
-    return collectMetadataActions(version, version).get(version);
-  }
-
-  /** Collect all metadata actions between start and end version, both inclusive. */
-  private Map<Long, Metadata> collectMetadataActions(long startVersion, long endVersion) {
-    return StreamingHelper.collectMetadataActions(
-        startVersion,
-        Optional.of(endVersion),
-        tableManager,
-        originalStreamingQueryContext,
-        options.failOnDataLoss(),
-        spark,
-        readSnapshotAtSourceInit);
-  }
-
-  /** Collect the protocol action at a specific version. Returns null if none. */
-  private Protocol collectProtocolAtVersion(long version) {
-    return collectProtocolActions(version, version).get(version);
-  }
-
-  /** Collect all protocol actions between start and end version, both inclusive. */
-  private Map<Long, Protocol> collectProtocolActions(long startVersion, long endVersion) {
-    return StreamingHelper.collectProtocolActions(
-        startVersion,
-        Optional.of(endVersion),
-        tableManager,
-        originalStreamingQueryContext,
-        options.failOnDataLoss(),
-        spark,
-        readSnapshotAtSourceInit);
-  }
-
   /**
    * Picks the most recent metadata and most supportive protocol in {@code [startVersion,
    * endVersion]} to seed the tracking log; throws if any earlier change is incompatible.
@@ -415,7 +392,12 @@ public class MetadataEvolutionHandler {
   private ValidatedMetadataAndProtocol validateAndResolveMetadataForLogInitialization(
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =
-        new ArrayList<>(collectMetadataActions(startVersion, endVersion).values());
+        CollectionConverters.asJava(
+                DeltaSourceMetadataEvolutionSupport$.MODULE$.collectMetadataActions(
+                    streamingBackend, startVersion, Option.apply(endVersion)))
+            .stream()
+            .map(Tuple2::_2)
+            .collect(Collectors.toList());
     Snapshot startSnapshot = streamingBackend.getSnapshotAt(startVersion);
     Metadata startMetadata = startSnapshot.metadata();
 
@@ -451,7 +433,12 @@ public class MetadataEvolutionHandler {
     // Check protocol changes and use the most supportive protocol
     Protocol mostSupportiveProtocol = startSnapshot.protocol();
     List<Protocol> protocolChanges =
-        new ArrayList<>(collectProtocolActions(startVersion, endVersion).values());
+        CollectionConverters.asJava(
+                DeltaSourceMetadataEvolutionSupport$.MODULE$.collectProtocolActions(
+                    streamingBackend, startVersion, Option.apply(endVersion)))
+            .stream()
+            .map(Tuple2::_2)
+            .collect(Collectors.toList());
     for (Protocol p : protocolChanges) {
       if (mostSupportiveProtocol
           .readerAndWriterFeatureNames()

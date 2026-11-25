@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.sources
 import java.sql.Timestamp
 
 import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaSingleCommit, Snapshot, SnapshotDescriptor}
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.{Action, Protocol}
 import org.apache.spark.sql.delta.storage.ClosableIterator
 
 
@@ -99,4 +99,11 @@ trait DeltaStreamingBackend {
       startVersion: Long,
       failOnDataLoss: Boolean,
       endOffset: Option[DeltaSourceOffset] = None): ClosableIterator[DeltaSingleCommit]
+
+  /**
+   * Collect all actions between start and end version, both inclusive
+   */
+  def collectActions(
+      startVersion: Long,
+      endVersionOpt: Option[Long]): ClosableIterator[(Long, Action)]
 }

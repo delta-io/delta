@@ -143,9 +143,11 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         spark,
         "test-table-id",
         new DeltaV2StreamingBackend(
-            tableManager, EMPTY_QUERY_CONTEXT, /* snapshotVersionAtSourceInit= */ 0L),
-        tableManager,
-        EMPTY_QUERY_CONTEXT,
+            tableManager,
+            EMPTY_QUERY_CONTEXT,
+            /* snapshotVersionAtSourceInit= */ 0L,
+            spark,
+            emptyDeltaOptions()),
         emptyDeltaOptions(),
         readOptions,
         trackingLog,
@@ -201,9 +203,8 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         new MetadataEvolutionHandler(
             spark,
             "test-table-id",
-            new DeltaV2StreamingBackend(tableManager, EMPTY_QUERY_CONTEXT, initVersion),
-            tableManager,
-            EMPTY_QUERY_CONTEXT,
+            new DeltaV2StreamingBackend(
+                tableManager, EMPTY_QUERY_CONTEXT, initVersion, spark, emptyDeltaOptions()),
             emptyDeltaOptions(),
             schemaReadOptions(/* allowUnsafeColumnMappingRead= */ false),
             Option.apply(trackingLog),
