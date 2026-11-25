@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.ClosableIterator
+import org.apache.spark.sql.delta.storage.ClosableIterator._
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -383,6 +384,51 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
       version,
       getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
         indexedFiles)
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // File change boundaries
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Keeps the files after the start offset (`fromVersion`, `fromIndex`), which is exclusive. The
+   * files must be at or after `fromVersion`.
+   */
+  protected def filterFilesAfterStartOffset(
+      iter: ClosableIterator[IndexedFile],
+      fromVersion: Long,
+      fromIndex: Long): ClosableIterator[IndexedFile] = {
+    iter.withClose { it =>
+      it.filter { file =>
+        file.version > fromVersion || file.index > fromIndex
+      }
+    }
+  }
+
+  /**
+   * Keeps the files up to the end offset of this scan, which is inclusive. When `endOffset` is
+   * empty, the end offset is `lastOffsetForTriggerAvailableNow`, if it is set. The files must be
+   * in (version, index) order.
+   */
+  protected def takeFilesUntilEndOffset(
+      files: ClosableIterator[IndexedFile],
+      endOffset: Option[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
+    var iter = files
+    // If endOffset is provided, we are getting a batch on a constructed range so we should use
+    // the endOffset as the limit.
+    // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
+    // Trigger.availableNow() as limit. We know endOffset <= lastOffsetForTriggerAvailableNow.
+    val lastOffsetForThisScan = endOffset.orElse(lastOffsetForTriggerAvailableNow)
+
+    lastOffsetForThisScan.foreach { bound =>
+      iter = iter.withClose { it =>
+        it.takeWhile { file =>
+          file.version < bound.reservoirVersion ||
+            (file.version == bound.reservoirVersion && file.index <= bound.index)
+        }
+      }
+    }
+    iter
   }
 
   // ---------------------------------------------------------------------------------------------
