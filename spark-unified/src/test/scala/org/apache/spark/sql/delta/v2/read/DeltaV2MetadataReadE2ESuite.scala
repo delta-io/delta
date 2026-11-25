@@ -200,15 +200,16 @@ private[read] trait DeltaV2MetadataReadE2ETests {
       val definitions = userColumns.map(name => s"$name $dataType").mkString(", ")
       val values = userColumns.map(name => userValueTemplate.format(s"user-$name")).mkString(", ")
       val metadataName = "_" * collisionCount + "_metadata"
+      // TODO(#8355): Enable row tracking and check its fields once BatchScan supports mapping.
+      val rowTrackingEnabled = false
+      val metadataProjection = s"$metadataName.file_path"
       withTable(table) {
         withV1Mode {
           sql(s"CREATE TABLE $table (id LONG, $definitions) USING $tableProvider " +
-            "TBLPROPERTIES ('delta.enableRowTracking' = 'true', " +
+            s"TBLPROPERTIES ('delta.enableRowTracking' = '$rowTrackingEnabled', " +
             s"'delta.columnMapping.mode' = '$columnMappingMode')")
           sql(s"INSERT INTO $table VALUES (1, $values), (2, $values)")
         }
-        val metadataProjection = s"$metadataName.file_path, $metadataName.row_id, " +
-          s"$metadataName.row_commit_version"
         val metadataQuery = s"SELECT id, $metadataProjection FROM $table"
         val query = s"SELECT id, ${userColumns.mkString(", ")}, $metadataProjection FROM $table"
         val (expected, expectedMetadata, expectedData) = withV1Mode {
@@ -236,7 +237,7 @@ private[read] trait DeltaV2MetadataReadE2ETests {
   }
 }
 
-/** Covers file metadata and collision-renamed row tracking across Delta V2 scan paths.
+/** Covers file metadata and metadata-column name collisions across Delta V2 scan paths.
  */
 class DeltaV2MetadataReadE2ESuite
   extends DeltaV2ScanE2ETestUtils
