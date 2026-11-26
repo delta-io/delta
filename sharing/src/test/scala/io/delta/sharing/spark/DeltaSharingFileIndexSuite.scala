@@ -131,6 +131,7 @@ class TestDeltaSharingClientForFileIndex(
   }
 
   var numGetFileCalls: Int = -1
+  var responseVersion: Long = 0L
 
   var savedLimits = Seq.empty[Long]
   var savedJsonPredicateHints = Seq.empty[String]
@@ -168,7 +169,7 @@ class TestDeltaSharingClientForFileIndex(
     }
 
     DeltaTableFiles(
-      version = 0,
+      version = responseVersion,
       lines = Seq[String](
         protocolStr,
         metaDataStr,
