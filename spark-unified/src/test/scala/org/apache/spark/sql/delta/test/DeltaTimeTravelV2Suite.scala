@@ -50,6 +50,8 @@ class DeltaTimeTravelV2Suite extends DeltaTimeTravelSuite with V2ForceTest {
     // Catalog reads.
     "SPARK-41154: Correct relation caching for queries with time travel spec",
     "timestamp as of expression for table in database",
+    "timestamp as of preserves explicit offsets during a DST overlap",
+    "timestamp as of uses the session time zone when the JVM time zone differs",
     "Dataframe-based time travel works with different timestamp precisions"
   )
 
