@@ -358,10 +358,10 @@ The root manifest contains entries of the following types:
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
-| 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
+| 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). Null when the table is unpartitioned. |
 | 103 | `record_count` | Long | Required | All | Number of records in the file |
 | 104 | `file_size_in_bytes` | Long | Required | All | Total file size in bytes |
-| 141 | `spec_id` | Int | Optional | All | Partition spec ID used for this entry |
+| 141 | `spec_id` | Int | Optional | All | Partition spec ID used for this entry. Null when the table is unpartitioned. |
 | 146 | `content_stats` | Struct ([Content Stats](#content-stats)) | Optional | All | Per-column statistics |
 | 151 | `tight_stats` | Boolean | Optional | All | When true, the entry's `content_stats` are tight (see [Content Stats](#content-stats)). When absent, readers must assume the stats are not tight. |
 | 140 | `sort_order_id` | Int | Optional | DATA | Sort order ID for this file. If missing or unknown, the order is assumed to be unsorted. |
