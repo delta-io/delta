@@ -248,13 +248,6 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 {
   import deltaImplicits._
 
-  protected def dataWithFixedFileLayout: DataFrame = {
-    // Keep one sequence per partition so file-level counts and bounds are deterministic.
-    spark.sparkContext.parallelize(
-      Seq(Seq(0L, 4L, 5L, 8L), Seq(1L, 2L, 3L, 6L, 7L, 9L)), 2)
-      .flatMap(identity).toDF("id")
-  }
-
   testSkipping(
     "top level, single 1",
     """{"a": 1}""",
@@ -1071,14 +1064,14 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
         "OPTIMIZE is blocked on catalog-managed tables")
       val t = "ds_stats_before_after_optimize"
       withTable(t) {
-        val data = dataWithFixedFileLayout
+        val data = spark.range(0, 10, 1, numPartitions = 2)
         data.write.format("delta").saveAsTable(t)
         var r = checkpointAndCreateNewLogIfNecessary(
           DeltaLog.forTable(spark, TableIdentifier(t)))
         def rStats: DataFrame =
           getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
-        checkAnswer(rStats, Seq(Row(4, 0, 8), Row(6, 1, 9)))
+        checkAnswer(rStats, Seq(Row(5, 0, 4), Row(5, 5, 9)))
         val optimizeDf = sql(s"OPTIMIZE $t")
         checkAnswer(rStats, Seq(Row(10, 0, 9)))
       }
@@ -2391,7 +2384,7 @@ trait DataSkippingDeltaV1Tests
       def rStats: DataFrame =
         getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
-      val data = dataWithFixedFileLayout
+      val data = spark.range(0, 10, 1, numPartitions = 2)
 
       Given("appending data without collecting stats")
       withSQLConf(
@@ -2405,7 +2398,7 @@ trait DataSkippingDeltaV1Tests
       withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
         data.write.format("delta").mode("append").saveAsTable(t)
         checkAnswer(rStats,
-          Seq(Row(null, null, null), Row(null, null, null), Row(4, 0, 8), Row(6, 1, 9)))
+          Seq(Row(null, null, null), Row(null, null, null), Row(5, 0, 4), Row(5, 5, 9)))
       }
 
       Given("querying reservoir without using stats")
