@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.amt
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.{ConcurrentAMTCheckpointLandedException, CurrentTransactionInfo, DeltaIllegalStateException, DeltaOperations, FullAMTWriteFailedWithConflict, LogSegment, Snapshot, SnapshotManagement, WinningCommitMetrics, WinningCommitSummary}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, CheckpointMetadata, ContentRoot, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Checkpoint, CheckpointMetadata, CommitInfo, ContentRoot, LastManifestCommit, RemoveFile}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -50,10 +50,12 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
   // A minimal transaction info over `snapshot` carrying `actions`, for direct writeAMT calls.
   // `preCommitLatestAMTCheckpointOpt` models the base AMT the attempt would build on: on a rebase
   // it is the tree the conflict fold advanced to (the winner's, if the winner wrote one).
+  // `lastManifestCommit` names that tree, as the conflict fold sets it on the commitInfo.
   private def txnInfoFor(
       snapshot: Snapshot,
       actions: Seq[Action],
-      preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None) =
+      preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None,
+      lastManifestCommit: Option[LastManifestCommit] = None) =
     CurrentTransactionInfo(
       txnId = "txn",
       readPredicates = Vector.empty,
@@ -64,12 +66,17 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       protocol = snapshot.protocol,
       actions = actions,
       readSnapshot = snapshot,
-      commitInfo = None,
+      commitInfo = Some(CommitInfo.empty().copy(
+        lastManifestCommit = lastManifestCommit.orElse(snapshot.lastManifestCommitOpt))),
       readRowIdHighWatermark = 0L,
       catalogTable = None,
       domainMetadata = Seq.empty,
       op = DeltaOperations.ManualUpdate,
       preCommitLatestAMTCheckpointOpt = preCommitLatestAMTCheckpointOpt)
+
+  // The tree a winner at `snapshot.version + 1` wrote.
+  private def winnerManifestCommit(snapshot: Snapshot, winnerTree: Checkpoint) =
+    Some(LastManifestCommit(snapshot.version + 1, winnerTree.contentRoot.version))
 
   // A neutral single-winner metric for a one-version conflicted range, for direct writeAMT rebase
   // tests that do not exercise the base-reuse decision (the loser is log-only, or the manager has
@@ -212,7 +219,8 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       val result = manager.writeAMT(
         nextAttemptVersion = snapshot.version + 2,
         currentTransactionInfo = txnInfoFor(
-          snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(winnerTree)),
+          snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(winnerTree),
+          lastManifestCommit = winnerManifestCommit(snapshot, winnerTree)),
         preCommitLogSegment = retrySegment,
         winningCommitMetricsForConflictedRange = Seq(anyWinner))
       assert(result.isEmpty,
@@ -252,7 +260,8 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
           manager.writeAMT(
             nextAttemptVersion = snapshot.version + 2,
             currentTransactionInfo = txnInfoFor(
-              snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(fullWinner)),
+              snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(fullWinner),
+              lastManifestCommit = winnerManifestCommit(snapshot, fullWinner)),
             preCommitLogSegment = retrySegment,
             winningCommitMetricsForConflictedRange = Seq(fullWinnerMetric))
         }
@@ -305,7 +314,8 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
           manager.writeAMT(
             nextAttemptVersion = snapshot.version + 2,
             currentTransactionInfo = txnInfoFor(
-              snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(winnerTree)),
+              snapshot, actions = Seq.empty, preCommitLatestAMTCheckpointOpt = Some(winnerTree),
+              lastManifestCommit = winnerManifestCommit(snapshot, winnerTree)),
             preCommitLogSegment = retrySegment,
             winningCommitMetricsForConflictedRange = Seq(anyWinner))
         }
@@ -350,7 +360,8 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
             nextAttemptVersion = snapshot.version + 2,
             currentTransactionInfo = txnInfoFor(
               snapshot, actions = Seq.empty,
-              preCommitLatestAMTCheckpointOpt = Some(incrementalWinner)),
+              preCommitLatestAMTCheckpointOpt = Some(incrementalWinner),
+              lastManifestCommit = winnerManifestCommit(snapshot, incrementalWinner)),
             preCommitLogSegment = retrySegment,
             winningCommitMetricsForConflictedRange = Seq(anyWinner))
         }
