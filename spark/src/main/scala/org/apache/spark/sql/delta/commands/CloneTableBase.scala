@@ -313,7 +313,7 @@ abstract class CloneTableBase(
       clonedMetadata = clonedMetadata.copy(id = targetSnapshot.metadata.id)
     }
 
-    val filteredConfiguration = clonedMetadata.configuration
+    var filteredConfiguration = clonedMetadata.configuration
       // Coordinated Commit configurations are never copied over to the target table.
       .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
       // ICT enablement provenance info refers to the source's log. The commit re-derives it for
@@ -324,6 +324,12 @@ abstract class CloneTableBase(
       .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
       .toMap
 
+    // The checkpoint protection version is a version of the source's log. A new target has no
+    // history to protect.
+    if (!tableExists(targetSnapshot) &&
+        conf.getConf(DeltaSQLConf.DELTA_CLONE_STRIP_SOURCE_CHECKPOINT_PROTECTION_VERSION)) {
+      filteredConfiguration -= DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+    }
     val clonedSchema =
       IdentityColumn.copySchemaWithMergedHighWaterMarks(
         deltaLog = targetSnapshot.deltaLog,
