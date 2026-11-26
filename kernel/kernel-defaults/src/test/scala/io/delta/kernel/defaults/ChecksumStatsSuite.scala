@@ -67,7 +67,8 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
         version = 1,
         expectedFileCount = 2,
         expectedTableSize = 100902,
-        expectedFileSizeHistogram = expectedFileSizeHistogram)
+        expectedFileSizeHistogram = Some(expectedFileSizeHistogram),
+        regenerateCrc = true)
 
       removeFiles(
         engine,
@@ -80,7 +81,8 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
         version = 2,
         expectedFileCount = 1,
         expectedTableSize = 100902 - 100,
-        expectedFileSizeHistogram = expectedFileSizeHistogram)
+        expectedFileSizeHistogram = Some(expectedFileSizeHistogram),
+        regenerateCrc = true)
     }
   }
 
@@ -93,6 +95,8 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
    * @param expectedFileCount Expected number of files in the table
    * @param expectedTableSize Expected total size of all files in bytes
    * @param expectedFileSizeHistogram Expected file size histogram
+   * @param expectedDvHistogram Expected file counts by DV cardinality, with trailing zeros omitted
+   * @param regenerateCrc Also regenerate a CRC and check the regenerated CRC
    */
   def checkCrcCorrect(
       engine: Engine,
@@ -100,7 +104,11 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
       version: Long,
       expectedFileCount: Long,
       expectedTableSize: Long,
-      expectedFileSizeHistogram: FileSizeHistogram): Unit = {
+      expectedFileSizeHistogram: Option[FileSizeHistogram],
+      expectedNumDeletionVectors: Option[Long] = None,
+      expectedNumDeletedRecords: Option[Long] = None,
+      expectedDvHistogram: Option[Seq[Long]] = None,
+      regenerateCrc: Boolean = false): Unit = {
     def verifyCrcExistsAndCorrect(): Unit = {
       val crcInfo = ChecksumReader.tryReadChecksumFile(
         engine,
@@ -110,34 +118,19 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
         .orElseThrow(() => new AssertionError("CRC information should be present"))
       assert(crcInfo.getNumFiles === expectedFileCount)
       assert(crcInfo.getTableSizeBytes === expectedTableSize)
-      assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
+      assert(crcInfo.getFileSizeHistogram.toScala === expectedFileSizeHistogram)
+      assert(
+        crcInfo.getNumDeletionVectors.toScala.map(_.longValue()) === expectedNumDeletionVectors)
+      assert(crcInfo.getNumDeletedRecords.toScala.map(_.longValue()) === expectedNumDeletedRecords)
+      assert(crcInfo.getDeletedRecordCountsHistogram.toScala.map(_.getCounts.toSeq) ===
+        expectedDvHistogram.map(_.padTo(10, 0L)))
     }
     verifyCrcExistsAndCorrect()
-    // Delete existing CRC to regenerate a new one from state construction.
-    engine.getFileSystemClient.delete(buildCrcPath(tablePath, version).toString)
-    Table.forPath(engine, tablePath).checksum(engine, version)
-    verifyCrcExistsAndCorrect()
-  }
-
-  /** Verifies the stored CRC, including DV metrics, without regenerating it. */
-  def checkCrcCorrect(
-      engine: Engine,
-      tablePath: String,
-      version: Long,
-      expectedFileCount: Long,
-      expectedTableSize: Long,
-      expectedFileSizeHistogram: Option[FileSizeHistogram],
-      expectedNumDeletionVectors: Option[Long] = None,
-      expectedNumDeletedRecords: Option[Long] = None): Unit = {
-    val crcInfo = ChecksumReader.tryReadChecksumFile(
-      engine,
-      FileStatus.of(checksumFile(new Path(tablePath + "/_delta_log"), version).toString))
-      .orElseThrow(() => new AssertionError("CRC information should be present"))
-    assert(crcInfo.getNumFiles === expectedFileCount)
-    assert(crcInfo.getTableSizeBytes === expectedTableSize)
-    assert(crcInfo.getFileSizeHistogram.toScala === expectedFileSizeHistogram)
-    assert(crcInfo.getNumDeletionVectors.toScala.map(_.longValue()) === expectedNumDeletionVectors)
-    assert(crcInfo.getNumDeletedRecords.toScala.map(_.longValue()) === expectedNumDeletedRecords)
+    if (regenerateCrc) {
+      engine.getFileSystemClient.delete(buildCrcPath(tablePath, version).toString)
+      Table.forPath(engine, tablePath).checksum(engine, version)
+      verifyCrcExistsAndCorrect()
+    }
   }
 
   /**
@@ -307,7 +300,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
           0,
           Some(histogramForSize100Files(0)),
           expectedNumDeletionVectors = if (supportsDv) Some(0L) else None,
-          expectedNumDeletedRecords = if (supportsDv) Some(0L) else None)
+          expectedNumDeletedRecords = if (supportsDv) Some(0L) else None,
+          expectedDvHistogram = Option.when(supportsDv)(Seq.empty[Long]))
       }
     }
   }
@@ -350,7 +344,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         200,
         Some(histogramForSize100Files(2)),
         Some(1L),
-        Some(3L))
+        Some(3L),
+        expectedDvHistogram = Some(Seq(1L, 1L)))
 
       commitSimple(getUpdateTxn(engine, path), engine, addFileToRemoveFileRow(firstDv))
       checkCrcCorrect(
@@ -361,7 +356,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         100,
         Some(histogramForSize100Files(1)),
         Some(0L),
-        Some(0L))
+        Some(0L),
+        expectedDvHistogram = Some(Seq(1L)))
     }
   }
 
@@ -383,7 +379,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         100,
         Some(histogramForSize100Files(1)),
         Some(1L),
-        Some(3L))
+        Some(3L),
+        expectedDvHistogram = Some(Seq(0L, 1L)))
 
       // Adding a second DV increases both counters.
       commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(secondDv))
@@ -395,7 +392,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         200,
         Some(histogramForSize100Files(2)),
         Some(2L),
-        Some(8L))
+        Some(8L),
+        expectedDvHistogram = Some(Seq(0L, 2L)))
       // Adding a file without a DV changes file statistics but leaves DV counters unchanged.
       commitSimple(getUpdateTxn(engine, path), engine, addFileToRow(noDV))
       checkCrcCorrect(
@@ -406,7 +404,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         300,
         Some(histogramForSize100Files(3)),
         Some(2L),
-        Some(8L))
+        Some(8L),
+        expectedDvHistogram = Some(Seq(1L, 2L)))
 
       // Replacing the first DV keeps 2 vectors but changes deleted records from 8 to 12.
       val updatedFirstDv = addFile("first.parquet", Some(7L))
@@ -423,7 +422,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         300,
         Some(histogramForSize100Files(3)),
         Some(2L),
-        Some(12L))
+        Some(12L),
+        expectedDvHistogram = Some(Seq(1L, 2L)))
       // Remove the second DV and the plain file, leaving only the updated first DV.
       commitSimple(
         getUpdateTxn(engine, path),
@@ -438,7 +438,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         100,
         Some(histogramForSize100Files(1)),
         Some(1L),
-        Some(7L))
+        Some(7L),
+        expectedDvHistogram = Some(Seq(0L, 1L)))
       // Removing the last file leaves present zero counters, rather than dropping the fields.
       commitSimple(getUpdateTxn(engine, path), engine, addFileToRemoveFileRow(updatedFirstDv))
       checkCrcCorrect(
@@ -449,7 +450,8 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         0,
         Some(histogramForSize100Files(0)),
         Some(0L),
-        Some(0L))
+        Some(0L),
+        expectedDvHistogram = Some(Seq.empty[Long]))
     }
   }
 
@@ -546,7 +548,16 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase with LogReplayBase
         commitSimple(losingTxn, retryEngine, addFileToRow(addFile("loser.parquet", Some(7L))))
       assert(result.getVersion === 2)
       assert(attempts === 2)
-      checkCrcCorrect(engine, path, 2, 3, 300, None, Some(3L), Some(15L))
+      checkCrcCorrect(
+        engine,
+        path,
+        2,
+        3,
+        300,
+        None,
+        Some(3L),
+        Some(15L),
+        expectedDvHistogram = Some(Seq(0L, 3L)))
     }
   }
 
