@@ -236,6 +236,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           latestSnapshot,
           engineInfo,
           operation,
+          false /* isBlindAppend */,
           Optional.empty(), // newProtocol
           Optional.empty(), // newMetadata
           committer,
@@ -303,6 +304,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         latestSnapshot,
         engineInfo,
         operation,
+        false /* isBlindAppend */,
         outputMetadata.newProtocol,
         outputMetadata.newMetadata,
         committer,

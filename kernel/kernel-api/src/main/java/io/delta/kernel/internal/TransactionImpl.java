@@ -137,6 +137,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SnapshotImpl> readSnapshotOpt;
   private final String engineInfo;
   private final Operation operation;
+  private final boolean isBlindAppend;
   private final Protocol protocol;
   private final boolean shouldUpdateProtocol;
   private Metadata metadata;
@@ -171,6 +172,7 @@ public class TransactionImpl implements Transaction {
       Optional<SnapshotImpl> readSnapshotOpt,
       String engineInfo,
       Operation operation,
+      boolean isBlindAppend,
       Optional<Protocol> newProtocol,
       Optional<Metadata> newMetadata,
       Committer committer,
@@ -191,6 +193,7 @@ public class TransactionImpl implements Transaction {
     this.readSnapshotOpt = readSnapshotOpt;
     this.engineInfo = engineInfo;
     this.operation = operation;
+    this.isBlindAppend = isBlindAppend;
     this.protocol = newProtocol.orElseGet(() -> readSnapshotOpt.get().getProtocol());
     this.shouldUpdateProtocol = newProtocol.isPresent();
     this.metadata = newMetadata.orElseGet(() -> readSnapshotOpt.get().getMetadata());
@@ -361,10 +364,9 @@ public class TransactionImpl implements Transaction {
   }
 
   private Optional<Boolean> isBlindAppend() {
-    // TODO: for now we hard code this to false to avoid erroneously setting this to true for a
-    //  non-blind-append operation. We should revisit how to safely set this to true for actual
-    //  blind appends.
-    return Optional.of(false);
+    // Kernel cannot tell whether the caller read the table, so a commit is a blind append only
+    // when the caller declares it.
+    return Optional.of(isBlindAppend);
   }
 
   private void updateMetadata(Metadata metadata) {
@@ -560,6 +562,9 @@ public class TransactionImpl implements Transaction {
                   action -> {
                     incrementMetricsForFileActionRow(transactionMetrics, action);
                     if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
+                      if (isBlindAppend) {
+                        throw DeltaErrors.cannotRemoveFilesInBlindAppend(dataPath.toString());
+                      }
                       RemoveFile removeFile = new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
                       if (isAppendOnlyTable && removeFile.getDataChange()) {
                         throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());

@@ -140,6 +140,7 @@ public class ReplaceTableTransactionBuilderV2Impl implements ReplaceTableTransac
         Optional.of(snapshot),
         engineInfo,
         Operation.REPLACE_TABLE,
+        false /* isBlindAppend */,
         txnMetadata.newProtocol,
         txnMetadata.newMetadata,
         snapshot.getCommitter(),

@@ -126,6 +126,19 @@ public interface UpdateTableTransactionBuilder {
   UpdateTableTransactionBuilder withTransactionId(String applicationId, long transactionVersion);
 
   /**
+   * Declare this transaction a blind append: it adds data files without reading the table's data to
+   * decide what to write, and it removes no files. The commit then sets {@code isBlindAppend} to
+   * true in its commitInfo. At the WriteSerializable isolation level, Delta Spark does not check
+   * the files that a blind append adds against what a concurrent transaction read.
+   *
+   * <p>Kernel cannot see what the caller read, so declare this only when the transaction read no
+   * table data. If the transaction removes a file, the commit fails with a {@link KernelException}.
+   *
+   * <p>By default, a transaction is not a blind append.
+   */
+  UpdateTableTransactionBuilder withBlindAppend();
+
+  /**
    * Set the maximum number of retries for handling concurrent write conflicts.
    *
    * <p>When multiple writers attempt to modify the same Delta table simultaneously, conflicts can
