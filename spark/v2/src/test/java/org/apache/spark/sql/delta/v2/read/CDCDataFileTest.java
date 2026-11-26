@@ -155,10 +155,7 @@ public class CDCDataFileTest {
     AddFile addFile = createTestAddFile("data.parquet", 1024, 100L, Optional.of(TEST_DV));
     CDCDataFile cdcFile =
         CDCDataFile.fromDVDiff(
-            addFile,
-            CDCReader.CDC_TYPE_DELETE(),
-            /* commitTimestamp= */ 77777L,
-            "inline-dv==");
+            addFile, CDCReader.CDC_TYPE_DELETE(), /* commitTimestamp= */ 77777L, "inline-dv==");
 
     assertSame(addFile, cdcFile.getAddFile());
     assertEquals(CDCReader.CDC_TYPE_DELETE(), cdcFile.getChangeType());
