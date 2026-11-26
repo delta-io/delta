@@ -232,6 +232,23 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
     }
   }
 
+  test("CREATE TABLE CLONE in DummyCatalog does not copy the checkpoint protection version") {
+    val key = DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+    val dummyCatalog =
+      spark.sessionState.catalogManager.catalog("dummy").asInstanceOf[DummyCatalog]
+    withTempDir { dir =>
+      val source = dir.getCanonicalPath
+      sql("SET CATALOG spark_catalog")
+      sql(s"CREATE TABLE delta.`$source` (id bigint) USING delta TBLPROPERTIES ('$key' = '1')")
+      withTable("dummy.default.clone_target") {
+        // DummyCatalog creates the target as an empty Delta table before CLONE runs.
+        sql(s"CREATE TABLE dummy.default.clone_target SHALLOW CLONE delta.`$source`")
+        val target = DeltaLog.forTable(spark, dummyCatalog.getTablePath("clone_target"))
+        assert(target.update().metadata.configuration.get(key) === None)
+      }
+    }
+  }
+
   test("DESCRIBE HISTORY a delta table from DummyCatalog") {
     val tableName = "desc_history_table"
     withTable(tableName) {
