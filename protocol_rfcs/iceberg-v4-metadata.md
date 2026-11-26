@@ -369,6 +369,7 @@ The root manifest contains entries of the following types:
 | 150 | `manifest_info` | Struct ([Manifest Info](#manifest-info)) | Optional | DATA_MANIFEST | Manifest-level summary and MDV |
 | 131 | `key_metadata` | Binary | Optional | All | Implementation-specific key metadata for encryption |
 | 132 | `split_offsets` | Array\<Long\> (element ID 133) | Optional | DATA | Row group split offsets. Must be sorted ascending. |
+| 158 | `column_files` | Array\<Struct\> (element ID 159) | Optional | DATA, DATA_MANIFEST | Iceberg [column files](https://iceberg.apache.org/spec/#column-file-fields) that store updated values of some of the file's fields. Not supported: writers must not set it, and readers must fail on an entry with a non-empty list, since ignoring it would read stale values. |
 
 ### Tracking
 
@@ -429,6 +430,7 @@ Tracks where a DV blob can be read. Only for `content_type` = DATA entries.
 | 144 | `offset` | Long | Required | Offset in the file where DV content starts |
 | 145 | `size_in_bytes` | Long | Required | Length of DV content in the file |
 | 156 | `cardinality` | Long | Required | Number of set bits (deleted rows) in the vector |
+| 149 | `key_metadata` | Binary | Optional | Key metadata for encryption of the DV content; specific to the encryption scheme |
 
 ### Manifest Info
 
