@@ -184,6 +184,20 @@ This design enables:
 
 <ins>When the `adaptiveMetadata` table feature is enabled, if `tightBounds` is absent from `stats`, readers must default it to `false`. Similarly, if `tightStats` is absent, readers must default it to `false`.</ins>
 
+### Statistics for Variant Columns
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#statistics-for-variant-columns)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, the Variant `minValues` and `maxValues` stats must not be shredded in Parquet files that hold checkpoint state: the manifests of the metadata tree and [standalone checkpoints](#standalone-checkpoint). Writers must write them as unshredded Variant values. Shredding of Variant data in data files is not affected.</ins>
+
+### Partition Value Serialization
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#partition-value-serialization)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, writers must store `timestamp` partition values of newly added files adjusted to UTC and in ISO8601 format. They must not store them without a time zone. `timestamp without time zone` partition values are not affected.</ins>
+
+<ins>Files added before the feature was enabled may still have `timestamp` partition values without a time zone. Readers continue to interpret those values as described in the existing section.</ins>
+
 --------
 
 > ***Add a new section at the [Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-features) section***
@@ -471,7 +485,7 @@ The `content_stats` field (ID 146) uses Iceberg V4's typed column statistics str
 
 The `content_stats` struct is optional on the entry, and each per-column stats struct within it is also optional. Writers are not required to produce stats for every column.
 
-Only leaf (primitive) columns get stats structs. Complex types (struct, list, map) do not. The stats structs are flat fields in `content_stats`, not nested under parent types. Field IDs are deterministically calculated from table field IDs:
+Only leaf columns (primitive types and `variant`) get stats structs. Complex types (struct, list, map) do not. The stats structs are flat fields in `content_stats`, not nested under parent types. Field IDs are deterministically calculated from table field IDs:
 
 | Table Field ID | Stats Struct Field ID | Calculation |
 |----------------|----------------------|-------------|
@@ -492,6 +506,8 @@ Each per-column stats struct contains:
 | +6 | `total_bytes` | Long | string, binary, variant, geometry, geography | Estimated uncompressed in-memory bytes of non-null values |
 
 Implementations are not required to write a stats struct for every table field. If any field is missing from the struct, readers must assume it is unknown.
+
+For `variant` columns, `lower_bound` and `upper_bound` are unshredded `variant` values that hold one bound per normalized JSON path, as in Delta's Variant `minValues` and `maxValues` (see [Statistics for Variant Columns](#statistics-for-variant-columns)). Writers must not shred them.
 
 **Stats tightness.** Tightness is tracked per entry by `tight_stats`, not per column, following [Stats Tightness](https://iceberg.apache.org/spec/#stats-tightness) in the Iceberg V4 specification. An entry's stats are tight when, over its live rows, `lower_bound` and `upper_bound` of fixed-length types equal the minimum and maximum values, and `value_count`, `null_value_count`, and `nan_value_count` equal the counts. Whatever the value of `tight_stats`, bounds of `string` and `binary` columns are never tight because they may be truncated, and bounds of `geometry` and `geography` columns are never tight because they are bounding boxes. For `variant` columns, a bound present for a normalized JSON path is tight under the same rules as the path's value type. No other stats field is covered by tightness. When `tight_stats` is `false` or absent, `lower_bound` must be less than or equal to every live value and `upper_bound` must be greater than or equal to every live value.
 
@@ -584,7 +600,7 @@ Delta defines partitioning via `partitionColumns` in the table metadata, support
 
 Partition values are stored in the `partition` struct (field ID 102) on each DATA entry. The struct has one field per partition column, keyed by `field-id = 1000 + i` and typed as the i-th partition column's type.
 
-When producing manifest entries, writers convert Delta's `partitionValues` string map to the typed `partition` struct: each value is parsed into its column's type and placed at that column's `field-id`. When reading manifest entries back into Delta actions, readers extract each value by `field-id = 1000 + i` and map it back to the i-th partition column.
+When producing manifest entries, writers convert Delta's `partitionValues` string map to the typed `partition` struct: each value is parsed into its column's type and placed at that column's `field-id`. A `timestamp` partition value without a time zone, from a file added before `adaptiveMetadata` was enabled, must be converted to the instant that readers of the Delta log would interpret it as (see [Partition Value Serialization](#partition-value-serialization)), so that both representations of the file have the same partition value. When reading manifest entries back into Delta actions, readers extract each value by `field-id = 1000 + i` and map it back to the i-th partition column. A `timestamp` value is written back adjusted to UTC and in ISO8601 format.
 
 Because partition column values are materialized in the data files (see [Writer Requirements](#writer-requirements)), readers read them from the file like any other column; the `partition` struct is used only for partition pruning.
 
@@ -663,6 +679,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 - Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
 - Assign field IDs to the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes; ID allocation is the same as in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2).
 - Write timestamp columns in data files as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`.
+- Store `timestamp` partition values of new files adjusted to UTC in ISO8601 format, and do not shred Variant `minValues` and `maxValues` in manifests or standalone checkpoints (see [Partition Value Serialization](#partition-value-serialization) and [Statistics for Variant Columns](#statistics-for-variant-columns)).
 - Write timestamp values in manifests as `int64` `TIMESTAMP(MICROS)`, not `int96`, with `isAdjustedToUTC = true` for `timestamp` and `false` for `timestampNtz`. This covers the `partition` tuple (field 102) and the `lower_bound` / `upper_bound` of [Content Stats](#content-stats) (field 146).
 - Set `tightStats` on newly written or updated file actions, and write `minValues` and `maxValues` of `timestamp` and `timestamp without time zone` columns in `add.stats` and `remove.stats` as valid lower and upper bounds without truncating down to milliseconds (see [Per-file Statistics](#per-file-statistics) and [Stats Reconciliation](#stats-reconciliation)).
 - Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
