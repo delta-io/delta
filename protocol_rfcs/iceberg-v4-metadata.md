@@ -480,6 +480,15 @@ Only leaf (primitive) columns get stats structs. Complex types (struct, list, ma
 | 2 | 10400 | 10_000 + 200 × 2 |
 | 100 | 30000 | 10_000 + 200 × 100 |
 
+IDs from `10_000` (inclusive) to `200_000_000` (exclusive) are reserved for stats structs. A table field whose stats struct ID falls outside that range (a field ID above `999_949`) has no stats in `content_stats`.
+
+The [materialized row tracking columns](#materialized-row-tracking-columns) carry Iceberg's reserved row lineage field IDs, which fall outside the calculation above. Their stats structs use the IDs that the [Iceberg specification reserves](https://iceberg.apache.org/spec/#field-statistics) for them. Stats are not tracked for any other reserved field ID.
+
+| Materialized Column | Field ID | Stats Struct Field ID |
+|---------------------|----------|-----------------------|
+| Row ID | 2147483540 | 9200 |
+| Row commit version | 2147483539 | 9000 |
+
 Each per-column stats struct contains:
 
 | Offset | Field Name | Delta Type | Included For | Description |
