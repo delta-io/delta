@@ -382,6 +382,9 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
         .getSnapshotAsOfVersion(engine, 3).asInstanceOf[SnapshotImpl]
       val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot3.getLogSegment)
 
+      // Table stats can still use the base CRC without any DV metrics.
+      assert(
+        snapshot3.getStatistics.getTableStats(engine).get().getNumFiles === crcInfo.getNumFiles)
       assert(crcInfo.getVersion === 3)
       assert(crcInfo.getNumDeletedRecords.isPresent)
       assert(crcInfo.getNumDeletionVectors.isPresent)
@@ -738,59 +741,98 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       engine,
       FileStatus.of(Paths.get(path, "_delta_log", f"$version%020d.crc").toString)).get()
 
-  Seq(
-    ("complete allFiles", 9L, true),
-    ("zero deleted records", 0L, false),
-    ("no allFiles", 9L, false)).foreach {
-    case (base, cardinality, keepAllFiles) =>
-      test(s"FULL CRC replays when the base DV histogram is missing: $base") {
-        withTempDirAndMetricsEngine { (path, engine) =>
-          val plain = operationTestFile(1, None)
-          val old = operationTestFile(2, Some(cardinality))
-          writeCommitWithOperation(
-            path,
-            0,
-            "CREATE TABLE",
-            createMetadataSingleAction(operationTestMetadata0.toRow),
-            createProtocolSingleAction(operationTestProtocol0.toRow),
-            createAddFileSingleAction(plain.toRow),
-            createAddFileSingleAction(old.toRow))
-          val table = Table.forPath(engine, path)
-          table.getLatestSnapshot(engine).writeChecksum(engine, ChecksumWriteMode.FULL)
-          val baseCrc = readWrittenCrc(path, engine, 0)
-          val initialCounts = if (cardinality == 0) Seq(2L) else Seq(1L, 1L)
-          assert(baseCrc.getDeletedRecordCountsHistogram.get().getCounts.toSeq ===
-            initialCounts.padTo(10, 0L))
-          assert(baseCrc.getAllFiles.get().size() === 2)
+  private case class DvState(name: String, protocol: KernelProtocol, metadata: KernelMetadata)
 
-          val crcPath = Paths.get(path, "_delta_log", f"${0L}%020d.crc")
-          val legacy = OBJ_MAPPER.readTree(Files.readAllBytes(crcPath)).asInstanceOf[ObjectNode]
-          legacy.remove("deletedRecordCountsHistogramOpt")
-          if (!keepAllFiles) legacy.remove("allFiles")
-          engine.getFileSystemClient.delete(crcPath.toString)
-          Files.write(crcPath, OBJ_MAPPER.writeValueAsBytes(legacy))
+  private val dvProtocol = new KernelProtocol(
+    3,
+    7,
+    Set("deletionVectors").asJava,
+    Set("deletionVectors").asJava)
+  private val dvEnabled = DvState("enabled", dvProtocol, operationTestMetadata0)
+  private val dvDisabled = DvState(
+    "supported but disabled",
+    dvProtocol,
+    operationTestMetadata0.withMergedConfiguration(
+      Map("delta.enableDeletionVectors" -> "false").asJava))
+  private val dvUnsupported = DvState(
+    "unsupported",
+    new KernelProtocol(1, 2),
+    operationTestMetadata0.withConfigurationKeysUnset(Set("delta.enableDeletionVectors").asJava))
 
-          // Remove the plain file and replace the other file's DV with one in the 100-999 bucket.
-          val updated = operationTestFile(2, Some(100L))
-          writeCommitWithOperation(
-            path,
-            1,
-            "DELETE",
-            createRemoveFileSingleAction(plain.toRemoveFileRow(true, Optional.of(1L))),
-            createRemoveFileSingleAction(old.toRemoveFileRow(true, Optional.of(1L))),
-            createAddFileSingleAction(updated.toRow))
-          val snapshot = table.getLatestSnapshot(engine)
-          // Table statistics only require file count and size, even with an incomplete base CRC.
-          engine.resetMetrics()
-          assert(snapshot.getStatistics.getTableStats(engine).get().getNumFiles === 1L)
-          assertMetrics(engine, Seq(1), Nil)
-          engine.resetMetrics()
-          snapshot.writeChecksum(engine, ChecksumWriteMode.FULL)
-          assertMetrics(engine, Seq(1, 0), Nil, expChecksumReadSet = Seq(0))
-          assert(readWrittenCrc(path, engine, 1).getDeletedRecordCountsHistogram
-            .get().getCounts.toSeq === Seq(0L, 0L, 0L, 1L).padTo(10, 0L))
+  private val dvHistogramCases = {
+    // v0 has 100 bytes but its CRC reports 1,000. v2 appends 200 bytes.
+    val fullReplay = 300L
+    val incremental = 1200L
+    Seq(dvEnabled, dvDisabled, dvUnsupported).flatMap { target =>
+      // (base DV state, base histogram present, target DV state, expected bytes in v2.crc)
+      Seq(
+        (dvEnabled, false, target, fullReplay),
+        (dvEnabled, true, target, incremental),
+        (dvDisabled, false, target, fullReplay),
+        (dvDisabled, true, target, incremental),
+        (dvUnsupported, false, target, incremental),
+        (dvUnsupported, true, target, incremental))
+    }
+  }
+
+  dvHistogramCases.foreach { case (baseState, baseHasHistogram, targetState, expectedBytes) =>
+    test(s"FULL CRC DVs ${baseState.name} -> ${targetState.name}, " +
+      s"baseHasHistogram=$baseHasHistogram") {
+      withTempDirAndEngine { (path, engine) =>
+        // GIVEN one plain file at v0. A present base histogram incorrectly counts seven.
+        writeCommitWithOperation(
+          path,
+          0,
+          "CREATE TABLE AS SELECT",
+          createProtocolSingleAction(baseState.protocol.toRow),
+          createMetadataSingleAction(baseState.metadata.toRow),
+          createAddFileSingleAction(operationTestFile(1, None).toRow))
+        val table = Table.forPath(engine, path)
+        table.getLatestSnapshot(engine).writeChecksum(engine, ChecksumWriteMode.FULL)
+        val crcPath = buildCrcPath(path, 0)
+        val base = OBJ_MAPPER.readTree(Files.readAllBytes(crcPath)).asInstanceOf[ObjectNode]
+        base.put("tableSizeBytes", 1000L)
+        val histogramField = "deletedRecordCountsHistogramOpt"
+        if (baseHasHistogram) {
+          val buckets = base.putObject(histogramField).putArray("deletedRecordCounts")
+          Seq(7L).padTo(10, 0L).foreach(n => buckets.add(n))
+        } else {
+          base.remove(histogramField)
         }
+        engine.getFileSystemClient.delete(crcPath.toString)
+        Files.write(crcPath, OBJ_MAPPER.writeValueAsBytes(base))
+
+        // WHEN v1 sets the target DV state and v2 appends a file under that protocol.
+        val dropsDv = baseState != dvUnsupported && targetState == dvUnsupported
+        writeCommitWithOperation(
+          path,
+          1,
+          if (dropsDv) "DROP FEATURE" else "SET TBLPROPERTIES",
+          createProtocolSingleAction(targetState.protocol.toRow),
+          createMetadataSingleAction(targetState.metadata.toRow))
+        val addedDvCardinality = Option.when(targetState == dvEnabled)(9L)
+        writeCommitWithOperation(
+          path,
+          2,
+          "WRITE",
+          createAddFileSingleAction(operationTestFile(2, addedDvCardinality).toRow))
+        table.getLatestSnapshot(engine).writeChecksum(engine, ChecksumWriteMode.FULL)
+
+        // THEN verify the replay path (full replay or incremental) by byte count
+        // and check the DV histogram.
+        val written = readWrittenCrc(path, engine, 2)
+        assert(written.getTableSizeBytes === expectedBytes)
+        assert(written.getProtocol === targetState.protocol)
+        assert(written.getMetadata === targetState.metadata)
+        val expectedHistogram = Option.when(targetState != dvUnsupported) {
+          val basePlainFiles = if (baseHasHistogram && baseState != dvUnsupported) 7L else 1L
+          val counts =
+            if (targetState == dvEnabled) Seq(basePlainFiles, 1L) else Seq(basePlainFiles + 1L)
+          new DeletedRecordCountsHistogram(counts.toArray.padTo(10, 0L))
+        }
+        assert(written.getDeletedRecordCountsHistogram === optionToJava(expectedHistogram))
       }
+    }
   }
 
   test("FULL CRC builds the DV histogram incrementally across a protocol upgrade") {
