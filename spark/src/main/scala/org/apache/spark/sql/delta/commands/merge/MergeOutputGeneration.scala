@@ -313,7 +313,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             rowIdColumnExpressionOpt ++
             rowCommitVersionColumnExpressionOpt ++
             Seq(incrCountExpr) ++
-            (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
+            (if (cdcEnabled) Some(CDC_TYPE_DELETE_LITERAL) else None)
         case _: DeltaMergeIntoNotMatchedBySourceDeleteClause =>
           val incrCountExpr = {
             if (shouldCountDeletedRows) {
@@ -334,7 +334,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             rowIdColumnExpressionOpt ++
             rowCommitVersionColumnExpressionOpt ++
             Seq(incrCountExpr) ++
-            (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
+            (if (cdcEnabled) Some(CDC_TYPE_DELETE_LITERAL) else None)
         case i: DeltaMergeIntoNotMatchedInsertClause =>
           val incrInsertedCountExpr = incrementMetricsAndReturnBool(
             names = Seq("numTargetRowsInserted"),
@@ -343,7 +343,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             rowIdColumnExpressionOpt.map(_ => Literal(null)) ++
             rowCommitVersionColumnExpressionOpt.map(_ => Literal(null)) ++
             Seq(incrInsertedCountExpr) ++
-            (if (cdcEnabled) Some(Literal(CDC_TYPE_INSERT)) else None)
+            (if (cdcEnabled) Some(CDC_TYPE_INSERT_LITERAL) else None)
       }
       ProcessedClause(clause.condition, actions)
     }
@@ -481,14 +481,14 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
 
     val cdcTypeCol = outputCols.last
     val cdcArray = Column(CaseWhen(Seq(
-      EqualNullSafe(expression(cdcTypeCol), Literal(CDC_TYPE_INSERT)) -> expression(array(
+      EqualNullSafe(expression(cdcTypeCol), CDC_TYPE_INSERT_LITERAL) -> expression(array(
         struct(outputCols: _*))),
 
       EqualNullSafe(expression(cdcTypeCol), Literal(CDC_TYPE_UPDATE_POSTIMAGE)) -> expression(array(
         struct(updatePreimageCdcOutput: _*),
         struct(outputCols: _*))),
 
-      EqualNullSafe(expression(cdcTypeCol), CDC_TYPE_DELETE) -> expression(array(
+      EqualNullSafe(expression(cdcTypeCol), CDC_TYPE_DELETE_LITERAL) -> expression(array(
         struct(deleteCdcOutput: _*)))),
 
       // If none of the CDC cases apply (true for purely rewritten target rows, dropped source
@@ -499,7 +499,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     val cdcToMainDataArray = Column(If(
       Or(
         EqualNullSafe(expression(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME")),
-          Literal(CDC_TYPE_INSERT)),
+          CDC_TYPE_INSERT_LITERAL),
         EqualNullSafe(expression(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME")),
           Literal(CDC_TYPE_UPDATE_POSTIMAGE))),
       expression(array(

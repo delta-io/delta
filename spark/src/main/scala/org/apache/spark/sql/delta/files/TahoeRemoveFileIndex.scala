@@ -72,7 +72,7 @@ class TahoeRemoveFileIndex(
           val newPartitionVals = r.partitionValues +
             (CDC_COMMIT_VERSION -> version.toString) +
             (CDC_COMMIT_TIMESTAMP -> tsOpt) +
-            (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE_STRING)
+            (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE)
           AddFile(
             path = r.path,
             partitionValues = newPartitionVals,

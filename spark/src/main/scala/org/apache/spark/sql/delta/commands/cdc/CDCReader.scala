@@ -65,9 +65,10 @@ object CDCReader extends CDCReaderImpl
   val CDC_TYPE_COLUMN_NAME = "_change_type" // emitted from data
   val CDC_COMMIT_VERSION = "_commit_version" // inferred by reader
   val CDC_COMMIT_TIMESTAMP = "_commit_timestamp" // inferred by reader
-  val CDC_TYPE_DELETE_STRING = "delete"
-  val CDC_TYPE_DELETE = Literal(CDC_TYPE_DELETE_STRING)
   val CDC_TYPE_INSERT = "insert"
+  val CDC_TYPE_DELETE = "delete"
+  val CDC_TYPE_INSERT_LITERAL = Literal(CDC_TYPE_INSERT)
+  val CDC_TYPE_DELETE_LITERAL = Literal(CDC_TYPE_DELETE)
   val CDC_TYPE_UPDATE_PREIMAGE = "update_preimage"
   val CDC_TYPE_UPDATE_POSTIMAGE = "update_postimage"
 

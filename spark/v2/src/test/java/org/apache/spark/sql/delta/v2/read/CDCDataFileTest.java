@@ -68,7 +68,7 @@ public class CDCDataFileTest {
 
     assertNull(cdcFile.getAddFile());
     assertSame(removeFile, cdcFile.getRemoveFile());
-    assertEquals(CDCReader.CDC_TYPE_DELETE_STRING(), cdcFile.getChangeType());
+    assertEquals(CDCReader.CDC_TYPE_DELETE(), cdcFile.getChangeType());
     assertEquals(99999L, cdcFile.getCommitTimestamp());
     assertEquals(4096, cdcFile.getFileSize());
     assertFalse(cdcFile.isAddCDCFile());
@@ -156,12 +156,12 @@ public class CDCDataFileTest {
     CDCDataFile cdcFile =
         CDCDataFile.fromDVDiff(
             addFile,
-            CDCReader.CDC_TYPE_DELETE_STRING(),
+            CDCReader.CDC_TYPE_DELETE(),
             /* commitTimestamp= */ 77777L,
             "inline-dv==");
 
     assertSame(addFile, cdcFile.getAddFile());
-    assertEquals(CDCReader.CDC_TYPE_DELETE_STRING(), cdcFile.getChangeType());
+    assertEquals(CDCReader.CDC_TYPE_DELETE(), cdcFile.getChangeType());
     assertEquals(77777L, cdcFile.getCommitTimestamp());
     assertEquals(1024, cdcFile.getFileSize());
     assertFalse(cdcFile.isAddCDCFile());

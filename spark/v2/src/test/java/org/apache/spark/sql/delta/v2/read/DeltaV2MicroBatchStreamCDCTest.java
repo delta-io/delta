@@ -1827,7 +1827,7 @@ class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
             .count();
     long deletes =
         dataFiles.stream()
-            .filter(f -> CDCReader.CDC_TYPE_DELETE_STRING().equals(f._2().getChangeType()))
+            .filter(f -> CDCReader.CDC_TYPE_DELETE().equals(f._2().getChangeType()))
             .count();
     assertEquals(1, inserts, "Expected 1 insert");
     assertEquals(1, deletes, "Expected 1 delete");
