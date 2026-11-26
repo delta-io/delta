@@ -31,6 +31,7 @@ import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.DeltaV2Mode
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.util.DeltaFileSystemOptions
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -78,13 +79,15 @@ class ApplyV2Streaming(
       val catalogTable = s.dataSource.catalogTable.get
       val ident =
         Identifier.of(catalogTable.identifier.database.toArray, catalogTable.identifier.table)
+      val caseSensitiveOptions =
+        DeltaFileSystemOptions.toCaseSensitiveMap(s.dataSource.options, session.sessionState.conf)
       val table =
         new DeltaV2Table(
           ident,
           catalogTable,
           // Use user-specified streaming options to override catalog storage properties.
           // DeltaV2Table handles merging catalogTable storage props internally.
-          ScalaUtils.toJavaMap(s.dataSource.options))
+          ScalaUtils.toJavaMap(caseSensitiveOptions))
       val catalog = catalogTable.identifier.catalog.map(
         session.sessionState.catalogManager.catalog)
 
@@ -96,7 +99,7 @@ class ApplyV2Streaming(
         source = None,
         sourceName = DeltaSourceUtils.NAME,
         table = table,
-        extraOptions = new CaseInsensitiveStringMap(s.dataSource.options.asJava),
+        extraOptions = new CaseInsensitiveStringMap(caseSensitiveOptions.asJava),
         output = toAttributes(table.schema),
         catalog = catalog,
         identifier = Some(ident),

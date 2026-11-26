@@ -2217,6 +2217,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS =
+    buildConf("legacy.lowercaseFileSystemOptions")
+      .internal()
+      .doc(
+        """When true, DataFrame option keys passed to Delta's Hadoop file system configuration and
+          |table resolution are lowercased, restoring the legacy behavior of case-insensitive map
+          |wrappers.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val CONVERT_EMPTY_TO_NULL_FOR_STRING_PARTITION_COL =
     buildConf("convertEmptyToNullForStringPartitionCol")
       .internal()

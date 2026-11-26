@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.commands.{
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.{PartitionUtils, Utils}
+import org.apache.spark.sql.delta.util.{DeltaFileSystemOptions, PartitionUtils, Utils}
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
 import org.json4s.jackson.Serialization
@@ -109,7 +109,13 @@ class DeltaDataSource
     val options = new CaseInsensitiveStringMap(properties)
     val path = options.get("path")
     if (path == null) throw DeltaErrors.pathNotSpecifiedException
-    DeltaTableV2(SparkSession.active, new Path(path), options = options.asScala.toMap)
+    val activeSession = SparkSession.active
+    DeltaTableV2(
+      activeSession,
+      new Path(path),
+      options =
+        DeltaFileSystemOptions.toCaseSensitiveMap(options, activeSession.sessionState.conf)
+          .asScala.toMap)
   }
 
   override def sourceSchema(
@@ -326,10 +332,10 @@ class DeltaDataSource
             DeltaDataSource.CDC_END_TIMESTAMP_KEY)
         }
       }
+      val conf = sqlContext.sparkSession.sessionState.conf
       val dfOptions: Map[String, String] =
-        if (sqlContext.sparkSession.sessionState.conf.getConf(
-            DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-          parameters ++ cdcOptions
+        if (conf.getConf(DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
+          DeltaFileSystemOptions.toCaseSensitiveMap(parameters, conf) ++ cdcOptions
         } else {
           cdcOptions.toMap
         }

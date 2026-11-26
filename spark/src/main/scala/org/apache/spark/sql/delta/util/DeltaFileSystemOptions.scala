@@ -20,6 +20,9 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Shared helpers for deriving Hadoop filesystem options from DataFrame options and catalog table
@@ -28,11 +31,51 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 object DeltaFileSystemOptions {
 
   /**
+   * Unwraps [[CaseInsensitiveMap]] to its underlying case-sensitive `originalMap` so that
+   * iterating or filtering the map does not lowercase keys, unless
+   * [[DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS]] is enabled.
+   */
+  def toCaseSensitiveMap(
+      options: Map[String, String],
+      conf: SQLConf = SQLConf.get): Map[String, String] = {
+    options match {
+      case ci: CaseInsensitiveMap[String @unchecked] =>
+        if (conf.getConf(DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS)) {
+          ci.iterator.toMap
+        } else {
+          ci.originalMap
+        }
+      case other => other
+    }
+  }
+
+  /**
+   * Unwraps [[CaseInsensitiveStringMap]] via `asCaseSensitiveMap()` so that converting or copying
+   * the map does not lowercase keys, unless [[DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS]]
+   * is enabled.
+   */
+  def toCaseSensitiveMap(
+      options: CaseInsensitiveStringMap,
+      conf: SQLConf): java.util.Map[String, String] = {
+    if (conf.getConf(DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS)) {
+      options
+    } else {
+      options.asCaseSensitiveMap()
+    }
+  }
+
+  def toCaseSensitiveMap(options: CaseInsensitiveStringMap): java.util.Map[String, String] = {
+    toCaseSensitiveMap(options, SQLConf.get)
+  }
+
+  /**
    * Retains only entries whose key starts with a recognised Hadoop filesystem
    * prefix ([[DeltaTableUtils.validDeltaTableHadoopPrefixes]]).
    */
-  private[delta] def filterHadoopOptions(options: Map[String, String]): Map[String, String] = {
-    options.filter { case (k, _) =>
+  private[delta] def filterHadoopOptions(
+      options: Map[String, String],
+      conf: SQLConf = SQLConf.get): Map[String, String] = {
+    toCaseSensitiveMap(options, conf).filter { case (k, _) =>
       DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
     }
   }
@@ -58,9 +101,9 @@ object DeltaFileSystemOptions {
       options: Map[String, String],
       catalogTableOpt: Option[CatalogTable] = None): Map[String, String] = {
     val catalogStorageProps = extractCatalogTableFsOptions(catalogTableOpt)
-    if (spark.sessionState.conf.getConf(
-        DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-      catalogStorageProps ++ filterHadoopOptions(options)
+    val conf = spark.sessionState.conf
+    if (conf.getConf(DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
+      catalogStorageProps ++ filterHadoopOptions(options, conf)
     } else {
       catalogStorageProps
     }

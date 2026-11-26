@@ -18,14 +18,19 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.DeltaFileSystemOptions
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DeltaDataFrameHadoopOptionsSuite extends QueryTest
@@ -43,7 +48,8 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
   private def fakeFileSystemOptions: Map[String, String] = {
     Map(
       "fs.fake.impl" -> classOf[FakeFileSystem].getName,
-      "fs.fake.impl.disable.cache" -> "true"
+      "fs.fake.impl.disable.cache" -> "true",
+      "fs.fake.camelCaseKey" -> "camelCaseValue"
     )
   }
 
@@ -177,53 +183,144 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
     withClue(s"$desc: ") {
       clearCachedDeltaLogToForceReload()
       op
-      val deltaLog = DeltaLog.forTable(spark, new Path(path), fakeFileSystemOptions)
+      val cachedLogs =
+        DeltaLog.getOrCreateCache(spark.sessionState.conf).asMap().values().asScala.toSeq
+      assert(
+        cachedLogs.size == 1,
+        s"Expected 1 cached DeltaLog after operation, found ${cachedLogs.size}")
+      val deltaLog = cachedLogs.head
       assert(
         deltaLog.options("fs.fake.impl") == classOf[FakeFileSystem].getName,
         "fs.fake.impl was not propagated to DeltaLog.options")
       assert(
         deltaLog.newDeltaHadoopConf().get("fs.fake.impl") == classOf[FakeFileSystem].getName,
         "fs.fake.impl was not propagated to Hadoop configuration")
+      assert(
+        deltaLog.options("fs.fake.camelCaseKey") == "camelCaseValue",
+        "mixed-case fs.* option key was not preserved in DeltaLog.options")
+      assert(
+        deltaLog.newDeltaHadoopConf().get("fs.fake.camelCaseKey") == "camelCaseValue",
+        "mixed-case fs.* option key was not preserved in Hadoop configuration")
+    }
+  }
+
+  test("filterHadoopOptions preserves mixed-case keys from CaseInsensitiveMap") {
+    val options = CaseInsensitiveMap(Map(
+      "fs.azure.skipUserGroupMetadataDuringInitialization" -> "true",
+      "dfs.datatransfer.server.fixedBlackList.file" -> "/etc/blacklist",
+      "FS.uppercasePrefix" -> "ignored",
+      "mergeSchema" -> "true"
+    ))
+    val filtered = DeltaFileSystemOptions.filterHadoopOptions(options)
+    assert(filtered == Map(
+      "fs.azure.skipUserGroupMetadataDuringInitialization" -> "true",
+      "dfs.datatransfer.server.fixedBlackList.file" -> "/etc/blacklist"
+    ))
+    withSQLConf(DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS.key -> "true") {
+      assert(DeltaFileSystemOptions.filterHadoopOptions(options) == Map(
+        "fs.azure.skipusergroupmetadataduringinitialization" -> "true",
+        "dfs.datatransfer.server.fixedblacklist.file" -> "/etc/blacklist",
+        "fs.uppercaseprefix" -> "ignored"
+      ))
+    }
+  }
+
+  test("legacy.lowercaseFileSystemOptions restores lowercased keys across DataFrame operations") {
+    withSQLConf(DeltaSQLConf.LEGACY_LOWERCASE_FILE_SYSTEM_OPTIONS.key -> "true") {
+      withTempPath { dir =>
+        val path = fakeFileSystemPath(dir)
+        val misCasedOptions = Map(
+          "fs.fake.Impl" -> classOf[FakeFileSystem].getName,
+          "fs.fake.Impl.Disable.Cache" -> "true"
+        )
+        clearCachedDeltaLogToForceReload()
+        spark.range(2).write.format("delta").options(misCasedOptions).save(path)
+        clearCachedDeltaLogToForceReload()
+        assert(spark.read.format("delta").options(misCasedOptions).load(path).count() == 2)
+        withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "delta") {
+          clearCachedDeltaLogToForceReload()
+          assert(spark.read.format("delta").options(misCasedOptions).load(path).count() == 2)
+        }
+      }
     }
   }
 
   test("all operations should propagate Hadoop file system options") {
-    withTempPaths(/* numPaths = */ 2) { case Seq(inputDir, checkpointDir) =>
-      val path = fakeFileSystemPath(inputDir)
+    withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+      withTempPaths(/* numPaths = */ 2) { case Seq(inputDir, checkpointDir) =>
+        val path = fakeFileSystemPath(inputDir)
 
-      // Seed the table
-      spark.range(2).write.format("delta")
-        .options(fakeFileSystemOptions).save(path)
+        // Seed the table
+        spark.range(2).write.format("delta")
+          .options(fakeFileSystemOptions).save(path)
 
-      withOptionsPropagationCheck(path, "batch write (overwrite)") {
-        spark.range(3).write.format("delta")
-          .options(fakeFileSystemOptions).mode("overwrite").save(path)
-      }
+        withOptionsPropagationCheck(path, "batch write (overwrite)") {
+          spark.range(3).write.format("delta")
+            .options(fakeFileSystemOptions).mode("overwrite").save(path)
+        }
 
-      withOptionsPropagationCheck(path, "batch read") {
-        assert(spark.read.format("delta")
-          .options(fakeFileSystemOptions).load(path).count() == 3)
-      }
+        withOptionsPropagationCheck(path, "batch read") {
+          assert(spark.read.format("delta")
+            .options(fakeFileSystemOptions).load(path).count() == 3)
+        }
 
-      withOptionsPropagationCheck(path, "batch append") {
-        spark.range(1).write.format("delta")
-          .options(fakeFileSystemOptions).mode("append").save(path)
-      }
+        withOptionsPropagationCheck(path, "batch read (V1 createRelation)") {
+          withSQLConf(SQLConf.USE_V1_SOURCE_LIST.key -> "delta") {
+            assert(spark.read.format("delta")
+              .options(fakeFileSystemOptions).load(path).count() == 3)
+          }
+        }
 
-      withOptionsPropagationCheck(path, "streaming read") {
-        val query = spark.readStream.format("delta")
-          .options(fakeFileSystemOptions)
-          .load(path)
-          .writeStream
-          .format("memory")
-          .queryName("options_propagation_test")
-          .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .start()
-        try {
-          query.processAllAvailable()
-          assert(spark.table("options_propagation_test").count() == 4)
-        } finally {
-          query.stop()
+        withOptionsPropagationCheck(path, "batch read with VersionAsOf") {
+          assert(spark.read.format("delta")
+            .options(fakeFileSystemOptions)
+            .option("VersionAsOf", 0)
+            .load(path)
+            .count() == 2)
+        }
+
+        withOptionsPropagationCheck(path, "CDF read") {
+          assert(spark.read.format("delta")
+            .options(fakeFileSystemOptions)
+            .option("readChangeFeed", "true")
+            .option("startingVersion", 0)
+            .load(path)
+            .count() == 7)
+        }
+
+        withTable("options_propagation_tbl") {
+          sql(
+            s"CREATE TABLE options_propagation_tbl USING delta " +
+              s"LOCATION '${inputDir.getCanonicalPath}'")
+          assert(
+            spark.read.option("VersionAsOf", 0).table("options_propagation_tbl").count() == 2)
+          assert(spark.read
+            .option("ReadChangeFeed", "true")
+            .option("StartingVersion", 0)
+            .table("options_propagation_tbl")
+            .count() == 7)
+        }
+
+        withOptionsPropagationCheck(path, "batch append") {
+          spark.range(1).write.format("delta")
+            .options(fakeFileSystemOptions).mode("append").save(path)
+        }
+
+        withOptionsPropagationCheck(path, "streaming read") {
+          val query = spark.readStream.format("delta")
+            .options(fakeFileSystemOptions)
+            .load(path)
+            .writeStream
+            .format("memory")
+            .queryName("options_propagation_test")
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .start()
+          try {
+            query.processAllAvailable()
+            assert(spark.table("options_propagation_test").count() == 4)
+          } finally {
+            query.stop()
+          }
         }
       }
     }
