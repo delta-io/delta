@@ -128,6 +128,39 @@ class GeometryParquetReaderSuite
     }
   }
 
+  // Unlike geometry, the Parquet writer collects no bounding box for a geography column, so a
+  // file has no min/max stat for it, and its null count and row count are still written. Readers
+  // must therefore treat a missing geography min/max as "cannot skip".
+  test("GeographyType: no bounding box stats are written, only null and row counts") {
+    withTempDir { tempDir =>
+      val targetDir = tempDir.getAbsolutePath
+      val colType = new GeographyType("OGC:CRS84", "spherical")
+
+      val values: Seq[Option[Array[Byte]]] = Seq(
+        Some(pointWkb(10.0, -20.0)),
+        None,
+        Some(pointWkb(-5.0, 30.0)),
+        Some(pointWkb(15.0, 0.0)))
+
+      val geogVec = makeGeometryVector(colType, values)
+      val statsCol = new Column("col_0")
+      val fileStatuses = writeToParquetUsingKernel(
+        Seq(columnarBatch(geogVec).toFiltered),
+        targetDir,
+        statsColumns = Seq(statsCol))
+
+      assert(fileStatuses.size == 1)
+      val stats = fileStatuses.head.getStatistics
+      assert(stats.isPresent, "stats should be present")
+
+      val fileStats = stats.get()
+      assert(fileStats.getNumRecords == 4)
+      assert(fileStats.getNullCount.get(statsCol) == 1L)
+      assert(fileStats.getMinValues.get(statsCol) == null)
+      assert(fileStats.getMaxValues.get(statsCol) == null)
+    }
+  }
+
   private def makeGeometryVector(
       colType: DataType,
       values: Seq[Option[Array[Byte]]]): io.delta.kernel.data.ColumnVector = {
