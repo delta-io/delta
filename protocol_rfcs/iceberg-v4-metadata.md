@@ -392,7 +392,7 @@ Only `EXISTING`, `ADDED`, and `MODIFIED` entries are live (visible to scans). `D
 - `DELETED` (2): Removed in this commit. Not live.
 - `REPLACED` (3): Superseded (e.g., DV added/changed). Not live. A
   new DATA entry with updated metadata exists elsewhere in the tree as the live entry for this file path.
-- `MODIFIED` (4): When a data file's deletion vector is updated. Live.
+- `MODIFIED` (4): When a data file's deletion vector is updated, or when a `DATA_MANIFEST` entry's `manifest_info.dv` changes. Live.
 
 Non-live entries are transient: they are dropped in the next manifest commit that rewrites the affected manifest (root or leaf).
 
@@ -415,7 +415,7 @@ The fields that support inheritance:
 
 Root manifest entries must always have explicit (non-null) tracking values since there is nothing above them to inherit from.
 
-Leaf manifests are immutable. Entries stay `ADDED` with null tracking fields forever. The `DATA_MANIFEST` entry in the root tracks the manifest's lifecycle (`ADDED` -> `EXISTING` across commits), but individual entries in the leaf do not change. This allows writers to create a leaf manifest once and reuse it across commit retries. Only the root manifest needs to be updated on retry.
+Leaf manifests are immutable. Entries stay `ADDED` with null tracking fields forever. The `DATA_MANIFEST` entry in the root tracks the manifest's lifecycle (`ADDED` -> `EXISTING` across commits, or `MODIFIED` in a commit that changes its `manifest_info.dv`), but individual entries in the leaf do not change. This allows writers to create a leaf manifest once and reuse it across commit retries. Only the root manifest needs to be updated on retry.
 
 After manifest compaction, inherited values must be materialized in the new leaf manifest with `status=EXISTING`, since compacted entries originate from different commits and cannot share a single inherited value from the root.
 
@@ -629,14 +629,14 @@ MDVs reduce the write amplification: instead of rewriting a leaf manifest to rem
 
 MDVs are stored in `manifest_info.dv` on `DATA_MANIFEST` entries in the root manifest. See [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs) for field definitions and CDF bitmap semantics.
 
-Example root manifest entry with MDV:
+Example root manifest entry in the commit that marks positions 2 and 17 in its MDV:
 
 ```
 DATA_MANIFEST entry:
   content_type: 3 (DATA_MANIFEST)
   location: "metadata/leaf-m1.parquet"
   tracking:
-    status: EXISTING
+    status: MODIFIED
   manifest_info:
     dv: <bitmap marking positions 2, 17>
 ```
@@ -677,6 +677,8 @@ When `adaptiveMetadata` is supported and active, writers must:
    - Group by manifest path
    - Add each superseded position to the manifest_info.dv bitmap
      (cumulative; readers use it to skip invalidated entries)
+   - Set the status of each DATA_MANIFEST entry whose
+     manifest_info.dv changed to MODIFIED
    - Set a per-commit CDF tracking bitmap only for data changes:
      tracking.deleted_positions for a pure delete (remove with no
      paired add), tracking.replaced_positions for a DV update (remove
