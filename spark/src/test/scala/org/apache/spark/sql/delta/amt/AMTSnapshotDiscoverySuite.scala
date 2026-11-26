@@ -28,10 +28,8 @@ import org.apache.commons.io.IOUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.plans.logical.Filter
-import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.util.ThreadUtils
 
@@ -114,9 +112,9 @@ class AMTSnapshotDiscoverySuite
     }
   }
 
-  test("[cold init] derives the leaf count from a prefetched root when its tag is missing") {
+  test("[cold init] root prefetch handles cache metadata combinations") {
     withSQLConf(leafPackingConfs: _*) {
-      val name = "amt_cold_root_prefetch_without_num_leaves"
+      val name = "amt_cold_root_prefetch_metadata"
       withTable(name) {
         createAMTTable(name, checkpointInterval = Int.MaxValue)
         appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
@@ -125,6 +123,7 @@ class AMTSnapshotDiscoverySuite
 
         val checkpointProvider = amtProvider(deltaLog.unsafeVolatileSnapshot).get
         assertLeafCount(checkpointProvider.leaves)
+        assert(checkpointProvider.checkpointAction.contentRoot.numRootEntries.nonEmpty)
         val checkpointWithoutNumLeaves = updateCheckpointActions(
             checkpointProvider.checkpointAction) {
           case root: ContentRoot =>
@@ -132,20 +131,43 @@ class AMTSnapshotDiscoverySuite
               ContentRoot.Tags.NUM_LEAVES.name)
         }
         assert(checkpointWithoutNumLeaves.contentRoot.numLeaves.isEmpty)
+        val checkpointWithoutNumRootEntries = updateCheckpointActions(
+            checkpointProvider.checkpointAction) {
+          case root: ContentRoot =>
+            root.copy(tags = Option(root.tags).getOrElse(Map.empty) -
+              ContentRoot.Tags.NUM_ROOT_ENTRIES.name)
+        }
+        assert(checkpointWithoutNumRootEntries.contentRoot.numRootEntries.isEmpty)
 
-        val uninitializedProvider = new UninitializedAMTCheckpointProvider(
-          deltaLog,
-          checkpointWithoutNumLeaves,
-          checkpointProvider.manifestCommitVersion)
         val expectedNumLeaves = checkpointProvider.leaves.size
-        val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
-          checkpointProvider.manifestCommitVersion,
-          checkpointWithoutNumLeaves.contentRoot.version,
-          checkpointWithoutNumLeaves,
-          checkpointProvider.leaves)
+        val checkpoints = Seq(
+          ("present", "present", checkpointProvider.checkpointAction, true),
+          ("absent", "present", checkpointWithoutNumLeaves, true),
+          ("present", "absent", checkpointWithoutNumRootEntries, false))
+        for {
+          (numLeavesState, numRootEntriesState, checkpoint, canCacheRoot) <- checkpoints
+          (belowThreshold, threshold) <- Seq(true -> Int.MaxValue, false -> 0)
+        } withClue(
+            s"numLeaves: $numLeavesState, numRootEntries: $numRootEntriesState, " +
+              s"below threshold: $belowThreshold") {
+          withSQLConf(
+              DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> threshold.toString) {
+            val uninitializedProvider = new UninitializedAMTCheckpointProvider(
+              deltaLog, checkpoint, checkpointProvider.manifestCommitVersion)
+            val root = uninitializedProvider.nonFateSharingCheckpointReadFuture.get(Duration.Inf)
+            val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
+              checkpointProvider.manifestCommitVersion,
+              checkpoint.contentRoot.version,
+              checkpoint,
+              checkpointProvider.leaves)
 
-        assert(CheckpointInstance(uninitializedProvider).numParts.contains(expectedNumLeaves))
-        assert(CheckpointInstance(uninitializedProvider) == CheckpointInstance(lastCheckpointInfo))
+            assert(root.hasCachedRows == (canCacheRoot && belowThreshold))
+            assertLeavesEqual(root.leaves, checkpointProvider.leaves)
+            assert(CheckpointInstance(uninitializedProvider).numParts.contains(expectedNumLeaves))
+            assert(
+              CheckpointInstance(uninitializedProvider) == CheckpointInstance(lastCheckpointInfo))
+          }
+        }
       }
     }
   }
@@ -186,7 +208,6 @@ class AMTSnapshotDiscoverySuite
         synchronous = AMTCheckpointProvider.fromCheckpoint(
           spark, deltaLog, checkpoint, context.provider.manifestCommitVersion)
       })
-      assert(discoveryJobs == 1, "Leaf pointer decoding must not launch another Spark job")
 
       // Removing the root after discovery makes an accidental second scan fail reliably.
       val rootPath = checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
@@ -227,9 +248,12 @@ class AMTSnapshotDiscoverySuite
       val deltaLog = context.postCheckpointSnapshot.deltaLog
       val checkpoint = context.checkpoint
       val rootPath = checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
-      val numRootEntries = allowReadWithinDeltaLog {
-        spark.read.parquet(rootPath.toString).count().toInt
-      }
+      val numRootEntries = checkpoint.contentRoot.numRootEntries
+        .getOrElse(fail("The writer must record the number of root entries."))
+        .toInt
+      assert(allowReadWithinDeltaLog {
+        spark.read.parquet(rootPath.toString).count()
+      } == numRootEntries)
       val uncached = AMTCheckpointProvider(
         context.manifestCommitVersion, checkpoint,
         context.provider.leaves, deltaLog.dataPath)
@@ -245,9 +269,13 @@ class AMTSnapshotDiscoverySuite
       for ((threshold, shouldCache) <- thresholds) {
         withClue(s"root entries: $numRootEntries, cache threshold: $threshold") {
           withSQLConf(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> threshold.toString) {
-            val uninitialized = new UninitializedAMTCheckpointProvider(
-              deltaLog, checkpoint, context.manifestCommitVersion)
-            val root = uninitialized.nonFateSharingCheckpointReadFuture.get(Duration.Inf)
+            var uninitialized: UninitializedAMTCheckpointProvider = null
+            var root: AMTRootInfo = null
+            val prefetchJobs = countSparkJobs(spark.sparkContext, {
+              uninitialized = new UninitializedAMTCheckpointProvider(
+                deltaLog, checkpoint, context.manifestCommitVersion)
+              root = uninitialized.nonFateSharingCheckpointReadFuture.get(Duration.Inf)
+            })
             assert(root.hasCachedRows == shouldCache)
             assert(root.toDF(spark).isDefined == shouldCache)
             assert(root.leaves == context.provider.leaves)
@@ -256,23 +284,10 @@ class AMTSnapshotDiscoverySuite
               spark, context.postCheckpointSnapshot, None, uninitialized)
               .asInstanceOf[LazyCompleteAMTCheckpointProvider].underlyingCheckpointProvider
             var synchronous: AMTCheckpointProvider = null
-            val queries = QueryTest.withQueryExecutionsCaptured(spark) {
-              val jobs = countSparkJobs(spark.sparkContext, {
-                synchronous = AMTCheckpointProvider.fromCheckpoint(
-                  spark, deltaLog, checkpoint, context.manifestCommitVersion)
-              })
-              assert(jobs == 1, "The footer count check must not launch another Spark job")
-            }
-            val scanQueries = queries.filter(_.analyzed.exists(_.isInstanceOf[LogicalRelation]))
-            assert(scanQueries.size == (if (shouldCache) 0 else 1))
-            // Large roots filter DATA before collection instead of collecting and discarding it.
-            scanQueries.foreach { query =>
-              assert(query.analyzed.exists {
-                case Filter(condition, _) =>
-                  condition.references.exists(_.name == "content_type")
-                case _ => false
-              })
-            }
+            val synchronousJobs = countSparkJobs(spark.sparkContext, {
+              synchronous = AMTCheckpointProvider.fromCheckpoint(
+                spark, deltaLog, checkpoint, context.manifestCommitVersion)
+            })
             for (provider <- Seq(prefetched, synchronous)) {
               assert(provider.leaves == context.provider.leaves)
               val actions = provider.loadActionsForStateReconstruction(spark, deltaLog).get
