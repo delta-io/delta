@@ -131,7 +131,7 @@ object DeltaFileProviderUtils extends DeltaLogging {
    * concurrently on the driver delta-log thread pool; results are returned in the input order.
    * Only derive `A` from `commits`.
    */
-  protected def parallelReadDeltaFiles[A](
+  private[delta] def parallelReadDeltaFiles[A](
       spark: SparkSession,
       commits: Seq[DeltaSingleCommit])(f: DeltaSingleCommit => A): Seq[A] =
     readThreadPool.parallelMap(spark, commits)(f).toSeq

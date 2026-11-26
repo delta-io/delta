@@ -233,6 +233,8 @@ abstract class LazyCompleteAMTCheckpointProvider(
 trait AMTCheckpointProviderImpl extends CheckpointProvider {
   self: AMTCheckpointProvider =>
 
+  import AMTManifestReader.SingleManifest
+
   /** The table version the manifest tree describes. */
   def checkpointVersion: Long = checkpointAction.version
 
@@ -510,7 +512,11 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       dataChange: Boolean,
       commitTimestamp: Long,
       ordered: Boolean = true): Seq[FileAction] =
-    toChangeActions(reconstructChangeFiles(spark, deltaLog), dataChange, commitTimestamp, ordered)
+    toSingleActions(
+        manifestReader.loadFilteredChangeEntries(spark, deltaLog, changeManifests),
+        dataChange,
+        commitTimestamp,
+        ordered)
       .collect().toSeq
       .map(_.unwrap.asInstanceOf[FileAction])
 
@@ -523,17 +529,21 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       deltaLog: DeltaLog,
       dataChange: Boolean,
       commitTimestamp: Long): Iterator[FileAction] =
-    toChangeActions(
-        reconstructChangeFiles(spark, deltaLog), dataChange, commitTimestamp, ordered = true)
+    toSingleActions(
+        manifestReader.loadFilteredChangeEntries(spark, deltaLog, changeManifests),
+        dataChange,
+        commitTimestamp,
+        ordered = true)
       .toLocalIterator().asScala
       .map(_.unwrap.asInstanceOf[FileAction])
 
   /**
-   * The changed files of the commit this tree describes.
+   * The manifests that record the changes of the commit this tree describes:
+   *  - the root, whose DATA entries record the changes to root-resident files;
+   *  - the leaves the commit wrote, except those holding only EXISTING entries;
+   *  - the carried leaves the commit deleted or replaced entries of, read only at those positions.
    */
-  private[amt] def reconstructChangeFiles(
-      spark: SparkSession,
-      deltaLog: DeltaLog): DataFrame = {
+  private[amt] def changeManifests: Seq[SingleManifest] = {
     val addedLeaves = leaves.filter { leaf =>
       leaf.tracking.status == Tracking.Status.Added && !holdsOnlyExistingEntries(leaf)
     }
@@ -541,19 +551,29 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     val changedPositionsLeaves = leaves.filter(_.changedPositionsBitmaps.nonEmpty)
     assert(changedPositionsLeaves.forall(_.tracking.status != Tracking.Status.Added))
 
-    manifestReader.loadChangeFiles(spark, deltaLog, rootFile, addedLeaves, changedPositionsLeaves)
+    val rootManifest =
+      SingleManifest(manifestCommitVersion, rootFile, leafOpt = None, changedPositions = false)
+    val addedLeafManifests = addedLeaves.map { leaf =>
+      SingleManifest(
+        manifestCommitVersion, leaf.toFileStatus(tableRoot), Some(leaf), changedPositions = false)
+    }
+    val changedPositionsLeafManifests = changedPositionsLeaves.map { leaf =>
+      SingleManifest(
+        manifestCommitVersion, leaf.toFileStatus(tableRoot), Some(leaf), changedPositions = true)
+    }
+    rootManifest +: (addedLeafManifests ++ changedPositionsLeafManifests)
   }
 
   /**
-   * The AddFile and RemoveFile actions of [[reconstructChangeFiles]], stamped
+   * The AddFile and RemoveFile actions of `changeEntries`, read from [[changeManifests]], stamped
    * with the commit-level `dataChange` and `commitTimestamp`, and optionally ordered.
    */
-  private def toChangeActions(
-      changeFiles: DataFrame,
+  private def toSingleActions(
+      changeEntries: DataFrame,
       dataChange: Boolean,
       commitTimestamp: Long,
       ordered: Boolean): Dataset[SingleAction] =
-    manifestReader.toChangeActions(changeFiles, dataChange, commitTimestamp, ordered)
+    manifestReader.toSingleActions(changeEntries, dataChange, commitTimestamp, ordered)
 
   /**
    * Whether every entry of `leaf` is EXISTING, per its `manifest_info` counts. Such a leaf holds
