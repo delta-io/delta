@@ -97,6 +97,8 @@ case class WriteIntoDelta(
   with DeltaCommand
   with WriteIntoDeltaLike {
 
+  override protected def shouldCheckMissingStructFields: Boolean = true
+
   override protected val canMergeSchema: Boolean = options.canMergeSchema
 
   private def isOverwriteOperation: Boolean = mode == SaveMode.Overwrite

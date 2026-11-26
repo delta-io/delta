@@ -23,13 +23,16 @@ import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.util.PartitionUtils
+import org.apache.spark.sql.delta.util.Utils.withBreakingChangeRollout
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
+import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.types.{ArrayType, AtomicType, DataType, MapType, StructType}
 
 /**
@@ -41,6 +44,9 @@ trait ImplicitMetadataOperation extends DeltaLogging {
 
   protected val canMergeSchema: Boolean
   protected val canOverwriteSchema: Boolean
+
+  // Batch writers opt in; streaming can pass schemas merged against an earlier snapshot.
+  protected def shouldCheckMissingStructFields: Boolean = false
 
   private def normalizePartitionColumns(
       spark: SparkSession,
@@ -83,6 +89,23 @@ trait ImplicitMetadataOperation extends DeltaLogging {
 
     // File Source generated columns are not added to the stored schema.
     dataSchema = dropGeneratedMetadataColumns(dataSchema)
+
+    if (shouldCheckMissingStructFields && txn.deltaLog.tableExists &&
+        !(isOverwriteMode && canOverwriteSchema)) {
+      withBreakingChangeRollout(
+        DeltaSQLConf.MissingStructFieldsCheckMode, txn.deltaLog, spark) {
+        val missingFields = SchemaUtils.findMissingNestedFields(txn.metadata.schema, dataSchema)
+        if (missingFields.nonEmpty) {
+          val parent = missingFields.head.init
+          val tableName = txn.catalogTable.map(_.identifier.quotedString)
+            .getOrElse(QueryCompilationErrors.toSQLId(Seq("delta", txn.dataPath.toString)))
+          val missingChildren = missingFields.filter(_.init == parent)
+            .map(path => QueryCompilationErrors.toSQLId(Seq(path.last))).mkString(", ")
+          throw QueryCompilationErrors.incompatibleDataToTableStructMissingFieldsError(
+            tableName, QueryCompilationErrors.toSQLId(parent), missingChildren)
+        }
+      }
+    }
 
     val mergedSchema = mergeSchema(spark, txn, dataSchema, isOverwriteMode, canOverwriteSchema)
     val normalizedPartitionCols =
