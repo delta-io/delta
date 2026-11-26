@@ -1940,7 +1940,7 @@ class InCommitTimestampWithCatalogOwnedBatch5Suite extends InCommitTimestampSuit
 
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(5)
 
-  test("getActiveCommitAtTime works correctly within catalog owned range") {
+  test("getActiveCommitAtTime works correctly within catalog-managed range") {
     CatalogManagedCommitCoordinatorProvider.clearBuilders()
     CatalogManagedCommitCoordinatorProvider.registerBuilder(
       catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,

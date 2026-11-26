@@ -3909,29 +3909,6 @@
     ],
     "sqlState" : "22005"
   },
-  "DELTA_V2_INTERNAL_ERROR" : {
-    "message" : [
-      "An internal error occurred in the Delta V2 connector:"
-    ],
-    "subClass" : {
-      "ILLEGAL_ARGUMENT" : {
-        "message" : [
-          "An operation received a value that is not valid. This is a bug."
-        ]
-      },
-      "ILLEGAL_STATE" : {
-        "message" : [
-          "An operation reached a state that is not valid. This is a bug."
-        ]
-      },
-      "UNSUPPORTED_OPERATION" : {
-        "message" : [
-          "An operation is not supported. This is a bug."
-        ]
-      }
-    },
-    "sqlState" : "XXKDS"
-  },
   "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE" : {
     "message" : [
       "Retention period for Vacuum can't be less than 0 hours."

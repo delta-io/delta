@@ -754,11 +754,11 @@ class OptimisticTransactionSuite
       withSQLConf(
           DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> numRetries,
           DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> numNonConflictRetries) {
-        withTable("retryable_catalog_owned") {
-          sql(s"CREATE TABLE retryable_catalog_owned (id BIGINT) USING delta TBLPROPERTIES " +
+        withTable("retryable_catalog_managed") {
+          sql(s"CREATE TABLE retryable_catalog_managed (id BIGINT) USING delta TBLPROPERTIES " +
             s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
           val catalogTable = spark.sessionState.catalog.getTableMetadata(
-            TableIdentifier("retryable_catalog_owned"))
+            TableIdentifier("retryable_catalog_managed"))
           val log = DeltaLog.forTable(spark, catalogTable)
           assert(log.update(catalogTableOpt = Some(catalogTable)).isCatalogManaged)
           val testTxn = log.startTransaction(catalogTableOpt = Some(catalogTable))
@@ -822,11 +822,11 @@ class OptimisticTransactionSuite
       withSQLConf(
           DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> "100",
           DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> "10") {
-        withTable("file_exists_catalog_owned") {
-          sql(s"CREATE TABLE file_exists_catalog_owned (id BIGINT) USING delta TBLPROPERTIES " +
+        withTable("file_exists_catalog_managed") {
+          sql(s"CREATE TABLE file_exists_catalog_managed (id BIGINT) USING delta TBLPROPERTIES " +
             s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
           val catalogTable = spark.sessionState.catalog.getTableMetadata(
-            TableIdentifier("file_exists_catalog_owned"))
+            TableIdentifier("file_exists_catalog_managed"))
           val log = DeltaLog.forTable(spark, catalogTable)
           assert(log.update(catalogTableOpt = Some(catalogTable)).isCatalogManaged)
           val testTxn = log.startTransaction(catalogTableOpt = Some(catalogTable))
@@ -1270,7 +1270,7 @@ class OptimisticTransactionSuite
 
   BOOLEAN_DOMAIN.foreach { conflict =>
     test(s"commitLarge should handle Commit Failed Exception with conflict: $conflict") {
-      val tableName = "commit_large_catalog_owned"
+      val tableName = "commit_large_catalog_managed"
       CatalogManagedCommitCoordinatorProvider.clearBuilders()
       try {
         withTable(tableName) {

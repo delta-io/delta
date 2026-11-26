@@ -35,6 +35,7 @@ import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
 import org.apache.spark.SparkEnv
+import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.internal.Logging
 import org.apache.spark.storage.BlockId
 
@@ -877,11 +878,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       }
     }
 
-    val encodedTablePath = DeltaSharingLogFileSystem.encode(customTablePath)
-
-    // Always use 0.json for snapshot queries.
-    val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
-    val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString
+    val (deltaLogPath, jsonFilePath) = snapshotDeltaLogPathsAtVersionZero(customTablePath)
     DeltaSharingUtils.overrideIteratorBlock[String](
       getDeltaSharingLogBlockId(jsonFilePath),
       jsonLogSeq.result().toIterator
@@ -905,6 +902,36 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       minVersion = 0,
       maxVersion = 0
     )
+  }
+
+  /** Paths of the `_delta_log` listing and `0.json` blocks written for `customTablePath`. */
+  private def snapshotDeltaLogPathsAtVersionZero(customTablePath: String): (String, String) = {
+    val encodedTablePath = DeltaSharingLogFileSystem.encode(customTablePath)
+    val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
+    val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString
+    (deltaLogPath, jsonFilePath)
+  }
+
+  /**
+   * Whether the snapshot log for `customTablePath` can be reused: its urls are in
+   * [[CachedTableManager]] and its blocks in the BlockManager. False on any error.
+   */
+  def isSnapshotDeltaLogReusable(customTablePath: String): Boolean = {
+    try {
+      // Throws if the urls are not cached.
+      CachedTableManager.INSTANCE.getQueryStateSize(customTablePath)
+      val (deltaLogPath, jsonFilePath) = snapshotDeltaLogPathsAtVersionZero(customTablePath)
+      val blockManager = SparkEnv.get.blockManager
+      // getStatus takes no read lock and doesn't deserialize the block.
+      Seq(deltaLogPath, jsonFilePath).forall { path =>
+        blockManager.getStatus(getDeltaSharingLogBlockId(path)).isDefined
+      }
+    } catch {
+      case _: IllegalStateException => false // The urls are not cached.
+      case NonFatal(e) =>
+        logWarning(log"Failed to check whether a snapshot delta log is reusable", e)
+        false
+    }
   }
 
   // Create a delta log directory with protocol and metadata at version 0.

@@ -36,7 +36,6 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
-import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
@@ -441,20 +440,16 @@ class DeltaV2SnapshotSuite extends DeltaSQLCommandTest {
       val error = intercept[IllegalStateException] {
         DeltaV2Snapshot.getKernelSnapshot(snapshot)
       }
-      checkError(error.asInstanceOf[SparkThrowable],
-        "DELTA_V2_INTERNAL_ERROR.ILLEGAL_STATE", "XXKDS", Map.empty[String, String])
-      assert(error.getCause.getMessage.contains("Expected a DeltaV2Snapshot"))
-      assert(error.getCause.getMessage.contains(snapshot.getClass.getName))
+      assert(error.getMessage.contains("Expected a DeltaV2Snapshot"))
+      assert(error.getMessage.contains(snapshot.getClass.getName))
     }
   }
 
   test("getKernelSnapshot rejects null") {
-    val error = intercept[IllegalArgumentException] {
+    val error = intercept[NullPointerException] {
       DeltaV2Snapshot.getKernelSnapshot(null)
     }
-    checkError(error.asInstanceOf[SparkThrowable],
-      "DELTA_V2_INTERNAL_ERROR.ILLEGAL_ARGUMENT", "XXKDS", Map.empty[String, String])
-    assert(error.getCause.getMessage === "snapshot is null")
+    assert(error.getMessage === "snapshot is null")
   }
 
 }

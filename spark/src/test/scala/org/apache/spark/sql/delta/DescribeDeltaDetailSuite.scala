@@ -231,17 +231,17 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
           metadata.configuration ++ Map("foo" -> "bar")
         )
         txn.commit(newMetadata :: Nil, DeltaOperations.ManualUpdate)
-        val catalogOwnedProperties = constructCatalogOwnedSpecificTableProperties(
+        val catalogManagedProperties = constructCatalogManagedSpecificTableProperties(
           spark, newMetadata)
         checkResult(sql(s"DESCRIBE DETAIL $tableName"),
-          Seq(Map("foo" -> "bar") ++ catalogOwnedProperties),
+          Seq(Map("foo" -> "bar") ++ catalogManagedProperties),
           Seq("properties")
         )
       }
   }
 
   test("delta table: describe detail shows table features") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("CatalogManaged is not compatible w/ the test since protocol version would be " +
         "set to (3, 7) by default for CatalogManaged tables.")
     }

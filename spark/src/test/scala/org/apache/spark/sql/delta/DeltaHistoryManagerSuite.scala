@@ -357,7 +357,7 @@ trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        if (catalogOwnedCoordinatorBackfillBatchSize.exists(_ > 2)) {
+        if (catalogManagedCoordinatorBackfillBatchSize.exists(_ > 2)) {
           assert(e2.getMessage.contains("No commits found at"))
         } else {
           assert(e2.getMessage.contains("No recreatable commits found at"))
@@ -419,7 +419,7 @@ trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTablesCatalogOwned) {
+    if (isICTEnabledForNewTablesCatalogManaged) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
@@ -581,7 +581,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
   }
 
   test("vacuumed version") {
-    assume(!catalogOwnedDefaultCreationEnabledInTests,
+    assume(!catalogManagedDefaultCreationEnabledInTests,
       "VACUUM is blocked on catalog-managed tables")
 
     quietly {
@@ -746,7 +746,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
   }
 
   test("parallel search handles empty commits in a partition correctly") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("This test is not compatible with coordinated commits backfill timestamps.")
     }
     val tblName = "delta_table"

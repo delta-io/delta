@@ -68,7 +68,7 @@ trait AMTDMLTestUtils extends AMTCheckpointTestBase {
   // before the beforeEach() that normally registers the coordinator.
   override protected def beforeAll(): Unit = {
     CatalogManagedCommitCoordinatorProvider.clearBuilders()
-    catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
+    catalogManagedCoordinatorBackfillBatchSize.foreach { batchSize =>
       CatalogManagedCommitCoordinatorProvider.registerBuilder(
         catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize))

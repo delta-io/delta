@@ -96,7 +96,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
   private def deleteDeltaJsonFiles(path: String): Unit = {
     val deltaLogDir = new File(path, "_delta_log")
     deltaLogDir.listFiles().filter(_.getName.endsWith(".json")).foreach(_.delete())
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       val stagedCommitsDir = new File(deltaLogDir, "_staged_commits")
       Option(stagedCommitsDir.listFiles()).getOrElse(Array.empty)
         .filter(_.getName.endsWith(".json"))
@@ -115,7 +115,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
     testQuietly(name) {
       // CatalogManaged tables enable V2 checkpoints by default.
       // These tests intentionally create and mutate classic checkpoint files.
-      withClassicCheckpointPolicyForCatalogOwned {
+      withClassicCheckpointPolicyForCatalogManaged {
         withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
           f(Some(1))
           f(Some(2))
@@ -284,7 +284,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
   test("should throw a clear exception when checkpoint exists but its corresponding delta file " +
     "doesn't exist") {
     // This test expects recovery from a classic checkpoint after deleting delta JSON files.
-    withClassicCheckpointPolicyForCatalogOwned {
+    withClassicCheckpointPolicyForCatalogManaged {
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         val staleLog = DeltaLog.forTable(spark, path)
@@ -320,7 +320,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
   test("should throw a clear exception when the checkpoint is corrupt " +
     "but could not find any delta files") {
     // This test corrupts a classic checkpoint file directly.
-    withClassicCheckpointPolicyForCatalogOwned {
+    withClassicCheckpointPolicyForCatalogManaged {
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         val staleLog = DeltaLog.forTable(spark, path)
@@ -610,10 +610,10 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       }
       val latestSnapshot = log.update()
       val versionOneIsBackfilledByCatalogManagedBatch =
-        catalogOwnedCoordinatorBackfillBatchSize.exists(_ <= 1)
+        catalogManagedCoordinatorBackfillBatchSize.exists(_ <= 1)
       // This test appends version 1, and CatalogManaged batch sizes above 1 keep it staged.
       // Without a commit-coordinator client, this path-based refresh lists only filesystem deltas.
-      if (!catalogOwnedDefaultCreationEnabledInTests ||
+      if (!catalogManagedDefaultCreationEnabledInTests ||
           latestSnapshot.tableCommitCoordinatorClientOpt.nonEmpty ||
           versionOneIsBackfilledByCatalogManagedBatch) {
         assert(log.getLogSegmentAfterCommit(
@@ -683,7 +683,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
   testQuietly("checkpoint/json not found when executor restart " +
     "after expired checkpoints in the snapshot cache are cleaned up") {
     // This test deletes a classic checkpoint file by version.
-    withClassicCheckpointPolicyForCatalogOwned {
+    withClassicCheckpointPolicyForCatalogManaged {
       withTempDir { tempDir =>
         // Create checkpoint 1 and 3
         val path = tempDir.getCanonicalPath

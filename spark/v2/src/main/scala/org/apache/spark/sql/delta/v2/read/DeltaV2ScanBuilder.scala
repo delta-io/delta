@@ -24,7 +24,7 @@ import scala.util.control.NonFatal
 import io.delta.kernel.engine.Engine
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext
 
-import org.apache.spark.sql.delta.{DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaScan
@@ -38,12 +38,13 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExprId}
+import org.apache.spark.sql.catalyst.expressions.MetadataAttribute
 import org.apache.spark.sql.connector.expressions.filter.Predicate
 import org.apache.spark.sql.connector.read.{Scan, ScanBuilder, Statistics, SupportsPushDownLimit, SupportsPushDownRequiredColumns}
-import org.apache.spark.sql.execution.datasources.DataSourceUtils
+import org.apache.spark.sql.execution.datasources.{DataSourceUtils, FileFormat}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.connector.SupportsPushDownCatalystFilters
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -150,10 +151,11 @@ private[read] class DeltaV2ScanBuilder(
   override def pruneColumns(requiredSchema: StructType): Unit =
     recordFrameProfile("scanBuilder.pruneColumns") {
       Objects.requireNonNull(requiredSchema, "requiredSchema is null")
+      val schemaWithMetadata = restoreMetadataStructMarker(requiredSchema)
       // Keep metadata `_metadata` distinct from partition `_Metadata` in case-sensitive queries.
       // CDC filtering must match CDCSchemaContext's case-insensitive schema validation.
       requiredDataSchema = new StructType(
-        requiredSchema.fields.filter { f =>
+        schemaWithMetadata.fields.filter { f =>
           !partitionColumnNames.contains(f.name) && !CDCSchemaContext.isCDCColumn(f.name)
         })
       logDebug(log"Pruned Delta V2 scan schema request for " +
@@ -163,6 +165,25 @@ private[read] class DeltaV2ScanBuilder(
         log"${MDC(DeltaLogKeys.PATH, redactedTablePathForLogging)}: pruned data schema " +
         log"${MDC(DeltaLogKeys.SCHEMA, requiredDataSchema)}")
     }
+
+  /** Restores the generated metadata marker lost by nested schema pruning in Spark 4.1. */
+  private def restoreMetadataStructMarker(requiredSchema: StructType): StructType = {
+    val resolver = SQLConf.get.resolver
+    def uniqueMetadataName(name: String): String = {
+      if (tableSchema.fieldNames.exists(resolver(name, _))) uniqueMetadataName(s"_$name") else name
+    }
+
+    val metadataName = uniqueMetadataName(FileFormat.METADATA_NAME)
+    StructType(requiredSchema.fields.map {
+      case field @ StructField(name, _: StructType, _, metadata)
+          if name == metadataName && !MetadataAttribute.isValid(metadata) =>
+        field.copy(metadata = new MetadataBuilder()
+          .withMetadata(metadata)
+          .withMetadata(MetadataAttribute.metadata(FileFormat.METADATA_NAME))
+          .build())
+      case field => field
+    })
+  }
 
   /**
    * Accepts a LIMIT hint from Spark's optimizer.
@@ -184,8 +205,7 @@ private[read] class DeltaV2ScanBuilder(
         tablePath = tablePathForLogging,
         opType = "scan.pushLimit.failure",
         data = Map("limit" -> limit))
-      throw DeltaErrors.deltaV2IllegalArgument(
-        "Pushed limit must be non-negative, but got: " + limit)
+      throw new IllegalArgumentException("Pushed limit must be non-negative, but got: " + limit)
     }
     if (SQLConf.get.getConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED)) {
       pushedLimit = OptionalInt.of(limit)

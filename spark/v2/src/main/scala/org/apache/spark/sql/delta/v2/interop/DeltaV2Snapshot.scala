@@ -23,7 +23,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 import org.apache.spark.sql.delta.v2.kernel.KernelContext
 
-import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaErrors, DeltaLogFileIndex, Snapshot, VersionChecksum}
+import org.apache.spark.sql.delta.{CheckpointProvider, DeltaColumnMappingMode, DeltaLogFileIndex, Snapshot, VersionChecksum}
 import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, FileSizeHistogram, StatisticsCollection}
@@ -264,12 +264,12 @@ object DeltaV2Snapshot {
    */
   def getKernelSnapshot(snapshot: Snapshot): KernelSnapshot = {
     if (snapshot == null) {
-      throw DeltaErrors.deltaV2IllegalArgument("snapshot is null")
+      throw new NullPointerException("snapshot is null")
     }
     snapshot match {
       case deltaV2Snapshot: DeltaV2Snapshot => deltaV2Snapshot.kernelSnapshot
       case other =>
-        throw DeltaErrors.deltaV2IllegalState(
+        throw new IllegalStateException(
           s"Expected a DeltaV2Snapshot, but found ${other.getClass.getName}")
     }
   }

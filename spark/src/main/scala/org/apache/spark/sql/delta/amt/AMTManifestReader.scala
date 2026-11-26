@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.amt
 import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterProvider}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaLogFileIndex}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, SingleAction}
 import org.apache.spark.sql.delta.deletionvectors.ManifestBitmap
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -33,11 +34,10 @@ import org.apache.spark.sql.functions.{coalesce, col, concat, element_at, lit, r
 import org.apache.spark.sql.types.{IntegerType, LongType, MapType, StringType, StructField, StructType}
 
 /**
- * Reads the AMT manifests, roots and leaves, of the trees of a table that share a metadata and a
- * protocol, which shape the manifest schema. An [[AMTCheckpointProvider]] reads the changes of its
- * own tree through one, and its state reconstruction uses the manifest reads of one. Each reader
- * states whether it is compatible with multiple trees, that is, whether one call can read the
- * manifests of several trees.
+ * Distributedly reads possibly multiple AMT trees.
+ *
+ * The read schema comes from `metadata` and `protocol` (see [[AMTSingleAction.persistedSchema]]),
+ * so a reader can only read trees sharing that metadata and protocol.
  *
  * @param tableRoot The table's data path.
  * @param metadata  The metadata of the trees whose manifests are read.
@@ -368,56 +368,64 @@ trait AMTManifestReaderImpl {
   ////////////////////////////////
 
   /**
-   * The changed files that `root`, `addedLeaves` and the changed positions of
-   * `changedPositionsLeaves` record, as [[projectChangeFiles]] selects them, in no particular
-   * order. `root` and the leaves must come from one tree, which has this reader's metadata and
-   * protocol. Not compatible with multiple trees: it reads one root.
+   * The change entries that `manifests` record, in no particular order.
+   *
+   * @param spark     The Spark session.
+   * @param deltaLog  The log of the table, which reads the manifest files.
+   * @param manifests The change manifests of one tree (see
+   *                  `AMTCheckpointProviderImpl.changeManifests`). The tree must have this
+   *                  reader's metadata and protocol, which shape the manifest schema.
    */
-  private[amt] def loadChangeFiles(
+  private[amt] def loadFilteredChangeEntries(
       spark: SparkSession,
       deltaLog: DeltaLog,
-      root: FileStatus,
-      addedLeaves: Seq[DataManifestEntry],
-      changedPositionsLeaves: Seq[DataManifestEntry]): DataFrame =
-    (trackingDerivedChangeFiles(deltaLog, root, addedLeaves) +:
-      mdvDerivedChangeFiles(spark, deltaLog, changedPositionsLeaves).toSeq)
-      .reduce(_ union _)
+      manifests: Seq[SingleManifest]): DataFrame = {
+    val (changed, tracked) = manifests.partition(_.changedPositions)
+    (trackingDerivedChangeEntries(deltaLog, tracked).toSeq ++
+      mdvDerivedChangeEntries(spark, deltaLog, changed.flatMap(_.leafOpt))).reduce(_ union _)
+  }
 
   /**
-   * Change files derived from the tracking statuses of `root` and of `addedLeaves`, the leaves the
-   * commit wrote, as the changed files [[projectChangeFiles]] selects. Not compatible with
-   * multiple trees: it reads one root.
+   * Filter change entries by tracking statuses.
    */
-  private def trackingDerivedChangeFiles(
+  private def trackingDerivedChangeEntries(
       deltaLog: DeltaLog,
-      root: FileStatus,
-      addedLeaves: Seq[DataManifestEntry]): DataFrame = {
+      manifests: Seq[SingleManifest]): Option[DataFrame] = {
+    if (manifests.isEmpty) return None
+
+    val (leafManifests, rootManifests) = manifests.partition(_.leafOpt.isDefined)
     val changeStatuses = Tracking.Status.changeEntryStatuses
     val removed = !col("tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*)
-    val rootChanges = projectChangeFiles(
-      withStatuses(rootEntries(deltaLog, Seq(root)), changeStatuses),
-      baseRowId = col("tracking.first_row_id"),
-      removed = removed)
-    if (addedLeaves.isEmpty) {
-      rootChanges
+    val rootChanges = if (rootManifests.nonEmpty) {
+      Some(projectChangeEntries(
+        withStatuses(rootEntries(deltaLog, rootManifests.map(_.file)), changeStatuses),
+        baseRowId = col("tracking.first_row_id"),
+        removed = removed))
     } else {
+      None
+    }
+
+    val addedLeaves = leafManifests.flatMap(_.leafOpt)
+    val leafChanges = if (addedLeaves.nonEmpty) {
       // TODO(v4amt): Reuse the manifest layout for tracking-derived change reconstruction too.
       val leavesWithFilters = addedLeaves.map(_ -> None)
       val leafIndex = DeltaLogFileIndex(
         new AMTParquetFileFormat, addedLeaves.map(_.toFileStatus(tableRoot)).toArray)
-      rootChanges.union(projectChangeFiles(
+      Some(projectChangeEntries(
         withStatuses(
           leafEntriesWithRowIdPrefix(deltaLog, leavesWithFilters, leafIndex), changeStatuses),
         baseRowId = inheritedBaseRowId,
         removed = removed))
+    } else {
+      None
     }
+    Some((rootChanges ++ leafChanges).reduce(_ union _))
   }
 
   /**
-   * The files at the MDV-marked positions of `touchedLeaves`, all removed by the commit, as the
-   * changed files [[projectChangeFiles]] selects.
+   * Filter change entries by MDV bitmaps.
    */
-  private def mdvDerivedChangeFiles(
+  private def mdvDerivedChangeEntries(
       spark: SparkSession,
       deltaLog: DeltaLog,
       touchedLeaves: Seq[DataManifestEntry]): Option[DataFrame] = {
@@ -431,34 +439,34 @@ trait AMTManifestReaderImpl {
     val entries = withStatuses(
       leafEntriesWithRowIdPrefix(spark, deltaLog, leavesWithFilters),
       Tracking.Status.liveEntryStatuses)
-    Some(projectChangeFiles(entries, baseRowId = inheritedBaseRowId, removed = lit(true)))
+    Some(projectChangeEntries(entries, baseRowId = inheritedBaseRowId, removed = lit(true)))
   }
 
   /**
-   * The changed files of `entries`: the manifest path (`leafPath`) and position (`pos`) of each
+   * The change entries of `entries`: the manifest path (`leafPath`) and position (`pos`) of each
    * entry, which order them, its AddFile (see [[addFileEntries]]), and whether the commit
-   * `removed` the file rather than added it.
+   * `removed` the file.
    *
    * @param baseRowId The entry's first row ID; leaf entries may inherit it from their parent.
    */
-  private def projectChangeFiles(
+  private def projectChangeEntries(
       entries: DataFrame, baseRowId: Column, removed: Column): DataFrame =
     addFileEntries(entries, baseRowId)
       .select(col("leafPath"), col("pos"), col("add"), removed.as(REMOVED_COLUMN))
 
   /**
-   * The AddFile and RemoveFile actions of `changeFiles`, which [[loadChangeFiles]] reads, stamped
-   * with the commit-level `dataChange` and `commitTimestamp` (see
+   * The AddFile and RemoveFile actions of `changeEntries`, which [[loadFilteredChangeEntries]]
+   * reads, stamped with the commit-level `dataChange` and `commitTimestamp` (see
    * [[AMTCheckpointProvider.reconstructFileActions]]). If `ordered`, they are sorted by the
    * manifest path and position of their entries.
    */
-  private[amt] def toChangeActions(
-      changeFiles: DataFrame,
+  private[amt] def toSingleActions(
+      changeEntries: DataFrame,
       dataChange: Boolean,
       commitTimestamp: Long,
       ordered: Boolean): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
-    (if (ordered) changeFiles.orderBy(col("leafPath"), col("pos")) else changeFiles)
+    (if (ordered) changeEntries.orderBy(col("leafPath"), col("pos")) else changeEntries)
       .select(Action.logSchema.fields.toIndexedSeq.map { field =>
         (field.name match {
           case "add" => when(!col(REMOVED_COLUMN), stampedAddFileStruct(lit(dataChange)))
@@ -509,7 +517,9 @@ object AMTManifestReader {
   /** Name of the column with an entry's `first_row_id` prefix sum. */
   private[amt] val PRECEDING_RECORDS_COLUMN: String = "precedingNullFirstRowIdRecords"
 
-  // The entry context of an entry row (see [[withRootEntryContext]] and [[withLeafEntryContext]]).
+  /**
+   * The entry context of an entry row (see [[withRootEntryContext]] and [[withLeafEntryContext]]).
+   */
   private[amt] val IS_ROOT_ENTRY_COLUMN: String = "isRootEntry"
   private[amt] val MANIFEST_LOCATION_COLUMN: String = "manifestLocation"
   private[amt] val PARENT_SNAPSHOT_ID_COLUMN: String = "parentSnapshotId"
@@ -517,7 +527,7 @@ object AMTManifestReader {
   private[amt] val PARENT_FIRST_ROW_ID_COLUMN: String = "parentFirstRowId"
 
   /**
-   * Whether the commit removed a changed file rather than added it (see [[projectChangeFiles]]).
+   * Whether the commit removed the file of a change entry (see [[projectChangeEntries]]).
    */
   private[amt] val REMOVED_COLUMN: String = "_amt_removed"
 
@@ -541,5 +551,59 @@ object AMTManifestReader {
           cardinality = dv.getAs[Long]("cardinality")),
         tableRoot)
     }.orNull
+  }
+
+  ////////////////////////////////
+  // Change file reconstruction //
+  ////////////////////////////////
+
+  /**
+   * An inline manifest commit, as its changes are read: the tree it wrote, with the commit-level
+   * `dataChange` and timestamp its reconstructed file actions carry.
+   */
+  private[delta] case class AMTInlineManifestCommit(
+      provider: AMTCheckpointProvider,
+      dataChange: Boolean,
+      commitTimestamp: Long)
+
+  /**
+   * A manifest that records some of the changes of the commit a tree describes. This can be either
+   * a root or a leaf.
+   *
+   * @param version          The version of the manifest commit whose tree lists the manifest.
+   * @param file             The manifest file.
+   * @param leafOpt          The manifest's leaf pointer if it's a leaf.
+   * @param changedPositions Whether the manifest is a carried leaf read only at the positions the
+   *                         commit deleted or replaced.
+   */
+  private[amt] case class SingleManifest(
+      version: Long,
+      file: FileStatus,
+      leafOpt: Option[DataManifestEntry],
+      changedPositions: Boolean) {
+    /** The manifest's URL-encoded path, as Spark reports the file each entry was read from. */
+    def path: String = SparkPath.fromPath(file.getPath).urlEncoded
+  }
+
+  /**
+   * The AddFile and RemoveFile actions that the commits of `inlineManifestCommits` recorded in
+   * their trees, as [[Action.logSchema]] columns plus [[DeltaLogFileIndex.COMMIT_VERSION_COLUMN]],
+   * in no particular order. None when `inlineManifestCommits` is empty.
+   */
+  private[delta] def loadActionsFromAMTManifestCommits(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      inlineManifestCommits: Seq[AMTInlineManifestCommit]): Option[DataFrame] = {
+    inlineManifestCommits.map { manifestCommit =>
+      val provider = manifestCommit.provider
+      val reader = provider.manifestReader
+      reader
+        .toSingleActions(
+          reader.loadFilteredChangeEntries(spark, deltaLog, provider.changeManifests),
+          manifestCommit.dataChange,
+          manifestCommit.commitTimestamp,
+          ordered = false)
+        .withColumn(COMMIT_VERSION_COLUMN, lit(provider.manifestCommitVersion))
+    }.reduceOption(_ union _)
   }
 }

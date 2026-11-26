@@ -32,6 +32,7 @@ import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTManifestReader
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
@@ -54,6 +55,7 @@ import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.expressions.UserDefinedFunction
+import org.apache.spark.sql.functions.{coalesce, col}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -401,6 +403,79 @@ class DeltaLog private(
           failOnDataLoss).map { case (version, status) =>
         (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
       }
+    }
+  }
+
+  /**
+   * All actions over [startVersion, endVersion] (both inclusive) as a [[DataFrame]] of
+   * [[Action.logSchema]] columns plus [[DeltaLogFileIndex.COMMIT_VERSION_COLUMN]], the distributed
+   * counterpart of [[getChanges]]. When [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled,
+   * the AddFile and RemoveFile actions of an inline AMT manifest commit come from its tree, not
+   * from its log file.
+   *
+   * @param startVersion the first version to read.
+   * @param endVersion the last version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`.
+   * @param manifestCommitVersionsHintOpt a hint of the versions of all the inline manifest commits
+   *                                      in the range. When defined, only the log files of these
+   *                                      commits are read to find the trees. Callers should only
+   *                                      pass in this parameter when they know AMT and the
+   *                                      versions of all the inline manifest commits in the range.
+   */
+  def loadChangesDf(
+      startVersion: Long,
+      endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean,
+      skipNoDataChangeFileActions: Boolean,
+      manifestCommitVersionsHintOpt: Option[Set[Long]] = None): DataFrame = {
+    val singleCommitRead =
+      spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)
+    val isFileAction = col("add").isNotNull || col("remove").isNotNull
+    val actions = if (singleCommitRead) {
+      val commits =
+        getSingleCommitIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss)
+          .map(_.asInstanceOf[SingleCommit])
+          .toSeq
+      val commitJsonActions = loadIndex(SingleCommit.logFileIndex(commits), Action.logSchema)
+      val manifestCommitCandidates = manifestCommitVersionsHintOpt match {
+        case Some(versions) => commits.filter(commit => versions.contains(commit.version))
+        case None => commits
+      }
+      val manifestCommits =
+        DeltaFileProviderUtils.parallelReadDeltaFiles(spark, manifestCommitCandidates) { commit =>
+          commit.asInstanceOf[SingleCommit].toAMTManifestCommit()
+        }.flatten
+      val manifestCommitVersions = manifestCommits.map(_.provider.manifestCommitVersion)
+      val manifestCommitsWithDataChange =
+        if (skipNoDataChangeFileActions) manifestCommits.filter(_.dataChange)
+        else manifestCommits
+      // Drop the inline manifest commits' file actions from the log files; the trees supply them.
+      val filter =
+        col(DeltaLogFileIndex.COMMIT_VERSION_COLUMN).isin(manifestCommitVersions: _*) &&
+          isFileAction
+      val logActions = commitJsonActions.where(!filter)
+      AMTManifestReader
+        .loadActionsFromAMTManifestCommits(spark, this, manifestCommitsWithDataChange)
+        .map(logActions.unionByName(_))
+        .getOrElse(logActions)
+    } else {
+      val logFiles = getChangeLogFiles(startVersion, endVersion, catalogTableOpt, failOnDataLoss)
+        .map(_._2)
+        .toArray
+      val index = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logFiles)
+      loadIndex(index, Action.logSchema)
+    }
+    // Filter out the data changing file actions still present at this point.
+    // This is for those actions in JSON commits.
+    if (skipNoDataChangeFileActions) {
+      actions.where(!isFileAction || coalesce(col("add.dataChange"), col("remove.dataChange")))
+    } else {
+      actions
     }
   }
 

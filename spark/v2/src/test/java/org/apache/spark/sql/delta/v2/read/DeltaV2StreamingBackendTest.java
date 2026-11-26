@@ -37,6 +37,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -247,6 +248,49 @@ public class DeltaV2StreamingBackendTest extends DeltaV2TestBase {
                   backend.getSingleCommitIterator(
                       /* startVersion= */ 1L, /* failOnDataLoss= */ true, Option.empty())));
         });
+  }
+
+  @Test
+  public void closeCommitsWithFilesClosesFilesAndCommits(@TempDir File tempDir) throws Exception {
+    String path = createTable(tempDir, /* commits= */ 1);
+    DeltaV2StreamingBackend backend =
+        new DeltaV2StreamingBackend(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, path, Collections.emptyMap(), Option.empty()),
+            queryContext,
+            /* snapshotVersionAtSourceInit= */ 0L,
+            spark,
+            defaultOptions());
+    List<String> closed = new ArrayList<>();
+
+    // The Kernel commits hold open resources, so closing the files also closes them.
+    backend
+        .closeCommitsWithFiles(
+            emptyIteratorRecordingClose(closed, "files"),
+            emptyIteratorRecordingClose(closed, "commits"))
+        .close();
+
+    assertEquals(List.of("files", "commits"), closed);
+  }
+
+  private static <T> ClosableIterator<T> emptyIteratorRecordingClose(
+      List<String> closed, String name) {
+    return new ClosableIterator<T>() {
+      @Override
+      public boolean hasNext() {
+        return false;
+      }
+
+      @Override
+      public T next() {
+        throw new NoSuchElementException();
+      }
+
+      @Override
+      public void close() {
+        closed.add(name);
+      }
+    };
   }
 
   @Test
