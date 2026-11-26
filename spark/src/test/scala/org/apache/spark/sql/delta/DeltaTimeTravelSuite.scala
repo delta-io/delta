@@ -313,6 +313,79 @@ class DeltaTimeTravelSuite extends QueryTest
     )
   }
 
+  test("BufferingLogDeletionIterator: stops listing after the retention checkpoint") {
+    def file(version: Long, timestamp: Long, checkpoint: Boolean = false): FileStatus = {
+      val path = if (checkpoint) {
+        FileNames.checkpointFileSingular(new Path("/foo"), version)
+      } else {
+        FileNames.unsafeDeltaFile(new Path("/foo"), version)
+      }
+      new FileStatus(10L, false, 1, 10L, timestamp, path)
+    }
+
+    def checkpointPart(version: Long, part: Int, numParts: Int, timestamp: Long): FileStatus = {
+      val path = FileNames.checkpointFileWithParts(new Path("/foo"), version, numParts)(part - 1)
+      new FileStatus(10L, false, 1, 10L, timestamp, path)
+    }
+
+    def assertDeletionAndConsumption(
+        files: Seq[FileStatus],
+        maxTimestamp: Long,
+        expectedDeletedVersions: Seq[Long],
+        expectedConsumed: Int): Unit = {
+      var consumed = 0
+      val countingIterator = files.iterator.map { fileStatus =>
+        consumed += 1
+        fileStatus
+      }
+      val iterator = new BufferingLogDeletionIterator(
+        countingIterator,
+        maxTimestamp,
+        maxVersion = 2,
+        versionGetter = FileNames.getFileVersion)
+
+      assert(iterator.map(f => FileNames.getFileVersion(f.getPath)).toSeq ===
+        expectedDeletedVersions)
+      assert(consumed === expectedConsumed)
+    }
+
+    val newerFiles = (4L to 10000L).map(version => file(version, timestamp = 200L))
+
+    // Nothing is expired, but the complete checkpoint still has to be inspected to establish
+    // that preceding commits are safe to retain without consuming the newer listing.
+    assertDeletionAndConsumption(
+      Seq(file(0, 100), file(1, 101), file(2, 102), file(3, 103, checkpoint = true)) ++
+        newerFiles,
+      maxTimestamp = 99,
+      expectedDeletedVersions = Nil,
+      expectedConsumed = 4)
+
+    // Timestamp adjustment is preserved: version 1 anchors version 2's adjusted timestamp. The
+    // checkpoint beyond maxVersion releases the buffer, and files after it cannot be deletable.
+    assertDeletionAndConsumption(
+      Seq(file(0, 5), file(1, 10), file(2, 8), file(3, 20, checkpoint = true)) ++ newerFiles,
+      maxTimestamp = 11,
+      expectedDeletedVersions = Seq(0, 1, 2),
+      expectedConsumed = 4)
+
+    // A multipart checkpoint becomes a stopping boundary only after all of its parts are present.
+    assertDeletionAndConsumption(
+      Seq(file(0, 5), file(1, 6), file(2, 7),
+        checkpointPart(3, 1, 2, 20), checkpointPart(3, 2, 2, 20)) ++ newerFiles,
+      maxTimestamp = 7,
+      expectedDeletedVersions = Seq(0, 1, 2),
+      expectedConsumed = 5)
+
+    // An incomplete checkpoint must not release preceding commits or establish an early-exit
+    // boundary. This intentionally consumes the listing to preserve checkpoint safety.
+    assertDeletionAndConsumption(
+      Seq(file(0, 5), file(1, 6), file(2, 7), checkpointPart(3, 1, 2, 20)) ++
+        newerFiles.take(10),
+      maxTimestamp = 7,
+      expectedDeletedVersions = Nil,
+      expectedConsumed = 14)
+  }
+
   test("BufferingLogDeletionIterator: " +
     "early exit while handling adjusted timestamps due to timestamp") {
     // only should return 5 because 5 < 7
