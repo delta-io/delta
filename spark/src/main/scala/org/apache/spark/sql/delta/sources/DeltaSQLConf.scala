@@ -3255,6 +3255,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_OPTIMIZE_METADATA_QUERY_DISTINCT_PARTITIONS_MAX_VALUES =
+    buildConf("optimizeMetadataQuery.distinctPartitions.maxValues")
+      .internal()
+      .doc("Maximum number of distinct partition values that a DISTINCT or GROUP BY query over " +
+        "partition columns may collect on the driver to be answered from the DeltaLog. Queries " +
+        "with more distinct partition values are executed without the optimization.")
+      .intConf
+      .checkValue(n => n >= 0 && n < Int.MaxValue, "must be between 0 and Int.MaxValue - 1.")
+      .createWithDefault(10000)
+
   val DELTA_SKIP_RECORDING_EMPTY_COMMITS =
     buildConf("skipRecordingEmptyCommits")
       .internal()
