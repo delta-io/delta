@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.catalog
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.sql.Timestamp
+import java.time.Instant
 import java.util
 import java.util.Locale
 
@@ -509,7 +509,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
             Map(DeltaDataSource.TIME_TRAVEL_VERSION_KEY -> version.get)
           } else {
             val timestampMs = timestamp.get / 1000
-            Map(DeltaDataSource.TIME_TRAVEL_TIMESTAMP_KEY -> new Timestamp(timestampMs).toString)
+            Map(DeltaDataSource.TIME_TRAVEL_TIMESTAMP_KEY ->
+              Instant.ofEpochMilli(timestampMs).toString)
           })
 
         deltaTable.withOptions(ttOpts)

@@ -20,6 +20,7 @@ import java.io.File
 import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
+import java.time.Instant
 import java.util.Date
 
 import scala.concurrent.duration._
@@ -29,6 +30,7 @@ import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterat
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, SingleAction}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -770,6 +772,50 @@ class DeltaTimeTravelSuite extends QueryTest
         sql(s"SELECT * FROM testDb.tbl TIMESTAMP AS OF " +
           s"coalesce(CAST ('$ts' AS TIMESTAMP), current_date())")
       }
+    }
+  }
+
+  private def withTimestampAsOfTable(jvmTimeZone: String, commits: String*)(
+      f: String => Unit): Unit = {
+    DeltaTestUtils.withTimeZone(jvmTimeZone) {
+      withSQLConf(
+          SQLConf.SESSION_LOCAL_TIMEZONE.key -> "America/New_York",
+          DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.defaultTablePropertyKey -> "false",
+          DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION.key -> "false") {
+        withTempDir { dir =>
+          val table = "timestamp_as_of_table"
+          val path = dir.getCanonicalPath
+          withTable(table) {
+            runSetup {
+              generateCommits(path, commits.map(ts => Instant.parse(ts).toEpochMilli): _*)
+            }
+            setupSql(s"CREATE TABLE $table (id LONG) USING delta LOCATION '$path'")
+            f(table)
+          }
+        }
+      }
+    }
+  }
+
+  test("timestamp as of preserves explicit offsets during a DST overlap") {
+    withTimestampAsOfTable("America/New_York",
+        "2025-11-02T05:15:00Z", "2025-11-02T06:15:00Z", "2025-11-02T06:45:00Z") { table =>
+      checkAnswer(sql(s"SELECT count(*) FROM $table TIMESTAMP AS OF '2025-11-02T01:30:00-04:00'"),
+        Row(10L))
+      checkAnswer(sql(s"SELECT count(*) FROM $table TIMESTAMP AS OF '2025-11-02T01:30:00-05:00'"),
+        Row(20L))
+      checkAnswer(sql(s"SELECT count(*) FROM $table TIMESTAMP AS OF " +
+        "CAST('2025-11-02T01:30:00-05:00' AS TIMESTAMP)"), Row(20L))
+    }
+  }
+
+  test("timestamp as of uses the session time zone when the JVM time zone differs") {
+    withTimestampAsOfTable("UTC",
+        "2025-01-15T10:15:00Z", "2025-01-15T11:15:00Z", "2025-01-15T16:15:00Z") { table =>
+      checkAnswer(sql(s"SELECT count(*) FROM $table TIMESTAMP AS OF '2025-01-15T05:30:00-05:00'"),
+        Row(10L))
+      checkAnswer(sql(s"SELECT count(*) FROM $table TIMESTAMP AS OF '2025-01-15 05:30:00'"),
+        Row(10L))
     }
   }
 
