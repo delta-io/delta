@@ -655,8 +655,6 @@ object AMTCheckpointProvider extends DeltaLogging {
     val startNanos = System.nanoTime()
     val tableRoot = deltaLog.dataPath
     val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
-    val index =
-      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
     val root = {
       val persistedSchema =
         AMTSingleAction.persistedSchema(checkpoint.metaData, checkpoint.protocol)
@@ -664,12 +662,13 @@ object AMTCheckpointProvider extends DeltaLogging {
       val readSchema = StructType(persistedSchema.map { field =>
         if (field.name == "content_type") field.copy(nullable = true) else field
       })
+      val shouldCacheRoot = checkpoint.contentRoot.numRootEntries.exists { numRootEntries =>
+        AMTUtils.shouldCacheRootRows(spark, numRootEntries)
+      }
+      val index =
+        DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
       val persisted = deltaLog.loadIndex(index, readSchema)
-      // Decide before collecting rows so large roots only return leaf pointers to the driver.
-      val cacheRoot = AMTUtils.shouldCacheRootRows(
-        spark,
-        Snapshot.getParquetFileSchemaAndRowCount(spark, deltaLog, rootFile)._2)
-      val collectedRows = if (cacheRoot) {
+      val collectedRows = if (shouldCacheRoot) {
         Some(persisted.queryExecution.executedPlan.executeCollect().toSeq)
       } else {
         None
@@ -682,7 +681,7 @@ object AMTCheckpointProvider extends DeltaLogging {
         col("content_type").isNull ||
           col("content_type") =!= lit(AMTSingleAction.ContentType.Type.Data))
       val decodedPointers = decodeEntries(pointers, checkpoint.metaData, checkpoint.protocol)
-      val pointersToCollect = if (cacheRoot) {
+      val pointersToCollect = if (shouldCacheRoot) {
         // Evaluate these projections locally even when the general optimizer disables this rule.
         val localPointers =
           AMTUtils.convertToLocalRelationFully(decodedPointers.queryExecution.analyzed)
@@ -692,8 +691,7 @@ object AMTCheckpointProvider extends DeltaLogging {
       }
       val leaves = pointersToCollect
         .collect().toSeq.map(_.unwrap.asInstanceOf[DataManifestEntry])
-      val cachedRows = collectedRows.map(persistedSchema -> _)
-      new AMTRootInfo(leaves, cachedRows)
+      new AMTRootInfo(leaves, collectedRows.map(persistedSchema -> _))
     }
     recordDeltaEvent(
       deltaLog,

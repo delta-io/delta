@@ -222,7 +222,8 @@ object AMTWriteHelper extends DeltaLogging {
           version = contentTreeVersion,
           isIncremental = false,
           lastManifestCommitWithFullRewrite = contentTreeVersion,
-          numLeaves = 0L)
+          numLeaves = 0L,
+          numRootEntries = onlyLeaf.record_count)
         AMTClusteredWriteResult(
           contentRoot,
           rootInfo = new AMTRootInfo(leaves = Seq.empty, cachedRows = None),
@@ -246,7 +247,8 @@ object AMTWriteHelper extends DeltaLogging {
           version = contentTreeVersion,
           isIncremental = false,
           lastManifestCommitWithFullRewrite = contentTreeVersion,
-          numLeaves = leafEntries.size.toLong)
+          numLeaves = leafEntries.size.toLong,
+          numRootEntries = leafEntries.size.toLong)
         AMTClusteredWriteResult(
           contentRoot,
           rootInfo = new AMTRootInfo(leafEntries, writtenRoot.cachedRows),
