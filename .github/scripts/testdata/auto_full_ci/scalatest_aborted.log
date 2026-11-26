@@ -1,0 +1,26 @@
+﻿2026-10-18T07:59:41.6928900Z Current runner version: '2.337.0'
+2026-10-18T07:59:41.6955231Z ##[group]Runner Image Provisioner
+2026-10-18T07:59:41.6956236Z Hosted Compute Agent
+2026-10-18T08:37:41.7220576Z [0m[[0m[0minfo[0m] [0m[0m[32mMergeIntoSuiteBaseMiscSQLNameBasedSuite:[0m[0m
+2026-10-18T08:37:41.7261195Z [0m[[0m[0minfo[0m] [0m[0m[31morg.apache.spark.sql.delta.generatedsuites.merge.MergeIntoSuiteBaseMiscSQLNameBasedSuite *** ABORTED ***[0m[0m
+2026-10-18T08:37:41.7332160Z [0m[[0m[0minfo[0m] [0m[0m[31m  java.lang.NullPointerException: Cannot invoke "org.apache.spark.sql.classic.SparkSession.conf()" because the return value of "org.apache.spark.sql.delta.test.DeltaSQLCommandTest.spark()" is null[0m[0m
+2026-10-18T08:37:41.7360564Z [0m[[0m[0minfo[0m] [0m[0m[31m  at org.apache.spark.sql.delta.test.DeltaSQLCommandTest.$anonfun$withConf$1(DeltaSQLCommandTest.scala:52)[0m[0m
+2026-10-18T09:06:02.5117283Z [0m[[0m[0minfo[0m] [0m[0m[32mMergeIntoSuiteBaseMiscSQLPathBasedSuite:[0m[0m
+2026-10-18T09:06:02.5218228Z [0m[[0m[0minfo[0m] [0m[0m[31morg.apache.spark.sql.delta.generatedsuites.merge.MergeIntoSuiteBaseMiscSQLPathBasedSuite *** ABORTED ***[0m[0m
+2026-10-18T09:06:02.5239515Z [0m[[0m[0minfo[0m] [0m[0m[31m  java.lang.NullPointerException: Cannot invoke "org.apache.spark.sql.classic.SparkSession.conf()" because the return value of "org.apache.spark.sql.delta.test.DeltaSQLCommandTest.spark()" is null[0m[0m
+2026-10-18T10:01:36.7204824Z [0m[[0m[0minfo[0m] [0m[0m[32mMergeIntoSuiteBaseMiscSQLPathBasedCDCOnSuite:[0m[0m
+2026-10-18T10:01:36.7239689Z [0m[[0m[0minfo[0m] [0m[0m[31morg.apache.spark.sql.delta.generatedsuites.merge.MergeIntoSuiteBaseMiscSQLPathBasedCDCOnSuite *** ABORTED ***[0m[0m
+2026-10-18T10:01:36.7243044Z [0m[[0m[0minfo[0m] [0m[0m[31m  java.lang.NullPointerException: Cannot invoke "org.apache.spark.sql.classic.SparkSession.conf()" because the return value of "org.apache.spark.sql.delta.test.DeltaSQLCommandTest.spark()" is null[0m[0m
+2026-10-18T10:01:37.3948695Z [0m[[0m[0minfo[0m] [0m[0m[36mRun completed in 1 hour, 47 minutes, 25 seconds.[0m[0m
+2026-10-18T10:01:37.3950071Z [0m[[0m[0minfo[0m] [0m[0m[36mTotal number of tests run: 3168[0m[0m
+2026-10-18T10:01:37.3951021Z [0m[[0m[0minfo[0m] [0m[0m[36mSuites: completed 130, aborted 3[0m[0m
+2026-10-18T10:01:37.3952255Z [0m[[0m[0minfo[0m] [0m[0m[36mTests: succeeded 3168, failed 0, canceled 24, ignored 621, pending 0[0m[0m
+2026-10-18T10:01:37.3953169Z [0m[[0m[0minfo[0m] [0m[0m[31m*** 3 SUITES ABORTED ***[0m[0m
+2026-10-18T10:01:37.4001950Z [0m[[0m[31merror[0m] [0m[0mError: Total 3178, Failed 0, Errors 3, Passed 3174, Skipped 1, Ignored 621, Canceled 24[0m
+2026-10-18T10:01:37.4015479Z [0m[[0m[31merror[0m] [0m[0mError during tests:[0m
+2026-10-18T10:01:37.4016875Z [0m[[0m[31merror[0m] [0m[0m	org.apache.spark.sql.delta.generatedsuites.merge.MergeIntoSuiteBaseMiscSQLNameBasedSuite[0m
+2026-10-18T10:01:37.4018791Z [0m[[0m[31merror[0m] [0m[0m	org.apache.spark.sql.delta.generatedsuites.merge.MergeIntoSuiteBaseMiscSQLPathBasedSuite[0m
+2026-10-18T10:01:37.4021070Z [0m[[0m[31merror[0m] [0m[0m	org.apache.spark.sql.delta.generatedsuites.merge.MergeIntoSuiteBaseMiscSQLPathBasedCDCOnSuite[0m
+2026-10-18T10:01:42.3261305Z [0m[[0m[31merror[0m] [0m[0m(spark / Test / [31mtest[0m) sbt.TestsFailedException: Tests unsuccessful[0m
+2026-10-18T10:01:42.3347915Z [0m[[0m[31merror[0m] [0m[0mTotal time: 7084 s (01:58:04), completed Oct 18, 2026, 10:01:42 AM[0m
+2026-10-18T10:01:43.3595807Z ##[error]Process completed with exit code 1.

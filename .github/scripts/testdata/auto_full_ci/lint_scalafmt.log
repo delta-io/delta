@@ -1,0 +1,9 @@
+﻿2026-10-21T21:55:00.7394760Z Current runner version: '2.338.0'
+2026-10-21T21:55:00.7419699Z ##[group]Runner Image Provisioner
+2026-10-21T21:55:00.7420791Z Hosted Compute Agent
+2026-10-21T21:59:50.7172453Z [0m[[0m[33mwarn[0m] [0m[0mscalafmt: /home/runner/work/delta/delta/kernel/kernel-api/src/test/scala/io/delta/kernel/internal/files/ParsedLogDataSuite.scala isn't formatted properly![0m
+2026-10-21T21:59:51.3511974Z [0m[[0m[33mwarn[0m] [0m[0mscalafmt: /home/runner/work/delta/delta/kernel/kernel-api/src/test/scala/io/delta/kernel/internal/catalogManaged/CatalogManagedLogSegmentSuite.scala isn't formatted properly![0m
+2026-10-21T22:01:51.3291893Z [0m[[0m[31merror[0m] [0m[0mscalafmt: 2 files must be formatted (/home/runner/work/delta/delta/kernel/kernel-api)[0m
+2026-10-21T22:01:51.3403522Z [0m[[0m[31merror[0m] [0m[0m(kernelApi / Test / [31mscalafmtCheck[0m) scalafmt: 2 files must be formatted (/home/runner/work/delta/delta/kernel/kernel-api)[0m
+2026-10-21T22:01:51.3463175Z [0m[[0m[31merror[0m] [0m[0mTotal time: 175 s (02:55), completed Oct 21, 2026, 10:01:51 PM[0m
+2026-10-21T22:01:51.9256061Z ##[error]Process completed with exit code 1.

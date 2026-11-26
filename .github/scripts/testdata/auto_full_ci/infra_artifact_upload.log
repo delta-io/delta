@@ -1,0 +1,29 @@
+﻿2026-11-11T18:32:03.1171578Z Current runner version: '2.338.2'
+2026-11-11T18:32:03.1196553Z ##[group]Runner Image Provisioner
+2026-11-11T18:32:03.1197465Z Hosted Compute Agent
+2026-11-11T20:16:32.1758803Z [0m[[0m[0minfo[0m] [0m[0m[36mTotal number of tests run: 148[0m[0m
+2026-11-11T20:16:32.1788825Z [0m[[0m[0minfo[0m] [0m[0m[36mSuites: completed 5, aborted 0[0m[0m
+2026-11-11T20:16:32.1819974Z [0m[[0m[0minfo[0m] [0m[0m[36mTests: succeeded 148, failed 0, canceled 0, ignored 0, pending 0[0m[0m
+2026-11-11T20:16:32.1848668Z [0m[[0m[0minfo[0m] [0m[0m[32mAll tests passed.[0m[0m
+2026-11-11T20:16:32.1879116Z [0m[[0m[0minfo[0m] [0m[0mPassed: Total 269, Failed 0, Errors 0, Passed 269, Canceled 2[0m
+2026-11-11T20:41:48.8728931Z [0m[[0m[0minfo[0m] [0m[0m[36mRun completed in 1 hour, 53 minutes, 38 seconds.[0m[0m
+2026-11-11T20:41:48.8730139Z [0m[[0m[0minfo[0m] [0m[0m[36mTotal number of tests run: 3254[0m[0m
+2026-11-11T20:41:48.8731181Z [0m[[0m[0minfo[0m] [0m[0m[36mSuites: completed 133, aborted 0[0m[0m
+2026-11-11T20:41:48.8732429Z [0m[[0m[0minfo[0m] [0m[0m[36mTests: succeeded 3254, failed 0, canceled 39, ignored 630, pending 0[0m[0m
+2026-11-11T20:41:48.8733978Z [0m[[0m[0minfo[0m] [0m[0m[32mAll tests passed.[0m[0m
+2026-11-11T20:41:57.9617332Z env:
+2026-11-11T20:41:57.9617575Z   JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.21-1/x64
+2026-11-11T20:41:57.9618154Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.21-1/x64
+2026-11-11T20:41:57.9618481Z ##[endgroup]
+2026-11-11T20:41:58.9272332Z (node:861902) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-11T20:41:58.9273295Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-11T20:42:01.7652081Z With the provided path, there will be 168 files uploaded
+2026-11-11T20:42:01.7657329Z Artifact name is valid!
+2026-11-11T20:42:01.7658366Z Root directory input is valid!
+2026-11-11T20:44:02.0470660Z Attempt 1 of 5 failed with error: Unexpected token '<', "<!DOCTYPE "... is not valid JSON. Retrying request in 3000 ms...
+2026-11-11T20:46:05.2724405Z Attempt 2 of 5 failed with error: Unexpected token '<', "<!DOCTYPE "... is not valid JSON. Retrying request in 6089 ms...
+2026-11-11T20:48:11.5791722Z Attempt 3 of 5 failed with error: Unexpected token '<', "<!DOCTYPE "... is not valid JSON. Retrying request in 7703 ms...
+2026-11-11T20:50:19.5233237Z Attempt 4 of 5 failed with error: Unexpected token '<', "<!DOCTYPE "... is not valid JSON. Retrying request in 12743 ms...
+2026-11-11T20:52:32.5082652Z ##[error]Failed to CreateArtifact: Failed to make request after 5 attempts: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+2026-11-11T20:52:32.5220465Z ##[end-action id=__self_2.__actions_upload-artifact;outcome=failure;conclusion=failure;duration_ms=634570]
+2026-11-11T20:52:32.5224090Z ##[start-action display=Save SBT cache;id=__self_2.__actions_cache_2]

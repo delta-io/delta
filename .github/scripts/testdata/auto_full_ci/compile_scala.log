@@ -1,0 +1,12 @@
+﻿2026-11-16T20:58:15.7041984Z Current runner version: '2.338.2'
+2026-11-16T20:58:15.7070189Z ##[group]Runner Image Provisioner
+2026-11-16T20:58:15.7071107Z Hosted Compute Agent
+2026-11-16T21:13:01.3066180Z [0m[[0m[31merror[0m] [0m[0m/home/runner/work/delta/delta/spark/src/test/scala/org/apache/spark/sql/delta/storage/LineClosableIteratorSuite.scala:130:5: not found: value gridTest[0m
+2026-11-16T21:13:01.3085021Z [0m[[0m[31merror[0m] [0m[0m    gridTest(s"$operation preserves processing failures")(Seq(false, true)) { failOnClose =>[0m
+2026-11-16T21:13:01.3115796Z [0m[[0m[31merror[0m] [0m[0m    ^[0m
+2026-11-16T21:13:01.5215576Z [0m[[0m[0minfo[0m] [0m[0m[32m- interleaved when matched then update and delete clauses[0m[0m
+2026-11-16T21:13:03.4075370Z [0m[[0m[33mwarn[0m] [0m[0m100 warnings found[0m
+2026-11-16T21:13:03.4104370Z [0m[[0m[31merror[0m] [0m[0mone error found[0m
+2026-11-16T21:26:27.6758043Z [0m[[0m[31merror[0m] [0m[0m(spark / Test / [31mcompileIncremental[0m) Compilation failed[0m
+2026-11-16T21:26:27.6851988Z [0m[[0m[31merror[0m] [0m[0mTotal time: 1433 s (23:53), completed Nov 16, 2026, 9:26:27 PM[0m
+2026-11-16T21:26:28.8734051Z ##[error]Process completed with exit code 1.
