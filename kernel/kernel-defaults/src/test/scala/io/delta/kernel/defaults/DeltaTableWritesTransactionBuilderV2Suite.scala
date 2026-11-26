@@ -29,12 +29,14 @@ import io.delta.kernel.defaults.utils.WriteUtilsWithV2Builders
 import io.delta.kernel.engine.{Engine, JsonHandler}
 import io.delta.kernel.exceptions.{KernelException, MaxCommitRetryLimitReachedException, TableAlreadyExistsException}
 import io.delta.kernel.expressions.Column
+import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType
-import io.delta.kernel.utils.CloseableIterable.emptyIterable
+import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterator
 
 import org.apache.spark.sql.delta.DeltaLog
@@ -136,6 +138,59 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
         txn.commit(engine, emptyIterable())
       }
       assert(e.getMessage.contains("This is a fake committer"))
+    }
+  }
+
+  test("UpdateTableTransactionBuilder records a declared blind append in the commitInfo") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+      val txn = TableManager.loadSnapshot(tablePath)
+        .build(engine)
+        .buildUpdateTableTransaction(testEngineInfo, Operation.WRITE)
+        .withBlindAppend()
+        .build(engine)
+      val version = commitAppendData(engine, txn, seqOfUnpartitionedDataBatch1).getVersion
+
+      // Delta Spark reads the commit as a blind append
+      val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
+      assert(deltaLog.history.getHistory(version, Some(version)).head.isBlindAppend === Some(true))
+    }
+  }
+
+  test("UpdateTableTransactionBuilder fails a declared blind append that removes a file") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        data = seqOfUnpartitionedDataBatch1)
+      val committedFile = readCommitFile(
+        engine,
+        tablePath,
+        version = 0,
+        row => {
+          val addOrdinal = row.getSchema.indexOf("add")
+          if (row.isNullAt(addOrdinal)) None else Some(new AddFile(row.getStruct(addOrdinal)))
+        }).get.asInstanceOf[AddFile]
+
+      // The commit fails on a remove with either dataChange value
+      Seq(true, false).foreach { dataChange =>
+        val txn = TableManager.loadSnapshot(tablePath)
+          .build(engine)
+          .buildUpdateTableTransaction(testEngineInfo, Operation.WRITE)
+          .withBlindAppend()
+          .build(engine)
+        val removeAction = SingleAction.createRemoveFileSingleAction(
+          committedFile.toRemoveFileRow(dataChange, Optional.empty()))
+        val actions = inMemoryIterable(toCloseableIterator(Seq(removeAction).asJava.iterator()))
+
+        val e = intercept[KernelException] {
+          txn.commit(engine, actions)
+        }
+        assert(e.getMessage.contains("built with withBlindAppend() and tried to remove a file"))
+        assert(TableManager.loadSnapshot(tablePath).build(engine).getVersion === 0)
+      }
     }
   }
 

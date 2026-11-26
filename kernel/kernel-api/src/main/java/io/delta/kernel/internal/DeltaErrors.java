@@ -564,6 +564,14 @@ public final class DeltaErrors {
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 
+  public static KernelException cannotRemoveFilesInBlindAppend(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot remove files in a blind append. The transaction was built with "
+                + "withBlindAppend() and tried to remove a file from table `%s`.",
+            tablePath));
+  }
+
   public static KernelException cdfMixedAddRemoveNotSupported(String tablePath) {
     return new KernelException(
         String.format(

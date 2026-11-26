@@ -51,6 +51,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
   private Optional<StructType> updatedSchemaOpt = Optional.empty();
   private Optional<List<Column>> inputLogicalClusteringColumnsOpt = Optional.empty();
   private Optional<Integer> userProvidedMaxRetries = Optional.empty();
+  private boolean isBlindAppend = false;
 
   /** Number of commits between producing a log compaction file. */
   private int logCompactionInterval = 0;
@@ -120,6 +121,12 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
   }
 
   @Override
+  public UpdateTableTransactionBuilder withBlindAppend() {
+    this.isBlindAppend = true;
+    return this;
+  }
+
+  @Override
   public UpdateTableTransactionBuilder withMaxRetries(int maxRetries) {
     checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
     this.userProvidedMaxRetries = Optional.of(maxRetries);
@@ -167,6 +174,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         Optional.of(snapshot),
         engineInfo,
         operation,
+        isBlindAppend,
         txnMetadata.newProtocol,
         txnMetadata.newMetadata,
         snapshot.getCommitter(),

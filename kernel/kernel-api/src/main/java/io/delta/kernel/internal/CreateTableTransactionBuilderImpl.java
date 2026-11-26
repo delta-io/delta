@@ -156,6 +156,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         Optional.empty(), // no existing snapshot for create table
         engineInfo,
         Operation.CREATE_TABLE,
+        false /* isBlindAppend */,
         txnMetadata.newProtocol,
         txnMetadata.newMetadata,
         userProvidedCommitter.orElse(DefaultFileSystemManagedTableOnlyCommitter.INSTANCE),

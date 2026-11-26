@@ -540,8 +540,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
     assert(row.getAs[Long]("version") === version)
     assert(row.getAs[Long]("partitionBy") ===
       (if (partitionCols == null) null else OBJ_MAPPER.writeValueAsString(partitionCols.asJava)))
-    // For now we've hardcoded isBlindAppend=false, once we support more precise setting of this
-    // field we should update this check
+    // Kernel writes isBlindAppend=true only for a transaction built with withBlindAppend()
     assert(!row.getAs[Boolean]("isBlindAppend"))
     assert(row.getAs[Seq[String]]("engineInfo") ===
       "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
