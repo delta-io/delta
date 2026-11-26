@@ -18,15 +18,18 @@ package org.apache.spark.sql.delta.amt
 
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaFileProviderUtils, DeltaLog, DeltaOperations, DeltaSingleCommit, SingleCommit}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaFileProviderUtils, DeltaLog, DeltaLogFileIndex, DeltaOperations, DeltaSingleCommit, SingleCommit}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Checkpoint, CommitInfo, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Checkpoint, CommitInfo, FileAction, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.amt.AMTManifestReader.AMTInlineManifestCommit
+import org.apache.spark.sql.delta.implicits.singleActionEncoder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.shims.GridTestShim
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 
 /**
@@ -766,7 +769,8 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
         assert(ordered.size === changes.size)
         // The actions follow the manifest path, then the position, of the entries recording them.
         val provider = providerAt(amtDeltaLog, version)
-        val byManifestPosition = provider.reconstructChangeFiles(spark, amtDeltaLog)
+        val byManifestPosition = provider.manifestReader
+          .loadFilteredChangeEntries(spark, amtDeltaLog, provider.changeManifests)
           .select("leafPath", "pos", "add.path", AMTManifestReader.REMOVED_COLUMN)
           .collect()
           .sortBy(row => (row.getString(0), row.getLong(1)))
@@ -844,6 +848,179 @@ class AMTSingleCommitSuite extends AMTIncrementalWriteTestBase with GridTestShim
             assert(actions.collect { case action: AddFile => action.path } === Seq(add.path))
             assert(actions.collect { case action: RemoveFile => action.path } === Seq(remove.path))
           }
+      }
+    }
+  }
+
+  /** The (is AddFile, file identity) keys of the AddFile and RemoveFile actions in `actions`. */
+  private def fileActionKeys(deltaLog: DeltaLog, actions: Seq[Action]): Set[(Boolean, String)] =
+    actions.collect {
+      case add: AddFile => add
+      case remove: RemoveFile => remove
+    }.map { action =>
+      (action.isInstanceOf[AddFile],
+        action.toUniqueFileActionTuple(deltaLog.dataPath, useObjectIdentity = true).toString)
+    }.toSet
+
+  /**
+   * Commits two inline manifest commits around a log commit, which both delete a file of the same
+   * leaf, so that both trees list that leaf. The second also updates the DV of a file of another
+   * leaf. Needs `AMT_ENTRIES_PER_LEAF` set to 10.
+   *
+   * @return The versions of the two manifest commits, and the location of the leaf both list.
+   */
+  private def commitManifestCommitsSharingALeaf(amtDeltaLog: DeltaLog): (Long, Long, String) = {
+    setupAmt(amtDeltaLog, entriesPerLeaf = 10, initialIdRangeInLeaf = 1 to 30)
+    val leafLocations = leafToAddFileMap(amtDeltaLog).keys.toSeq.sorted
+    assert(leafLocations.size >= 2, "scenario needs at least two leaves.")
+    val (firstLeaf, secondLeaf) = (leafLocations(0), leafLocations(1))
+
+    // A manifest commit that deletes a file of the first leaf and inserts a file.
+    val firstManifestCommit = amtDeltaLog.update().version + 1
+    withInline {
+      commitAmt(
+        amtDeltaLog,
+        Seq(leafToAddFileMap(amtDeltaLog)(firstLeaf).head.remove, fakeAdd(100)))
+    }
+    // A log commit.
+    commitAmt(amtDeltaLog, Seq(fakeAdd(101)))
+    // A manifest commit that deletes another file of the first leaf, so that both trees list
+    // that leaf, and updates the DV of a file of the second leaf.
+    val secondManifestCommit = amtDeltaLog.update().version + 1
+    val liveFilesByLeaf = leafToAddFileMap(amtDeltaLog)
+    withInline {
+      commitAmt(
+        amtDeltaLog,
+        Seq[Action](liveFilesByLeaf(firstLeaf).head.remove, fakeAdd(102)) ++
+          removeAndReAddWithDV(amtDeltaLog, Right(liveFilesByLeaf(secondLeaf).head)))
+    }
+    Seq(firstManifestCommit, secondManifestCommit).foreach { version =>
+      assert(checkpointAt(amtDeltaLog, version).exists(_.contentRoot.version == version),
+        s"v$version must be an inline manifest commit")
+    }
+    (firstManifestCommit, secondManifestCommit, firstLeaf)
+  }
+
+  test("loadActionsFromAMTManifestCommits stamps each tree's actions with its commit") {
+    withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+      withAmtTable { amtDeltaLog =>
+        val (firstManifestCommit, secondManifestCommit, _) =
+          commitManifestCommitsSharingALeaf(amtDeltaLog)
+        val manifestCommitVersions = Seq(firstManifestCommit, secondManifestCommit)
+        val manifestCommits = manifestCommitVersions.map { version =>
+          val commitInfo = actionsAt(amtDeltaLog, version)
+            .collectFirst { case commitInfo: CommitInfo => commitInfo }
+            .getOrElse(fail(s"v$version must have a CommitInfo"))
+          AMTInlineManifestCommit(
+            providerAt(amtDeltaLog, version),
+            commitInfo.dataChange.get,
+            commitInfo.inCommitTimestamp.get)
+        }
+        val treeActions = AMTManifestReader
+          .loadActionsFromAMTManifestCommits(spark, amtDeltaLog, manifestCommits)
+          .getOrElse(fail("expected the file actions of the manifest commits"))
+        manifestCommits.foreach { manifestCommit =>
+          val version = manifestCommit.provider.manifestCommitVersion
+          val actions = treeActions
+            .where(col(DeltaLogFileIndex.COMMIT_VERSION_COLUMN) === version)
+            .drop(DeltaLogFileIndex.COMMIT_VERSION_COLUMN)
+            .as[SingleAction](singleActionEncoder)
+            .collect()
+            .map(_.unwrap)
+            .toSeq
+          assert(fileActionKeys(amtDeltaLog, actions) ===
+            fileActionKeys(amtDeltaLog, actionsAt(amtDeltaLog, version)), s"v$version")
+          actions.foreach {
+            case add: AddFile =>
+              assert(add.dataChange === manifestCommit.dataChange, s"v$version: $add")
+            case remove: RemoveFile =>
+              assert(remove.dataChange === manifestCommit.dataChange, s"v$version: $remove")
+              assert(remove.deletionTimestamp === Some(manifestCommit.commitTimestamp),
+                s"v$version: $remove")
+            case action => fail(s"v$version: unexpected $action")
+          }
+        }
+      }
+    }
+  }
+
+  test("loadChangesDf reconstructs the file actions of several manifest commits") {
+    withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10") {
+      withAmtTable { amtDeltaLog =>
+        val (firstManifestCommit, secondManifestCommit, _) =
+          commitManifestCommitsSharingALeaf(amtDeltaLog)
+        val versions = firstManifestCommit to secondManifestCommit
+        val inlineKeys = versions.map { version =>
+          version -> fileActionKeys(amtDeltaLog, actionsAt(amtDeltaLog, version))
+        }.toMap
+        // Only the trees can supply the file actions of the manifest commits from now on.
+        stripInlineAddAndRemoveActions(amtDeltaLog, firstManifestCommit)
+        stripInlineAddAndRemoveActions(amtDeltaLog, secondManifestCommit)
+
+        val logicalActions = amtDeltaLog.loadChangesDf(
+          firstManifestCommit,
+          secondManifestCommit,
+          catalogTableOpt = None,
+          failOnDataLoss = true,
+          skipNoDataChangeFileActions = false)
+        versions.foreach { version =>
+          val actions = logicalActions
+            .where(col(DeltaLogFileIndex.COMMIT_VERSION_COLUMN) === version)
+            .drop(DeltaLogFileIndex.COMMIT_VERSION_COLUMN)
+            .as[SingleAction](singleActionEncoder)
+            .collect()
+            .map(_.unwrap)
+            .toSeq
+          assert(fileActionKeys(amtDeltaLog, actions) === inlineKeys(version), s"v$version")
+          assert(actions.exists(_.isInstanceOf[CommitInfo]), s"v$version must keep its CommitInfo")
+        }
+
+      }
+    }
+  }
+
+  test("loadChangesDf skips the file actions of a manifest commit that changes no data") {
+    withSQLConf(
+        DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "10",
+        DeltaSQLConf.DELTA_COMMIT_INFO_DATA_CHANGE_READ_ENABLED.key -> "true") {
+      withAmtTable { amtDeltaLog =>
+        setupAmt(amtDeltaLog, entriesPerLeaf = 10, initialIdRangeInLeaf = 1 to 30)
+        val version = amtDeltaLog.update().version + 1
+        // A compaction style commit: its tree records a delete and an insert, and its CommitInfo
+        // has dataChange = false.
+        withInline {
+          commitAmt(amtDeltaLog, Seq[Action](
+            removeOf(amtDeltaLog, 1).copy(dataChange = false),
+            fakeAdd(200, dataChange = false)))
+        }
+
+        val isFileAction = col("add").isNotNull || col("remove").isNotNull
+        val allFileActions = amtDeltaLog
+          .loadChangesDf(
+            version,
+            version,
+            catalogTableOpt = None,
+            failOnDataLoss = true,
+            skipNoDataChangeFileActions = false)
+          .where(isFileAction)
+          .drop(DeltaLogFileIndex.COMMIT_VERSION_COLUMN)
+          .as[SingleAction](singleActionEncoder)
+          .collect()
+          .map(_.unwrap.asInstanceOf[FileAction])
+          .toSeq
+        assert(allFileActions.count(_.isInstanceOf[AddFile]) === 1, allFileActions)
+        assert(allFileActions.count(_.isInstanceOf[RemoveFile]) === 1, allFileActions)
+        assert(allFileActions.forall(!_.dataChange), allFileActions)
+
+        val dataChangingFileActions = amtDeltaLog
+          .loadChangesDf(
+            version,
+            version,
+            catalogTableOpt = None,
+            failOnDataLoss = true,
+            skipNoDataChangeFileActions = true)
+          .where(isFileAction)
+        assert(dataChangingFileActions.isEmpty)
       }
     }
   }

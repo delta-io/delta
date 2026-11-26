@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, CommitInfo, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
+import org.apache.spark.sql.delta.amt.AMTManifestReader.AMTInlineManifestCommit
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
@@ -108,6 +109,25 @@ class SingleCommit private (
       override def rewind(): Unit = underlying.rewind()
     }
   }
+
+  /**
+   * The [[AMTInlineManifestCommit]] of this commit, used to load AMT changes as dataframe.
+   * Returns none when this commit is not AMT commit. This method incurs I/O.
+   */
+  private[delta] def toAMTManifestCommit(): Option[AMTInlineManifestCommit] =
+    getJsonActionsIterator(maxInMemoryFileSizeBytes = 0)
+      .processAndClose { commitJsonIter =>
+        val actions = commitJsonIter.buffered
+        actions.headOption.collect {
+          case commitInfo: CommitInfo if commitInfo.isAMTInlineManifestCommit(version) => commitInfo
+        }.map { commitInfo =>
+          val checkpointOpt = actions.collectFirst { case checkpoint: Checkpoint => checkpoint }
+          AMTInlineManifestCommit(
+            amtProviderFromCheckpointOpt(checkpointOpt),
+            commitInfo.getDataChangeOrThrow,
+            commitInfo.getCommitTimestamp)
+        }
+      }
 
   /**
    * The modification time of this commit's log file.
@@ -246,6 +266,15 @@ object SingleCommit {
       version: Long,
       fileStatus: FileStatus): DeltaSingleCommit =
     new SingleCommit(deltaLog, version, fileStatus)
+
+  /**
+   * The log files of `commits` as a [[DeltaLogFileIndex]], so that their [[FileStatus]]es stay
+   * inside the handles.
+   *
+   * NOTE: This file index is not AMT aware.
+   */
+  private[delta] def logFileIndex(commits: Seq[SingleCommit]): DeltaLogFileIndex =
+    DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, commits.map(_.fileStatus).toArray)
 
   /**
    * Read a single commit's actions into a rewindable, closable iterator, respecting memory
