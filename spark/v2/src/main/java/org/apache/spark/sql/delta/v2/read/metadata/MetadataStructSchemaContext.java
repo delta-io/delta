@@ -20,6 +20,7 @@ import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import java.io.Serializable;
 import java.util.Arrays;
 import java.util.Optional;
+import org.apache.spark.sql.catalyst.expressions.MetadataStructFieldWithLogicalName$;
 import org.apache.spark.sql.delta.DeltaParquetFileFormatBase;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
@@ -34,7 +35,11 @@ import scala.collection.immutable.Map;
 import scala.collection.immutable.Seq;
 
 /**
- * Schema context for the DSv2 {@code _metadata} struct column.
+ * Schema context for the DSv2 metadata struct with logical name {@code _metadata}.
+ *
+ * <p>The struct is identified by Spark's metadata-column marker and logical name, so it remains
+ * recognizable when its physical name is changed to avoid a user-column collision. Unmarked user
+ * fields named {@code _metadata} are treated as ordinary data columns.
  *
  * <p>Single owner of everything needed to materialise the pruned {@code _metadata} struct at read
  * time:
@@ -52,9 +57,8 @@ import scala.collection.immutable.Seq;
  * </ul>
  *
  * <p>Constructed via the static {@link #forSchema} factory which returns {@code Optional.empty()}
- * when the requested read schema does not contain a top-level {@code _metadata} struct - the caller
- * therefore avoids paying any context-construction cost when the scan does not request {@code
- * _metadata} at all.
+ * when the requested read schema does not contain a top-level struct with the metadata-column
+ * marker and logical name {@code _metadata}.
  *
  * <p>Row tracking is modelled as two specialised setters ({@link RowIdValueSetterBuilder}, {@link
  * RowCommitVersionValueSetterBuilder}) registered alongside generic {@link
@@ -65,7 +69,12 @@ import scala.collection.immutable.Seq;
  */
 public class MetadataStructSchemaContext implements Serializable {
 
+  /**
+   * Logical name of the metadata struct. Use {@link #isMetadataStruct(StructField)} to identify it
+   * regardless of collision renaming.
+   */
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
+
   private static final String ROW_ID_FIELD_NAME = RowId$.MODULE$.ROW_ID();
   private static final String ROW_COMMIT_VERSION_FIELD_NAME =
       RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME();
@@ -79,16 +88,19 @@ public class MetadataStructSchemaContext implements Serializable {
   private final MetadataValueSetterBuilder[] valueSetterBuilders;
 
   /**
-   * Builds a context iff {@code readDataSchema} contains a top-level {@code _metadata} struct.
+   * Builds a context when {@code readDataSchema} contains a top-level struct carrying Spark's
+   * metadata-column marker with logical name {@code _metadata}. The physical field name may differ
+   * after collision renaming; unmarked fields named {@code _metadata} are ignored.
    *
-   * @param readDataSchema the requested read schema, including {@code _metadata} when requested
+   * @param readDataSchema the requested read schema, including the marked, possibly renamed
+   *     metadata struct when requested
    * @param partitionSchema the partition columns appended by Spark after the inner read row
    * @param deltaFormat the Delta Parquet format whose {@link
    *     DeltaParquetFileFormatBase#fileConstantMetadataExtractors} drives the file-constant setters
    * @param tableMetadata Kernel table metadata used to resolve the materialised row-tracking
    *     helper-column physical names when row tracking fields are requested
-   * @return a present {@code MetadataStructSchemaContext} when {@code _metadata} is requested,
-   *     otherwise {@code Optional.empty()}
+   * @return a present context when a marked metadata struct with logical name {@code _metadata} is
+   *     requested, otherwise {@code Optional.empty()}
    */
   public static Optional<MetadataStructSchemaContext> forSchema(
       StructType readDataSchema,
@@ -114,17 +126,19 @@ public class MetadataStructSchemaContext implements Serializable {
       Metadata tableMetadata) {
     StructField metadataColumn =
         Arrays.stream(readDataSchema.fields())
-            .filter(field -> METADATA_COLUMN_NAME.equals(field.name()))
+            .filter(MetadataStructSchemaContext::isMetadataStruct)
             .findFirst()
             .orElse(null);
     if (metadataColumn == null || !(metadataColumn.dataType() instanceof StructType)) {
       return Optional.empty();
     }
     StructType prunedMetadata = (StructType) metadataColumn.dataType();
+    // Use metadataColumn.name() to preserve user columns when Spark renames the metadata struct
+    // to avoid a name collision.
     StructType baseSchema =
         new StructType(
             Arrays.stream(readDataSchema.fields())
-                .filter(f -> !METADATA_COLUMN_NAME.equals(f.name()))
+                .filter(f -> !metadataColumn.name().equals(f.name()))
                 .toArray(StructField[]::new));
     return Optional.of(
         new MetadataStructSchemaContext(
@@ -268,6 +282,18 @@ public class MetadataStructSchemaContext implements Serializable {
 
   private static boolean containsField(StructType struct, String name) {
     return Arrays.stream(struct.fields()).anyMatch(field -> name.equals(field.name()));
+  }
+
+  /**
+   * Identifies the generated metadata struct even when renamed to avoid a user-column collision.
+   *
+   * @return true if {@code field} carries Spark's metadata-column marker with logical name {@code
+   *     _metadata}
+   */
+  public static boolean isMetadataStruct(StructField field) {
+    scala.Option<scala.Tuple2<StructField, String>> matched =
+        MetadataStructFieldWithLogicalName$.MODULE$.unapply(field);
+    return matched.isDefined() && METADATA_COLUMN_NAME.equals(matched.get()._2());
   }
 
   private static Seq<Object> buildRangeOrdinals(int startInclusive, int endExclusive) {
