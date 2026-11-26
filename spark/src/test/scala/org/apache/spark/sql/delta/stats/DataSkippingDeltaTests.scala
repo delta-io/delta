@@ -1060,7 +1060,7 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
   }
 
   test("data skipping stats before and after optimize") {
-      assume(!catalogOwnedDefaultCreationEnabledInTests,
+      assume(!catalogManagedDefaultCreationEnabledInTests,
         "OPTIMIZE is blocked on catalog-managed tables")
       val t = "ds_stats_before_after_optimize"
       withTable(t) {

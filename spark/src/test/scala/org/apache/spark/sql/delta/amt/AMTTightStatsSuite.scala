@@ -246,4 +246,37 @@ class AMTTightStatsSuite extends AMTCheckpointTestBase {
       check(deltaLogForName(nonAMTTable))
     }
   }
+
+  for (legacyStats <- BOOLEAN_DOMAIN) {
+    testAcrossAMTCheckpointScenarios(
+        s"AMT checkpoints keep tightStats and drop tightBounds (legacy stats = $legacyStats)",
+        s"amt_tightness_round_trip_$legacyStats",
+        tableSchema = "id INT, n INT",
+        amtFeature = AdaptiveMetadataTableFeature)(
+        setup = { name =>
+          // Two files, so that the DELETE leaves a deletion vector on the first one only.
+          appendRowsAsSeparateFiles(name, numFiles = 2, rowsPerFile = 3,
+            columnExprs = Seq("CAST(id AS INT)", "IF(id = 0, 7, NULL)"))
+          if (legacyStats) commitLegacyStats(deltaLogForName(name))
+        },
+        inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
+          s"DELETE FROM $name WHERE id = 0"))) { context =>
+      // The DELETE widens the stats of a file, which the checkpoint must keep exactly.
+      assertLiveAddFilesRoundTrip(context)
+      val files = liveAddFiles(context.postCheckpointSnapshot)
+      assert(files.size == 2 && files.count(_.deletionVector != null) == 1, files)
+      files.foreach { file =>
+        val stats = parseStats(file)
+        if (legacyStats) {
+          // AMT drops `tightBounds`, so a legacy file reads back not tight.
+          assert(stats.has(TIGHT_BOUNDS) && !stats.get(TIGHT_BOUNDS).asBoolean(), file)
+          assert(!stats.has(TIGHT_STATS), file)
+        } else {
+          assert(stats.has(TIGHT_STATS), file)
+          assert(stats.get(TIGHT_STATS).asBoolean() == (file.deletionVector == null), file)
+          assert(!stats.has(TIGHT_BOUNDS), file)
+        }
+      }
+    }
+  }
 }

@@ -16,17 +16,19 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaOptions, SnapshotDescriptor, TypeWidening}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaOptions, DeltaSingleCommit, SnapshotDescriptor, TypeWidening}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.ClosableIterator
+import org.apache.spark.sql.delta.storage.ClosableIterator._
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.read.streaming.ReadLimit
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.Utils
 
 /**
  * Offset logic shared by the Delta streaming sources: [[DeltaSource]] (V1) and
@@ -66,6 +68,12 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
 
   /** Options that control how the source handles schema changes. */
   protected def schemaReadOptions: DeltaStreamUtils.SchemaReadOptions
+
+  /**
+   * Returns the files of the snapshot at `version`, with BEGIN and END markers, and the in-commit
+   * timestamp of that snapshot if it has one.
+   */
+  protected def getSnapshotAt(version: Long): (Iterator[IndexedFile], Option[Long])
 
   /** The metadata tracking log (schema tracking log) of the stream, if it has one. */
   protected def metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog]
@@ -383,6 +391,143 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
       version,
       getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
         indexedFiles)
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // File change boundaries
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Keeps the files after the start offset (`fromVersion`, `fromIndex`), which is exclusive. The
+   * files must be at or after `fromVersion`.
+   */
+  protected def filterFilesAfterStartOffset(
+      iter: ClosableIterator[IndexedFile],
+      fromVersion: Long,
+      fromIndex: Long): ClosableIterator[IndexedFile] = {
+    iter.withClose { it =>
+      it.filter { file =>
+        file.version > fromVersion || file.index > fromIndex
+      }
+    }
+  }
+
+  /**
+   * Keeps the files up to the end offset of this scan, which is inclusive. When `endOffset` is
+   * empty, the end offset is `lastOffsetForTriggerAvailableNow`, if it is set. The files must be
+   * in (version, index) order.
+   */
+  protected def takeFilesUntilEndOffset(
+      files: ClosableIterator[IndexedFile],
+      endOffset: Option[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
+    var iter = files
+    // If endOffset is provided, we are getting a batch on a constructed range so we should use
+    // the endOffset as the limit.
+    // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
+    // Trigger.availableNow() as limit. We know endOffset <= lastOffsetForTriggerAvailableNow.
+    val lastOffsetForThisScan = endOffset.orElse(lastOffsetForTriggerAvailableNow)
+
+    lastOffsetForThisScan.foreach { bound =>
+      iter = iter.withClose { it =>
+        it.takeWhile { file =>
+          file.version < bound.reservoirVersion ||
+            (file.version == bound.reservoirVersion && file.index <= bound.index)
+        }
+      }
+    }
+    iter
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Commit loop
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Returns matching files that were added on or after startVersion among delta logs.
+   * `fromVersion` is the start version of the whole scan. If the backend's commits hold
+   * resources, closing the result also closes them, see
+   * [[DeltaStreamingBackend.closeCommitsWithFiles]].
+   */
+  protected def filterAndIndexDeltaLogs(
+      startVersion: Long,
+      fromVersion: Long,
+      endOffset: Option[DeltaSourceOffset],
+      verifyMetadataAction: Boolean
+  ): ClosableIterator[IndexedFile] = {
+    // TODO: handle the case when failOnDataLoss = false and we are missing change log files
+    //    in that case, we need to recompute the start snapshot and evolve the schema if needed
+    require(options.failOnDataLoss || !trackingMetadataChange,
+      "Using schema from schema tracking log cannot tolerate missing commit files.")
+    def indexCommit(commit: DeltaSingleCommit): ClosableIterator[IndexedFile] = {
+      val version = commit.version
+      // First pass reads the whole commit and closes the iterator.
+      val iter = DeltaSource.createRewindableActionIterator(spark, commit)
+      val (shouldSkipCommit, metadataOpt, protocolOpt) = iter
+        .processAndClose { actionsIter =>
+          validateCommitAndDecideSkipping(
+            actionsIter, version,
+            fromVersion, endOffset,
+            verifyMetadataAction && !trackingMetadataChange
+          )
+        }
+      // Rewind the iterator to the beginning, if the actions are cached in memory, they will
+      // be reused again.
+      iter.rewind()
+      // Second pass reads the commit lazily.
+      iter.withClose { actionsIter =>
+        filterAndGetIndexedFiles(
+          actionsIter, version, shouldSkipCommit, metadataOpt, protocolOpt)
+      }
+    }
+    val commits =
+      streamingBackend.getSingleCommitIterator(startVersion, options.failOnDataLoss, endOffset)
+    streamingBackend.closeCommitsWithFiles(commits.flatMapWithClose(indexCommit), commits)
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // File changes
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Get the changes starting from (startVersion, startIndex). The start point should not be
+   * included in the result.
+   *
+   * @param endOffset If defined, do not return changes beyond this offset.
+   *                  If not defined, we must be scanning the log to find the next offset.
+   * @param verifyMetadataAction If true, we will break the stream when we detect any
+   *                             read-incompatible metadata changes.
+   */
+  protected def getFileChanges(
+      fromVersion: Long,
+      fromIndex: Long,
+      isInitialSnapshot: Boolean,
+      endOffset: Option[DeltaSourceOffset] = None,
+      verifyMetadataAction: Boolean = true
+  ): ClosableIterator[IndexedFile] = {
+
+    val (result, duration) = Utils.timeTakenMs {
+      var iter = if (isInitialSnapshot) {
+        Iterator(1, 2).flatMapWithClose { // so that the filterAndIndexDeltaLogs call is lazy
+          case 1 => getSnapshotAt(fromVersion)._1.toClosable
+          case 2 => filterAndIndexDeltaLogs(
+            fromVersion + 1, fromVersion, endOffset, verifyMetadataAction)
+        }
+      } else {
+        filterAndIndexDeltaLogs(fromVersion, fromVersion, endOffset, verifyMetadataAction)
+      }
+
+      iter = filterFilesAfterStartOffset(iter, fromVersion, fromIndex)
+
+        iter = takeFilesUntilEndOffset(iter, endOffset)
+      iter
+    }
+    logInfo(log"Getting file changes for delta_log_path=" +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
+      log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, " +
+      log"fromIndex=${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
+      log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} " +
+      log"took timeMs=${MDC(DeltaLogKeys.DURATION, duration)} ms")
+    result
   }
 
   // ---------------------------------------------------------------------------------------------

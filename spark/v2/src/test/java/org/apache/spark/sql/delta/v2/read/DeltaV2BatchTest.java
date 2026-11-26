@@ -15,17 +15,30 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
+import static org.apache.spark.sql.delta.v2.read.metadata.MetadataColumnTestUtils.renamedMetadataColumnStructField;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.read.Batch;
+import org.apache.spark.sql.connector.read.InputPartition;
+import org.apache.spark.sql.connector.read.PartitionReader;
+import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.delta.v2.catalog.DeltaV2Table;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.sources.GreaterThan;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -91,6 +104,78 @@ public class DeltaV2BatchTest extends DeltaV2PartitionedTableTestBase {
 
     assertNotEquals(batch1, batch2);
     assertNotEquals(batch1.hashCode(), batch2.hashCode());
+  }
+
+  @Test
+  public void testBatchReaderPreservesUserColumnWithRenamedMetadata(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String collisionTableName = "batch_metadata_collision";
+    withTable(
+        new String[] {collisionTableName},
+        () ->
+            withSQLConf(
+                "spark.databricks.delta.v2.enableMode",
+                "NONE",
+                () -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id LONG, _metadata STRING) USING delta LOCATION '%s'",
+                          collisionTableName, path));
+                  spark.sql(
+                      String.format(
+                          "INSERT INTO %s VALUES (1, 'user_a'), (2, 'user_b')",
+                          collisionTableName));
+                  List<Row> expected =
+                      spark
+                          .sql(
+                              String.format(
+                                  "SELECT id, _metadata, __metadata.file_path FROM %s ORDER BY id",
+                                  collisionTableName))
+                          .collectAsList();
+                  assertEquals(2, expected.size());
+
+                  DeltaV2Table collisionTable =
+                      new DeltaV2Table(
+                          Identifier.of(
+                              new String[] {"spark_catalog", "default"}, collisionTableName),
+                          path,
+                          options);
+                  DeltaV2ScanBuilder builder =
+                      (DeltaV2ScanBuilder) collisionTable.newScanBuilder(options);
+                  builder.pruneColumns(
+                      new StructType()
+                          .add("id", DataTypes.LongType)
+                          .add("_metadata", DataTypes.StringType)
+                          .add(
+                              renamedMetadataColumnStructField(
+                                  "__metadata",
+                                  new StructType().add("file_path", DataTypes.StringType))));
+
+                  // Call the batch API directly to exercise its reader independently of FileScan.
+                  Batch batch = asDeltaV2Scan(builder.build()).toBatch();
+                  PartitionReaderFactory readerFactory = batch.createReaderFactory();
+                  List<Row> actual = new ArrayList<>();
+                  for (InputPartition partition : batch.planInputPartitions()) {
+                    assertFalse(readerFactory.supportColumnarReads(partition));
+                    try (PartitionReader<InternalRow> reader =
+                        readerFactory.createReader(partition)) {
+                      while (reader.next()) {
+                        InternalRow row = reader.get();
+                        assertFalse(row.isNullAt(2), "Renamed metadata must be populated");
+                        InternalRow metadata = row.getStruct(2, 1);
+                        assertFalse(metadata.isNullAt(0), "Generated file_path must be populated");
+                        actual.add(
+                            RowFactory.create(
+                                row.getLong(0),
+                                row.getUTF8String(1).toString(),
+                                metadata.getUTF8String(0).toString()));
+                      }
+                    }
+                  }
+                  actual.sort(Comparator.comparingLong(row -> row.getLong(0)));
+                  assertEquals(expected, actual);
+                }));
   }
 
   @Test

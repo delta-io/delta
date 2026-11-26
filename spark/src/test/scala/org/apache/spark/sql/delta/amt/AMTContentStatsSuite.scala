@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{CatalogManagedTableFeature, ColumnMappingTableFeature, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaConfigs, DomainMetadataTableFeature, RowTrackingFeature}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, CatalogManagedTableFeature, ColumnMappingTableFeature, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaConfigs, DomainMetadataTableFeature, RowTrackingFeature, TableFeature}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaStatistics.{TIGHT_BOUNDS, TIGHT_STATS}
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -36,8 +37,8 @@ import org.apache.spark.sql.types.{BooleanType, ByteType, DataType, DateType, De
  * Tests for [[AMTContentStats]] -- the conversion between Delta's stats JSON string and the typed
  * Iceberg V4 `content_stats` struct. `forWrite` and `forRead` are exercised end to end against a
  * real all-types table (see [[withAllTypesTable]]); the edge cases -- unsupported bound types, a
- * table that collects no statistics, and the `tight_stats` / `tightBounds` mapping -- run on
- * synthesized `(Metadata, Protocol)` fixtures (see [[metadataWithColumnIds]]).
+ * table that collects no statistics, and the file-level tightness flags -- run on synthesized
+ * `(Metadata, Protocol)` fixtures (see [[metadataWithColumnIds]]).
  */
 class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
@@ -121,7 +122,10 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       boundless("d_bool")
       boundless("d_binary")
       boundless("d_arr")
-      // Delta's tightBounds is not carried over to the entry's file-level tight_stats yet.
+      // Delta's `tightStats` is kept as-is, and its legacy `tightBounds` is dropped. Stats without
+      // `tightStats`, such as those of this preview AMT table, keep `tight_stats = false`.
+      assert(!protocol.isFeatureSupported(AdaptiveMetadataTableFeature))
+      assert(flagOf(add.stats, TIGHT_STATS).isEmpty, add.stats)
       assert(persistedTightStats(persisted).contains(false))
     }
   }
@@ -173,10 +177,10 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
       // itself. Compare as parsed JSON trees so field order and formatting do not matter.
       val loggedSchema = StructType(Seq(StructField("add", StructType(Seq(
         StructField("stats", StringType))))))
-      // Two things do not survive AMT yet, so adjust the logged stats to what forRead reconstructs:
+      // Two things do not survive AMT, so adjust the logged stats to what forRead reconstructs:
       // AMT persists no timestamp bounds (see `isSupportedBoundType`), so the timestamp min/max are
-      // dropped; and Delta's tightBounds is written to `tight_stats` as false, so it reads back as
-      // false.
+      // dropped; and AMT drops Delta's legacy `tightBounds`, so a file without `tightStats` reads
+      // back with `tightBounds = false`.
       val timestampColumns = metadata.dataSchema.filter(f =>
         f.dataType.isInstanceOf[TimestampType] || f.dataType.isInstanceOf[TimestampNTZType])
       def asReconstructed(stats: JsonNode): JsonNode = {
@@ -184,7 +188,7 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
           val values = stats.get(stat).asInstanceOf[ObjectNode]
           timestampColumns.foreach(f => values.remove(DeltaColumnMapping.getPhysicalName(f)))
         }
-        stats.asInstanceOf[ObjectNode].put("tightBounds", false)
+        if (!stats.has(TIGHT_STATS)) stats.asInstanceOf[ObjectNode].put(TIGHT_BOUNDS, false)
         stats
       }
       val logged = spark.read.schema(loggedSchema)
@@ -223,11 +227,18 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
 
   /**
    * A [[Protocol]] representative of a real AMT table: it carries every
-   * feature `AdaptiveMetadataPreviewTableFeature` requires. In particular it is
-   * DV-capable, so Delta's derived stats schema always carries `tightBounds`.
+   * feature `AdaptiveMetadataTableFeature` requires. In particular it is
+   * DV-capable, so Delta's derived stats schema always carries `tightBounds`, and its stats schema
+   * carries `tightStats`.
    */
-  private def amtProtocol: Protocol =
+  private def amtProtocol: Protocol = protocolWith(AdaptiveMetadataTableFeature)
+
+  /** [[amtProtocol]] with the preview AMT feature, whose stats schema has no `tightStats`. */
+  private def previewAMTProtocol: Protocol = protocolWith(AdaptiveMetadataPreviewTableFeature)
+
+  private def protocolWith(amtFeature: TableFeature): Protocol =
     Protocol(3, 7)
+      .withFeature(amtFeature)
       .withFeature(CatalogManagedTableFeature)
       .withFeature(RowTrackingFeature)
       .withFeature(DomainMetadataTableFeature)
@@ -573,45 +584,61 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
     }
   }
 
-  /** The persisted Iceberg `tight_stats` of the single entry in `persisted`, or None if absent. */
+  /**
+   * The sample stats of [[getSampleStatsJson]] with the given file-level tightness flags; a flag
+   * that is None is absent.
+   */
+  private def sampleStatsWithFlags(
+      metadata: Metadata,
+      tightBounds: Option[Boolean],
+      tightStats: Option[Boolean]): String = {
+    val node = JsonUtils.mapper.readTree(getSampleStatsJson(metadata, tightBounds = true))
+      .asInstanceOf[ObjectNode]
+    node.remove(TIGHT_BOUNDS)
+    tightBounds.foreach(flag => node.put(TIGHT_BOUNDS, flag))
+    tightStats.foreach(flag => node.put(TIGHT_STATS, flag))
+    JsonUtils.mapper.writeValueAsString(node)
+  }
+
+  /** The value of the flag `name` in a Delta stats JSON, or None if absent. */
+  private def flagOf(statsJson: String, name: String): Option[Boolean] =
+    Option(JsonUtils.mapper.readTree(statsJson).get(name)).map(_.asBoolean)
+
+  /** The persisted Iceberg `tight_stats` of the single entry in `persisted`, or None if null. */
   private def persistedTightStats(persisted: DataFrame): Option[Boolean] =
     persisted.select(col("tight_stats")).as[Option[Boolean]].head()
 
-  /** The file-level `tightBounds` recorded in a Delta stats JSON, or None if absent. */
-  private def tightBoundsOf(statsJson: String): Option[Boolean] =
-    Option(JsonUtils.mapper.readTree(statsJson).get("tightBounds")).map(_.asBoolean)
-
-  test("an entry built from an AddFile has tight_stats = false, whatever Delta's tightBounds") {
-    // Iceberg tracks tightness with the file-level `tight_stats`, which vouches for more than
-    // Delta's tightBounds does (e.g. exact counts and untruncated timestamp bounds), so tightBounds
-    // is not carried over: every entry AMT builds is explicitly not tight.
+  test("AMT keeps the tightStats of a file and drops its tightBounds") {
+    // Strings are never tight, whatever the flags say, so a string column must not affect them.
     val metadata = metadataWithColumnIds(
-      new StructType().add("id", LongType).add("s", StringType))
-    Seq(true, false).foreach { tight =>
-      val persisted =
-        writeStats(getSampleStatsJson(metadata, tightBounds = tight), metadata, amtProtocol)
-      assert(persistedTightStats(persisted).contains(false),
-        s"tightBounds=$tight must persist tight_stats=false")
-      assert(tightBoundsOf(readStats(persisted, metadata, amtProtocol)).contains(false),
-        s"tightBounds=$tight must reconstruct tightBounds=false")
+      new StructType().add("id", LongType).add("name", StringType).add("ts", TimestampType))
+    for {
+      tightBounds <- Seq(None, Some(true), Some(false))
+      tightStats <- Seq(None, Some(true), Some(false))
+    } {
+      val stats = sampleStatsWithFlags(metadata, tightBounds, tightStats)
+      val persisted = writeStats(stats, metadata, amtProtocol)
+      assert(persistedTightStats(persisted) == tightStats, stats)
+      val restored = readStats(persisted, metadata, amtProtocol)
+      assert(flagOf(restored, TIGHT_STATS) == tightStats, restored)
+      // An absent `tightBounds` means tight, which a file without `tightStats` can't claim once
+      // its `tightBounds` is dropped.
+      val expectedTightBounds = if (tightStats.isEmpty) Some(false) else None
+      assert(flagOf(restored, TIGHT_BOUNDS) == expectedTightBounds, restored)
     }
   }
 
-  test("forRead maps tight_stats to Delta's tightBounds as-is, and an absent flag to false") {
-    // forWrite always writes false, but an external Iceberg writer may set the flag or omit it.
-    // Iceberg treats an absent tight_stats as not tight, whereas Delta treats an absent tightBounds
-    // as tight, so the reconstruction must spell an absent flag out as false.
-    val metadata = metadataWithColumnIds(
-      new StructType().add("id", LongType).add("s", StringType))
-    val persisted =
-      writeStats(getSampleStatsJson(metadata, tightBounds = true), metadata, amtProtocol)
-    Seq(Some(true) -> true, Some(false) -> false, None -> false).foreach {
-      case (tightStats, expected) =>
-        val flag = tightStats.map(lit).getOrElse(lit(null).cast(BooleanType))
-        val tampered = persisted.withColumn("tight_stats", flag)
-        assert(persistedTightStats(tampered) == tightStats)
-        assert(tightBoundsOf(readStats(tampered, metadata, amtProtocol)).contains(expected),
-          s"tight_stats=$tightStats must reconstruct tightBounds=$expected")
+  test("an entry with Iceberg's tight_stats set reads back with that tightStats") {
+    // An Iceberg writer may set `tight_stats` on an entry whose stats AMT did not write.
+    val metadata = metadataWithColumnIds(new StructType().add("id", LongType))
+    val persisted = writeStats(
+      sampleStatsWithFlags(metadata, tightBounds = Some(true), tightStats = None),
+      metadata, amtProtocol)
+    BOOLEAN_DOMAIN.foreach { tightStats =>
+      val restored =
+        readStats(persisted.withColumn("tight_stats", lit(tightStats)), metadata, amtProtocol)
+      assert(flagOf(restored, TIGHT_BOUNDS).isEmpty, restored)
+      assert(flagOf(restored, TIGHT_STATS).contains(tightStats), restored)
     }
   }
 
@@ -773,5 +800,21 @@ class AMTContentStatsSuite extends AMTCheckpointTestBase {
           s"got $names")
     }
     assertColumnStatsSurviveCheckpoint(context, Seq("c_b"), boundsSurvive = true)
+  }
+
+  test("an entry of a preview AMT table reads back with its tight_stats as tightBounds") {
+    // Preview tables keep `tightBounds`, and their manifests hold `tight_stats = false`.
+    val metadata = metadataWithColumnIds(new StructType().add("id", LongType))
+    val persisted = writeStats(
+      sampleStatsWithFlags(metadata, tightBounds = Some(false), tightStats = None),
+      metadata, previewAMTProtocol)
+    Seq(Some(true) -> true, Some(false) -> false, None -> false).foreach {
+      case (tightStats, expected) =>
+        val flag = tightStats.map(lit).getOrElse(lit(null).cast(BooleanType))
+        val restored = readStats(
+          persisted.withColumn("tight_stats", flag), metadata, previewAMTProtocol)
+        assert(flagOf(restored, TIGHT_BOUNDS).contains(expected), restored)
+        assert(flagOf(restored, TIGHT_STATS).isEmpty, restored)
+    }
   }
 }

@@ -24,7 +24,6 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
-import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
@@ -37,7 +36,7 @@ import org.apache.spark.sql.delta.v2.kernel.KernelActionUtils$;
  * Helper class providing utilities for working with Delta table data in streaming scenarios.
  *
  * <p>This class provides static utility methods for extracting information from Delta table
- * batches, such as version numbers and data change actions.
+ * batches, such as metadata and data change actions.
  */
 @Experimental
 public class StreamingHelper {
@@ -72,15 +71,6 @@ public class StreamingHelper {
     ColumnVector actionVector = columnarBatch.getColumnVector(actionIdx);
     T action = actionFactory.apply(actionVector, rowId);
     return Optional.ofNullable(action);
-  }
-
-  /**
-   * Get the version from a {@link ColumnarBatch} of Delta log actions. Assumes all rows in the
-   * batch belong to the same commit version, so it reads the version from the first row (rowId=0).
-   */
-  public static long getVersion(ColumnarBatch columnarBatch) {
-    int versionColIdx = getFieldIndex(columnarBatch, "version");
-    return columnarBatch.getColumnVector(versionColIdx).getLong(0);
   }
 
   /** Get AddFile action from a ColumnarBatch at the specified row, if present. */
@@ -134,26 +124,6 @@ public class StreamingHelper {
         rowId,
         DeltaLogActionUtils.DeltaAction.METADATA,
         io.delta.kernel.internal.actions.Metadata::fromColumnVector);
-  }
-
-  /** Get Protocol action from a batch at the specified row, if present. */
-  public static Optional<io.delta.kernel.internal.actions.Protocol> getProtocol(
-      ColumnarBatch batch, int rowId) {
-    return getAction(
-        batch,
-        rowId,
-        DeltaLogActionUtils.DeltaAction.PROTOCOL,
-        io.delta.kernel.internal.actions.Protocol::fromColumnVector);
-  }
-
-  /** Get CommitInfo action from a batch at the specified row, if present. */
-  public static Optional<CommitInfo> getCommitInfo(ColumnarBatch columnarBatch, int rowId) {
-    int commitInfoIdx =
-        getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.COMMITINFO.colName);
-    ColumnVector commitInfoVector = columnarBatch.getColumnVector(commitInfoIdx);
-    CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, rowId);
-
-    return Optional.ofNullable(commitInfo);
   }
 
   /**

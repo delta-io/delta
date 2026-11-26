@@ -2071,6 +2071,9 @@ case class ContentRoot(
   /** Number of leaf manifests in this tree, if recorded; `0` means a root-only tree. */
   def numLeaves: Option[Long] = tag(ContentRoot.Tags.NUM_LEAVES).map(_.toLong)
 
+  /** Number of entries in the root manifest, if recorded. */
+  def numRootEntries: Option[Long] = tag(ContentRoot.Tags.NUM_ROOT_ENTRIES).map(_.toLong)
+
   /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
   def lastManifestCommitWithFullRewrite: Option[Long] =
     tag(ContentRoot.Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE).map(_.toLong)
@@ -2116,6 +2119,25 @@ object ContentRoot {
     )
   }
 
+  def apply(
+      path: String,
+      sizeInBytes: Long,
+      version: Long,
+      isIncremental: Boolean,
+      lastManifestCommitWithFullRewrite: Long,
+      numLeaves: Long,
+      numRootEntries: Long): ContentRoot = {
+    val contentRoot = apply(
+      path,
+      sizeInBytes,
+      version,
+      isIncremental,
+      lastManifestCommitWithFullRewrite,
+      numLeaves)
+    contentRoot.copy(tags = contentRoot.tags +
+      (Tags.NUM_ROOT_ENTRIES.name -> numRootEntries.toString))
+  }
+
   object Tags {
     sealed abstract class KeyType(val name: String)
 
@@ -2126,6 +2148,8 @@ object ContentRoot {
       extends KeyType("lastManifestCommitWithFullRewrite")
     /** Number of leaf manifests in the tree; `0` means a root-only tree. */
     object NUM_LEAVES extends KeyType("numLeaves")
+    /** Number of entries in the root manifest. */
+    object NUM_ROOT_ENTRIES extends KeyType("numRootEntries")
   }
 }
 

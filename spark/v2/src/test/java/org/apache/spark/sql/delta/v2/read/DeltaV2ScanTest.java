@@ -1,5 +1,7 @@
 package org.apache.spark.sql.delta.v2.read;
 
+import static org.apache.spark.sql.delta.v2.read.metadata.MetadataColumnTestUtils.metadataColumnStructField;
+import static org.apache.spark.sql.delta.v2.read.metadata.MetadataColumnTestUtils.renamedMetadataColumnStructField;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -207,7 +209,7 @@ public class DeltaV2ScanTest extends DeltaV2PartitionedTableTestBase {
     StructType prunedSchema =
         new StructType()
             .add("name", DataTypes.StringType)
-            .add("_metadata", new StructType().add("file_path", DataTypes.StringType))
+            .add(metadataColumnStructField(new StructType().add("file_path", DataTypes.StringType)))
             .add("date", DataTypes.StringType)
             .add("city", DataTypes.StringType)
             .add("part", DataTypes.IntegerType);
@@ -219,6 +221,69 @@ public class DeltaV2ScanTest extends DeltaV2PartitionedTableTestBase {
         Scan.ColumnarSupportMode.UNSUPPORTED,
         scan.columnarSupportMode(),
         "columnarSupportMode should return UNSUPPORTED when _metadata is requested");
+  }
+
+  @Test
+  public void testColumnarSupportModeWithCollisionRenamedMetadataColumn() throws Exception {
+    withSQLConf(
+        "spark.sql.parquet.enableVectorizedReader",
+        "true",
+        () ->
+            withSQLConf(
+                "spark.sql.parquet.enableNestedColumnVectorizedReader",
+                "true",
+                () -> {
+                  // Omit a stored _metadata field so the old physical-name check cannot pass.
+                  DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+                  StructType prunedSchema =
+                      new StructType()
+                          .add("name", DataTypes.StringType)
+                          .add(
+                              renamedMetadataColumnStructField(
+                                  "__metadata",
+                                  new StructType().add("file_path", DataTypes.StringType)))
+                          .add("date", DataTypes.StringType)
+                          .add("city", DataTypes.StringType)
+                          .add("part", DataTypes.IntegerType);
+                  builder.pruneColumns(prunedSchema);
+
+                  DeltaV2Scan scan = asDeltaV2Scan(builder.build());
+
+                  assertEquals(
+                      Scan.ColumnarSupportMode.UNSUPPORTED,
+                      scan.columnarSupportMode(),
+                      "Renamed metadata must disable columnar reads "
+                          + "even with vectorization enabled");
+                }));
+  }
+
+  @Test
+  public void testColumnarSupportModeWithUserMetadataColumnOnly() throws Exception {
+    // A user column literally named `_metadata` (no metadata-column marker) and no metadata struct
+    // must NOT be mistaken for the metadata column: columnarSupportMode stays SUPPORTED. This
+    // guards the false positive the old physical-name check produced.
+    withSQLConf(
+        "spark.sql.parquet.enableVectorizedReader",
+        "true",
+        () -> {
+          DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+          StructType prunedSchema =
+              new StructType()
+                  .add("name", DataTypes.StringType)
+                  .add("_metadata", DataTypes.StringType)
+                  .add("date", DataTypes.StringType)
+                  .add("city", DataTypes.StringType)
+                  .add("part", DataTypes.IntegerType);
+          builder.pruneColumns(prunedSchema);
+
+          DeltaV2Scan scan = asDeltaV2Scan(builder.build());
+
+          assertEquals(
+              Scan.ColumnarSupportMode.SUPPORTED,
+              scan.columnarSupportMode(),
+              "columnarSupportMode should stay SUPPORTED for a user _metadata column "
+                  + "with no struct");
+        });
   }
 
   @Test

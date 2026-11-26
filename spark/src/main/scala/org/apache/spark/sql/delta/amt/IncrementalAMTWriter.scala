@@ -243,7 +243,8 @@ class IncrementalAMTWriter(spark: SparkSession, deltaLog: DeltaLog) extends Delt
       version = contentTreeVersion,
       isIncremental = true,
       lastManifestCommitWithFullRewrite = lastFullRewriteVersion,
-      numLeaves = allLeafPointers.size.toLong)
+      numLeaves = allLeafPointers.size.toLong,
+      numRootEntries = rootRows.size.toLong)
     val checkpoint = Checkpoint(
       version = contentTreeVersion,
       contentRoot = contentRoot,

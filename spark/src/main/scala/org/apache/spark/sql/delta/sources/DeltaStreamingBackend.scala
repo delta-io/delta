@@ -106,4 +106,12 @@ trait DeltaStreamingBackend {
   def collectActions(
       startVersion: Long,
       endVersionOpt: Option[Long]): ClosableIterator[(Long, Action)]
+
+  /**
+   * Returns `files`, the files read from `commits`, made to also close `commits` when it is
+   * closed if this backend's commits hold resources. Called once per scan.
+   */
+  def closeCommitsWithFiles(
+      files: ClosableIterator[IndexedFile],
+      commits: ClosableIterator[DeltaSingleCommit]): ClosableIterator[IndexedFile]
 }

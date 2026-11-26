@@ -91,4 +91,9 @@ private[delta] class DeltaLogStreamingBackend(
         .withClose(_.map((commit.version, _)))
     }
   }
+
+  // A DeltaLog commit iterator holds nothing to close, so the files are returned as they are.
+  override def closeCommitsWithFiles(
+      files: ClosableIterator[IndexedFile],
+      commits: ClosableIterator[DeltaSingleCommit]): ClosableIterator[IndexedFile] = files
 }
