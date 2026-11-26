@@ -357,7 +357,7 @@ trait CloneTableSuiteBase extends QueryTest
 
   cloneTest("CLONE ignores reader/writer session defaults", TAG_HAS_SHALLOW_CLONE) {
     (source, clone) =>
-      if (catalogOwnedDefaultCreationEnabledInTests) {
+      if (catalogManagedDefaultCreationEnabledInTests) {
         cancel("Expects base protocol version.")
       }
       withSQLConf(
@@ -405,7 +405,7 @@ trait CloneTableSuiteBase extends QueryTest
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
     fs.setTimes(path, time, 0)
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       InCommitTimestampTestUtils.overwriteICTInDeltaFile(
         DeltaLog.forTable(spark, source),
         path,
@@ -421,7 +421,7 @@ trait CloneTableSuiteBase extends QueryTest
 
   cloneTest("clones take protocol from the source",
     TAG_HAS_SHALLOW_CLONE, TAG_MODIFY_PROTOCOL, TAG_CHANGE_COLUMN_MAPPING_MODE) { (source, clone) =>
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("table needs to start with custom protocol versions but enabling " +
         "catalogManaged automatically upgrades table protocol version.")
     }
@@ -529,7 +529,7 @@ trait CloneTableSuiteBase extends QueryTest
     testAllClones("Cloning a table with new table properties" +
       s" that force protocol version upgrade - ${featureWithProperty.property.key}"
     ) { (source, target, isShallow) =>
-      if (catalogOwnedDefaultCreationEnabledInTests) {
+      if (catalogManagedDefaultCreationEnabledInTests) {
         cancel("table needs to start with default protocol versions but enabling " +
           "catalogManaged upgrades table protocol version.")
       }
@@ -568,7 +568,7 @@ trait CloneTableSuiteBase extends QueryTest
 
   testAllClones("Cloning a table without DV property should not upgrade protocol version"
   ) { (source, target, isShallow) =>
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("table needs to start with default protocol versions but enabling " +
         "catalogManaged upgrades table protocol version.")
     }

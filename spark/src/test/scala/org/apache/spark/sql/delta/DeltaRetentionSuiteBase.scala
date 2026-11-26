@@ -102,7 +102,7 @@ trait DeltaRetentionSuiteBase extends QueryTest
   protected def getDeltaVersions(dir: File): Set[Long] = {
     val backfilledDeltaVersions = getFileVersions(getDeltaFiles(dir))
     val unbackfilledDeltaVersions = getUnbackfilledDeltaVersions(dir)
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       // The unbackfilled commit files (except commit 0) should be a superset of the backfilled
       // commit files since they're always deleted together in this suite.
       assert(

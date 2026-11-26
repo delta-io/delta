@@ -1804,7 +1804,7 @@ class DeltaSuite extends QueryTest
           Seq((2, 99), (5, 99)).toDF("key", "value")
         )
 
-        assume(!catalogOwnedDefaultCreationEnabledInTests,
+        assume(!catalogManagedDefaultCreationEnabledInTests,
           "VACUUM is blocked on catalog-managed tables")
 
         // VACUUM

@@ -415,7 +415,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
   }
 
   test("protocol version") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("This test is intended to test the protocol version of `ChangeDataFeedTableFeature`." +
         "For CCv1.5 tables, the protocol version has different requirement and we already have " +
         "the corresponding coverage in `CatalogOwnedEnablementSuite` and " +

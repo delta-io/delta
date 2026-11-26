@@ -82,7 +82,10 @@ trait CommitCoordinatorUtilBase {
    * Returns true if this test is about CatalogManaged table feature.
    * Returns false if this test is about CoordinatedCommits tabel feature.
    */
-  def isCatalogOwnedTest: Boolean
+  def isCatalogManagedTest: Boolean
+
+  /** Old name of [[isCatalogManagedTest]], for code that still reads it. */
+  final def isCatalogOwnedTest: Boolean = isCatalogManagedTest
 
   /** Keeps track of the number of table names pointing to the location. */
   protected val locRefCount: mutable.Map[String, Int] = mutable.Map.empty
@@ -247,7 +250,7 @@ trait CatalogManagedTestBaseSuite
       "spark_catalog", builder.asInstanceOf[CatalogManagedCommitCoordinatorBuilder])
   }
 
-  override def isCatalogOwnedTest: Boolean = true
+  override def isCatalogManagedTest: Boolean = true
 
   def deleteCatalogManagedTableFromCommitCoordinator(tableName: String): Unit = {
     val location = try {
@@ -340,7 +343,7 @@ trait CatalogManagedTestBaseSuite
   def extractCatalogManagedSpecificPropertiesIfEnabled(
       metadata: Metadata): Iterable[(String, String)] = {
     if (catalogManagedDefaultCreationEnabledInTests) {
-      val CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS =
+      val CATALOG_MANAGED_TABLE_QOL_PROPERTY_KEYS =
         CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
           .map { case (_, config, _) => config.key }
           .filterNot(Set(
@@ -350,7 +353,7 @@ trait CatalogManagedTestBaseSuite
             MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
             MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP
           )
-      CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS.map { key =>
+      CATALOG_MANAGED_TABLE_QOL_PROPERTY_KEYS.map { key =>
         key -> metadata.configuration.getOrElse(key,
           fail( s"Expected $key to be defined in the table properties"))
       } ++
@@ -360,7 +363,7 @@ trait CatalogManagedTestBaseSuite
     }
   }
 
-  protected def withClassicCheckpointPolicyForCatalogOwned(f: => Unit): Unit = {
+  protected def withClassicCheckpointPolicyForCatalogManaged(f: => Unit): Unit = {
     if (catalogManagedDefaultCreationEnabledInTests) {
       withSQLConf(
         DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.Classic.name) {
@@ -570,7 +573,7 @@ trait CoordinatedCommitsTestUtils
       s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '$coordinatedCommitsConfJson')"
   }
 
-  override def isCatalogOwnedTest: Boolean = false
+  override def isCatalogManagedTest: Boolean = false
 
   def getUpdatedActionsForZerothCommit(
       commitInfo: CommitInfo,

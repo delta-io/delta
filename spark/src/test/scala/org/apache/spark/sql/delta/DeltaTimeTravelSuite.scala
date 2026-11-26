@@ -148,7 +148,7 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   historyTest("getCommits should monotonize timestamps") { (deltaLog, clock) =>
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       // This is fine for CC tables since ICT should've been enabled from the beginning.
       // Hence, we should *never* call [[DeltaHistoryManager.getCommitsWithNonIctTimestamps]].
       cancel("This test is not compatible with CC since ICT should've been enabled from the " +
@@ -216,7 +216,7 @@ class DeltaTimeTravelSuite extends QueryTest
     val e = intercept[AnalysisException] {
       history.getActiveCommitAtTime(start + 15.seconds, false).version
     }
-    if (catalogOwnedDefaultCreationEnabledInTests &&
+    if (catalogManagedDefaultCreationEnabledInTests &&
         // Since we are creating a table w/ three initial commits, the table would have
         // unbackfilled commits if the backfill batch size is greater or equal to three.
         // See [[generateCommitsCheap]] for details.
@@ -634,7 +634,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         spark.read.format("delta").option("versionAsOf", 0).load(tblLoc).collect()
       }
-      if (catalogOwnedDefaultCreationEnabledInTests &&
+      if (catalogManagedDefaultCreationEnabledInTests &&
           // Since we are creating a table w/ three initial commits, the table would have
           // unbackfilled commits if the backfill batch size is greater or equal to three.
           // See [[generateCommits]] for details.
