@@ -412,8 +412,11 @@ class DeltaSharingDeltaLogBuilderSuite
     withQuerySpecificCache(reuseEnabled = true) { profilePath =>
       val anchor1 = new Object()
       val (path1, _) = runQuery(profilePath, "query-1", "hashA", anchor1)
-      // Drop the blocks but keep the urls: urls alone can't be reused.
-      DeltaSharingLogFileSystem.tryToCleanUpDeltaLog(path1.toString)
+      // Drop the blocks but keep the urls: urls alone can't be reused. The cleanup takes the
+      // `_delta_log` path, like its production callers, to match flat block ids too.
+      DeltaSharingLogFileSystem.tryToCleanUpDeltaLog(s"$path1/_delta_log")
+      assert(!DeltaSharingLogFileSystem.isSnapshotDeltaLogReusable(
+        DeltaSharingLogFileSystem.decode(path1)))
       assert(CachedTableManager.INSTANCE.size() == 1)
 
       val anchor2 = new Object()
