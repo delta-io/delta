@@ -401,7 +401,8 @@ case class InCommitTimestampsPreDowngradeCommand(table: DeltaTableV2)
    */
   override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
     val startTimeNs = System.nanoTime()
-    val currentMetadata = table.initialSnapshot.metadata
+    val txn = table.startTransaction()
+    val currentMetadata = txn.metadata
     val currentTableProperties = currentMetadata.configuration
 
     val enablementProperty = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
@@ -420,7 +421,7 @@ case class InCommitTimestampsPreDowngradeCommand(table: DeltaTableV2)
 
       val deltaOperation = DeltaOperations.UnsetTableProperties(
         (propertiesToRemove ++ propertiesToDisable.map(_._1)).toSeq, ifExists = true)
-      table.startTransaction().commit(
+      txn.commit(
         Seq(currentMetadata.copy(configuration = desiredTableProperties.toMap)), deltaOperation)
     }
 
