@@ -159,6 +159,9 @@ public class GenericColumnVector implements ColumnVector {
   }
 
   private Object extractChildValue(Object element, int ordinal, DataType childDatatype) {
+    if (element == null) {
+      return null;
+    }
     checkArgument(element instanceof Row);
     Row row = (Row) element;
 

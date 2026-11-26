@@ -84,6 +84,17 @@ public interface TransactionMetricsResult {
   long getNumDeletedRecordsDelta();
 
   /**
+   * @return a copy of the net file counts (adds minus removes) by number of deleted records, if
+   *     collected. The bucket lower bounds are 0, 1, 10, 100, 1000, 10000, 100000, 1000000,
+   *     10000000, and {@link Integer#MAX_VALUE}. Files without a deletion vector use bucket 0. For
+   *     a failed transaction this metric may be incomplete.
+   */
+  @JsonIgnore
+  default Optional<long[]> getDeletedRecordCountsHistogramDelta() {
+    return Optional.empty();
+  }
+
+  /**
    * @return the file size histogram information for the table version committed in this
    *     transaction. For a failed transaction this metric may be incomplete.
    */

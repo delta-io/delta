@@ -148,10 +148,11 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
 
     val values = List[ArrayValue](
       new ArrayValue {
-        override def getSize: Int = 2
+        override def getSize: Int = 3
         override def getElements: ColumnVector = VectorUtils.buildColumnVector(
           List[Row](
             row("a1", 1),
+            null,
             row("a2", 2)).asJava,
           structType)
       },
@@ -181,14 +182,17 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
     // Test first array
     val array0 = columnVector.getArray(0)
     val struct0 = array0.getElements
-    assert(struct0.getSize == 2)
+    assert(struct0.getSize == 3)
 
     val nameVector0 = struct0.getChild(0)
     val valueVector0 = struct0.getChild(1)
     assert(nameVector0.getString(0) == "a1")
     assert(valueVector0.getInt(0) == 1)
-    assert(nameVector0.getString(1) == "a2")
-    assert(valueVector0.getInt(1) == 2)
+    assert(struct0.isNullAt(1))
+    assert(nameVector0.isNullAt(1))
+    assert(valueVector0.isNullAt(1))
+    assert(nameVector0.getString(2) == "a2")
+    assert(valueVector0.getInt(2) == 2)
 
     // Test second array
     val array1 = columnVector.getArray(1)

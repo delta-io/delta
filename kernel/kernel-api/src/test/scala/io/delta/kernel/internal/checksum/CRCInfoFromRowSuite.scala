@@ -22,7 +22,7 @@ import java.util.{Collections, Optional}
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{AddFile, DomainMetadata, Format, Metadata, Protocol, SetTransaction}
 import io.delta.kernel.internal.data.GenericRow
-import io.delta.kernel.internal.stats.FileSizeHistogram
+import io.delta.kernel.internal.stats.{DeletedRecordCountsHistogram, FileSizeHistogram}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
 import io.delta.kernel.types.{StringType, StructType}
@@ -151,7 +151,8 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       /* setTransactions */ Optional.empty(),
       /* numDeletedRecords */ Optional.empty(),
       /* numDeletionVectors */ Optional.empty(),
-      /* allFiles */ Optional.empty()))
+      /* allFiles */ Optional.empty(),
+      /* deletedRecordCountsHistogram */ Optional.empty()))
   }
 
   test("round-trips with setTransactions present") {
@@ -170,7 +171,8 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
         new SetTransaction("app2", 9L, Optional.empty()))),
       /* numDeletedRecords */ Optional.empty(),
       /* numDeletionVectors */ Optional.empty(),
-      /* allFiles */ Optional.empty()))
+      /* allFiles */ Optional.empty(),
+      /* deletedRecordCountsHistogram */ Optional.empty()))
   }
 
   test("round-trips with numDeletedRecords and numDeletionVectors present") {
@@ -187,7 +189,8 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       /* setTransactions */ Optional.empty(),
       /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(7L)),
       /* numDeletionVectors */ Optional.of(java.lang.Long.valueOf(2L)),
-      /* allFiles */ Optional.empty()))
+      /* allFiles */ Optional.empty(),
+      /* deletedRecordCountsHistogram */ Optional.empty()))
   }
 
   test("round-trips with allFiles present") {
@@ -206,10 +209,13 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       /* numDeletionVectors */ Optional.empty(),
       /* allFiles */ Optional.of(util.Arrays.asList(
         new AddFile(testAddFileRow("f1", 100L)),
-        new AddFile(testAddFileRow("f2", 200L))))))
+        new AddFile(testAddFileRow("f2", 200L)))),
+      /* deletedRecordCountsHistogram */ Optional.empty()))
   }
 
   test("round-trips with all optional fields present") {
+    val histogram = DeletedRecordCountsHistogram.empty()
+    histogram.applyDvChange(0L, 1L)
     assertRoundTrips(new CRCInfo(
       13L,
       testMetadata,
@@ -225,7 +231,8 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(7L)),
       /* numDeletionVectors */ Optional.of(java.lang.Long.valueOf(2L)),
       /* allFiles */ Optional.of(util.Arrays.asList(
-        new AddFile(testAddFileRow("f1", 100L))))))
+        new AddFile(testAddFileRow("f1", 100L)))),
+      /* deletedRecordCountsHistogram */ Optional.of(histogram)))
   }
 
   test("preserves the supplied version, independent of the row (toRow omits version)") {
