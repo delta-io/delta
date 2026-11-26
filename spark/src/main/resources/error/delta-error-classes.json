@@ -3909,6 +3909,24 @@
     ],
     "sqlState" : "22005"
   },
+  "DELTA_V2_INTERNAL_ERROR" : {
+    "message" : [
+      "An internal error occurred in the Delta V2 connector:"
+    ],
+    "subClass" : {
+      "INVALID_READ_PLAN" : {
+        "message" : [
+          "The plan to read the table has a step that cannot run: <step>. This is a bug."
+        ]
+      },
+      "INVALID_SNAPSHOT" : {
+        "message" : [
+          "The snapshot of the table loaded for the query is not valid. This is a bug."
+        ]
+      }
+    },
+    "sqlState" : "XXKDS"
+  },
   "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE" : {
     "message" : [
       "Retention period for Vacuum can't be less than 0 hours."
