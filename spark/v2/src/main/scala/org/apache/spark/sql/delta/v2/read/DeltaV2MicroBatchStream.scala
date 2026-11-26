@@ -27,6 +27,7 @@ import scala.jdk.javaapi.CollectionConverters
 import scala.util.Using
 import scala.util.matching.Regex
 
+import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.DeltaSingleCommit
@@ -663,8 +664,7 @@ private[read] class DeltaV2MicroBatchStream(
     }
 
     var changes: ClosableIterator[IndexedFile] =
-        getFileChanges(
-            fromVersion, fromIndex, isInitialSnapshot, endOffset = Optional.empty())
+        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset = None)
 
     // Take each change until we've seen the configured number of addFiles. Some changes don't
     // represent file additions; we retain them for offset tracking, but they don't count toward
@@ -686,57 +686,14 @@ private[read] class DeltaV2MicroBatchStream(
       })
   }
 
-  /**
-   * Get file changes between fromVersion/fromIndex and endOffset. This is the Kernel-based
-   * implementation of DeltaSource.getFileChanges.
-   *
-   * <p>Package-private for testing.
-   *
-   * @param fromVersion The starting version (exclusive with fromIndex)
-   * @param fromIndex The starting index within fromVersion (exclusive)
-   * @param isInitialSnapshot Whether this is the initial snapshot
-   * @param endOffset The end offset (inclusive), or empty to read all available commits
-   * @return An iterator of IndexedFile representing the file changes
-   */
+  // Java callers and the call sites above pass an Optional end offset.
   private[read] def getFileChanges(
       fromVersion: Long,
       fromIndex: Long,
       isInitialSnapshot: Boolean,
-      endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] = {
-
-    var result: ClosableIterator[IndexedFile] = null
-
-    if (isInitialSnapshot) {
-      // Read snapshot files, then delta logs from fromVersion + 1.
-      // Create each iterator on demand.
-      // filterAndIndexDeltaLogs handles the case when no commits exist after fromVersion.
-      result =
-          new IteratorFlatMapCloseOp(CollectionConverters.asScala(Arrays.asList(1, 2).iterator()))
-              .flatMapWithClose(
-                  part => {
-                    if (part == 1) {
-                      getSnapshotAt(fromVersion)
-                    } else {
-                      filterAndIndexDeltaLogs(
-                          fromVersion + 1,
-                          fromVersion,
-                          ScalaUtils.toScalaOption(endOffset),
-                          /* verifyMetadataAction= */ true)
-                    }
-                  })
-    } else {
-      result =
-          filterAndIndexDeltaLogs(
-              fromVersion,
-              fromVersion,
-              ScalaUtils.toScalaOption(endOffset),
-              /* verifyMetadataAction= */ true)
-    }
-
-    result = filterFilesAfterStartOffset(result, fromVersion, fromIndex)
-      result = takeFilesUntilEndOffset(result, ScalaUtils.toScalaOption(endOffset))
-    result
-  }
+      endOffset: Optional[DeltaSourceOffset]): ClosableIterator[IndexedFile] =
+      getFileChanges(
+          fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toScalaOption(endOffset))
 
   /**
    * Gets file changes for CDC mode with rate limiting. Mirrors DSv1:
@@ -763,7 +720,7 @@ private[read] class DeltaV2MicroBatchStream(
               .flatMapWithClose(
                   part => {
                     if (part == 1) {
-                      val files = getSnapshotAt(fromVersion)
+                      val files = getSnapshotAt(fromVersion)._1.toClosable
                       val commitTimestamp = initialSnapshot.snapshot.timestamp
                       var snapshotFiles = files.withClose(_.map { file =>
                         val cdcFile = if (file.add != null) {
@@ -1014,9 +971,9 @@ private[read] class DeltaV2MicroBatchStream(
    * This method computes the initial snapshot to read when Delta Source was initialized on a fresh
    * stream.
    *
-   * @return an iterator of IndexedFiles for the initial snapshot
+   * @return the files of the initial snapshot and its in-commit timestamp, if it has one
    */
-  private def getSnapshotAt(version: Long): ClosableIterator[IndexedFile] = {
+  override protected def getSnapshotAt(version: Long): (Iterator[IndexedFile], Option[Long]) = {
     if (initialSnapshot == null || version != initialSnapshotVersion) {
       cleanUpSnapshotResources()
       val snapshot: Snapshot = streamingBackend.getSnapshotAt(version)
@@ -1052,7 +1009,12 @@ private[read] class DeltaV2MicroBatchStream(
     // TODO: Add range-aware iteration to DeltaSourceSnapshot so V1 and V2 can filter the
     // already-processed prefix before decoding files.
     val snapshotFiles: Iterator[IndexedFile] = initialSnapshot.iterator()
-    new ClosableWrapper(addBeginAndEndIndexOffsetsForVersion(version, snapshotFiles)).toClosable
+    val inCommitTimestampOpt: Option[Long] =
+        if (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(
+            initialSnapshot.snapshot.metadata)) {
+          Some(initialSnapshot.snapshot.timestamp)
+        } else None
+    (addBeginAndEndIndexOffsetsForVersion(version, snapshotFiles), inCommitTimestampOpt)
   }
 
   /**

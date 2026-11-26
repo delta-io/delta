@@ -571,47 +571,6 @@ case class DeltaSource(
 
   logInfo(log"Filters being pushed down: ${MDC(DeltaLogKeys.FILTER, filters)}")
 
-  /**
-   * Get the changes starting from (startVersion, startIndex). The start point should not be
-   * included in the result.
-   *
-   * @param endOffset If defined, do not return changes beyond this offset.
-   *                  If not defined, we must be scanning the log to find the next offset.
-   * @param verifyMetadataAction If true, we will break the stream when we detect any
-   *                             read-incompatible metadata changes.
-   */
-  protected def getFileChanges(
-      fromVersion: Long,
-      fromIndex: Long,
-      isInitialSnapshot: Boolean,
-      endOffset: Option[DeltaSourceOffset] = None,
-      verifyMetadataAction: Boolean = true
-  ): ClosableIterator[IndexedFile] = {
-
-    val (result, duration) = Utils.timeTakenMs {
-      var iter = if (isInitialSnapshot) {
-        Iterator(1, 2).flatMapWithClose { // so that the filterAndIndexDeltaLogs call is lazy
-          case 1 => getSnapshotAt(fromVersion)._1.toClosable
-          case 2 => filterAndIndexDeltaLogs(
-            fromVersion + 1, fromVersion, endOffset, verifyMetadataAction)
-        }
-      } else {
-        filterAndIndexDeltaLogs(fromVersion, fromVersion, endOffset, verifyMetadataAction)
-      }
-
-      iter = filterFilesAfterStartOffset(iter, fromVersion, fromIndex)
-
-        iter = takeFilesUntilEndOffset(iter, endOffset)
-      iter
-    }
-    logInfo(log"Getting file changes for delta_log_path=" +
-      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
-      log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, " +
-      log"fromIndex=${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
-      log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} " +
-      log"took timeMs=${MDC(DeltaLogKeys.DURATION, duration)} ms")
-    result
-  }
 
   /**
    * This method computes the initial snapshot to read when Delta Source was initialized on a fresh

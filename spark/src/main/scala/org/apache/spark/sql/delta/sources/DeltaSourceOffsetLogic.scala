@@ -28,6 +28,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.read.streaming.ReadLimit
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.Utils
 
 /**
  * Offset logic shared by the Delta streaming sources: [[DeltaSource]] (V1) and
@@ -67,6 +68,12 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
 
   /** Options that control how the source handles schema changes. */
   protected def schemaReadOptions: DeltaStreamUtils.SchemaReadOptions
+
+  /**
+   * Returns the files of the snapshot at `version`, with BEGIN and END markers, and the in-commit
+   * timestamp of that snapshot if it has one.
+   */
+  protected def getSnapshotAt(version: Long): (Iterator[IndexedFile], Option[Long])
 
   /** The metadata tracking log (schema tracking log) of the stream, if it has one. */
   protected def metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog]
@@ -475,6 +482,52 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
     val commits =
       streamingBackend.getSingleCommitIterator(startVersion, options.failOnDataLoss, endOffset)
     streamingBackend.closeCommitsWithFiles(commits.flatMapWithClose(indexCommit), commits)
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // File changes
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * Get the changes starting from (startVersion, startIndex). The start point should not be
+   * included in the result.
+   *
+   * @param endOffset If defined, do not return changes beyond this offset.
+   *                  If not defined, we must be scanning the log to find the next offset.
+   * @param verifyMetadataAction If true, we will break the stream when we detect any
+   *                             read-incompatible metadata changes.
+   */
+  protected def getFileChanges(
+      fromVersion: Long,
+      fromIndex: Long,
+      isInitialSnapshot: Boolean,
+      endOffset: Option[DeltaSourceOffset] = None,
+      verifyMetadataAction: Boolean = true
+  ): ClosableIterator[IndexedFile] = {
+
+    val (result, duration) = Utils.timeTakenMs {
+      var iter = if (isInitialSnapshot) {
+        Iterator(1, 2).flatMapWithClose { // so that the filterAndIndexDeltaLogs call is lazy
+          case 1 => getSnapshotAt(fromVersion)._1.toClosable
+          case 2 => filterAndIndexDeltaLogs(
+            fromVersion + 1, fromVersion, endOffset, verifyMetadataAction)
+        }
+      } else {
+        filterAndIndexDeltaLogs(fromVersion, fromVersion, endOffset, verifyMetadataAction)
+      }
+
+      iter = filterFilesAfterStartOffset(iter, fromVersion, fromIndex)
+
+        iter = takeFilesUntilEndOffset(iter, endOffset)
+      iter
+    }
+    logInfo(log"Getting file changes for delta_log_path=" +
+      log"${MDC(DeltaLogKeys.PATH, snapshotAtSourceInit.logPath)} with " +
+      log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, " +
+      log"fromIndex=${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
+      log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} " +
+      log"took timeMs=${MDC(DeltaLogKeys.DURATION, duration)} ms")
+    result
   }
 
   // ---------------------------------------------------------------------------------------------
