@@ -2747,7 +2747,7 @@ date | Encoded as `{year}-{month}-{day}`. For example, `1970-01-01`
 timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}`. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`. Timestamps may also be encoded as an ISO8601 formatted timestamp adjusted to UTC timestamp such as `1970-01-01T00:00:00.123456Z`
 timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456` To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampNtz) for more information.
 boolean | Encoded as the string "true" or "false"
-binary | Encoded as a string of escaped binary values. For example, `"\u0001\u0002\u0003"`
+binary | Encoded by interpreting the raw bytes as a UTF-8 string (each byte maps to its corresponding Unicode code point / character). In JSON this is written with Unicode escapes; for example, `"\u0001\u0002\u0003"` is three characters (U+0001, U+0002, U+0003), not the literal six-character sequences `\u0001`, etc. Implementations typically round-trip with UTF-8 encode/decode of the byte array.
 
 Note: A timestamp value in a partition value may be stored in one of the following ways:
 1. Without a timezone, where the timestamp should be interpreted using the time zone of the system which wrote to the table.
