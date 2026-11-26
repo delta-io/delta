@@ -937,6 +937,8 @@ trait Checkpoints extends DeltaLogging {
     //         [ iter-3 window  ]
     //              |
     //        latest checkpoint
+    val stopAtNonDeltaFiles =
+      spark.conf.get(DeltaSQLConf.DELTA_FIND_LAST_CHECKPOINT_STOP_AT_NON_DELTA_FILES_ENABLED)
     while (listingEndVersion >= 0) {
       iterations += 1
       eventData("iterations") = iterations.toString
@@ -945,11 +947,17 @@ trait Checkpoints extends DeltaLogging {
         .listFrom(listingPrefix(logPath, listingStartVersion), newDeltaHadoopConf())
         .map { file => numFilesScanned += 1 ; file }
         .collect {
-          // Also collect delta files from the listing result so that the next takeWhile helps us
-          // terminate iterator early if no checkpoint exists upto the `listingEndVersion`
-          // version.
+          // Also collect delta, checksum and compacted delta files from the listing result so
+          // that the next takeWhile ends the listing at the first file after `listingEndVersion`.
+          // Without checksum and compacted delta files, a range that holds only those files (left
+          // behind when a cleanup deleted their .json) is listed to its end in every window.
           case DeltaFile(file, version) => (file, FileType.DELTA, version)
           case CheckpointFile(file, version) => (file, FileType.CHECKPOINT, version)
+          case ChecksumFile(file, version) if stopAtNonDeltaFiles =>
+            (file, FileType.CHECKSUM, version)
+          // The listing orders compacted delta files by their start version.
+          case CompactedDeltaFile(file, startVersion, _) if stopAtNonDeltaFiles =>
+            (file, FileType.COMPACTED_DELTA, startVersion)
         }
         .takeWhile { case (_, _, currentFileVersion) => currentFileVersion <= listingEndVersion }
         // Checkpoint files of 0 size are invalid but Spark will ignore them silently when

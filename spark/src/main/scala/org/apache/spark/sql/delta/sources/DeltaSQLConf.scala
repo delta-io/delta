@@ -3516,6 +3516,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_FIND_LAST_CHECKPOINT_STOP_AT_NON_DELTA_FILES_ENABLED =
+    buildConf("findLastCompleteCheckpoint.stopAtNonDeltaFiles.enabled")
+      .internal()
+      .doc("If true, each window of the backward checkpoint search also stops its listing at " +
+        "the first .crc or compacted .json file after the window.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTALOG_MINOR_COMPACTION_USE_FOR_READS =
     buildConf("deltaLog.minorCompaction.useForReads")
       .doc("If true, minor compacted delta log files will be used for creating Snapshots")

@@ -20,6 +20,7 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.CheckpointInstance.Format
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -67,6 +68,13 @@ class FindLastCompleteCheckpointSuite
 
   private def checksumFiles(logPath: Path, versions: Seq[Long]): Seq[FileStatus] = {
     versions.map { version => pathToFileStatus(FileNames.checksumFile(logPath, version)) }
+  }
+
+  /** One compacted delta file per start version; each ends 6 versions after its start. */
+  private def compactedDeltaFiles(logPath: Path, startVersions: Seq[Long]): Seq[FileStatus] = {
+    startVersions.map { startVersion =>
+      pathToFileStatus(FileNames.compactedDeltaFile(logPath, startVersion, startVersion + 6))
+    }
   }
 
   def getLastCompleteCheckpointUsageLog(f: => Unit): Map[String, String] = {
@@ -313,6 +321,49 @@ class FindLastCompleteCheckpointSuite
         assert(Seq("iterations", "numFilesScanned").forall(!eventData1.contains(_)))
       }
 
+      logStore.reset()
+    }
+  }
+
+  for (fileType <- Seq(".crc", ".compacted.json"))
+  test(s"findLastCompleteCheckpoint lists each window once when only $fileType files exist " +
+      "below it") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
+      val logPath = log.logPath
+      val logStore = log.store.asInstanceOf[CustomListingLogStore]
+      logStore.reset()
+
+      // Versions 0 to 2999 have only one `fileType` file each; their .json files were deleted.
+      val filesWithoutCommit = fileType match {
+        case ".crc" => checksumFiles(logPath, 0L to 2999)
+        case ".compacted.json" => compactedDeltaFiles(logPath, 0L to 2999)
+      }
+      logStore.customListingResult = Some(
+        filesWithoutCommit ++
+          commitFiles(logPath, 3000L to 3500) ++
+          singleCheckpointFiles(logPath, Seq(50)))
+      val eventData = getLastCompleteCheckpointUsageLog {
+        assert(
+          log.findLastCompleteCheckpointBefore(3200).contains(CheckpointInstance(version = 50)))
+      }
+      // Windows [2200, 3200], [1200, 2200] and [200, 1200] each read 1001 files plus the first
+      // file after the window. Window [0, 200] reads the 201 files of versions 0 to 200, the
+      // checkpoint and the file of version 201.
+      assert(logStore.listFromCount == 4)
+      assert(eventData("iterations") == "4")
+      assert(eventData("numFilesScanned") == "3209")
+      assert(logStore.elementsConsumedFromListFromIter == 3209)
+
+      // With the flag off, each window lists to the first .json again.
+      withSQLConf(
+          DeltaSQLConf.DELTA_FIND_LAST_CHECKPOINT_STOP_AT_NON_DELTA_FILES_ENABLED.key -> "false") {
+        val eventDataOff = getLastCompleteCheckpointUsageLog {
+          assert(
+            log.findLastCompleteCheckpointBefore(3200).contains(CheckpointInstance(version = 50)))
+        }
+        assert(eventDataOff("numFilesScanned") == "8606")
+      }
       logStore.reset()
     }
   }
