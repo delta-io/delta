@@ -720,7 +720,7 @@ abstract class CommitCoordinatorSuiteBase
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     withTable("t1") {
-      if (isCatalogOwnedTest) {
+      if (isCatalogManagedTest) {
         sql(s"CREATE TABLE t1 (id LONG) USING delta")
         sql(s"INSERT INTO t1 VALUES (0)")
       } else {
@@ -735,7 +735,7 @@ abstract class CommitCoordinatorSuiteBase
         // REPLACE w/o default CC confs => CC, and all ICT confs.
         sql(s"REPLACE TABLE t1 (id STRING) USING delta")
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, CatalystTableIdentifier("t1"))
-        if (isCatalogOwnedTest) {
+        if (isCatalogManagedTest) {
           assert(snapshot.isCatalogManaged)
           // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogManaged
           // since we don't support upgrade yet.

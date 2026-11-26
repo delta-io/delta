@@ -581,7 +581,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
   }
 
   test("vacuumed version") {
-    assume(!catalogOwnedDefaultCreationEnabledInTests,
+    assume(!catalogManagedDefaultCreationEnabledInTests,
       "VACUUM is blocked on catalog-managed tables")
 
     quietly {
@@ -746,7 +746,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
   }
 
   test("parallel search handles empty commits in a partition correctly") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("This test is not compatible with coordinated commits backfill timestamps.")
     }
     val tblName = "delta_table"

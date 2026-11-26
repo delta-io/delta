@@ -517,7 +517,7 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
-      if (catalogOwnedDefaultCreationEnabledInTests) {
+      if (catalogManagedDefaultCreationEnabledInTests) {
         // For Catalog Managed table with a commit that is not backfilled, we can't use
         // 00000000002.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
@@ -551,7 +551,7 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
-      if (catalogOwnedDefaultCreationEnabledInTests) {
+      if (catalogManagedDefaultCreationEnabledInTests) {
         val oc = getCatalogManagedCommitCoordinatorClient(
           catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         oc.asInstanceOf[TrackingCommitCoordinatorClient]
@@ -629,7 +629,7 @@ class DeltaLogSuite extends QueryTest
 
       val log = DeltaLog.forTable(spark, path)
       var commitFilePath = FileNames.unsafeDeltaFile(log.logPath, 1L)
-      if (catalogOwnedDefaultCreationEnabledInTests) {
+      if (catalogManagedDefaultCreationEnabledInTests) {
         // For Catalog Managed table with a commit that is not backfilled, we can't use
         // 00000000001.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
