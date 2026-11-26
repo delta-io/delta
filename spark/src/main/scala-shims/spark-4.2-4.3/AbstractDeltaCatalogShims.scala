@@ -32,6 +32,7 @@ import org.apache.spark.sql.catalyst.catalog.{
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableInfo, TransactionalCatalogPlugin, V1Table}
 import org.apache.spark.sql.delta.{
   CatalogManagedTableFeature,
+  DeltaConfigs,
   DeltaErrors,
   DeltaV2Mode,
   InCommitTimestampUtils,
@@ -134,7 +135,7 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
         val deltaLogSrc = DeltaTableV2(spark, new Path(sourceTable.location))
         val snapshot = deltaLogSrc.initialSnapshot
         val sourceMetadata = snapshot.metadata
-        val filteredConfig = sourceMetadata.configuration.filter { case (key, _) =>
+        var filteredConfig = sourceMetadata.configuration.filter { case (key, _) =>
           key != "delta.columnMapping.maxColumnId" &&
             key != MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP &&
             key != MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP &&
@@ -142,6 +143,12 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
             // ICT enablement provenance info should not be copied from the source
             !InCommitTimestampUtils.ENABLEMENT_INFO_PROPERTY_KEYS.contains(key) &&
             key != UC_TABLE_ID_KEY
+        }
+        // The checkpoint protection version is a version of the source's log. The target is a
+        // new table with no history to protect.
+        if (spark.sessionState.conf.getConf(
+            DeltaSQLConf.DELTA_CREATE_TABLE_LIKE_STRIP_SOURCE_CHECKPOINT_PROTECTION_VERSION)) {
+          filteredConfig -= DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
         }
         val sourceProtocol =
           if (isEnablingCatalogManagedViaExplicitPropertyOverrides) {
