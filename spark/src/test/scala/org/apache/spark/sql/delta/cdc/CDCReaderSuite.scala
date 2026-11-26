@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.{recordDataChangeInCommitInfo, 
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
-import org.apache.spark.sql.delta.files.DelayedCommitProtocol
+import org.apache.spark.sql.delta.files.{DelayedCommitProtocol, TahoeFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -38,7 +38,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.{Row, SaveMode}
 import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
-import org.apache.spark.sql.execution.datasources.FileFormatWriter
+import org.apache.spark.sql.execution.datasources.{FileFormatWriter, HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, Metadata, MetadataBuilder, StringType, StructType}
@@ -615,6 +615,283 @@ class CDCReaderSuite
     }
   }
 
+  private def readChanges(path: String, start: Long, end: Long): DataFrame = {
+    spark.read.format("delta")
+      .option(DeltaOptions.CDC_READ_OPTION, "true")
+      .option(DeltaOptions.CDC_START_VERSION, start)
+      .option(DeltaOptions.CDC_END_VERSION, end)
+      .load(path)
+      .select("id", "a", "b", CDC_TYPE_COLUMN_NAME, CDC_COMMIT_VERSION)
+  }
+
+  private def overwriteWithPartitionColumns(path: String, partitionColumns: String*): Unit = {
+    spark.read.format("delta").load(path)
+      .write.format("delta")
+      .mode(SaveMode.Overwrite)
+      .option(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "true")
+      .partitionBy(partitionColumns: _*)
+      .save(path)
+  }
+
+  for (storePartitionColumns <- BOOLEAN_DOMAIN; deletionVectors <- BOOLEAN_DOMAIN) {
+    test("CDF of versions before a partition column was removed returns its values, " +
+        s"storePartitionColumns=$storePartitionColumns, deletionVectors=$deletionVectors") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        sql(
+          s"""
+             |CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA PARTITIONED BY (a, b)
+             |TBLPROPERTIES (
+             |  '${DeltaConfigs.WRITE_PARTITION_COLUMNS_TO_PARQUET.key}' = '$storePartitionColumns',
+             |  '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = '$deletionVectors')
+             |""".stripMargin)
+        sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 1, 10), (3, 2, 30), (4, 2, 30)")
+        sql(s"UPDATE delta.`$path` SET id = 5 WHERE id = 1")
+        sql(s"DELETE FROM delta.`$path` WHERE id = 3")
+        val changesBeforeRemoval = readChanges(path, 1, 3).collect().toSeq
+        assert(changesBeforeRemoval.forall(!_.isNullAt(2)))
+
+        overwriteWithPartitionColumns(path, "a") // version 4
+        sql(s"INSERT INTO delta.`$path` VALUES (6, 1, 60)") // version 5
+
+        checkAnswer(readChanges(path, 1, 3), changesBeforeRemoval)
+        val remainingRows = Seq((5, 1, 10), (2, 1, 10), (4, 2, 30))
+        val allChanges = changesBeforeRemoval ++
+          remainingRows.map { case (id, a, b) => Row(id, a, b, "delete", 4L) } ++
+          remainingRows.map { case (id, a, b) => Row(id, a, b, "insert", 4L) } :+
+          Row(6, 1, 60, "insert", 5L)
+        checkAnswer(readChanges(path, 1, 5), allChanges)
+        // A filter on b is a partition filter for the files written before version 4 and a data
+        // filter for the files written after it.
+        checkAnswer(readChanges(path, 1, 5).where("b = 10"), allChanges.filter(_.getInt(2) == 10))
+        checkAnswer(readChanges(path, 1, 5).where("a = 2"), allChanges.filter(_.getInt(1) == 2))
+      }
+    }
+  }
+
+  for (deletionVectors <- BOOLEAN_DOMAIN) {
+    test("CDF of versions before a column became a partition column returns its values, " +
+        s"deletionVectors=$deletionVectors") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        sql(
+          s"""
+             |CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA PARTITIONED BY (a)
+             |TBLPROPERTIES (
+             |  '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = '$deletionVectors')
+             |""".stripMargin)
+        sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 2, 20), (3, 2, 30)")
+        sql(s"UPDATE delta.`$path` SET id = 4 WHERE id = 1")
+        sql(s"DELETE FROM delta.`$path` WHERE id = 3")
+        val changesBeforeChange = readChanges(path, 1, 3).collect().toSeq
+
+        overwriteWithPartitionColumns(path, "a", "b") // version 4
+        sql(s"DELETE FROM delta.`$path` WHERE id = 2") // version 5
+
+        checkAnswer(readChanges(path, 1, 3), changesBeforeChange)
+        val remainingRows = Seq((4, 1, 10), (2, 2, 20))
+        val allChanges = changesBeforeChange ++
+          remainingRows.map { case (id, a, b) => Row(id, a, b, "delete", 4L) } ++
+          remainingRows.map { case (id, a, b) => Row(id, a, b, "insert", 4L) } :+
+          Row(2, 2, 20, "delete", 5L)
+        checkAnswer(readChanges(path, 1, 5), allChanges)
+        // A filter on b is a data filter for the files written before version 4 and a partition
+        // filter for the files written after it.
+        checkAnswer(readChanges(path, 1, 5).where("b = 20"), allChanges.filter(_.getInt(2) == 20))
+      }
+    }
+  }
+
+  for (storePartitionColumns <- BOOLEAN_DOMAIN) {
+    test("CDF across several partition column changes returns the original values, " +
+        s"storePartitionColumns=$storePartitionColumns") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        sql(
+          s"""
+             |CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA PARTITIONED BY (a)
+             |TBLPROPERTIES (
+             |  '${DeltaConfigs.WRITE_PARTITION_COLUMNS_TO_PARQUET.key}' = '$storePartitionColumns')
+             |""".stripMargin)
+        sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 2, 20)") // version 1
+        overwriteWithPartitionColumns(path, "a", "b") // version 2
+        sql(s"UPDATE delta.`$path` SET id = 3 WHERE id = 1") // version 3
+        overwriteWithPartitionColumns(path) // version 4, not partitioned
+        sql(s"DELETE FROM delta.`$path` WHERE id = 2") // version 5
+        overwriteWithPartitionColumns(path, "b") // version 6
+        sql(s"INSERT INTO delta.`$path` VALUES (4, 4, 40)") // version 7
+
+        def rewrite(version: Long, rows: (Int, Int, Int)*): Seq[Row] =
+          rows.map { case (id, a, b) => Row(id, a, b, "delete", version) } ++
+            rows.map { case (id, a, b) => Row(id, a, b, "insert", version) }
+        val allChanges =
+          Seq(Row(1, 1, 10, "insert", 1L), Row(2, 2, 20, "insert", 1L)) ++
+            rewrite(2L, (1, 1, 10), (2, 2, 20)) ++
+            Seq(Row(1, 1, 10, "update_preimage", 3L), Row(3, 1, 10, "update_postimage", 3L)) ++
+            rewrite(4L, (3, 1, 10), (2, 2, 20)) ++
+            Seq(Row(2, 2, 20, "delete", 5L)) ++
+            rewrite(6L, (3, 1, 10)) ++
+            Seq(Row(4, 4, 40, "insert", 7L))
+        // Files written with (a), (a, b), no partition columns and (b), read with (b). The files
+        // written with (a) or with no partition columns have no partition value for b.
+        checkAnswer(readChanges(path, 1, 7), allChanges)
+        checkAnswer(readChanges(path, 2, 5), allChanges.filter { r =>
+          val version = r.getLong(4)
+          version >= 2 && version <= 5
+        })
+        checkAnswer(readChanges(path, 1, 7).where("b = 20"), allChanges.filter(_.getInt(2) == 20))
+      }
+    }
+  }
+
+  test("CDF scans the files written with the same partition columns together") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA PARTITIONED BY (a)")
+      sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 2, 20)")
+      sql(s"INSERT INTO delta.`$path` VALUES (3, 3, 30)")
+      overwriteWithPartitionColumns(path, "a", "b") // version 3
+      sql(s"INSERT INTO delta.`$path` VALUES (4, 4, 40)")
+      sql(s"INSERT INTO delta.`$path` VALUES (5, 5, 50)")
+
+      def scannedPartitionColumns(start: Long, end: Long): Seq[String] = {
+        val df = CDCReader.changesToBatchDF(DeltaLog.forTable(spark, path), start, end, spark)
+        df.queryExecution.logical.collect { case r: LogicalRelation => r.relation }.collect {
+          case HadoopFsRelation(index: TahoeFileIndex, _, _, _, _, _) =>
+            index.metadata.partitionColumns.mkString(",")
+        }.sorted
+      }
+      // Files written after the change are read with the read schema's partitioning.
+      assert(scannedPartitionColumns(4, 5) === Seq("a,b"))
+      // Files written before the change are read together with their own partitioning.
+      assert(scannedPartitionColumns(1, 2) === Seq("a"))
+      // Version 3 removes files written with (a) and adds files written with (a, b).
+      assert(scannedPartitionColumns(1, 5) === Seq("a", "a", "a,b"))
+    }
+  }
+
+  for (storePartitionColumns <- BOOLEAN_DOMAIN) {
+    test("CDF that starts at a partition column change reads its removed files with the " +
+        s"previous partitioning, storePartitionColumns=$storePartitionColumns") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        sql(
+          s"""
+             |CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA PARTITIONED BY (a, b)
+             |TBLPROPERTIES (
+             |  '${DeltaConfigs.WRITE_PARTITION_COLUMNS_TO_PARQUET.key}' = '$storePartitionColumns')
+             |""".stripMargin)
+        sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 2, 20)")
+        overwriteWithPartitionColumns(path, "a") // version 2
+        sql(s"INSERT INTO delta.`$path` VALUES (3, 3, 30)") // version 3
+
+        // Version 2 removes the files written with (a, b) and adds files written with (a).
+        val changesOfVersion2 = Seq((1, 1, 10), (2, 2, 20)).flatMap { case (id, a, b) =>
+          Seq(Row(id, a, b, "delete", 2L), Row(id, a, b, "insert", 2L))
+        }
+        checkAnswer(readChanges(path, 2, 2), changesOfVersion2)
+        checkAnswer(readChanges(path, 2, 3), changesOfVersion2 :+ Row(3, 3, 30, "insert", 3L))
+      }
+    }
+  }
+
+  for (storePartitionColumns <- BOOLEAN_DOMAIN) {
+    test("CDF that starts at a commit that drops a partition column reads the other partition " +
+        s"columns of its removed files, storePartitionColumns=$storePartitionColumns") {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        sql(
+          s"""
+             |CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA PARTITIONED BY (a, b)
+             |TBLPROPERTIES (
+             |  '${DeltaConfigs.WRITE_PARTITION_COLUMNS_TO_PARQUET.key}' = '$storePartitionColumns')
+             |""".stripMargin)
+        sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 2, 20)")
+        // Version 2 drops b and the partitioning, so a becomes a data column.
+        spark.read.format("delta").load(path).drop("b")
+          .write.format("delta")
+          .mode(SaveMode.Overwrite)
+          .option(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "true")
+          .partitionBy()
+          .save(path)
+
+        // Version 2 removes the files written with (a, b). The read schema has a but not b.
+        val changes = spark.read.format("delta")
+          .option(DeltaOptions.CDC_READ_OPTION, "true")
+          .option(DeltaOptions.CDC_START_VERSION, 2)
+          .option(DeltaOptions.CDC_END_VERSION, 2)
+          .load(path)
+          .select("id", "a", CDC_TYPE_COLUMN_NAME, CDC_COMMIT_VERSION)
+        checkAnswer(changes, Seq((1, 1), (2, 2)).flatMap { case (id, a) =>
+          Seq(Row(id, a, "delete", 2L), Row(id, a, "insert", 2L))
+        })
+      }
+    }
+  }
+
+  for (unsafeBatchRead <- BOOLEAN_DOMAIN) {
+    test("CDF that starts at a partition column change records an event when the version " +
+        s"before it is unavailable, unsafeBatchRead=$unsafeBatchRead") {
+      withSQLConf(DeltaSQLConf.DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES.key ->
+          unsafeBatchRead.toString) {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          sql(s"CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA " +
+            "PARTITIONED BY (a, b)")
+          sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10), (2, 2, 20)")
+          overwriteWithPartitionColumns(path, "a") // version 2
+          val log = DeltaLog.forTable(spark, path)
+          log.checkpoint(log.update())
+          (0 to 1).foreach { v =>
+            assert(new File(FileNames.unsafeDeltaFile(log.logPath, v).toUri).delete())
+          }
+          DeltaLog.clearCache()
+
+          // The removed files of version 2 are read with its partitioning, since the version
+          // before it cannot be loaded.
+          val events = Log4jUsageLogger.track {
+            readChanges(path, 2, 2).collect()
+          }
+          val errorEvents = events.filter { event =>
+            event.metric == "tahoeEvent" && event.tags.get("opType")
+              .contains("delta.changeDataFeed.startVersionSchemaCheckError")
+          }
+          assert(errorEvents.size == 1, events.flatMap(_.tags.get("opType")).mkString(", "))
+        }
+      }
+    }
+  }
+
+  test("CDF across a partition column change is blocked when files are read with the read " +
+      "schema's partitioning") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      sql(
+        s"""
+           |CREATE TABLE delta.`$path` (id INT, a INT, b INT) USING DELTA PARTITIONED BY (a, b)
+           |TBLPROPERTIES ('${DeltaConfigs.WRITE_PARTITION_COLUMNS_TO_PARQUET.key}' = 'false')
+           |""".stripMargin)
+      sql(s"INSERT INTO delta.`$path` VALUES (1, 1, 10)")
+      overwriteWithPartitionColumns(path, "a") // version 2
+
+      withSQLConf(DeltaSQLConf.DELTA_CDF_READ_FILES_WITH_WRITTEN_PARTITIONING.key -> "false") {
+        checkError(
+          exception = intercept[DeltaUnsupportedOperationException] {
+            readChanges(path, 1, 1).collect()
+          },
+          condition = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+          sqlState = Some("0AKDC"),
+          matchPVals = true,
+          parameters = Map(
+            "start" -> "1",
+            "end" -> "1",
+            "readSchema" -> ".*",
+            "readVersion" -> "2",
+            "incompatibleVersion" -> "1"))
+      }
+    }
+  }
+
 }
 
 trait CDFStartingCommitSchemaTests extends QueryTest with DeltaSQLCommandTest {
@@ -998,7 +1275,8 @@ trait CDCSchemaChangeTests {
         assert(eventData("partitionSchemaCheckEnabled") === false)
 
         withSQLConf(
-            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true",
+            DeltaSQLConf.DELTA_CDF_READ_FILES_WITH_WRITTEN_PARTITIONING.key -> "false") {
           checkError(
             exception = intercept[DeltaUnsupportedOperationException] {
               sql(s"SELECT * FROM table_changes('$tableName', 1, 2)").collect()
@@ -1013,6 +1291,12 @@ trait CDCSchemaChangeTests {
               "readVersion" -> "2",
               "incompatibleVersion" -> "1"))
         }
+
+        // Files are read with the partition columns they were written with, so the read
+        // succeeds and returns the original values.
+        checkAnswer(
+          sql(s"SELECT a, b, _change_type, _commit_version FROM table_changes('$tableName', 1, 2)"),
+          Seq(Row(1, 10, "insert", 1L), Row(1, 10, "delete", 2L)))
       }
     }
 
@@ -1083,7 +1367,8 @@ trait CDCSchemaChangeTests {
         sql(s"INSERT INTO $tableName VALUES (2, 20)")
 
         withSQLConf(
-            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true",
+            DeltaSQLConf.DELTA_CDF_READ_FILES_WITH_WRITTEN_PARTITIONING.key -> "false") {
           checkError(
             exception = intercept[DeltaUnsupportedOperationException] {
               sql(s"SELECT * FROM table_changes('$tableName', 0, 3)").collect()
@@ -1098,6 +1383,12 @@ trait CDCSchemaChangeTests {
               "readVersion" -> "3",
               "incompatibleVersion" -> "0"))
         }
+
+        // Files are read with the partition columns they were written with, so the read
+        // succeeds and returns the original values.
+        checkAnswer(
+          sql(s"SELECT a, b, _change_type, _commit_version FROM table_changes('$tableName', 0, 3)"),
+          Seq(Row(1, 10, "insert", 1L), Row(1, 10, "delete", 2L), Row(2, 20, "insert", 3L)))
       }
     }
 
@@ -1120,7 +1411,8 @@ trait CDCSchemaChangeTests {
              |""".stripMargin)
 
         withSQLConf(
-            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true",
+            DeltaSQLConf.DELTA_CDF_READ_FILES_WITH_WRITTEN_PARTITIONING.key -> "false") {
           checkError(
             exception = intercept[DeltaUnsupportedOperationException] {
               sql(s"SELECT * FROM table_changes('$tableName', 1, 3)").collect()
@@ -1135,6 +1427,12 @@ trait CDCSchemaChangeTests {
               "readVersion" -> "3",
               "incompatibleVersion" -> "2"))
         }
+
+        // Files are read with the partition columns they were written with, so the read
+        // succeeds and returns the original values.
+        checkAnswer(
+          sql(s"SELECT a, b, _change_type, _commit_version FROM table_changes('$tableName', 1, 3)"),
+          Seq(Row(1, 10, "insert", 1L), Row(1, 10, "delete", 2L)))
       }
     }
 
@@ -1156,7 +1454,8 @@ trait CDCSchemaChangeTests {
              |""".stripMargin)
 
         withSQLConf(
-            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true",
+            DeltaSQLConf.DELTA_CDF_READ_FILES_WITH_WRITTEN_PARTITIONING.key -> "false") {
           checkError(
             exception = intercept[DeltaUnsupportedOperationException] {
               sql(s"SELECT * FROM table_changes('$tableName', 0, 2)").collect()
@@ -1171,6 +1470,12 @@ trait CDCSchemaChangeTests {
               "readVersion" -> "2",
               "incompatibleVersion" -> "1"))
         }
+
+        // Files are read with the partition columns they were written with, so the read
+        // succeeds and returns the original values.
+        checkAnswer(
+          sql(s"SELECT a, b, _change_type, _commit_version FROM table_changes('$tableName', 0, 2)"),
+          Nil)
       }
     }
   }
@@ -1251,7 +1556,8 @@ trait CDCSchemaChangeTests {
         sql(s"RESTORE TABLE $tableName TO VERSION AS OF 1")
 
         withSQLConf(
-            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true") {
+            DeltaSQLConf.DELTA_CDF_BLOCK_READS_ACROSS_PARTITION_SCHEMA_CHANGES.key -> "true",
+            DeltaSQLConf.DELTA_CDF_READ_FILES_WITH_WRITTEN_PARTITIONING.key -> "false") {
           checkError(
             exception = intercept[DeltaUnsupportedOperationException] {
               sql(s"SELECT * FROM table_changes('$tableName', 1, 3)").collect()
@@ -1266,6 +1572,12 @@ trait CDCSchemaChangeTests {
               "readVersion" -> "3",
               "incompatibleVersion" -> "2"))
         }
+
+        // Files are read with the partition columns they were written with, so the read
+        // succeeds and returns the original values.
+        checkAnswer(
+          sql(s"SELECT a, b, _change_type, _commit_version FROM table_changes('$tableName', 1, 3)"),
+          Seq(Row(1, 10, "insert", 1L), Row(1, 10, "delete", 2L), Row(1, 10, "insert", 3L)))
       }
     }
   }
