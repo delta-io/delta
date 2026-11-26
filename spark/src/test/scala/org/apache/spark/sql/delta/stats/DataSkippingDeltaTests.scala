@@ -248,6 +248,13 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 {
   import deltaImplicits._
 
+  protected def dataWithFixedFileLayout: DataFrame = {
+    // Keep one sequence per partition so file-level counts and bounds are deterministic.
+    spark.sparkContext.parallelize(
+      Seq(Seq(0L, 4L, 5L, 8L), Seq(1L, 2L, 3L, 6L, 7L, 9L)), 2)
+      .flatMap(identity).toDF("id")
+  }
+
   testSkipping(
     "top level, single 1",
     """{"a": 1}""",
@@ -1064,8 +1071,7 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
         "OPTIMIZE is blocked on catalog-managed tables")
       val t = "ds_stats_before_after_optimize"
       withTable(t) {
-        val (numTuples, numFiles) = (10, 2)
-        val data = spark.range(0, numTuples, 1, 2).repartition(numFiles)
+        val data = dataWithFixedFileLayout
         data.write.format("delta").saveAsTable(t)
         var r = checkpointAndCreateNewLogIfNecessary(
           DeltaLog.forTable(spark, TableIdentifier(t)))
@@ -2385,7 +2391,7 @@ trait DataSkippingDeltaV1Tests
       def rStats: DataFrame =
         getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
-      val data = spark.range(10).repartition(2)
+      val data = dataWithFixedFileLayout
 
       Given("appending data without collecting stats")
       withSQLConf(
