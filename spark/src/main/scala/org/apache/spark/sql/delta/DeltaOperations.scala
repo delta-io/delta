@@ -1082,6 +1082,30 @@ object DeltaOperations {
     override def canChangePartitionColumns: Boolean = false
   }
 
+  /**
+   * Recorded when the partitioning of a table is replaced with clustering (or no layout) via
+   * `ALTER TABLE ... REPLACE PARTITIONED BY WITH CLUSTER BY`.
+   */
+  case class ReplacePartitionedByWithClusterBy(
+      oldPartitioningColumns: String,
+      newClusteringColumns: String) extends Operation("REPLACE PARTITIONED BY WITH CLUSTER BY") {
+    override val parameters: Map[String, Any] = Map(
+      "oldPartitioningColumns" -> oldPartitioningColumns,
+      "newClusteringColumns" -> newClusteringColumns)
+
+    // Existing AddFiles are re-added with their DVs and stats copied over (plus synthesized
+    // stats for the former partition columns). Stats may have been recomputed as tight bounds
+    // by ComputeStats before, so this check should be disabled.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
+
+    // Only partition values and stats of existing files are updated in place.
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
+
+    override def expectedFileDataChange: Option[Boolean] = Some(false)
+
+    override def canChangePartitionColumns: Boolean = true
+  }
+
   /** Recorded when we backfill a Delta table's existing AddFiles with row tracking data. */
   case class RowTrackingBackfill(
       batchId: Int = 0) extends Operation(ROW_TRACKING_BACKFILL_OPERATION_NAME) {

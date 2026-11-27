@@ -43,7 +43,7 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.catalyst.TimeTravel
-import org.apache.spark.sql.delta.skipping.clustering.temp.{AlterTableClusterBy, ClusterByParserUtils, ClusterByPlan, ClusterBySpec}
+import org.apache.spark.sql.delta.skipping.clustering.temp.{AlterTableClusterBy, AlterTableReplacePartitionedByWithClusterBy, ClusterByParserUtils, ClusterByPlan, ClusterBySpec}
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands._
@@ -637,6 +637,24 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
           .map(_.asInstanceOf[Seq[String]]).toSeq
       AlterTableClusterBy(table, Some(ClusterBySpec(columnNames)))
     }
+  }
+
+  /**
+   * Parse `ALTER TABLE ... REPLACE PARTITIONED BY WITH CLUSTER BY [(col1, ...) | NONE]`.
+   * Without columns or NONE, the partition columns become the clustering columns.
+   */
+  override def visitAlterTableReplacePartitionedBy(
+      ctx: AlterTableReplacePartitionedByContext): LogicalPlan = withOrigin(ctx) {
+    val table = UnresolvedTable(
+      ctx.table.identifier.asScala.map(_.getText).toSeq,
+      "ALTER TABLE ... REPLACE PARTITIONED BY WITH CLUSTER BY")
+    val clusterBySpec = Option(ctx.clusterBySpec()).map { spec =>
+      ClusterBySpec(spec.interleave.asScala.map(_.identifier.asScala.map(_.getText).toSeq).toSeq)
+    }
+    AlterTableReplacePartitionedByWithClusterBy(
+      table,
+      clusterBySpec,
+      clusterByPartitionColumns = clusterBySpec.isEmpty && ctx.NONE() == null)
   }
 
   protected def typedVisit[T](ctx: ParseTree): T = {

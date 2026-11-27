@@ -28,7 +28,7 @@ import scala.collection.mutable
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
-import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec, ReplacePartitionedByWithClusterBy}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
@@ -1188,6 +1188,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case deltaTable: DeltaTableV2 => deltaTable
       case _ if changes.exists(_.isInstanceOf[ClusterBy]) =>
         throw DeltaErrors.alterClusterByNotOnDeltaTableException()
+      case _ if changes.exists(_.isInstanceOf[ReplacePartitionedByWithClusterBy]) =>
+        throw DeltaErrors.alterClusterByNotOnDeltaTableException()
       case _ if changes.exists(_.isInstanceOf[SyncIdentity]) =>
         throw DeltaErrors.identityColumnAlterNonDeltaFormatError()
       case _ => return super.alterTable(ident, changes: _*)
@@ -1409,6 +1411,17 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           }
           AlterTableClusterByDeltaCommand(
             table, c.clusteringColumns.map(_.fieldNames().toSeq).toSeq).run(spark)
+        }
+
+      case (t, replace) if t == classOf[ReplacePartitionedByWithClusterBy] =>
+        replace.asInstanceOf[Seq[ReplacePartitionedByWithClusterBy]].foreach { r =>
+          if (r.clusteringColumns.nonEmpty) {
+            validateClusterBySpec(Some(ClusterBySpec(r.clusteringColumns.toSeq)), table.schema())
+          }
+          AlterTableReplacePartitionedByWithClusterByDeltaCommand(
+            table,
+            r.clusteringColumns.map(_.fieldNames().toSeq).toSeq,
+            r.clusterByPartitionColumns).run(spark)
         }
     }
 
