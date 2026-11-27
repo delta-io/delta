@@ -1,7 +1,7 @@
 We happily welcome contributions to Delta Lake. We use [GitHub Issues](/../../issues/) to track community reported issues and [GitHub Pull Requests ](/../../pulls/) for accepting changes.
 
 # Governance
-Delta Lake is an independent open-source project and not controlled by any single company. To emphasize this we joined the [Delta Lake Project](https://community.linuxfoundation.org/delta-lake/) in 2019, which is a sub-project of the Linux Foundation Projects. Within the project, we make decisions based on [these rules](https://delta.io/pdfs/delta-charter.pdf).
+Delta Lake is an independent open-source project and not controlled by any single company. To emphasize this we joined the [Delta Lake Project](https://lfaidata.foundation/projects/delta-lake/) in 2019, which is a sub-project of the Linux Foundation Projects. Within the project, we make decisions based on [these rules](https://delta.io/pdfs/delta-charter.pdf).
 
 Delta Lake is supported by a wide set of developers from over 50 organizations across multiple repositories.  Since 2019, more than 190 developers have contributed to Delta Lake!  The Delta Lake community is growing by leaps and bounds with more than 6000 members in the [Delta Users slack](https://go.delta.io/slack)).
 
