@@ -19,6 +19,7 @@ import scala.collection.JavaConverters.asScalaBuffer
 
 import org.apache.spark.sql.delta.{
   DeltaColumnMappingMode,
+  DeltaErrors,
   IdMapping,
   NameMapping,
   NoMapping,
@@ -64,7 +65,10 @@ private[delta] case class ProtocolMetadataAdapterV2(
       case KernelColumnMapping.ColumnMappingMode.ID => IdMapping
       case KernelColumnMapping.ColumnMappingMode.NAME => NameMapping
       case _ =>
-        throw new UnsupportedOperationException("Unsupported column mapping mode: " + kernelMode)
+        // Kernel parses every mode it supports, so only a null mode reaches this branch. V1 raises
+        // the same error, with the same null mode, in DeltaColumnMappingMode.apply.
+        throw DeltaErrors.unsupportedColumnMappingModeException(
+          Option(kernelMode).map(_.toString).orNull)
     }
   }
 
