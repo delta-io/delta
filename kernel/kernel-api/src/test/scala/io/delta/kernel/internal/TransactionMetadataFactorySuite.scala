@@ -326,7 +326,7 @@ class TransactionMetadataFactorySuite extends AnyFunSuite {
       mockSnapshot,
       Optional.empty(), // no properties added
       Optional.empty(), // no properties removed
-      Optional.of("Table description"),
+      Optional.of(Optional.of("Table description")),
       Optional.empty(), // no schema change
       Optional.empty() // no clustering columns
     )
@@ -341,6 +341,25 @@ class TransactionMetadataFactorySuite extends AnyFunSuite {
     assert(newMetadata.getSchema === oldMetadata.getSchema)
     assert(newMetadata.getPartitionColNames === oldMetadata.getPartitionColNames)
     assert(newMetadata.getConfiguration === oldMetadata.getConfiguration)
+  }
+
+  test("buildUpdateTableMetadata - remove description when there is none") {
+    // The mock snapshot has no description
+    val mockSnapshot = MockSnapshotUtils.getMockSnapshot(
+      new Path(testTablePath),
+      latestVersion = 5L)
+
+    val output = TransactionMetadataFactory.buildUpdateTableMetadata(
+      testTablePath,
+      mockSnapshot,
+      Optional.empty(), // no properties added
+      Optional.empty(), // no properties removed
+      Optional.of(Optional.empty()), // remove the description
+      Optional.empty(), // no schema change
+      Optional.empty() // no clustering columns
+    )
+
+    assert(!output.newMetadata.isPresent)
   }
 
   test("buildUpdateTableMetadata - with clustering columns") {

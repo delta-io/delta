@@ -89,11 +89,21 @@ public interface UpdateTableTransactionBuilder {
 
   /**
    * Set a new description for the table. If the table already has this description, this does not
-   * add a metadata update to the transaction.
+   * add a metadata update to the transaction. To remove the description, use {@link
+   * #withDescriptionRemoved()}.
    *
    * @param description The new table description. Cannot be null.
    */
   UpdateTableTransactionBuilder withDescription(String description);
+
+  /**
+   * Remove the description of the table. If the table has no description, this does not add a
+   * metadata update to the transaction.
+   *
+   * <p>If {@link #withDescription(String)} is also called on this builder, the last call takes
+   * effect.
+   */
+  UpdateTableTransactionBuilder withDescriptionRemoved();
 
   /**
    * Update the clustering columns for the table and enable clustering if it is not already enabled.
