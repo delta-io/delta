@@ -1,0 +1,207 @@
+# IcebergNativeV4
+**Associated Github issue for discussions: https://github.com/delta-io/delta/issues/7373**
+
+This protocol change introduces a compatibility flag, which ensures that a Delta table can be safely
+read as an Apache Iceberg V4 format table or accept an new Adaptive Metadata Tree from an Iceberg writer, similar to
+[IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1),
+[IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v2),
+and [IcebergCompatV3](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-compat-v3.md).
+
+The [Adaptive Metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md)
+feature (`adaptiveMetadata`) lets a commit either write `add` and `remove` actions to the Delta log
+(a *log commit*) or fold them into the metadata tree (a *manifest commit*). An Iceberg engine reads
+the tree but not the Delta log, so files that live only in a log commit are invisible to it.
+`icebergNativeV4` forbids file actions in the log, making the tree the complete record of table
+content.
+
+Like the other Iceberg compatibility features, this feature does not implement or specify the
+conversion itself. How an Iceberg engine discovers the tree, including any Iceberg `metadata.json`
+root pointer or catalog handoff, is an implementation detail outside the scope of this protocol.
+
+--------
+
+# Changes to existing sections
+
+### Add File and Remove File
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-file-and-remove-file)***
+
+<ins>When the `icebergNativeV4` table feature is enabled, `add` and `remove` actions must not be
+written to the Delta log; the Iceberg V4 metadata tree carries all content metadata instead (see
+[Iceberg Native V4](#iceberg-native-v4)). The actions themselves are unchanged from
+[Adaptive Metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md).</ins>
+
+### Add CDC File
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#add-cdc-file)***
+
+<ins>`cdc` actions must not be written to the Delta log while `icebergNativeV4` is enabled.
+`changeDataFeed` is the only producer of `cdc` actions and is an
+[incompatible feature](#incompatible-table-features) under `icebergNativeV4`, so no `cdc` actions
+are produced.
+
+### Checkpoints
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#checkpoints)***
+
+<ins>Standalone checkpoints remain permitted, but carry no inline file actions, so their
+`contentRoot.version` may lag `checkpointMetadata.version` only across versions that changed no
+files. [Adaptive Metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md)
+already requires that the `checkpoint` action carry checkpoint state and that classic and V2
+checkpoints not be produced.</ins>
+
+--------
+
+> ***New Section after [Iceberg Compatibility V3](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-compat-v3.md)***
+
+# Iceberg Native V4
+
+This table feature (`icebergNativeV4`) ensures that all of a Delta table's content metadata is
+stored in an Apache Iceberg V4 adaptive metadata tree, so that the table can be read natively by an
+Iceberg V4 engine. This table feature does not implement or specify that read path.
+
+To support this feature:
+- The feature `icebergNativeV4` must exist in the table protocol's `writerFeatures`.
+- The feature `adaptiveMetadata` must exist in the table protocol's `readerFeatures` and `writerFeatures`. Its required features are transitively required here.
+
+This table feature is enabled when the table property `delta.enableIcebergNativeV4` is set to
+`true`.
+
+The writer requirements of this feature apply only when the feature is both supported and enabled.
+When the feature is supported but not enabled, writers have no additional obligations. A writer may
+add the feature to the protocol and set the table property in the same commit.
+
+> **NOTE:** Like IcebergCompatV3, and unlike IcebergCompatV1 and IcebergCompatV2, this feature does
+> _NOT_ forbid supporting and enabling Deletion Vectors on the table. `adaptiveMetadata` requires
+> them.
+
+## Relationship to Iceberg Compatibility V1, V2, and V3
+
+Each Iceberg compatibility feature targets one Iceberg format version: IcebergCompatV1 and
+IcebergCompatV2 target Iceberg V2, IcebergCompatV3 targets Iceberg V3, and `icebergNativeV4` targets
+Iceberg V4. At most one may be active at a time. The others may stay in the protocol while they are
+inactive.
+
+Writers must ensure that IcebergCompatV1, IcebergCompatV2, IcebergCompatV3, IcebergWriterCompatV1,
+and IcebergWriterCompatV3 are not active: for each of `icebergCompatV1`, `icebergCompatV2`,
+`icebergCompatV3`, `icebergWriterCompatV1`, and `icebergWriterCompatV3`, either the table feature is
+absent from the protocol or its table property (`delta.enableIcebergCompatV1`,
+`delta.enableIcebergCompatV2`, `delta.enableIcebergCompatV3`, `delta.enableIcebergWriterCompatV1`,
+`delta.enableIcebergWriterCompatV3`) is not set to `true`.
+
+Since IcebergCompatV3 must be inactive, its rules are instead **incorporated by reference**: every
+requirement in
+[Writer Requirements for IcebergCompatV3](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-compat-v3.md#writer-requirements-for-icebergcompatv3)
+applies as though restated here, with modifications. IcebergCompatV3 governs only Delta-to-Iceberg
+conversion; because the tree here may also be written by an external Iceberg engine, a few
+constraints beyond IcebergCompatV3 are added:
+
+- The requirement that IcebergCompatV1 and IcebergCompatV2 be inactive is broadened to include IcebergCompatV3, IcebergWriterCompatV1, and IcebergWriterCompatV3, as stated above.
+- IcebergCompatV3 permits Column Mapping in `name` or `id` mode; here only `id` mode is permitted, because an external Iceberg writer resolves columns by field ID and does not honor Delta's physical column names.
+- The type allow-list carries over **except `byte` and `short`, which are removed**: Iceberg has no 8- or 16-bit integer type, so an external Iceberg writer would store such a column as a 32-bit integer, and reading those values back as `byte` or `short` could overflow. The allowed types are therefore: [`integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`, `variant`, `geometry`, `geography`, `file`].
+- The `file` type is added. IcebergCompatV3 does not allow it, because Iceberg V3 has no equivalent type. Iceberg V4 has the [`FILE` type](https://github.com/apache/iceberg/blob/main/format/spec.md#file-type), and the Delta [`file` type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/file-type.md) maps to it.
+- Any schema change to a `struct` used as a `map` key must be blocked (changes to the map value are allowed), matching Iceberg, which does not permit evolving map-key types.
+
+All other IcebergCompatV3 requirements apply unchanged: Row
+Tracking with the reserved materialized column field IDs, nested field identifiers for `ArrayType`
+and `MapType`, materialized partition column values, int64 timestamps, the partition spec
+replacement restriction, the Type Widening allow-list (its `byte` and `short` source rows are
+unreachable once those types are disallowed), and literal-only column write defaults.
+
+## Incompatible Table Features
+
+Because the tree is the complete, authoritative record of table content and may be written by an
+external Iceberg engine that does not honor Delta write-time semantics, any feature whose guarantee
+depends on the Delta writer validating or deriving content at write time cannot be upheld. Writers
+must ensure that none of the following features is active. Each feature may be present in
+`writerFeatures` only while its "Not Active Check" holds:
+
+| Feature | Why it is incompatible | Not Active Check |
+|-|-|-|
+| `invariants` | Write-time validation of column values that an external Iceberg writer does not perform. | No column includes `delta.invariants` in its metadata |
+| `checkConstraints` | Write-time validation of column values that an external Iceberg writer does not perform. | No key in the `configuration` field of `metaData` starts with `delta.constraints.` |
+| `generatedColumns` | Column values the Delta writer derives at write time; an external Iceberg writer does not. | No column metadata contains the key `delta.generationExpression` |
+| `identityColumns` | Column values the Delta writer derives at write time, and `delta.identity.highWaterMark` maintenance; an external Iceberg writer does neither. | No column metadata contains any of the keys `delta.identity.start`, `delta.identity.step`, `delta.identity.highWaterMark`, `delta.identity.allowExplicitInsert` |
+| `changeDataFeed` | Requires `cdc` files for row-level changes, which an externally produced manifest commit does not emit, so the change feed would be incomplete. (`cdc` actions are never represented in the tree; see [Add CDC File](#add-cdc-file).) | The table property `delta.enableChangeDataFeed` does not exist or is not `true` |
+
+`clustering` may remain enabled: it only influences physical layout, so an external writer that does
+not maintain it still produces a correct tree. `appendOnly` may also remain enabled. As with
+[IcebergWriterCompatV1](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-writer-compat-v1.md),
+an external Iceberg writer is expected to honor `delta.appendOnly`. These restrictions may be
+revisited if a future Iceberg spec version gains equivalent support (e.g. constraints,
+generated/identity columns, or collations).
+
+## Allowed Table Features
+
+The list above blocks features known to be incompatible today, but it cannot anticipate features
+defined in the future, some of which may also break the guarantee that the tree is a complete,
+externally writable record. To stay forward-safe, writers must additionally verify that every
+feature present in `writerFeatures` appears in the following allow-list. A feature not on this list
+must not be present at all; enabling `icebergNativeV4` on a table that carries an unlisted feature
+must be rejected until that feature's interaction with this one has been reviewed and the list
+updated.
+
+The allowed features are:
+
+- `icebergNativeV4`, `adaptiveMetadata`, and every feature `adaptiveMetadata` transitively requires (including `columnMapping`, `deletionVectors`, and `rowTracking`).
+- `appendOnly`, `domainMetadata`, `vacuumProtocolCheck`, `inCommitTimestamp`, `clustering`, `timestampNtz`, `typeWidening`, `variantType`, `variantShredding`, `geospatial`, `fileType`, `materializePartitionColumns`, `allowColumnDefaults`, `catalogManaged`, `checkpointProtection`. `catalogManaged` only coordinates how commits are published, and `checkpointProtection` only constrains checkpoint removal during history cleanup; neither affects the content tree.
+- The features named under [Incompatible Table Features](#incompatible-table-features), which may be present only as inactive legacy carry-overs and only while the not-active checks in that section hold.
+- The Iceberg compatibility features `icebergCompatV1`, `icebergCompatV2`, `icebergCompatV3`, `icebergWriterCompatV1` (which itself requires `icebergCompatV2` be present), and `icebergWriterCompatV3` (which itself requires `icebergCompatV3` be present), which — per [Relationship to Iceberg Compatibility V1, V2, and V3](#relationship-to-iceberg-compatibility-v1-v2-and-v3) — may be present only while inactive.
+
+Because `icebergNativeV4` is a writer feature, this allow-list governs `writerFeatures`; a reader-only feature (one absent from `writerFeatures`) is out of its scope.
+
+> **NOTE:** `adaptiveMetadata` keeps files based on whether live table state can reach them. Bytes that a `file` value references are not reachable this way, so Delta does not protect them, including bytes under the default `_files` location. The system that owns their storage must retain them. See [File Data Type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/file-type.md).
+
+## Writer Requirements for IcebergNativeV4
+
+When this feature is supported and enabled, writers must additionally:
+
+- Write every commit that adds or removes files as a *manifest commit*, as defined by [Adaptive Metadata](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-v4-metadata.md#commit-types). Equivalently: `add` and `remove` actions must never be written to the Delta log.
+- Keep the tree complete as of `checkpointMetadata.version`. `adaptiveMetadata` allows `contentRoot.version` to lag and covers the gap with inline file actions; with no file actions in the log there is nothing to cover a gap with, so every version in the gap must have changed no files. A commit that adds or removes files must therefore set `contentRoot.version` equal to both `checkpointMetadata.version` and the commit version.
+- Continue to write non-file actions (`metaData`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) to the Delta log, as `adaptiveMetadata` already requires. The tree does not store them.
+- Reject inline deletion vectors (storage type `i`) on every commit (`adaptiveMetadata` already forbids them).
+- Keep Iceberg sequence numbers equal to Delta versions. `adaptiveMetadata` sets the sequence number of each file to the Delta version of the commit that added it, and Delta versions have no gaps. Therefore:
+  - Iceberg table metadata that is exposed for the table must report a `last-sequence-number` equal to the Delta version that the metadata reflects. The value advances on every Delta commit, including commits that add no Iceberg snapshot, for example schema or property changes.
+  - A snapshot added by an Iceberg writer must have a sequence number equal to the Delta version of the commit that adds it. This is `last-sequence-number` + 1 of the metadata that the Iceberg writer read. A commit whose snapshot has a different sequence number must be rejected. The Iceberg writer can retry against the newer table state.
+
+> **NOTE:** This is stricter than Iceberg. The Iceberg spec only requires sequence numbers to increase. Here an Iceberg writer must assign exactly `last-sequence-number` + 1 and must not skip numbers. The Iceberg reference implementation already assigns `last-sequence-number` + 1.
+
+
+### Enablement
+
+This feature may be enabled at table creation, or on an existing table via `ALTER TABLE`. Enablement
+must be rejected if any [incompatible feature](#incompatible-table-features) is active, or if any
+feature outside the [allow-list](#allowed-table-features) is present; such features must be disabled
+or removed first.
+
+An existing table's log may contain historical `add` and `remove` actions. The first commit after
+enablement must be a manifest commit that folds all pre-existing state into the tree, so the tree is
+complete as of the enablement version. Until it succeeds, the table does not satisfy this feature's
+guarantee and must not be presented to an Iceberg engine as a native V4 table.
+
+Writers must not change `delta.enableIcebergNativeV4` from `true` to `false` except as part of
+feature removal.
+
+### History and Time Travel
+
+This feature constrains only versions committed while it is active. Earlier commits may contain
+`add` and `remove` actions and are replayed under the normal Delta rules, so a time-travel read of a
+pre-enablement version, or a change-data-feed read spanning one, may still consume file actions from
+the log. The native Iceberg read path applies from the enablement version onward.
+
+
+## Feature Removal
+
+To remove `icebergNativeV4`, set `delta.enableIcebergNativeV4` to `false` and drop
+`icebergNativeV4` from the protocol's `writerFeatures`. No rewrite of table state is required: the
+tree remains valid and readable by any client supporting `adaptiveMetadata`. Removing
+`adaptiveMetadata` itself follows that feature's own removal rules, which require producing a
+traditional checkpoint from the current tree.
+
+## Open Questions
+
+1. **Do we need to specify additional constraints on reading partition tuple** - Iceberg might have
+multiple partition specs each with different columns.  Delta would have to read these empirically and
+write them?  For this iteration we assume non-content metadata is always compatible with Delta, so
+partition evolution does not currently apply. The same question applies to statistics: how readers
+use stats for a file when a partition field is no longer in the current partition spec.
