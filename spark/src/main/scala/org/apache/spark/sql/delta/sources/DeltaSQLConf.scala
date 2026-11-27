@@ -1896,6 +1896,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DV_AWARE_FILE_METRICS_ENABLED =
+    buildConf("dvAwareFileMetrics.enabled")
+      .doc("When true, file metrics in Delta commit stats and in the operation metrics of " +
+        "CLONE and RESTORE (table history and command output) do not count an AddFile and a " +
+        "RemoveFile with the same path in one commit, such as a deletion-vector-only update, " +
+        "because no data file is added or removed. When false, every AddFile and RemoveFile is " +
+        "counted, as before.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_FILE_SIZE_HISTOGRAM_ENABLED =
     buildConf("fileSizeHistogramMetrics.enabled")
       .internal()

@@ -269,11 +269,19 @@ trait TransactionHelper extends DeltaLogging {
       math.max(currentTimestamp, lastCommitTimestamp + 1)
     }
 
+  private[delta] lazy val dvAwareFileMetricsEnabled = spark.sessionState.conf.getConf(
+    DeltaSQLConf.DELTA_DV_AWARE_FILE_METRICS_ENABLED)
+  private lazy val fileSizeHistogramsEnabled =
+    spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)
+
   /**
    * Computes and emits commit stats for the current transaction.
    */
-  class CommitStatsComputer {
+  class CommitStatsComputer(
+      samePathPairMetrics: SamePathFileActionMetrics.SamePathPairMetrics =
+        SamePathFileActionMetrics.empty) {
     private var bytesNew: Long = 0L
+    private var bytesRemoved: Long = 0L
     private var numAdd: Int = 0
     private var numOfDomainMetadatas: Int = 0
     private var numRemove: Int = 0
@@ -281,6 +289,10 @@ trait TransactionHelper extends DeltaLogging {
     private var numCdcFiles: Int = 0
     private var cdcBytesNew: Long = 0L
     private var numAbsolutePaths = 0
+    private var numDeletionVectorsAdded = 0L
+    private var numDeletionVectorsRemoved = 0L
+    private var numDeletionVectorsBytesAdded = 0L
+    private var numDeletionVectorsBytesRemoved = 0L
     private var fileActionDataChange = false
     // We don't expect commits to have more than 2 billion actions
     private var numActions: Int = 0
@@ -291,11 +303,7 @@ trait TransactionHelper extends DeltaLogging {
     private var inputActionsIteratorOpt = Option.empty[Iterator[Action]]
 
     private val (addFilesHistogram, removeFilesHistogram) =
-      if (spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
-        (Some(FileSizeHistogramUtils.emptyHistogram), Some(FileSizeHistogramUtils.emptyHistogram))
-      } else {
-        (None, None)
-      }
+      SamePathFileActionMetrics.emptyHistograms(fileSizeHistogramsEnabled)
 
     private def assertStateBeforeFinalization(): Unit = {
       assert(
@@ -329,10 +337,19 @@ trait TransactionHelper extends DeltaLogging {
             partitionsAdded += a.partitionValues
             addFilesHistogram.foreach(_.insert(a.size))
             if (a.dataChange) bytesNew += a.size
+            Option(a.deletionVector).foreach { dv =>
+              numDeletionVectorsAdded += 1
+              numDeletionVectorsBytesAdded += dv.sizeInBytes
+            }
           case r: RemoveFile =>
             numRemove += 1
             fileActionDataChange = r.dataChange
             removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
+            bytesRemoved += r.size.getOrElse(0L)
+            Option(r.deletionVector).foreach { dv =>
+              numDeletionVectorsRemoved += 1
+              numDeletionVectorsBytesRemoved += dv.sizeInBytes
+            }
           case c: AddCDCFile =>
             numCdcFiles += 1
             cdcBytesNew += c.size
@@ -402,6 +419,7 @@ trait TransactionHelper extends DeltaLogging {
         case Some(ci) => ci.copy(readVersion = None, isolationLevel = None)
         case None => null
       }
+      samePathPairMetrics.subtractFrom(addFilesHistogram, removeFilesHistogram)
       val stats = CommitStats(
         startVersion = startVersion,
         commitVersion = attemptVersion,
@@ -410,10 +428,10 @@ trait TransactionHelper extends DeltaLogging {
         commitDurationMs = commitDurationMs,
         fsWriteDurationMs = fsWriteDurationMs,
         stateReconstructionDurationMs = stateReconstructionDurationMs,
-        numAdd = numAdd,
-        numRemove = numRemove,
+        numAdd = numAdd - samePathPairMetrics.numAddRemovePathPairs.toInt,
+        numRemove = numRemove - samePathPairMetrics.numAddRemovePathPairs.toInt,
         numSetTransaction = numSetTransaction,
-        bytesNew = bytesNew,
+        bytesNew = bytesNew - samePathPairMetrics.dataChangeAddedBytes,
         numFilesTotal = numFilesTotal,
         sizeInBytesTotal = sizeInBytesTotal,
         numCdcFiles = numCdcFiles,
@@ -439,7 +457,16 @@ trait TransactionHelper extends DeltaLogging {
         fileActionOperationClass = Some(
           FileActionOperationClass
             .classify(numAdd, numRemove, fileActionDataChange)
-            .toString))
+            .toString),
+        bytesRemoved = Option.when(dvAwareFileMetricsEnabled)(
+          bytesRemoved - samePathPairMetrics.removedBytes),
+        numDeletionVectorsAdded = Option.when(dvAwareFileMetricsEnabled)(numDeletionVectorsAdded),
+        numDeletionVectorsRemoved = Option.when(dvAwareFileMetricsEnabled)(
+          numDeletionVectorsRemoved),
+        numDeletionVectorsBytesAdded = Option.when(dvAwareFileMetricsEnabled)(
+          numDeletionVectorsBytesAdded),
+        numDeletionVectorsBytesRemoved = Option.when(dvAwareFileMetricsEnabled)(
+          numDeletionVectorsBytesRemoved))
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
     }
 
@@ -459,5 +486,112 @@ trait TransactionHelper extends DeltaLogging {
       numActions
     }
   }
+
+  /** Computes the same-path file actions to exclude from physical data-file metrics. */
+  protected def getSamePathFileActionMetrics(
+      actions: Seq[Action]): SamePathFileActionMetrics.SamePathPairMetrics = {
+    if (dvAwareFileMetricsEnabled) {
+      SamePathFileActionMetrics.fromActions(actions, fileSizeHistogramsEnabled)
+    } else {
+      SamePathFileActionMetrics.empty
+    }
+  }
   // scalastyle:on argcount
+}
+
+/**
+ * Computes file metrics excluded from physical data-file counts. Delta data files are immutable,
+ * so an AddFile and RemoveFile with the same path in one commit describe the same physical file;
+ * that file was neither added nor removed.
+ */
+private[delta] object SamePathFileActionMetrics {
+  case class SamePathPairMetrics(
+      numAddRemovePathPairs: Long = 0L,
+      addedBytes: Long = 0L,
+      dataChangeAddedBytes: Long = 0L,
+      removedBytes: Long = 0L,
+      addedFileSizeHistogram: Option[FileSizeHistogram] = None,
+      removedFileSizeHistogram: Option[FileSizeHistogram] = None) {
+    def subtractFrom(
+        addFilesHistogram: Option[FileSizeHistogram],
+        removeFilesHistogram: Option[FileSizeHistogram]): Unit = {
+      def subtract(total: Option[FileSizeHistogram], paired: Option[FileSizeHistogram]): Unit = {
+        for (t <- total; p <- paired; bin <- t.fileCounts.indices) {
+          t.fileCounts(bin) -= p.fileCounts(bin)
+          t.totalBytes(bin) -= p.totalBytes(bin)
+        }
+      }
+      subtract(addFilesHistogram, addedFileSizeHistogram)
+      subtract(removeFilesHistogram, removedFileSizeHistogram)
+    }
+  }
+
+  val empty: SamePathPairMetrics = SamePathPairMetrics()
+
+  def emptyHistograms(enabled: Boolean): (Option[FileSizeHistogram], Option[FileSizeHistogram]) =
+    if (enabled) {
+      (Some(FileSizeHistogramUtils.emptyHistogram), Some(FileSizeHistogramUtils.emptyHistogram))
+    } else {
+      (None, None)
+    }
+
+  def fromActions(
+      actions: Seq[Action],
+      collectFileSizeHistograms: Boolean): SamePathPairMetrics = {
+    val numAdds = actions.count(_.isInstanceOf[AddFile])
+    val numRemoves = actions.count(_.isInstanceOf[RemoveFile])
+    fromFileActions(
+      numAdds,
+      actions.iterator.collect { case add: AddFile => add },
+      numRemoves,
+      actions.iterator.collect { case remove: RemoveFile => remove },
+      collectFileSizeHistograms)
+  }
+
+  def fromFileActions(
+      numAdds: Long,
+      adds: => Iterator[AddFile],
+      numRemoves: Long,
+      removes: => Iterator[RemoveFile],
+      collectFileSizeHistograms: Boolean): SamePathPairMetrics = {
+    if (numAdds == 0L || numRemoves == 0L) return empty
+
+    val (addedFileSizeHistogram, removedFileSizeHistogram) =
+      emptyHistograms(collectFileSizeHistograms)
+    var numAddRemovePathPairs = 0L
+    var addedBytes = 0L
+    var dataChangeAddedBytes = 0L
+    var removedBytes = 0L
+
+    def exclude(addSize: Long, addDataChange: Boolean, removeSize: Long): Unit = {
+      numAddRemovePathPairs += 1
+      addedBytes += addSize
+      if (addDataChange) dataChangeAddedBytes += addSize
+      removedBytes += removeSize
+      addedFileSizeHistogram.foreach(_.insert(addSize))
+      removedFileSizeHistogram.foreach(_.insert(removeSize))
+    }
+
+    if (numAdds <= numRemoves) {
+      val addsByPath = adds.map(add => add.path -> (add.size, add.dataChange)).toMap
+      removes.foreach { remove =>
+        addsByPath.get(remove.path).foreach { case (addSize, addDataChange) =>
+          exclude(addSize, addDataChange, remove.size.getOrElse(0L))
+        }
+      }
+    } else {
+      val removesByPath = removes.map(remove => remove.path -> remove.size.getOrElse(0L)).toMap
+      adds.foreach { add =>
+        removesByPath.get(add.path).foreach(exclude(add.size, add.dataChange, _))
+      }
+    }
+
+    SamePathPairMetrics(
+      numAddRemovePathPairs,
+      addedBytes,
+      dataChangeAddedBytes,
+      removedBytes,
+      addedFileSizeHistogram,
+      removedFileSizeHistogram)
+  }
 }
