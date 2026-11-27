@@ -183,18 +183,9 @@ trait DeltaSourceBase extends Source
       getFileChangesForCDC(fromVersion, fromIndex, isInitialSnapshot, limits, None).flatMap(_._2)
         .toClosable
     } else {
-      val changes = getFileChanges(fromVersion, fromIndex, isInitialSnapshot)
-
-      // Take each change until we've seen the configured number of addFiles. Some changes don't
-      // represent file additions; we retain them for offset tracking, but they don't count towards
-      // the maxFilesPerTrigger conf.
-      if (limits.isEmpty) {
-        changes
-      } else {
-        val admissionControl = limits.get
-        changes.withClose { it => it.takeWhile { admissionControl.admit(_) }
-        }
-      }
+      getFileChangesWithAdmissionLimits(
+        fromVersion, fromIndex, isInitialSnapshot, limits
+      )
     }
     // Stop before any schema change barrier if detected.
     stopIndexedFileIteratorAtSchemaChangeBarrier(iter)
