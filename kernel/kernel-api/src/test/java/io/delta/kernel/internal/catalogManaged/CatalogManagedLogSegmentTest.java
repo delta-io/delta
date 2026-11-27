@@ -67,7 +67,7 @@ class CatalogManagedLogSegmentTest {
   }
 
   private static List<Long> versions(Long... vs) {
-    return java.util.Arrays.asList(vs);
+    return Arrays.asList(vs);
   }
 
   /**
