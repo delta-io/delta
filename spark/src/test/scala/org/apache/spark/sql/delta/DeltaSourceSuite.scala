@@ -37,7 +37,6 @@ import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, O
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.StreamingExecutionRelation
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
-import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 import org.scalatest.time.{Seconds, Span}
 
@@ -2423,159 +2422,118 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("incremental: first commit file missing, fails") {
-    withTempDirs { (srcData, targetData, chkLocation) =>
-      def addData(): Unit = {
-        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+  for {
+    failOnDataLoss <- Seq(true, false)
+    (dataLossType, missingVersions) <- Seq(
+      "missing_start_commit" -> Seq(1L),
+      "missing_middle_commit" -> Seq(2L),
+      "missing_entire_range" -> Seq(1L, 2L, 3L))
+  } {
+    test(s"incremental: missing commit files, failOnDataLoss=$failOnDataLoss, " +
+        s"dataLossType=$dataLossType") {
+      // Exercise failOnDataLoss independently of the trailing-commit validator.
+      withSQLConf(
+          DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION.key -> "false",
+          DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key -> "false",
+          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "false") {
+        withTempDirs { (srcData, targetData, chkLocation) =>
+          def addData(version: Long): Unit = {
+            val numFiles = if (version == 3) 2 else 1
+            spark.range(version * 10, (version + 1) * 10).repartition(numFiles)
+              .write.format("delta").mode("append").save(srcData.getCanonicalPath)
+          }
+
+          addData(0)
+          val srcLog = DeltaLog.forTable(spark, srcData)
+          val df = loadStreamWithOptions(
+            srcData.getCanonicalPath,
+            Map("failOnDataLoss" -> failOnDataLoss.toString, "maxFilesPerTrigger" -> "3"))
+          val failureMessage = "fail before committing the planned batch"
+
+          def startStream(failBatch: Boolean = false): StreamingQuery = {
+            df.writeStream
+              .option("checkpointLocation", chkLocation.getCanonicalPath)
+              .foreachBatch { (batch: DataFrame, _: Long) =>
+                if (failBatch) throw new IllegalStateException(failureMessage)
+                batch.write.format("delta").mode("append").save(targetData.getCanonicalPath)
+              }
+              .start()
+          }
+
+          val initialQuery = startStream()
+          try {
+            initialQuery.processAllAvailable()
+          } finally {
+            initialQuery.stop()
+          }
+
+          addData(1)
+          addData(2)
+          addData(3)
+          val failedQuery = startStream(failBatch = true)
+          try {
+            val e = intercept[StreamingQueryException] {
+              failedQuery.processAllAvailable()
+            }
+            assert(Utils.getRootCause(e).getMessage == failureMessage)
+          } finally {
+            failedQuery.stop()
+          }
+
+          // End inside version 3 so the bounded listing cannot include the retained version 4.
+          val offsetLog = new OffsetSeqLog(spark, new File(chkLocation, "offsets").toString)
+          def batchEndOffset(batchId: Long): DeltaSourceOffset = {
+            DeltaSourceOffset(srcLog.unsafeVolatileTableId,
+              offsetLog.get(batchId).get.offsets.head.get)
+          }
+          assert(batchEndOffset(0) == DeltaSourceOffset(
+            srcLog.unsafeVolatileTableId, 1, DeltaSourceOffset.BASE_INDEX, false))
+          assert(batchEndOffset(1) == DeltaSourceOffset(
+            srcLog.unsafeVolatileTableId, 3, 0, isInitialSnapshot = false))
+
+          // A later commit lets V1's unbounded listing detect the missing range. A checkpoint
+          // keeps the table snapshot readable after every commit in the planned range is deleted.
+          addData(4)
+          srcLog.checkpoint()
+          missingVersions.foreach { version =>
+            assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, version).toUri).delete())
+          }
+
+          val restartedQuery = startStream()
+          try {
+            if (failOnDataLoss) {
+              val e = intercept[StreamingQueryException] {
+                restartedQuery.processAllAvailable()
+              }
+              if (useDsv2) {
+                val expectedMessage = dataLossType match {
+                  case "missing_start_commit" => "no log file found for version"
+                  case "missing_middle_commit" => "versions are not contiguous"
+                  case "missing_entire_range" => "no log files found in the requested version range"
+                }
+                assert(e.getCause.getMessage.contains(expectedMessage))
+              } else {
+                checkError(e.getCause.asInstanceOf[DeltaIllegalStateException],
+                  "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
+                  Map("startVersion" -> missingVersions.head.toString,
+                    "earliestVersion" -> (missingVersions.last + 1).toString,
+                    "option" -> "failOnDataLoss"))
+              }
+            } else {
+              restartedQuery.processAllAvailable()
+            }
+            val expectedVersions =
+              if (failOnDataLoss) Seq(0L) else (0L to 4L).diff(missingVersions)
+            val expected = expectedVersions.flatMap { version =>
+              version * 10 until (version + 1) * 10
+            }
+            checkAnswer(spark.read.format("delta").load(targetData.getCanonicalPath),
+              expected.map(Row(_)))
+          } finally {
+            restartedQuery.stop()
+          }
+        }
       }
-
-      addData()
-      val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
-
-      val q = df.writeStream.format("delta")
-        .option("checkpointLocation", chkLocation.getCanonicalPath)
-        .start(targetData.getCanonicalPath)
-      q.processAllAvailable()
-      q.stop()
-
-      addData()
-      addData()
-      addData()
-
-      val srcLog = DeltaLog.forTable(spark, srcData)
-      // Create a checkpoint so that we can create a snapshot without json files before version 3
-      srcLog.checkpoint()
-      // Delete the first file
-      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
-
-      val e = intercept[StreamingQueryException] {
-        val q = df.writeStream.format("delta")
-          .option("checkpointLocation", chkLocation.getCanonicalPath)
-          .start(targetData.getCanonicalPath)
-        q.processAllAvailable()
-      }
-      if (useDsv2) {
-        assert(e.getCause.getMessage.contains("no log file found for version"))
-      } else {
-        checkError(e.getCause.asInstanceOf[DeltaIllegalStateException],
-          "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
-          Map("startVersion" -> "1", "earliestVersion" -> "2", "option" -> "failOnDataLoss"))
-      }
-    }
-  }
-
-  test("incremental: commit file gap between versions, fails") {
-    withTempDirs { (srcData, targetData, chkLocation) =>
-      def addData(): Unit = {
-        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
-      }
-
-      addData()
-      val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
-
-      val q = df.writeStream.format("delta")
-        .option("checkpointLocation", chkLocation.getCanonicalPath)
-        .start(targetData.getCanonicalPath)
-      q.processAllAvailable()
-      q.stop()
-
-      addData()
-      addData()
-      addData()
-
-      val srcLog = DeltaLog.forTable(spark, srcData)
-      // Create a checkpoint so that we can create a snapshot without json files before version 3
-      srcLog.checkpoint()
-      // Delete the second file
-      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
-
-      val e = intercept[StreamingQueryException] {
-        val q = df.writeStream.format("delta")
-          .option("checkpointLocation", chkLocation.getCanonicalPath)
-          .start(targetData.getCanonicalPath)
-        q.processAllAvailable()
-      }
-      if (useDsv2) {
-        assert(e.getCause.getMessage.contains("versions are not contiguous"))
-      } else {
-        checkError(e.getCause.asInstanceOf[DeltaIllegalStateException],
-          "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
-          Map("startVersion" -> "2", "earliestVersion" -> "3", "option" -> "failOnDataLoss"))
-      }
-    }
-  }
-
-  test("incremental: first commit file missing, failOnDataLoss=false succeeds") {
-    withTempDirs { (srcData, targetData, chkLocation) =>
-      def addData(): Unit = {
-        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
-      }
-
-      addData()
-      val df = loadStreamWithOptions(
-        srcData.getCanonicalPath,
-        Map("failOnDataLoss" -> "false"))
-
-      val q = df.writeStream.format("delta")
-        .option("checkpointLocation", chkLocation.getCanonicalPath)
-        .start(targetData.getCanonicalPath)
-      q.processAllAvailable()
-      q.stop()
-
-      addData()
-      addData()
-      addData()
-
-      val srcLog = DeltaLog.forTable(spark, srcData)
-      // Create a checkpoint so that we can create a snapshot without json files before version 3
-      srcLog.checkpoint()
-      // Delete the first file
-      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
-
-      val q2 = df.writeStream.format("delta")
-        .option("checkpointLocation", chkLocation.getCanonicalPath)
-        .start(targetData.getCanonicalPath)
-      q2.processAllAvailable()
-      q2.stop()
-
-      assert(spark.read.format("delta").load(targetData.getCanonicalPath).count() === 30)
-    }
-  }
-
-  test("incremental: commit file gap between versions, failOnDataLoss=false succeeds") {
-    withTempDirs { (srcData, targetData, chkLocation) =>
-      def addData(): Unit = {
-        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
-      }
-
-      addData()
-      val df = loadStreamWithOptions(
-        srcData.getCanonicalPath,
-        Map("failOnDataLoss" -> "false"))
-
-      val q = df.writeStream.format("delta")
-        .option("checkpointLocation", chkLocation.getCanonicalPath)
-        .start(targetData.getCanonicalPath)
-      q.processAllAvailable()
-      q.stop()
-
-      addData()
-      addData()
-      addData()
-
-      val srcLog = DeltaLog.forTable(spark, srcData)
-      // Create a checkpoint so that we can create a snapshot without json files before version 3
-      srcLog.checkpoint()
-      // Delete the second file
-      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
-
-      val q2 = df.writeStream.format("delta")
-        .option("checkpointLocation", chkLocation.getCanonicalPath)
-        .start(targetData.getCanonicalPath)
-      q2.processAllAvailable()
-      q2.stop()
-
-      assert(spark.read.format("delta").load(targetData.getCanonicalPath).count() === 30)
     }
   }
 
