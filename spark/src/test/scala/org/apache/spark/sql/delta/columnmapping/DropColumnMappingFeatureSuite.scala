@@ -170,7 +170,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
       "spark.databricks.delta.vacuum.enforceDeletedFileAndLogRetentionDurationCompatibility" ->
         "false") {
       // Verify the input data is as expected.
-      val originalData = spark.table(tableName = testTableName).select(logicalColumnName).collect()
+      val originalData = spark.table(tableName = testTableName).collect()
       // Add a schema comment and verify it is preserved after the rewrite.
       val comment = "test comment"
       sql(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")

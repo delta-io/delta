@@ -22,7 +22,7 @@ import java.io.File
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DescribeDeltaHistoryCommand
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -47,7 +47,7 @@ trait DescribeDeltaHistorySuiteBase
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
   with MergeIntoMetricsBase
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with WriteOptionsTestBase {
 
   import deltaImplicits._
@@ -111,14 +111,14 @@ trait DescribeDeltaHistorySuiteBase
       val propertyDf = df.select(Seq($"operationParameters.properties"): _*)
       val actualPropertiesJson = propertyDf.take(1).head.getString(0)
       val actualProperties = JsonUtils.fromJson[Map[String, String]](actualPropertiesJson)
-      if (catalogOwnedDefaultCreationEnabledInTests) {
+      if (catalogManagedDefaultCreationEnabledInTests) {
         // We need to filter out the following two properties b/c
         // they are generated as part of [[RowTrackingFeature]] enablement,
         // the values of which are non-deterministic so we only verify the
         // existence.
         assert(actualProperties.contains(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP) &&
           actualProperties.contains(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP),
-          "RowTracking should be enabled as part of CatalogOwned QoL features, " +
+          "RowTracking should be enabled as part of CatalogManaged QoL features, " +
           s"expecting ${MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP} and " +
           s"${MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP} to be present. " +
           s"The `actualProperties`: $actualProperties")
@@ -194,7 +194,7 @@ trait DescribeDeltaHistorySuiteBase
   // a few properties will be automatically populated, and this method will take care of it.
   protected def getProperties(
       extraProperty: Option[Map[String, String]] = None): Map[String, String] = {
-    val catalogOwnedProperty = if (catalogOwnedDefaultCreationEnabledInTests) {
+    val catalogManagedProperty = if (catalogManagedDefaultCreationEnabledInTests) {
       CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
         case (feature, config, value)
         => config.key -> value
@@ -207,7 +207,7 @@ trait DescribeDeltaHistorySuiteBase
     }
     // For history command, the output omits the empty config value, so we also need to
     // manually omit the value here.
-    val properties = catalogOwnedProperty.filterNot { case (_, value) => value == "{}" }
+    val properties = catalogManagedProperty.filterNot { case (_, value) => value == "{}" }
     val finalProperties = extraProperty.map(properties ++ _).getOrElse(properties)
     finalProperties.asInstanceOf[Map[String, String]]
   }

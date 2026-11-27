@@ -34,7 +34,7 @@ trait DataSkippingAMTBase extends DataSkippingDeltaTestsBase
 
   import testImplicits._
 
-  // AMT requires the catalogManaged feature. `catalogOwnedCoordinatorBackfillBatchSize = Some(1)`
+  // AMT requires the catalogManaged feature. `catalogManagedCoordinatorBackfillBatchSize = Some(1)`
   // registers the in-memory commit coordinator (and enables catalog-managed-by-default) so
   // catalog-managed AMT tables can be created locally, backfilling every commit immediately.
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
@@ -63,9 +63,9 @@ trait DataSkippingAMTBase extends DataSkippingDeltaTestsBase
     // DELTA_ADAPTIVE_METADATA_REQUIRES_DEPENDENT_FEATURE_ENABLED at create.
     "base_row_id filter throws FIELD_NOT_FOUND when row tracking is disabled",
     "default_row_commit_version filter throws FIELD_NOT_FOUND when row tracking is disabled",
-    // AMT writes Iceberg's file-level `tight_stats` as false rather than carrying Delta's
-    // `tightBounds` over (see `AMTContentStats`), so a file served from an AMT checkpoint reads
-    // back with tightBounds=false, and this test's exact comparison of the stats JSON fails.
+    // AMT keeps `tightStats` but drops Delta's legacy `tightBounds` (see `AMTContentStats`), so a
+    // file served from an AMT checkpoint of these tables reads back with tightBounds=false, and
+    // this test's exact comparison of the stats JSON fails.
     "data skipping get specific files with Stats API"
   )
 

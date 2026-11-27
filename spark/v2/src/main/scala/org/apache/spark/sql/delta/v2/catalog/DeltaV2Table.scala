@@ -193,8 +193,7 @@ class DeltaV2Table private (
         SparkSession.active,
         initialSnapshotValue,
         options,
-        tableManager.snapshotManager(queryContext.catalogTableOpt),
-        kernelEngine(),
+        tableManager,
         queryContext)
 
     val (rawSchema, partitionColumnNames) = if (persistedMetadata.isPresent) {
@@ -295,6 +294,14 @@ class DeltaV2Table private (
    */
   override def getTablePath(): Path = new Path(tablePath)
 
+  // The path is qualified from `tablePath` with Hadoop, as `DeltaLog.dataPath` is, and not taken
+  // from the Kernel snapshot: the FFI Kernel engine resolves symbolic links in it, which Hadoop
+  // does not, so the two would differ for a local table reached through a link.
+  override def compositeId: (String, Path) = {
+    val path = getTablePath()
+    initialSnapshotValue.metadata.getId -> path.getFileSystem(hadoopConf).makeQualified(path)
+  }
+
   /**
    * Returns the V2 identifier this table was constructed with.
    *
@@ -388,6 +395,8 @@ class DeltaV2Table private (
     // back to the v1 path.
     if (isTimeTravel) READ_ONLY_CAPABILITIES else CAPABILITIES
   }
+
+  override def canRenameConflictingMetadataColumns(): Boolean = true
 
   /**
    * Returns the version of the snapshot loaded when this table was constructed, as a String.

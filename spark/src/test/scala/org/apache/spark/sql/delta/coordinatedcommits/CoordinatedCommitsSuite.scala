@@ -22,7 +22,7 @@ import java.util.{Iterator => JIterator, Optional}
 import scala.collection.JavaConverters._
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CheckpointPolicy, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_POLICY, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
@@ -322,7 +322,7 @@ class CoordinatedCommitsSuite
 
 class CatalogOwnedSuite
   extends CommitCoordinatorSuiteBase
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   override def sparkConf: SparkConf = {
     // Make sure all new tables in tests use CatalogManaged table feature by default.
@@ -720,7 +720,7 @@ abstract class CommitCoordinatorSuiteBase
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     withTable("t1") {
-      if (isCatalogOwnedTest) {
+      if (isCatalogManagedTest) {
         sql(s"CREATE TABLE t1 (id LONG) USING delta")
         sql(s"INSERT INTO t1 VALUES (0)")
       } else {
@@ -735,7 +735,7 @@ abstract class CommitCoordinatorSuiteBase
         // REPLACE w/o default CC confs => CC, and all ICT confs.
         sql(s"REPLACE TABLE t1 (id STRING) USING delta")
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, CatalystTableIdentifier("t1"))
-        if (isCatalogOwnedTest) {
+        if (isCatalogManagedTest) {
           assert(snapshot.isCatalogManaged)
           // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogManaged
           // since we don't support upgrade yet.
@@ -760,7 +760,7 @@ abstract class CommitCoordinatorSuiteBase
     sql(s"CREATE TABLE $target LIKE $source USING DELTA")
     val snapshot = DeltaLog.forTable(spark, target).unsafeVolatileSnapshot
     assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-    assert(!snapshot.isCatalogOwned)
+    assert(!snapshot.isCatalogManaged)
   }
 
 }

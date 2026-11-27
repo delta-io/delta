@@ -69,6 +69,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import scala.Option;
 
@@ -270,6 +271,51 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
       logger.removeAppender(appender);
       appender.stop();
     }
+  }
+
+  @ParameterizedTest(name = "collisions={0}, caseSensitive={1}")
+  @CsvSource({
+    "0, false, _metadata",
+    "1, false, __metadata",
+    "2, false, ___metadata",
+    "1, true, _metadata",
+    "2, true, _metadata"
+  })
+  public void testPruneColumns_restoresMetadataMarkerLostDuringNestedPruning(
+      int collisionCount, boolean caseSensitive, String metadataName, @TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "scan_builder_pruned_metadata_" + collisionCount + "_" + caseSensitive;
+    StructType metadataType = new StructType().add("file_path", DataTypes.StringType);
+    StructType storedSchema = new StructType().add("id", DataTypes.IntegerType);
+    for (int i = 0; i < collisionCount; i++) {
+      storedSchema = storedSchema.add("_".repeat(i) + "_Metadata", metadataType);
+    }
+    StructType dataSchema = storedSchema;
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (%s) USING delta LOCATION '%s'", tableName, dataSchema.toDDL(), path));
+    StructField markedMetadata =
+        DataTypes.createStructField(
+            metadataName, metadataType, false, MetadataAttribute$.MODULE$.metadata("_metadata"));
+    StructType expectedSchema = dataSchema.add(markedMetadata);
+
+    withSQLConf(
+        "spark.sql.caseSensitive",
+        Boolean.toString(caseSensitive),
+        () -> {
+          DeltaV2ScanBuilder builder =
+              newScanBuilder(tableName, path, dataSchema, new StructType(), dataSchema);
+          builder.pruneColumns(dataSchema);
+          assertEquals(dataSchema, getRequiredDataSchema(builder));
+
+          // Spark 4.1's SelectedField drops root metadata when selecting a nested field.
+          builder.pruneColumns(dataSchema.add(metadataName, metadataType, false));
+          assertEquals(expectedSchema, getRequiredDataSchema(builder));
+
+          builder.pruneColumns(expectedSchema);
+          assertEquals(expectedSchema, getRequiredDataSchema(builder));
+        });
   }
 
   @Test

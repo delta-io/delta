@@ -15,45 +15,26 @@
  */
 package org.apache.spark.sql.delta.v2.read;
 
-import com.google.common.collect.ImmutableSet;
 import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
-import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import java.io.IOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.util.*;
-import javax.annotation.Nullable;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
-import org.apache.spark.sql.delta.actions.Metadata;
-import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.IndexedFile;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
-import org.apache.spark.sql.delta.storage.ClosableIterator.IteratorCloseOps;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import scala.Function2;
 import scala.Tuple2;
-import scala.collection.Iterator;
 import scala.runtime.AbstractFunction2;
 
 /** Static helpers and constants of {@link DeltaV2MicroBatchStream}. */
 final class DeltaV2MicroBatchStreamUtils {
 
   private DeltaV2MicroBatchStreamUtils() {}
-
-  public static final Set<DeltaAction> ACTION_SET =
-      ImmutableSet.of(
-          DeltaAction.ADD,
-          DeltaAction.REMOVE,
-          DeltaAction.METADATA,
-          DeltaAction.PROTOCOL,
-          DeltaAction.COMMITINFO);
-
-  /** Action set for CDC reads: {@link #ACTION_SET} plus {@link DeltaAction#CDC}. */
-  public static final Set<DeltaAction> CDC_ACTION_SET =
-      ImmutableSet.<DeltaAction>builder().addAll(ACTION_SET).add(DeltaAction.CDC).build();
 
   /**
    * If the given exception wraps a {@link ClosedByInterruptException} as its direct cause, returns
@@ -92,22 +73,6 @@ final class DeltaV2MicroBatchStreamUtils {
   static boolean isAfterStartBoundary(IndexedFile file, long fromVersion, long fromIndex) {
     return file.version() > fromVersion
         || (file.version() == fromVersion && file.index() > fromIndex);
-  }
-
-  /** Result of commit validation, including skip decision and detected metadata/protocol. */
-  static class CommitValidationResult {
-    final boolean shouldSkipCommit;
-    @Nullable final Metadata metadataAction;
-    @Nullable final Protocol protocolAction;
-
-    CommitValidationResult(
-        boolean shouldSkipCommit,
-        @Nullable Metadata metadataAction,
-        @Nullable Protocol protocolAction) {
-      this.shouldSkipCommit = shouldSkipCommit;
-      this.metadataAction = metadataAction;
-      this.protocolAction = protocolAction;
-    }
   }
 
   /**
@@ -230,22 +195,6 @@ final class DeltaV2MicroBatchStreamUtils {
         /* remove= */ null,
         /* cdc= */ null,
         /* shouldSkip= */ false);
-  }
-
-  /**
-   * Adds dummy BEGIN_INDEX and END_INDEX IndexedFiles for {@code version} before and after the
-   * contents of the iterator. The contents of the iterator must be the IndexedFiles that correspond
-   * to this version.
-   */
-  static ClosableIterator<IndexedFile> addBeginAndEndIndexOffsetsForVersion(
-      long version, ClosableIterator<IndexedFile> files) {
-    return new IteratorCloseOps<>(files)
-        .withClose(
-            iterator ->
-                Iterator.single(sentinel(version, DeltaSourceOffset.BASE_INDEX()))
-                    .$plus$plus(() -> iterator)
-                    .$plus$plus(
-                        () -> Iterator.single(sentinel(version, DeltaSourceOffset.END_INDEX()))));
   }
 
   /** Pairs a CDC payload with its index. */

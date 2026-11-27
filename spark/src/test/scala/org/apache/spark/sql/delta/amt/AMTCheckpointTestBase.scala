@@ -22,10 +22,10 @@ import scala.collection.immutable.ListMap
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.{AdaptiveMetadataPreviewTableFeature, AdaptiveMetadataTableFeature, CommitStats, DeltaLog, DeltaOperations, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, AMTCheckpointAction, Checkpoint, ContentRoot, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -46,12 +46,12 @@ import org.apache.spark.sql.types.{ArrayType, BinaryType, BooleanType, ByteType,
  * file lookups, and typed access to the snapshot's [[AMTCheckpointProvider]].
  *
  * AMT requires the `catalogManaged` feature, so tables must be catalog-managed and accessed by
- * name (path-based access is blocked). This mixes in [[CatalogOwnedTestBaseSuite]] to register an
+ * name (path-based access is blocked). This mixes in [[CatalogManagedTestBaseSuite]] to register an
  * in-memory commit coordinator and creates/accesses tables by name.
  */
 trait AMTCheckpointTestBase
   extends QueryTest
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with DeltaSQLCommandTest {
 
   // Register the in-memory commit coordinator so catalog-managed AMT tables can be created locally.
@@ -61,6 +61,9 @@ trait AMTCheckpointTestBase
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key, "false")
+    // An `adaptiveMetadata` table can be created only when its SQL conf is on.
+    .set(DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_ENABLED.key,
+      (amtTableFeature == AdaptiveMetadataTableFeature).toString)
 
   /**
    * Runs `body` with the format check that rejects reading AMT manifest parquet files directly
@@ -96,7 +99,6 @@ trait AMTCheckpointTestBase
       txns = Nil,
       sidecars = Nil)
     AMTCheckpointProvider(
-      spark = spark,
       manifestCommitVersion = cpVersion,
       checkpointAction = checkpoint,
       leaves = Nil,
@@ -140,13 +142,19 @@ trait AMTCheckpointTestBase
   protected def tablePath(tableName: String): String =
     new File(deltaLogForName(tableName).dataPath.toUri).getCanonicalPath
 
+  /**
+   * The AMT table feature of the tables this suite creates through [[createAMTTable]] and
+   * [[testAcrossAMTCheckpointScenarios]]. Only `adaptiveMetadata` tables collect `tightStats`.
+   */
+  protected def amtTableFeature: TableFeature = AdaptiveMetadataPreviewTableFeature
+
   protected def createAMTTable(
       tableName: String,
       checkpointInterval: Int = 2,
       location: Option[String] = None,
       tableSchema: String = "id INT",
       partitionColumns: Seq[String] = Seq.empty,
-      amtFeature: TableFeature = AdaptiveMetadataPreviewTableFeature): Unit = {
+      amtFeature: TableFeature = amtTableFeature): Unit = {
     val locationClause = location.map(l => s"LOCATION '$l'").getOrElse("")
     val partitionClause =
       if (partitionColumns.isEmpty) ""
@@ -411,6 +419,7 @@ trait AMTCheckpointTestBase
    * the manifest commit, the resulting Checkpoint action and provider, and the final snapshot
    * without duplicating scenario-specific version arithmetic.
    */
+  // scalastyle:off argcount
   protected def testAcrossAMTCheckpointScenarios(
       testName: String,
       tableName: String,
@@ -419,11 +428,13 @@ trait AMTCheckpointTestBase
         AMTCheckpointScenario.DeferredFull),
       sqlConfs: Seq[(String, String)] = Seq.empty,
       tableSchema: String = "id INT",
-      partitionColumns: Seq[String] = Seq.empty)(
+      partitionColumns: Seq[String] = Seq.empty,
+      amtFeature: TableFeature = amtTableFeature)(
       beforeTableCreation: () => Unit = () => (),
       setup: String => Unit = _ => (),
       inlineCheckpointTriggerActionsOrSQL: Option[AMTCheckpointTrigger] = None)(
       body: AMTCheckpointScenarioContext => Unit): Unit = {
+    // scalastyle:on argcount
     require(!deferredScenarios.contains(AMTCheckpointScenario.InlineIncremental),
       "deferredScenarios must contain only deferred checkpoint scenarios")
     val scenarios = inlineCheckpointTriggerActionsOrSQL
@@ -443,7 +454,8 @@ trait AMTCheckpointTestBase
               scenarioTable,
               checkpointInterval = Int.MaxValue,
               tableSchema = tableSchema,
-              partitionColumns = partitionColumns)
+              partitionColumns = partitionColumns,
+              amtFeature = amtFeature)
             // Incremental checkpoints require an existing full checkpoint.
             commitCheckpoint(deltaLogForName(scenarioTable), incremental = false)
             setup(scenarioTable)
@@ -635,8 +647,8 @@ trait AMTCheckpointTestBase
    *    re-encodes the same vector as `"u"` (the base85 UUID), and both resolve to the same file.
    */
   /**
-   * The parsed stats JSON with `tightBounds` dropped: AMT does not carry Delta's `tightBounds` into
-   * Iceberg's `tight_stats` yet (it writes `false`), so the flag does not survive a checkpoint.
+   * The parsed stats JSON with `tightBounds` dropped: AMT keeps `tightStats` but not Delta's legacy
+   * `tightBounds` (see `AMTContentStats`), so that flag does not survive a checkpoint.
    */
   private def withoutTightBounds(stats: String): JsonNode = {
     val tree = JsonUtils.mapper.readTree(stats)

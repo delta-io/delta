@@ -403,7 +403,7 @@ class FeatureEnablementConcurrencySuite
     assert(!result16.areValid)
   }
 
-  test("CatalogOwned and VacuumProtocolCheck features allow concurrent txns at upgrade") {
+  test("CatalogManaged and VacuumProtocolCheck features allow concurrent txns at upgrade") {
     assert(!CatalogManagedTableFeature.failConcurrentTransactionsAtUpgrade)
     assert(!VacuumProtocolCheckTableFeature.failConcurrentTransactionsAtUpgrade)
   }

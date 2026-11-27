@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.catalog.DeltaV2TableMarker
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaMergingUtils, SchemaUtils}
@@ -37,7 +38,9 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
+import org.apache.spark.sql.connector.catalog.Table
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, StreamingDataSourceV2ScanRelation}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.execution.streaming.Sink
@@ -110,6 +113,12 @@ case class DeltaSink(
   }
 
 
+  private def isV2TableOfLog(table: Table, sinkLog: DeltaLog): Boolean = table match {
+    case v2Table: DeltaV2TableMarker =>
+      v2Table.compositeId == sinkLog.compositeId
+    case _ => false
+  }
+
   private def addBatchWithStatusImpl(batchId: Long, data: DataFrame): Boolean = {
     val txn = deltaLog.startTransaction(catalogTable)
     assert(queryId != null)
@@ -133,6 +142,10 @@ case class DeltaSink(
     // of the executed plan) even before the transaction was started.
     val selfScan = data.queryExecution.analyzed.collectFirst {
       case DeltaTable(index) if index.deltaLog.isSameLogAs(txn.deltaLog) => true
+      case r: DataSourceV2Relation
+          if isV2TableOfLog(r.table, txn.deltaLog) => true
+      case r: StreamingDataSourceV2ScanRelation
+          if isV2TableOfLog(r.relation.table, txn.deltaLog) => true
     }.nonEmpty
     if (selfScan) {
       txn.readWholeTable()

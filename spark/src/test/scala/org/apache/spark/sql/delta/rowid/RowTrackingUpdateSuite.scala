@@ -127,7 +127,7 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
 
   for (isPartitioned <- BOOLEAN_DOMAIN)
   test(s"Preserves row IDs across multiple updates, isPartitioned = $isPartitioned") {
-    withRowIdTestTable(isPartitioned = false) {
+    withRowIdTestTable(isPartitioned = isPartitioned) {
       checkAndExecuteUpdate(targetTableName, condition = Some("id % 20 = 0"))
 
       checkAndExecuteUpdate(targetTableName, condition = Some("id % 10 = 0"), newVersion = 2L)

@@ -22,7 +22,7 @@ import java.time.LocalDate
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, Metadata, Protocol, RemoveFile, SetTransaction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.commands._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -42,7 +42,7 @@ trait CloneTableSuiteBase extends QueryTest
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with CoordinatedCommitsTestUtils
   with DeletionVectorsTestUtils {
 
@@ -357,7 +357,7 @@ trait CloneTableSuiteBase extends QueryTest
 
   cloneTest("CLONE ignores reader/writer session defaults", TAG_HAS_SHALLOW_CLONE) {
     (source, clone) =>
-      if (catalogOwnedDefaultCreationEnabledInTests) {
+      if (catalogManagedDefaultCreationEnabledInTests) {
         cancel("Expects base protocol version.")
       }
       withSQLConf(
@@ -405,7 +405,7 @@ trait CloneTableSuiteBase extends QueryTest
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
     fs.setTimes(path, time, 0)
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       InCommitTimestampTestUtils.overwriteICTInDeltaFile(
         DeltaLog.forTable(spark, source),
         path,
@@ -421,9 +421,9 @@ trait CloneTableSuiteBase extends QueryTest
 
   cloneTest("clones take protocol from the source",
     TAG_HAS_SHALLOW_CLONE, TAG_MODIFY_PROTOCOL, TAG_CHANGE_COLUMN_MAPPING_MODE) { (source, clone) =>
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("table needs to start with custom protocol versions but enabling " +
-        "catalogOwned automatically upgrades table protocol version.")
+        "catalogManaged automatically upgrades table protocol version.")
     }
     // Change protocol versions of (read, write) = (2, 5). We cannot initialize this to (0, 0)
     // because min reader and writer versions are at least 1.
@@ -529,9 +529,9 @@ trait CloneTableSuiteBase extends QueryTest
     testAllClones("Cloning a table with new table properties" +
       s" that force protocol version upgrade - ${featureWithProperty.property.key}"
     ) { (source, target, isShallow) =>
-      if (catalogOwnedDefaultCreationEnabledInTests) {
+      if (catalogManagedDefaultCreationEnabledInTests) {
         cancel("table needs to start with default protocol versions but enabling " +
-          "catalogOwned upgrades table protocol version.")
+          "catalogManaged upgrades table protocol version.")
       }
       import DeltaTestUtils.StrictProtocolOrdering
 
@@ -568,9 +568,9 @@ trait CloneTableSuiteBase extends QueryTest
 
   testAllClones("Cloning a table without DV property should not upgrade protocol version"
   ) { (source, target, isShallow) =>
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("table needs to start with default protocol versions but enabling " +
-        "catalogOwned upgrades table protocol version.")
+        "catalogManaged upgrades table protocol version.")
     }
     import DeltaTestUtils.StrictProtocolOrdering
 

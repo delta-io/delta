@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, SetTransaction}
+import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, SetTransaction, SidecarFile}
 
 import org.apache.spark.sql.SparkSession
 
@@ -28,24 +28,31 @@ import org.apache.spark.sql.SparkSession
  *
  * @param metadata                          the old AMT's inline table metadata.
  * @param protocol                          the old AMT's inline table protocol.
- * @param setTransactions                   the old AMT's inline `SetTransaction` actions.
- * @param domainMetadatas                   the old AMT's inline `DomainMetadata` actions.
+ * @param inlineSetTransactions             the old AMT's inline `SetTransaction` actions only,
+ *                                          those carried directly on its checkpoint action; those
+ *                                          in `nonContentSidecars` are not included.
+ * @param inlineDomainMetadatas             the old AMT's inline `DomainMetadata` actions only,
+ *                                          those carried directly on its checkpoint action; those
+ *                                          in `nonContentSidecars` are not included.
  * @param fileActionsFromRoot               the live root-resident file actions (leaf-resident files
  *                                          are carried forward by pointer, not materialized here).
  * @param allLeafs                          the root's `DATA_MANIFEST` leaf pointers, one per leaf.
  * @param version                           the table version the old AMT describes.
  * @param lastManifestCommitWithFullRewrite the last-full-rewrite marker carried forward into the
  *                                          new tree's `ContentRoot`.
+ * @param nonContentSidecars                the old AMT's typed (txn / domain metadata) sidecars,
+ *                                          referenced but not read here.
  */
 case class BaseAMTActionsResult(
     metadata: Metadata,
     protocol: Protocol,
-    setTransactions: Seq[SetTransaction],
-    domainMetadatas: Seq[DomainMetadata],
+    inlineSetTransactions: Seq[SetTransaction],
+    inlineDomainMetadatas: Seq[DomainMetadata],
     fileActionsFromRoot: Seq[AddFile],
     allLeafs: Seq[DataManifestEntry],
     version: Long,
-    lastManifestCommitWithFullRewrite: Option[Long])
+    lastManifestCommitWithFullRewrite: Option[Long],
+    nonContentSidecars: Seq[SidecarFile])
 
 /**
  * Loads the previous-AMT state that [[IncrementalAMTWriter]] extends. Abstracting the source lets
@@ -73,14 +80,16 @@ class BaseSnapshotActionsProvider(
     BaseAMTActionsResult(
       metadata = snapshot.metadata,
       protocol = snapshot.protocol,
-      setTransactions = snapshot.setTransactions,
-      domainMetadatas = snapshot.domainMetadata,
+      // A snapshot-backed base has no previous AMT, so its full sets count as inline.
+      inlineSetTransactions = snapshot.setTransactions,
+      inlineDomainMetadatas = snapshot.domainMetadata,
       // Safe because of the empty-snapshot invariant above. A nonempty implementation must supply
       // every live base file here without eagerly collecting an unbounded snapshot to the driver.
       fileActionsFromRoot = Seq.empty,
       allLeafs = Seq.empty,
       version = snapshot.version,
-      lastManifestCommitWithFullRewrite = None)
+      lastManifestCommitWithFullRewrite = None,
+      nonContentSidecars = Seq.empty)
   }
 }
 
@@ -94,11 +103,12 @@ class BaseAMTCheckpointActionsProvider(
     BaseAMTActionsResult(
       metadata = checkpoint.metaData,
       protocol = checkpoint.protocol,
-      setTransactions = checkpoint.txns,
-      domainMetadatas = checkpoint.domainMetadata,
+      inlineSetTransactions = checkpoint.txns,
+      inlineDomainMetadatas = checkpoint.domainMetadata,
       fileActionsFromRoot = checkpointProvider.readLiveRootDataEntries(spark, deltaLog),
       allLeafs = checkpointProvider.leaves,
       version = checkpoint.contentRoot.version,
-      lastManifestCommitWithFullRewrite = checkpoint.contentRoot.lastManifestCommitWithFullRewrite)
+      lastManifestCommitWithFullRewrite = checkpoint.contentRoot.lastManifestCommitWithFullRewrite,
+      nonContentSidecars = checkpoint.sidecars.filter(_.`type`.isDefined))
   }
 }

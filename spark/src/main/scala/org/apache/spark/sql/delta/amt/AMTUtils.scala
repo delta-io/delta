@@ -78,12 +78,12 @@ object AMTUtils extends DeltaLogging {
     configuration.get(DeltaConfigs.ADAPTIVE_METADATA_ENABLED.key).map(_.toBoolean)
 
   /** The AMT state of a table. `Downgrading` lasts from the pre-downgrade commit to the drop. */
-  private sealed trait AMTState
-  private case object NotAMT extends AMTState
-  private case object AMTEnabled extends AMTState
-  private case object Downgrading extends AMTState
+  sealed trait AMTState
+  case object NotAMT extends AMTState
+  case object AMTEnabled extends AMTState
+  case object Downgrading extends AMTState
 
-  private def amtState(metadata: Metadata, protocol: Protocol): AMTState =
+  def amtState(metadata: Metadata, protocol: Protocol): AMTState =
     if (!amtSupported(protocol, isPreviewCompatible = true)) NotAMT
     else if (amtEnabled(metadata, protocol, isPreviewCompatible = true)) AMTEnabled
     else Downgrading
@@ -388,11 +388,9 @@ object AMTUtils extends DeltaLogging {
   private[amt] def shouldCacheRootRows(
       spark: SparkSession,
       numEntries: => Long): Boolean = {
-    val columnarEnabled = spark.sessionState.conf
-      .getConf(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED)
     val maxNumEntries = spark.sessionState.conf
       .getConf(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES)
-    columnarEnabled && maxNumEntries > 0 && numEntries < maxNumEntries
+    maxNumEntries > 0 && numEntries < maxNumEntries
   }
 
   /**

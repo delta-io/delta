@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.amt
 import scala.reflect.runtime.universe._
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types.StructType
@@ -125,24 +124,19 @@ class AMTAddFileFieldCoverageSuite extends AMTSyntheticTreeTestBase {
 
   test("addFileColumn maps every AddFile field") {
     withSyntheticTree("amt_add_file_column_fields") { tree =>
-      withSQLConf(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true") {
-        val provider = tree.provider(Seq.empty) match {
-          case columnar: ColumnarAMTCheckpointProvider => columnar
-          case other => fail("Expected a ColumnarAMTCheckpointProvider, got " + other)
+      val provider = tree.provider(Seq.empty)
+      // `addFileColumn` has no fallback case, so an unmapped field throws a MatchError.
+      val unmapped = Action.addFileSchema.fields.toSeq.filter { field =>
+        try {
+          provider.manifestReader.addFileColumn(spark, field, lit(0L))
+          false
+        } catch {
+          case _: MatchError => true
         }
-        // `addFileColumn` has no fallback case, so an unmapped field throws a MatchError.
-        val unmapped = Action.addFileSchema.fields.toSeq.filter { field =>
-          try {
-            provider.manifestReader.addFileColumn(spark, field, lit(0L))
-            false
-          } catch {
-            case _: MatchError => true
-          }
-        }.map(_.name)
-        assert(unmapped.isEmpty,
-          "addFileColumn has no mapping for AddFile fields " + unmapped.mkString("[", ", ", "]") +
-            ". " + updateInstructions)
-      }
+      }.map(_.name)
+      assert(unmapped.isEmpty,
+        "addFileColumn has no mapping for AddFile fields " + unmapped.mkString("[", ", ", "]") +
+          ". " + updateInstructions)
     }
   }
 

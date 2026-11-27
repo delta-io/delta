@@ -128,8 +128,8 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
     }
 
     // Validate that start boundary is less than or equal to end boundary if end boundary is
-    // provided
-    if (ctx.endBoundaryOpt.isPresent()) {
+    // provided. A relaxed range may be reversed: as in DeltaLog, start > end selects no commits.
+    if (ctx.commitRangeValidation && ctx.endBoundaryOpt.isPresent()) {
       CommitBoundary startBoundary = ctx.startBoundary;
       CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
 

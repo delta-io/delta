@@ -18,6 +18,7 @@ package io.delta.storage.commit.uccommitcoordinator
 
 import java.net.{InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.util.{Collections, Optional, Set => JSet, UUID}
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -26,12 +27,14 @@ import scala.jdk.CollectionConverters._
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
-import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
-import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
+import io.delta.storage.LocalLogStore
+import io.delta.storage.commit.{Commit, CommitFailedException, TableDescriptor, TableIdentifier, UpdatedActions}
+import io.delta.storage.commit.actions.{AbstractCommitInfo, AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, FileUtil, Path}
 import org.apache.http.HttpStatus
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.scalatest.funsuite.AnyFunSuite
@@ -641,6 +644,80 @@ class UCDeltaTokenBasedRestClientSuite
       }
       assert(!e.getRetryable && !e.getConflict)
       assert(e.getMessage.contains("Invalid updateTable request"))
+    }
+  }
+
+  test("commit throws non-retryable CommitFailedException on 401 and 403") {
+    val ucError = """{"error":{"message":"Permission denied on table cat.sch.tbl"}}"""
+    Seq(HttpStatus.SC_UNAUTHORIZED, HttpStatus.SC_FORBIDDEN).foreach { status =>
+      deltaHandler = (exchange, _) => {
+        if (exchange.getRequestMethod == "POST") {
+          sendJson(exchange, status, ucError)
+        } else {
+          sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+        }
+      }
+      withClient { c =>
+        val e = intercept[CommitFailedException] {
+          c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+            Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+            Optional.empty(), Optional.empty(), Optional.empty(),
+            Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
+        }
+        assert(!e.getRetryable && !e.getConflict)
+        assert(e.getMessage.contains(s"HTTP $status"))
+        assert(e.getMessage.contains("Permission denied on table cat.sch.tbl"))
+      }
+    }
+  }
+
+  test("UCCommitCoordinatorClient sends the commit to UC once on 403") {
+    val posts = new AtomicInteger(0)
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST") {
+        // A second POST means the coordinator retried. Answer it with a 400 so the retry loop
+        // ends at once instead of sleeping through its backoff.
+        val status =
+          if (posts.incrementAndGet() == 1) HttpStatus.SC_FORBIDDEN else HttpStatus.SC_BAD_REQUEST
+        sendJson(exchange, status, """{"error":"Permission denied"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+    val tableDir = Files.createTempDirectory("uc-commit-403").toFile
+    try {
+      val hadoopConf = new Configuration()
+      val logStore = new LocalLogStore(hadoopConf)
+      val logPath = new Path(tableDir.getAbsolutePath, "_delta_log")
+      Files.createDirectories(tableDir.toPath.resolve("_delta_log/_staged_commits"))
+      logStore.write(
+        new Path(logPath, "00000000000000000000.json"),
+        Seq("{}").iterator.asJava,
+        false,
+        hadoopConf)
+      val tableDesc = new TableDescriptor(
+        logPath,
+        Optional.of(testIdentifier),
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> testTableId.toString).asJava)
+      val commitInfo = new AbstractCommitInfo {
+        override def getCommitTimestamp: Long = 5000L
+      }
+      val md = metadata()
+      val proto = protocol(1, 2)
+      val updatedActions = new UpdatedActions(commitInfo, md, proto, md, proto)
+
+      withClient { c =>
+        val coordinator = new UCCommitCoordinatorClient(Collections.emptyMap(), c)
+        val e = intercept[CommitFailedException] {
+          coordinator.commit(
+            logStore, hadoopConf, tableDesc, 1L, Seq("{}").iterator.asJava, updatedActions)
+        }
+        assert(!e.getRetryable && !e.getConflict)
+        assert(e.getMessage.contains("HTTP 403"))
+        assert(posts.get() === 1)
+      }
+    } finally {
+      FileUtil.fullyDelete(tableDir)
     }
   }
 

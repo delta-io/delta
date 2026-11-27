@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{CatalogManagedTableFeature, DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
@@ -775,7 +775,7 @@ trait ClusteredTableDDLSuiteBase
   }
 
   test("optimize clustered table and trigger regular compaction") {
-    assume(!catalogOwnedDefaultCreationEnabledInTests,
+    assume(!catalogManagedDefaultCreationEnabledInTests,
       "OPTIMIZE is blocked on catalog-managed tables")
     val testTable = this.testTable
     withClusteredTable(testTable, "a INT, b STRING", "a, b") {
@@ -821,7 +821,7 @@ trait ClusteredTableDDLSuiteBase
   }
 
   test("optimize clustered table - error scenarios") {
-    assume(!catalogOwnedDefaultCreationEnabledInTests,
+    assume(!catalogManagedDefaultCreationEnabledInTests,
       "OPTIMIZE is blocked on catalog-managed tables")
     val testTable = this.testTable
     withClusteredTable(testTable, "a INT, b STRING", "a") {
@@ -933,7 +933,7 @@ trait ClusteredTableDDLSuiteBase
 
 
   test("validate CLONE on clustered table") {
-    assume(!catalogOwnedDefaultCreationEnabledInTests,
+    assume(!catalogManagedDefaultCreationEnabledInTests,
       "OPTIMIZE is blocked on catalog-managed tables")
     import deltaImplicits._
     val srcTable = s"SrcTbl_$tableSuffix"
@@ -1127,7 +1127,7 @@ trait ClusteredTableDDLSuiteBase
 
 trait ClusteredTableDDLSuite
   extends ClusteredTableDDLSuiteBase
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
 
 trait ClusteredTableDDLWithNameColumnMapping
   extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableNameMode
@@ -1349,8 +1349,8 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
 
   test("create external clustered table: location has clustered table, schema specified, " +
     "cluster by specified with same clustering column") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned does not support external table creation.")
+    if (catalogManagedDefaultCreationEnabledInTests) {
+      cancel("CatalogManaged does not support external table creation.")
     }
     val tableName = s"clustered_table_$tableSuffix"
     withTempDir { dir =>
@@ -1369,8 +1369,8 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
 
   test("create external clustered table: location has non-clustered table, schema specified, " +
     "cluster by specified") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned does not support external table creation.")
+    if (catalogManagedDefaultCreationEnabledInTests) {
+      cancel("CatalogManaged does not support external table creation.")
     }
     val tableName = s"clustered_table_$tableSuffix"
     withTempDir { dir =>

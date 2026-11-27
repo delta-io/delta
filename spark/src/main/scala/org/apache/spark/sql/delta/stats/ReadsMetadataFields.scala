@@ -52,5 +52,5 @@ object DeltaStatistics {
    */
   val TIGHT_STATS = "tightStats"
 
-  val ALL_STAT_FIELDS = Seq(NUM_RECORDS, MIN, MAX, NULL_COUNT, TIGHT_BOUNDS)
+  val ALL_STAT_FIELDS = Seq(NUM_RECORDS, MIN, MAX, NULL_COUNT, TIGHT_BOUNDS, TIGHT_STATS)
 }

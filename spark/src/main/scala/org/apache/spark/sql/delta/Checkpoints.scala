@@ -597,14 +597,9 @@ trait Checkpoints extends DeltaLogging {
           // We have all the deltas needed after the accurate content root version, so we update.
           readManifestCommitAndUpdateAMTCheckpointProvider(initSegment, lastManifestCommit)
         } else {
-          // The initial log segment somehow has a non-AMT provider, while the lastManifestCommit
-          // claims that there is some AMT content root available describing an earlier version.
-          // This might happen across upgrade/downgrade code paths. Throw until we support them.
-          throw new IllegalStateException(
-            s"The LastManifestCommit of version ${lastManifestCommit.version} carries a " +
-              s"content root version ${lastManifestCommit.contentRootVersion} that is before " +
-              s"the initial non-AMT checkpoint version ${otherCheckpointProvider.version}. " +
-              "Refusing to trust the checkpoint.")
+          // Only a downgrade writes a checkpoint newer than the last tree: it keeps
+          // lastManifestCommit until the drop commit. The newer checkpoint is the starting point.
+          initSegment
         }
 
       // A non-AMT / empty provider with no lastManifestCommit: nothing to reconcile.
@@ -942,6 +937,8 @@ trait Checkpoints extends DeltaLogging {
     //         [ iter-3 window  ]
     //              |
     //        latest checkpoint
+    val stopAtNonDeltaFiles =
+      spark.conf.get(DeltaSQLConf.DELTA_FIND_LAST_CHECKPOINT_STOP_AT_NON_DELTA_FILES_ENABLED)
     while (listingEndVersion >= 0) {
       iterations += 1
       eventData("iterations") = iterations.toString
@@ -950,11 +947,17 @@ trait Checkpoints extends DeltaLogging {
         .listFrom(listingPrefix(logPath, listingStartVersion), newDeltaHadoopConf())
         .map { file => numFilesScanned += 1 ; file }
         .collect {
-          // Also collect delta files from the listing result so that the next takeWhile helps us
-          // terminate iterator early if no checkpoint exists upto the `listingEndVersion`
-          // version.
+          // Also collect delta, checksum and compacted delta files from the listing result so
+          // that the next takeWhile ends the listing at the first file after `listingEndVersion`.
+          // Without checksum and compacted delta files, a range that holds only those files (left
+          // behind when a cleanup deleted their .json) is listed to its end in every window.
           case DeltaFile(file, version) => (file, FileType.DELTA, version)
           case CheckpointFile(file, version) => (file, FileType.CHECKPOINT, version)
+          case ChecksumFile(file, version) if stopAtNonDeltaFiles =>
+            (file, FileType.CHECKSUM, version)
+          // The listing orders compacted delta files by their start version.
+          case CompactedDeltaFile(file, startVersion, _) if stopAtNonDeltaFiles =>
+            (file, FileType.COMPACTED_DELTA, startVersion)
         }
         .takeWhile { case (_, _, currentFileVersion) => currentFileVersion <= listingEndVersion }
         // Checkpoint files of 0 size are invalid but Spark will ignore them silently when

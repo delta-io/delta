@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorBuilder, CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, CommitCoordinatorProvider, InMemoryCommitCoordinator}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedCommitCoordinatorBuilder, CatalogManagedCommitCoordinatorProvider, CatalogManagedTableUtils, CommitCoordinatorProvider, InMemoryCommitCoordinator}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -706,7 +706,7 @@ class OptimisticTransactionSuite
     val initialConflictErrors = 5
 
     object RetryableNonConflictCommitCoordinatorBuilder$
-        extends CatalogOwnedCommitCoordinatorBuilder {
+        extends CatalogManagedCommitCoordinatorBuilder {
 
       override def getName: String = commitCoordinatorName
 
@@ -746,21 +746,21 @@ class OptimisticTransactionSuite
           catalogName: String): CommitCoordinatorClient = commitCoordinatorClient
     }
 
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
+    CatalogManagedCommitCoordinatorProvider.registerBuilder(
+      CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
       RetryableNonConflictCommitCoordinatorBuilder$)
     try {
       withSQLConf(
           DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> numRetries,
           DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> numNonConflictRetries) {
-        withTable("retryable_catalog_owned") {
-          sql(s"CREATE TABLE retryable_catalog_owned (id BIGINT) USING delta TBLPROPERTIES " +
-            s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+        withTable("retryable_catalog_managed") {
+          sql(s"CREATE TABLE retryable_catalog_managed (id BIGINT) USING delta TBLPROPERTIES " +
+            s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
           val catalogTable = spark.sessionState.catalog.getTableMetadata(
-            TableIdentifier("retryable_catalog_owned"))
+            TableIdentifier("retryable_catalog_managed"))
           val log = DeltaLog.forTable(spark, catalogTable)
-          assert(log.update(catalogTableOpt = Some(catalogTable)).isCatalogOwned)
+          assert(log.update(catalogTableOpt = Some(catalogTable)).isCatalogManaged)
           val testTxn = log.startTransaction(catalogTableOpt = Some(catalogTable))
           intercept[CommitFailedException] { testTxn.commit(Seq.empty, ManualUpdate) }
           // num-attempts = 1 + num-retries
@@ -769,7 +769,7 @@ class OptimisticTransactionSuite
         }
       }
     } finally {
-      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+      CatalogManagedCommitCoordinatorProvider.clearBuilders()
     }
   }
 
@@ -777,7 +777,8 @@ class OptimisticTransactionSuite
     val commitCoordinatorName = "file-already-exists-commit-coordinator"
     var commitAttempts = 0
 
-    object FileAlreadyExistsCommitCoordinatorBuilder extends CatalogOwnedCommitCoordinatorBuilder {
+    object FileAlreadyExistsCommitCoordinatorBuilder
+      extends CatalogManagedCommitCoordinatorBuilder {
 
       override def getName: String = commitCoordinatorName
 
@@ -813,21 +814,21 @@ class OptimisticTransactionSuite
           catalogName: String): CommitCoordinatorClient = commitCoordinatorClient
     }
 
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
+    CatalogManagedCommitCoordinatorProvider.registerBuilder(
+      CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
       FileAlreadyExistsCommitCoordinatorBuilder)
     try {
       withSQLConf(
           DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> "100",
           DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> "10") {
-        withTable("file_exists_catalog_owned") {
-          sql(s"CREATE TABLE file_exists_catalog_owned (id BIGINT) USING delta TBLPROPERTIES " +
-            s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+        withTable("file_exists_catalog_managed") {
+          sql(s"CREATE TABLE file_exists_catalog_managed (id BIGINT) USING delta TBLPROPERTIES " +
+            s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
           val catalogTable = spark.sessionState.catalog.getTableMetadata(
-            TableIdentifier("file_exists_catalog_owned"))
+            TableIdentifier("file_exists_catalog_managed"))
           val log = DeltaLog.forTable(spark, catalogTable)
-          assert(log.update(catalogTableOpt = Some(catalogTable)).isCatalogOwned)
+          assert(log.update(catalogTableOpt = Some(catalogTable)).isCatalogManaged)
           val testTxn = log.startTransaction(catalogTableOpt = Some(catalogTable))
           intercept[FileAlreadyExistsException] { testTxn.commit(Seq.empty, ManualUpdate) }
           // Test that there are no retries for the FileAlreadyExistsException in
@@ -837,7 +838,7 @@ class OptimisticTransactionSuite
         }
       }
     } finally {
-      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+      CatalogManagedCommitCoordinatorProvider.clearBuilders()
     }
   }
 
@@ -1269,8 +1270,8 @@ class OptimisticTransactionSuite
 
   BOOLEAN_DOMAIN.foreach { conflict =>
     test(s"commitLarge should handle Commit Failed Exception with conflict: $conflict") {
-      val tableName = "commit_large_catalog_owned"
-      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+      val tableName = "commit_large_catalog_managed"
+      CatalogManagedCommitCoordinatorProvider.clearBuilders()
       try {
         withTable(tableName) {
           lazy val catalogTable = spark.sessionState.catalog.getTableMetadata(
@@ -1296,7 +1297,7 @@ class OptimisticTransactionSuite
             }
           }
           object RetryableConflictCommitCoordinatorBuilder$
-              extends CatalogOwnedCommitCoordinatorBuilder {
+              extends CatalogManagedCommitCoordinatorBuilder {
             lazy val commitCoordinatorClient = new RetryableConflictCommitCoordinatorClient()
             override def getName: String = commitCoordinatorName
             override def build(
@@ -1306,12 +1307,12 @@ class OptimisticTransactionSuite
                 spark: SparkSession,
                 catalogName: String): CommitCoordinatorClient = commitCoordinatorClient
           }
-          CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-            CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+          CatalogManagedCommitCoordinatorProvider.registerBuilder(
+            CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
             RetryableConflictCommitCoordinatorBuilder$)
           sql(s"CREATE TABLE $tableName (id BIGINT) USING delta TBLPROPERTIES " +
-            s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
-          assert(deltaLog.update(catalogTableOpt = Some(catalogTable)).isCatalogOwned)
+            s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
+          assert(deltaLog.update(catalogTableOpt = Some(catalogTable)).isCatalogManaged)
           deltaLog.startTransaction(catalogTableOpt = Some(catalogTable))
             .commit(addA :: Nil, ManualUpdate)
           val records = Log4jUsageLogger.track {
@@ -1346,7 +1347,7 @@ class OptimisticTransactionSuite
           assert(data("fromCoordinatedCommitsRetryable") == true)
         }
       } finally {
-        CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+        CatalogManagedCommitCoordinatorProvider.clearBuilders()
       }
     }
   }

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.v2.read.metadata;
 import static org.apache.spark.sql.delta.v2.InternalRowTestUtils.collectRows;
 import static org.apache.spark.sql.delta.v2.InternalRowTestUtils.mockReader;
 import static org.apache.spark.sql.delta.v2.InternalRowTestUtils.row;
+import static org.apache.spark.sql.delta.v2.read.metadata.MetadataColumnTestUtils.metadataColumnStructField;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -274,7 +275,7 @@ public class MetadataStructReadFunctionTest {
   private static StructType readSchemaWithMetadata(StructType metadataSchema) {
     return new StructType()
         .add("id", DataTypes.LongType, false)
-        .add(FileFormat$.MODULE$.METADATA_NAME(), metadataSchema, false);
+        .add(metadataColumnStructField(metadataSchema));
   }
 
   private static MetadataStructSchemaContext context(

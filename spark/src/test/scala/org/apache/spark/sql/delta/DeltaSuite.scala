@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogManagedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogManagedTableUtils, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -59,7 +59,7 @@ class DeltaSuite extends QueryTest
   with DeltaColumnMappingTestUtils
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   import deltaImplicits._
 
@@ -1804,7 +1804,7 @@ class DeltaSuite extends QueryTest
           Seq((2, 99), (5, 99)).toDF("key", "value")
         )
 
-        assume(!catalogOwnedDefaultCreationEnabledInTests,
+        assume(!catalogManagedDefaultCreationEnabledInTests,
           "VACUUM is blocked on catalog-managed tables")
 
         // VACUUM
@@ -2133,7 +2133,7 @@ class DeltaSuite extends QueryTest
   }
 
   // This test is only compatible w/ backfill batch size = 1.
-  testWithCatalogOwned(backfillBatchSize = 1)(
+  testWithCatalogManaged(backfillBatchSize = 1)(
       "An external write should be reflected during analysis of a path based query") {
     val tempDir = Utils.createTempDir().toString
     spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)
@@ -2365,7 +2365,7 @@ class DeltaSuite extends QueryTest
             .filter { case (k, _) => !k.startsWith("delta.columnMapping.") &&
               !k.startsWith("delta.enableDeletionVectors")} ===
           Map("delta.logRetentionDuration" -> "123 days") ++
-            extractCatalogOwnedSpecificPropertiesIfEnabled(metadata))
+            extractCatalogManagedSpecificPropertiesIfEnabled(metadata))
       }
     }
   }

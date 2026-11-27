@@ -206,7 +206,9 @@ trait CDCReaderBase extends DeltaLogging {
         // we can use the same semantics as streaming.
         DeltaSource.getStartingVersionFromTimestamp(
           spark,
-          new DeltaLogStreamingBackend(deltaLog, () => catalogTableOpt),
+          new DeltaLogStreamingBackend(
+            deltaLog, () => catalogTableOpt, spark,
+            new DeltaOptions(Map.empty[String, String], conf)),
           deltaLog.unsafeVolatileSnapshot,
           timestamp,
           allowOutOfRange)

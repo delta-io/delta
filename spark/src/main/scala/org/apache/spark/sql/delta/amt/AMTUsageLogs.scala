@@ -158,4 +158,8 @@ object AMTUsageLogs {
   // yet a non-empty back reference into the base tree -- contradictory signals.
   val ALERT_FILE_CONTAINS_NEW_SEQ_NUMBERS_BUT_NON_EMPTY_BACKREFERENCE =
     "amt.fileContainsNewSeqNumbersButNonEmptyBackreference"
+
+  // A txn appId or domain name appears more than once across the inline entries and the
+  // non-content sidecars of one checkpoint.
+  val ALERT_NON_CONTENT_SIDECAR_DUPLICATE_KEY = "amt.nonContentSidecar.duplicateKey"
 }

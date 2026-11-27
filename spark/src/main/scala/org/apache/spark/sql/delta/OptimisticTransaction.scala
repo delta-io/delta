@@ -37,7 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager, LazyCompleteAMTCheckpointProvider}
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTCommitStats, AMTDowngrade, AMTSnapshotId, AMTUsageLogs, AMTUtils, AMTWriteResult, AMTWriterManager, LazyCompleteAMTCheckpointProvider}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -947,8 +947,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       if (!isCreatingNewTable &&
           p.readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name) &&
           !existingFeatureNames.contains(CatalogManagedTableFeature.name)) {
-        throw new NotImplementedException("Upgrading to CatalogOwned table is not yet " +
-          s"supported. Please create a new table with the CatalogOwned table feature.")
+        throw new NotImplementedException("Upgrading to CatalogManaged table is not yet " +
+          s"supported. Please create a new table with the CatalogManaged table feature.")
       }
     }
 
@@ -1755,13 +1755,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Runs all AddFile sanity checks: empty-file detection and null-partition validation.
+   * Runs all AddFile sanity checks: empty-file detection and null-partition validation, and in
+   * tests, that the file's tightness flags agree (see [[StatsTightness]]).
    */
   protected def validateAddFileInvariants(
       addFile: AddFile,
       notNullPartitionCols: Set[String]): Unit = {
     validateAddFileNotEmpty(addFile)
     validateAddFileForNullPartitions(addFile, notNullPartitionCols)
+    if (Utils.isTesting) StatsTightness.checkTightnessFlags(addFile, protocol)
   }
 
   /**
@@ -2349,9 +2351,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       // Precompute NOT NULL partition columns for validation during action processing
       val notNullPartitionCols = getNotNullPartitionCols(metadata)
+      // While the table is downgrading, every commit writes its file actions in Delta form.
+      // RESTORE and CLONE copy files from another snapshot. In a snapshot that Delta built from a
+      // tree, in-table DVs are `r`. See `AMTDowngrade.toDeltaForm`.
+      val isDowngrading = AMTUtils.amtState(metadata, protocol) == AMTUtils.Downgrading
       var allActions =
         Iterator(commitInfo, metadata) ++
-          nonProtocolMetadataActions ++
+          nonProtocolMetadataActions.map { action =>
+            if (isDowngrading) AMTDowngrade.toDeltaForm(action, deltaLog.dataPath) else action
+          } ++
           newProtocol.toIterator
       allActions = allActions.map { action =>
         action match {
@@ -2963,7 +2971,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val committedKeys =
       committedFileActions.map(AMTCheckpointProvider.FileActionKey(_, tableRoot)).toSet
     val provider = AMTCheckpointProvider(
-      spark = spark,
       manifestCommitVersion = attemptVersion,
       checkpointAction = result.checkpoint,
       leaves = result.leaves,
@@ -3271,9 +3278,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
           currentTransactionInfo.copy(actions = actionsWithSnapshotIds)
         }
     }
+    val isDowngrading = AMTUtils.amtState(
+      currentTransactionInfo.metadata, currentTransactionInfo.protocol) == AMTUtils.Downgrading
+    val transactionInfoToWrite = if (isDowngrading) {
+      transactionInfoWithSnapshotIds.copy(actions = transactionInfoWithSnapshotIds.actions
+        .map(AMTDowngrade.toDeltaForm(_, deltaLog.dataPath)))
+    } else {
+      transactionInfoWithSnapshotIds
+    }
     val amtWriteResultOpt = amtWriterManager.writeAMT(
       nextAttemptVersion = attemptVersion,
-      currentTransactionInfo = transactionInfoWithSnapshotIds,
+      currentTransactionInfo = transactionInfoToWrite,
       preCommitLogSegment = preCommitLogSegment,
       winningCommitMetricsForConflictedRange = winningCommitMetrics)
 
@@ -3289,7 +3304,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
             spark,
             this,
             attemptVersion,
-            transactionInfoWithSnapshotIds
+            transactionInfoToWrite
             , table
           )
         if (isConversionPerformed) {
@@ -3297,7 +3312,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
             NANOSECONDS.toMillis(System.nanoTime() - startNanos))
         }
         updatedInfo
-      }.getOrElse(transactionInfoWithSnapshotIds)
+      }.getOrElse(transactionInfoToWrite)
 
     val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
     val actions = amtWriteResultOpt match {
@@ -3348,7 +3363,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If this commit writes an AMT, it becomes the latest AMT for the table.
     // Otherwise, use the latest AMT identified before commit, including conflict checking.
     val amtCheckpointProviderForPostCommitSnapshot = amtWriteResultOpt
-      .map(AMTCheckpointProvider.fromWriteResult(spark, deltaLog, _, attemptVersion))
+      .map(AMTCheckpointProvider.fromWriteResult(deltaLog, _, attemptVersion))
       .orElse(amtWriterManager.preCommitLatestAMTCheckpointProviderOpt)
     PrepareCommitResult(
       commitVersion = attemptVersion,

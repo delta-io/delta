@@ -575,6 +575,11 @@ class Snapshot(
       // When that undiscoverable manifest commit is the first manifest commit, lastManifestCommit
       // does not exist, so this is not a violation.
       case (Some(amtCp), None) => ()
+      // A downgrade writes classic or V2 checkpoints after the pre-downgrade commit, while each
+      // commit still carries lastManifestCommit until the drop commit.
+      case (None, Some(lmc))
+          if AMTUtils.amtState(metadata, protocol) == AMTUtils.Downgrading &&
+            logSegment.checkpointProvider.version > lmc.contentRootVersion => ()
       // But when the lastManifestCommit is present but the AMT checkpoint provider is missing,
       // that's a mismatch.
       case (None, Some(lmc)) =>
@@ -881,6 +886,8 @@ class Snapshot(
   def outputTableStatsSchema: StructType = metadata.dataSchema
 
   def outputAttributeSchema: StructType = metadata.dataSchema
+
+  def outputUsesPhysicalNames: Boolean = false
 
   /** Returns the schema of the columns written out to file (overridden in write path) */
   def dataSchema: StructType = metadata.dataSchema

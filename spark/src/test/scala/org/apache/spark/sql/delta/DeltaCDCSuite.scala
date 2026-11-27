@@ -27,7 +27,7 @@ import scala.concurrent.duration._
 import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.cdc.CDCEnabled
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -50,7 +50,7 @@ abstract class DeltaCDCSuiteBase
   with SharedSparkSession
   with CheckCDCAnswer
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with DeltaSQLTestUtils
   with CDFNondeterministicFilterTests {
 
@@ -361,9 +361,10 @@ abstract class DeltaCDCSuiteBase
 
       val ts0 = dateFormat.format(new Date(1000))
       val ts1 = dateFormat.format(new Date(3000))
-      intercept[AnalysisException] {
+      val error = intercept[AnalysisException] {
         cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1)).collect()
-      }.getMessage.contains("before the earliest version")
+      }
+      assert(error.getMessage.contains("before the earliest version"))
     }
   }
 
@@ -421,10 +422,14 @@ abstract class DeltaCDCSuiteBase
 
       val ts0 = dateFormat.format(new Date(3000))
       val ts1 = dateFormat.format(new Date(1000))
-      intercept[DeltaIllegalArgumentException] {
+      val error = intercept[DeltaIllegalArgumentException] {
         cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
           .collect()
-      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+      }
+      checkError(
+        exception = error,
+        condition = "DELTA_INVALID_CDC_RANGE",
+        parameters = Map("start" -> "1", "end" -> "0"))
     }
   }
 
@@ -439,10 +444,14 @@ abstract class DeltaCDCSuiteBase
 
       val ts0 = dateFormat.format(new Date(5000))
       val ts1 = dateFormat.format(new Date(3000))
-      intercept[DeltaIllegalArgumentException] {
+      val error = intercept[DeltaIllegalArgumentException] {
         cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
           .collect()
-      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+      }
+      checkError(
+        exception = error,
+        condition = "DELTA_INVALID_CDC_RANGE",
+        parameters = Map("start" -> "2", "end" -> "0"))
     }
   }
 

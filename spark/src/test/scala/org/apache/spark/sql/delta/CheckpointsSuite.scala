@@ -27,7 +27,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageReco
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.amt.AMTPassthrough
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedMaintenanceIncompatible, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -58,7 +58,7 @@ class CheckpointsSuite
   with DeltaCheckpointTestUtils
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
@@ -114,7 +114,7 @@ class CheckpointsSuite
 
   test("checkpoint metadata - checkpoint schema above the configured threshold are not" +
       " written to LAST_CHECKPOINT") {
-    withClassicCheckpointPolicyForCatalogOwned {
+    withClassicCheckpointPolicyForCatalogManaged {
       withTempTable(createTable = false) { tableName =>
         spark.range(10).write.format("delta").saveAsTable(tableName)
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
@@ -321,7 +321,7 @@ class CheckpointsSuite
           "fs.gs.impl.disable.cache" -> "true") {
         val gsPath = s"gs://${tempDir.getCanonicalPath}"
         val writer = spark.range(1).write.format("delta")
-        if (catalogOwnedDefaultCreationEnabledInTests) {
+        if (catalogManagedDefaultCreationEnabledInTests) {
           // Setting checkpointPolicy=classic because this test is intended for v1 checkpoint only.
           writer.option(DeltaConfigs.CHECKPOINT_POLICY.key, "classic")
         }
@@ -345,7 +345,7 @@ class CheckpointsSuite
   }
 
   test("multipart checkpoints") {
-    withClassicCheckpointPolicyForCatalogOwned {
+    withClassicCheckpointPolicyForCatalogManaged {
       withTempTable(createTable = false) { tableName =>
         withSQLConf(
           DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "10",
@@ -583,7 +583,7 @@ class CheckpointsSuite
               "protocol",
               "domainMetadata")
           // For CCv1.5 table, v2 checkpoints is enabled by default.
-          if (catalogOwnedDefaultCreationEnabledInTests) {
+          if (catalogManagedDefaultCreationEnabledInTests) {
             // V2 checkpoint's schema is shared by sidecar files (contains all file actions)
             // and the main v2 checkpoint file (contains all non-file actions).
             // So file actions (e.g. `txn`, `add`, `remove`) are not included in the main v2
@@ -670,7 +670,7 @@ class CheckpointsSuite
   }
 
   test("checkpoint does not contain remove.tags and remove.numRecords") {
-    withClassicCheckpointPolicyForCatalogOwned {
+    withClassicCheckpointPolicyForCatalogManaged {
       withTempDir { tempDir =>
         val expectedRemoveFileSchema = Seq(
           "path",
@@ -724,7 +724,7 @@ class CheckpointsSuite
   }
 
   test("non-AMT tables do not persist AMT-only AddFile fields") {
-    withClassicCheckpointPolicyForCatalogOwned {
+    withClassicCheckpointPolicyForCatalogManaged {
       withTempDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
         spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)
@@ -943,7 +943,8 @@ class CheckpointsSuite
 
       // For CCv1.5 table, row tracking is enabled by default, there will be an extra
       // DomainMetadata added by RowTracking as a non file action.
-      val domainMetadataAddedByRowTracking = if (catalogOwnedDefaultCreationEnabledInTests) 1 else 0
+      val domainMetadataAddedByRowTracking =
+        if (catalogManagedDefaultCreationEnabledInTests) 1 else 0
       // Append 1 AddFile [AddFile-2]
       val lc1 = writeCheckpoint(adds = 1, nonFileActionThreshold = 10, sidecarActionThreshold = 10)
       assert(lc1.v2Checkpoint.nonEmpty)

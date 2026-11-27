@@ -389,7 +389,13 @@ class AMTWriterManager(
       currentTransactionInfo: CurrentTransactionInfo,
       preCommitLogSegment: LogSegment,
       winningCommitMetricsForConflictedRange: Seq[WinningCommitMetrics]): Option[AMTWriteResult] = {
-    if (!AMTUtils.amtEnabled(readSnapshot, isPreviewCompatible = true)) return None
+    // Only a commit with AMT writes on before and after it writes a tree. The pre-downgrade
+    // commit turns them off, and the upgrade builds its first tree in a later checkpoint.
+    if (!AMTUtils.amtEnabled(readSnapshot, isPreviewCompatible = true) ||
+        !AMTUtils.amtEnabled(currentTransactionInfo.metadata, currentTransactionInfo.protocol,
+          isPreviewCompatible = true)) {
+      return None
+    }
     val actionsToCommit = currentTransactionInfo.actions
     val roundId = nextRoundId
     nextRoundId += 1

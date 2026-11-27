@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.storage.LogStore;
 import org.apache.spark.sql.delta.v2.kernel.KernelContext;
 import org.apache.spark.sql.delta.v2.read.DeltaV2Scan;
 import org.apache.spark.sql.delta.v2.read.DeltaV2ScanBuilder;
+import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManagerCache$;
 import org.apache.spark.sql.delta.v2.utils.ScalaUtils;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.EqualTo;
@@ -49,6 +50,7 @@ import org.apache.spark.sql.sources.StringStartsWith;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 
 public abstract class DeltaV2TestBase {
@@ -89,6 +91,21 @@ public abstract class DeltaV2TestBase {
     if (spark != null) {
       spark.stop();
       spark = null;
+    }
+  }
+
+  /**
+   * Opt-in hook: suites that return {@code true} get the shared {@code DeltaV2TableManagerCache}
+   * cleared after each test. Defaults to {@code false}, which leaves the cache untouched.
+   */
+  protected boolean clearTableManagerCacheAfterEach() {
+    return false;
+  }
+
+  @AfterEach
+  public void afterEach() {
+    if (clearTableManagerCacheAfterEach()) {
+      DeltaV2TableManagerCache$.MODULE$.clearCache();
     }
   }
 

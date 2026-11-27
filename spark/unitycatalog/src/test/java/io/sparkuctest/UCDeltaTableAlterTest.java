@@ -412,7 +412,7 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
         TableType.EXTERNAL,
         tableName ->
             assertThrowsWithCauseContaining(
-                "Upgrading to CatalogOwned table is not yet supported",
+                "Upgrading to CatalogManaged table is not yet supported",
                 () ->
                     sql(
                         "ALTER TABLE %s SET TBLPROPERTIES "

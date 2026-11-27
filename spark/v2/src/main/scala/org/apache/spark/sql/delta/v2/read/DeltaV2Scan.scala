@@ -28,9 +28,9 @@ import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog
 import org.apache.spark.sql.delta.stats.{DataSize, DeltaScan}
 import org.apache.spark.sql.delta.v2.DeltaV2Logging
 import org.apache.spark.sql.delta.v2.interop.{DeltaV2QueryContext, DeltaV2Snapshot, DeltaV2SnapshotManager}
-import org.apache.spark.sql.delta.v2.kernel.KernelEngineFactory
 import org.apache.spark.sql.delta.v2.read.cdc.CDCSchemaContext
 import org.apache.spark.sql.delta.v2.read.deletionvector.DeletionVectorSchemaContext
+import org.apache.spark.sql.delta.v2.read.metadata.MetadataStructSchemaContext
 import org.apache.spark.sql.delta.v2.tablemanager.DeltaV2TableManager
 import org.apache.spark.sql.delta.v2.utils.{PartitionUtils, PartitionValueCaster, ScalaUtils}
 import org.apache.spark.sql.delta.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression
@@ -57,7 +57,6 @@ import org.apache.spark.sql.connector.read.{
 }
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream
-import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.execution.datasources.v2.DeltaV2FilterTranslator
 import org.apache.spark.sql.internal.SQLConf
@@ -173,7 +172,7 @@ private[read] class DeltaV2Scan(
    */
   override def columnarSupportMode(): Scan.ColumnarSupportMode = {
     val metadataColumnRequested =
-      readDataSchema.fields.exists(field => FileFormat.METADATA_NAME.equals(field.name))
+      readDataSchema.fields.exists(MetadataStructSchemaContext.isMetadataStruct)
     if (metadataColumnRequested) {
       return Scan.ColumnarSupportMode.UNSUPPORTED
     }
@@ -250,8 +249,7 @@ private[read] class DeltaV2Scan(
         spark,
         latestSnapshot,
         options,
-        snapshotManager,
-        KernelEngineFactory.createDefaultEngine(hadoopConf),
+        streamTableManager,
         Option(checkpointLocation),
         /* mergeConsecutiveSchemaChanges= */ false,
         originalQueryContext

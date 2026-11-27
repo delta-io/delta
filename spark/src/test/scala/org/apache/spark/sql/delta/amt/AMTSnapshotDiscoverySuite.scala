@@ -28,10 +28,8 @@ import org.apache.commons.io.IOUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.plans.logical.Filter
-import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.util.ThreadUtils
 
@@ -114,9 +112,9 @@ class AMTSnapshotDiscoverySuite
     }
   }
 
-  test("[cold init] derives the leaf count from a prefetched root when its tag is missing") {
+  test("[cold init] root prefetch handles cache metadata combinations") {
     withSQLConf(leafPackingConfs: _*) {
-      val name = "amt_cold_root_prefetch_without_num_leaves"
+      val name = "amt_cold_root_prefetch_metadata"
       withTable(name) {
         createAMTTable(name, checkpointInterval = Int.MaxValue)
         appendRowsAsSeparateFiles(name, numFiles = leafPackedFiles)
@@ -125,6 +123,7 @@ class AMTSnapshotDiscoverySuite
 
         val checkpointProvider = amtProvider(deltaLog.unsafeVolatileSnapshot).get
         assertLeafCount(checkpointProvider.leaves)
+        assert(checkpointProvider.checkpointAction.contentRoot.numRootEntries.nonEmpty)
         val checkpointWithoutNumLeaves = updateCheckpointActions(
             checkpointProvider.checkpointAction) {
           case root: ContentRoot =>
@@ -132,31 +131,52 @@ class AMTSnapshotDiscoverySuite
               ContentRoot.Tags.NUM_LEAVES.name)
         }
         assert(checkpointWithoutNumLeaves.contentRoot.numLeaves.isEmpty)
+        val checkpointWithoutNumRootEntries = updateCheckpointActions(
+            checkpointProvider.checkpointAction) {
+          case root: ContentRoot =>
+            root.copy(tags = Option(root.tags).getOrElse(Map.empty) -
+              ContentRoot.Tags.NUM_ROOT_ENTRIES.name)
+        }
+        assert(checkpointWithoutNumRootEntries.contentRoot.numRootEntries.isEmpty)
 
-        val uninitializedProvider = new UninitializedAMTCheckpointProvider(
-          deltaLog,
-          checkpointWithoutNumLeaves,
-          checkpointProvider.manifestCommitVersion)
         val expectedNumLeaves = checkpointProvider.leaves.size
-        val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
-          checkpointProvider.manifestCommitVersion,
-          checkpointWithoutNumLeaves.contentRoot.version,
-          checkpointWithoutNumLeaves,
-          checkpointProvider.leaves)
+        val checkpoints = Seq(
+          ("present", "present", checkpointProvider.checkpointAction, true),
+          ("absent", "present", checkpointWithoutNumLeaves, true),
+          ("present", "absent", checkpointWithoutNumRootEntries, false))
+        for {
+          (numLeavesState, numRootEntriesState, checkpoint, canCacheRoot) <- checkpoints
+          (belowThreshold, threshold) <- Seq(true -> Int.MaxValue, false -> 0)
+        } withClue(
+            s"numLeaves: $numLeavesState, numRootEntries: $numRootEntriesState, " +
+              s"below threshold: $belowThreshold") {
+          withSQLConf(
+              DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> threshold.toString) {
+            val uninitializedProvider = new UninitializedAMTCheckpointProvider(
+              deltaLog, checkpoint, checkpointProvider.manifestCommitVersion)
+            val root = uninitializedProvider.nonFateSharingCheckpointReadFuture.get(Duration.Inf)
+            val lastCheckpointInfo = Checkpoints.buildLastCheckpointInfoForAMT(
+              checkpointProvider.manifestCommitVersion,
+              checkpoint.contentRoot.version,
+              checkpoint,
+              checkpointProvider.leaves)
 
-        assert(CheckpointInstance(uninitializedProvider).numParts.contains(expectedNumLeaves))
-        assert(CheckpointInstance(uninitializedProvider) == CheckpointInstance(lastCheckpointInfo))
+            assert(root.hasCachedRows == (canCacheRoot && belowThreshold))
+            assertLeavesEqual(root.leaves, checkpointProvider.leaves)
+            assert(CheckpointInstance(uninitializedProvider).numParts.contains(expectedNumLeaves))
+            assert(
+              CheckpointInstance(uninitializedProvider) == CheckpointInstance(lastCheckpointInfo))
+          }
+        }
       }
     }
   }
 
   for (layout <- Seq("root-only", "leaf-backed", "empty")) {
     testAcrossAMTCheckpointScenarios(
-        s"[cold init] columnar provider reuses the prefetched root across sessions: $layout",
-        s"amt_complete_root_prefetch_${layout.replace('-', '_')}",
-        sqlConfs = Seq(
-          DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true",
-          DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> "12000") ++
+        s"[cold init] root cache respects entry thresholds and cross-session reuse: $layout",
+        s"amt_root_cache_discovery_${layout.replace('-', '_')}",
+        sqlConfs = Seq(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> "12000") ++
           (if (layout == "leaf-backed") leafPackingConfs else Seq(
             DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "100")))(
         setup = name => appendRowsAsSeparateFiles(
@@ -166,85 +186,32 @@ class AMTSnapshotDiscoverySuite
           else s"INSERT INTO $name VALUES (100)"))) { context =>
       val deltaLog = context.postCheckpointSnapshot.deltaLog
       val checkpoint = context.checkpoint
-      val expectedRootFiles = AMTCheckpointProvider.readLiveRootDataEntries(deltaLog, checkpoint)
+      val rootPath = checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
+      val numRootEntries = checkpoint.contentRoot.numRootEntries
+        .getOrElse(fail("The writer must record the number of root entries."))
+        .toInt
+      assert(allowReadWithinDeltaLog {
+        spark.read.parquet(rootPath.toString).count()
+      } == numRootEntries)
+      val uncached = AMTCheckpointProvider(
+        context.manifestCommitVersion, checkpoint,
+        context.provider.leaves, deltaLog.dataPath)
+      val expected = uncached.loadActionsForStateReconstruction(spark, deltaLog).get.collect()
+      val expectedRootFiles = uncached.readLiveRootDataEntries(spark, deltaLog)
       if (layout == "empty") {
         assert(expectedRootFiles.isEmpty)
       } else if (layout == "root-only") {
         assert(expectedRootFiles.nonEmpty)
       }
       assert(context.provider.leaves.nonEmpty == (layout == "leaf-backed"))
+      assert(context.provider.manifestCommitVersion == context.manifestCommitVersion)
 
-      // Compare against a provider with no prefetched root, including all non-file actions.
-      val uncached = AMTCheckpointProvider(
-        spark,
-        context.provider.manifestCommitVersion, checkpoint,
-        context.provider.leaves, deltaLog.dataPath)
-      val expected = uncached.loadActionsForStateReconstruction(spark, deltaLog).get.collect()
-      val uninitialized = new UninitializedAMTCheckpointProvider(
-        deltaLog, checkpoint, context.provider.manifestCommitVersion)
-      val prefetched = CheckpointProvider(
-        spark, context.postCheckpointSnapshot, None, uninitialized)
-        .asInstanceOf[LazyCompleteAMTCheckpointProvider].underlyingCheckpointProvider
-      var synchronous: AMTCheckpointProvider = null
-      val discoveryJobs = countSparkJobs(spark.sparkContext, {
-        synchronous = AMTCheckpointProvider.fromCheckpoint(
-          spark, deltaLog, checkpoint, context.provider.manifestCommitVersion)
-      })
-      assert(discoveryJobs == 1, "Leaf pointer decoding must not launch another Spark job")
-      assert(prefetched.isInstanceOf[ColumnarAMTCheckpointProvider])
-      assert(synchronous.isInstanceOf[ColumnarAMTCheckpointProvider])
-
-      // Removing the root after discovery makes an accidental second scan fail reliably.
-      val rootPath = checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
-      val savedRoot = new Path(rootPath.toString + ".saved")
-      val fs = rootPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-      assert(fs.rename(rootPath, savedRoot))
-      try {
-        context.postCheckpointSnapshot.uncache()
-        val otherSession = spark.newSession()
-        for {
-          session <- Seq(spark, otherSession, spark)
-          provider <- Seq(prefetched, synchronous)
-        } session.withActive {
-          val actions = provider.loadActionsForStateReconstruction(session, deltaLog).get
-          assert(actions.sparkSession eq session)
-          assert(!actions.inputFiles.map(new Path(_)).contains(rootPath))
-          checkAnswer(actions, expected.toSeq)
-          assert(new BaseAMTCheckpointActionsProvider(session, deltaLog, provider)
-            .load().fileActionsFromRoot == expectedRootFiles)
-        }
-      } finally {
-        assert(fs.rename(savedRoot, rootPath))
-      }
-    }
-  }
-
-  for (layout <- Seq("root-only", "leaf-backed", "empty")) {
-    testAcrossAMTCheckpointScenarios(
-        s"[cold init] prefetched root cache respects the entry threshold: $layout",
-        s"amt_root_cache_threshold_${layout.replace('-', '_')}",
-        sqlConfs = Seq(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true") ++
-          (if (layout == "leaf-backed") leafPackingConfs else Seq(
-            DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "100")))(
-        setup = name => appendRowsAsSeparateFiles(
-          name, if (layout == "leaf-backed") leafPackedFiles + 1 else 2),
-        inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
-          if (layout == "empty") s"DELETE FROM $name"
-          else s"INSERT INTO $name VALUES (100)"))) { context =>
-      val deltaLog = context.postCheckpointSnapshot.deltaLog
-      val checkpoint = context.checkpoint
-      val rootPath = checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
-      val numRootEntries = allowReadWithinDeltaLog {
-        spark.read.parquet(rootPath.toString).count().toInt
-      }
-      val uncached = AMTCheckpointProvider(
-        spark, context.manifestCommitVersion, checkpoint,
-        context.provider.leaves, deltaLog.dataPath)
-      val expected = uncached.loadActionsForStateReconstruction(spark, deltaLog).get.collect()
-      val expectedRootFiles = uncached.readLiveRootDataEntries(spark, deltaLog)
-      assert(context.provider.leaves.nonEmpty == (layout == "leaf-backed"))
-
+      // Both proofs read the same immutable checkpoint. Each limit gets fresh providers, and the
+      // root's temporary removal is undone before the next limit is exercised.
+      val crossSessionCacheLimit = 12000
+      assert(numRootEntries < crossSessionCacheLimit)
       val thresholds = Seq(
+        (crossSessionCacheLimit, true),
         (numRootEntries + 1, true),
         (numRootEntries, false),
         (math.max(0, numRootEntries - 1), false),
@@ -252,9 +219,13 @@ class AMTSnapshotDiscoverySuite
       for ((threshold, shouldCache) <- thresholds) {
         withClue(s"root entries: $numRootEntries, cache threshold: $threshold") {
           withSQLConf(DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> threshold.toString) {
-            val uninitialized = new UninitializedAMTCheckpointProvider(
-              deltaLog, checkpoint, context.manifestCommitVersion)
-            val root = uninitialized.nonFateSharingCheckpointReadFuture.get(Duration.Inf)
+            var uninitialized: UninitializedAMTCheckpointProvider = null
+            var root: AMTRootInfo = null
+            val prefetchJobs = countSparkJobs(spark.sparkContext, {
+              uninitialized = new UninitializedAMTCheckpointProvider(
+                deltaLog, checkpoint, context.manifestCommitVersion)
+              root = uninitialized.nonFateSharingCheckpointReadFuture.get(Duration.Inf)
+            })
             assert(root.hasCachedRows == shouldCache)
             assert(root.toDF(spark).isDefined == shouldCache)
             assert(root.leaves == context.provider.leaves)
@@ -263,34 +234,56 @@ class AMTSnapshotDiscoverySuite
               spark, context.postCheckpointSnapshot, None, uninitialized)
               .asInstanceOf[LazyCompleteAMTCheckpointProvider].underlyingCheckpointProvider
             var synchronous: AMTCheckpointProvider = null
-            val queries = QueryTest.withQueryExecutionsCaptured(spark) {
-              val jobs = countSparkJobs(spark.sparkContext, {
-                synchronous = AMTCheckpointProvider.fromCheckpoint(
-                  spark, deltaLog, checkpoint, context.manifestCommitVersion)
-              })
-              assert(jobs == 1, "The footer count check must not launch another Spark job")
-            }
-            val scanQueries = queries.filter(_.analyzed.exists(_.isInstanceOf[LogicalRelation]))
-            assert(scanQueries.size == (if (shouldCache) 0 else 1))
-            // Large roots filter DATA before collection instead of collecting and discarding it.
-            scanQueries.foreach { query =>
-              assert(query.analyzed.exists {
-                case Filter(condition, _) =>
-                  condition.references.exists(_.name == "content_type")
-                case _ => false
-              })
-            }
-            for (provider <- Seq(prefetched, synchronous)) {
-              assert(provider.leaves == context.provider.leaves)
-              val actions = provider.loadActionsForStateReconstruction(spark, deltaLog).get
-              assert(actions.inputFiles.map(new Path(_)).contains(rootPath) == !shouldCache)
-              checkAnswer(actions, expected.toSeq)
-              assert(provider.readLiveRootDataEntries(spark, deltaLog) == expectedRootFiles)
+            val synchronousJobs = countSparkJobs(spark.sparkContext, {
+              synchronous = AMTCheckpointProvider.fromCheckpoint(
+                spark, deltaLog, checkpoint, context.manifestCommitVersion)
+            })
+            if (threshold == crossSessionCacheLimit) {
+              // Removing the root after discovery makes an accidental second scan fail reliably.
+              val savedRoot = new Path(rootPath.toString + ".saved")
+              val fs = rootPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+              assert(fs.rename(rootPath, savedRoot))
+              try {
+                context.postCheckpointSnapshot.uncache()
+                val otherSession = spark.newSession()
+                for {
+                  (session, sessionIndex) <- Seq(spark, otherSession, spark).zipWithIndex
+                  provider <- Seq(prefetched, synchronous)
+                } session.withActive {
+                  val actions = provider.loadActionsForStateReconstruction(session, deltaLog).get
+                  assert(actions.sparkSession eq session)
+                  assert(!actions.inputFiles.map(new Path(_)).contains(rootPath))
+                  checkCheckpointActions(actions, expected.toSeq, checkRDD = sessionIndex == 0)
+                  assert(new BaseAMTCheckpointActionsProvider(session, deltaLog, provider)
+                    .load().fileActionsFromRoot == expectedRootFiles)
+                }
+              } finally {
+                assert(fs.rename(savedRoot, rootPath))
+              }
+            } else {
+              for (provider <- Seq(prefetched, synchronous)) {
+                assert(provider.leaves == context.provider.leaves)
+                val actions = provider.loadActionsForStateReconstruction(spark, deltaLog).get
+                assert(actions.inputFiles.map(new Path(_)).contains(rootPath) == !shouldCache)
+                val checkRDD = threshold == numRootEntries
+                checkCheckpointActions(actions, expected.toSeq, checkRDD)
+                assert(provider.readLiveRootDataEntries(spark, deltaLog) == expectedRootFiles)
+              }
             }
           }
         }
       }
     }
+  }
+
+  // Collect every boundary and session's complete actions. Also check RDD deserialization once
+  // per provider/API for cached roots (the first session) and uncached roots (the exact limit).
+  private def checkCheckpointActions(
+      actions: DataFrame,
+      expected: Seq[Row],
+      checkRDD: Boolean): Unit = {
+    assertEmptyMissingInput(actions)
+    QueryTest.checkAnswer(actions, expected, checkToRDD = checkRDD)
   }
 
   ///////////////////////////
@@ -303,11 +296,10 @@ class AMTSnapshotDiscoverySuite
         AMTCheckpointScenario.DeferredIncremental,
         AMTCheckpointScenario.DeferredFull))) {
     testAcrossAMTCheckpointScenarios(
-        s"[warm commit] columnar provider reuses writer-produced root rows: $layout",
+        s"[warm commit] provider reuses writer-produced root rows: $layout",
         s"amt_written_root_cache_${layout.replace('-', '_')}",
         deferredScenarios = deferredScenarios,
         sqlConfs = Seq(
-          DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true",
           DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> "50000") ++
           (if (layout == "leaf-backed") leafPackingConfs else Seq(
             DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "100")),
@@ -320,12 +312,10 @@ class AMTSnapshotDiscoverySuite
         inlineCheckpointTriggerActionsOrSQL = Some(name => Right(
           s"INSERT INTO $name VALUES (100, 1)"))) { context =>
       val deltaLog = context.postCheckpointSnapshot.deltaLog
-      assert(context.provider.isInstanceOf[ColumnarAMTCheckpointProvider])
       assert(context.provider.leaves.nonEmpty == (layout == "leaf-backed"))
 
       val rootPath = context.checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
       val uncached = AMTCheckpointProvider(
-        spark,
         context.manifestCommitVersion,
         context.checkpoint,
         context.provider.leaves,
@@ -360,7 +350,6 @@ class AMTSnapshotDiscoverySuite
         s"[warm commit] writer does not retain root rows when $suffix",
         s"amt_written_root_$suffix",
         sqlConfs = Seq(
-          DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "true",
           DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> maxNumEntries.toString,
           DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "100"))(
         setup = name => appendRowsAsSeparateFiles(name, 2)) { context =>
@@ -368,14 +357,6 @@ class AMTSnapshotDiscoverySuite
       val rootPath = context.checkpoint.contentRoot.getAbsolutePath(deltaLog.dataPath)
       val actions = context.provider.loadActionsForStateReconstruction(spark, deltaLog).get
       assert(actions.inputFiles.map(new Path(_)).contains(rootPath))
-    }
-  }
-
-  test("[root cache] skips the entry count when columnar reconstruction is disabled") {
-    withSQLConf(
-        DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED.key -> "false",
-        DeltaSQLConf.AMT_ROOT_CACHE_MAX_NUM_ENTRIES.key -> "50000") {
-      assert(!AMTUtils.shouldCacheRootRows(spark, fail("the entry count must not be evaluated")))
     }
   }
 

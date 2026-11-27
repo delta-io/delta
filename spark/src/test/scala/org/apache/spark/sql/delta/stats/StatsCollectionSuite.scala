@@ -73,6 +73,7 @@ class StatsCollectionSuite
         override def tableSchema: StructType = dataRenamed.schema
         override def outputTableStatsSchema: StructType = dataRenamed.schema
         override def outputAttributeSchema: StructType = dataRenamed.schema
+        override def outputUsesPhysicalNames: Boolean = true
         override val statsColumnSpec = DeltaStatsColumnSpec(
           None,
           Some(
@@ -826,6 +827,331 @@ class StatsCollectionSuite
     }
   }
 
+  test("dataSkippingStatsColumns with a logical name that is another column's physical name") {
+    {
+      val tableName = "delta_table"
+      withTable(tableName) {
+        // Upgrading to column mapping keeps `amount` as the physical name of `amount_old`.
+        sql(s"CREATE TABLE $tableName (id INT, amount INT) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN amount TO amount_old")
+        sql(s"ALTER TABLE $tableName ADD COLUMNS (amount INT)")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES (" +
+          "'delta.dataSkippingStatsColumns' = 'id, amount, amount_old')")
+        sql(s"INSERT INTO $tableName (id, amount_old, amount) VALUES (1, 100, 5)")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(getPhysicalName("amount_old", deltaLog) == "amount")
+        val amountPhysicalName = getPhysicalName("amount", deltaLog)
+        val stats = JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats)
+        Seq("minValues", "maxValues").foreach { kind =>
+          val values = stats(kind).asInstanceOf[Map[String, Any]]
+          assert(values(amountPhysicalName).toString == "5", s"$kind of amount in $stats")
+          assert(values("amount").toString == "100", s"$kind of amount_old in $stats")
+        }
+        checkAnswer(sql(s"SELECT id FROM $tableName WHERE amount = 5"), Row(1))
+      }
+    }
+  }
+
+  test("dataSkippingStatsColumns with a logical name that is the physical name of a column of " +
+      "another type") {
+    {
+      val tableName = "delta_table"
+      withTable(tableName) {
+        // Upgrading to column mapping keeps `ts` as the physical name of `ts_str`.
+        sql(s"CREATE TABLE $tableName (id INT, ts STRING) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN ts TO ts_str")
+        sql(s"ALTER TABLE $tableName ADD COLUMNS (ts TIMESTAMP)")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.dataSkippingStatsColumns' = 'ts')")
+        sql(s"INSERT INTO $tableName (id, ts_str, ts) VALUES " +
+          "(1, 'not a timestamp', TIMESTAMP '2026-01-02 03:04:05')")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(getPhysicalName("ts_str", deltaLog) == "ts")
+        val tsPhysicalName = getPhysicalName("ts", deltaLog)
+        val stats = JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats)
+        Seq("minValues", "maxValues").foreach { kind =>
+          val values = stats(kind).asInstanceOf[Map[String, Any]]
+          assert(values.keySet == Set(tsPhysicalName), s"$kind in $stats")
+          withClue(s"$kind of ts in $stats: ") {
+            checkAnswer(
+              sql(s"SELECT try_cast('${values(tsPhysicalName)}' AS TIMESTAMP) = " +
+                "TIMESTAMP '2026-01-02 03:04:05'"),
+              Row(true))
+          }
+        }
+        checkAnswer(
+          sql(s"SELECT id FROM $tableName WHERE ts = TIMESTAMP '2026-01-02 03:04:05'"), Row(1))
+      }
+    }
+  }
+
+  test("dataSkippingStatsColumns with a nested field of a struct whose logical name is another " +
+      "struct's physical name") {
+    {
+      val tableName = "delta_table"
+      withTable(tableName) {
+        // Upgrading to column mapping keeps `s` as the physical name of `s_old`.
+        sql(s"CREATE TABLE $tableName (id INT, s STRUCT<x: INT>) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN s TO s_old")
+        sql(s"ALTER TABLE $tableName ADD COLUMNS (s STRUCT<x: INT>)")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.dataSkippingStatsColumns' = 's.x')")
+        sql(s"INSERT INTO $tableName (id, s_old, s) VALUES " +
+          "(1, named_struct('x', 100), named_struct('x', 5))")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(getPhysicalName("s_old", deltaLog) == "s")
+        val sPhysicalName = getPhysicalName("s", deltaLog)
+        val xPhysicalName = getPhysicalName("s.x", deltaLog)
+        val stats = JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats)
+        Seq("minValues", "maxValues").foreach { kind =>
+          val values = stats(kind).asInstanceOf[Map[String, Any]]
+          assert(values.keySet == Set(sPhysicalName), s"$kind in $stats")
+          val sValues = values(sPhysicalName).asInstanceOf[Map[String, Any]]
+          assert(sValues.keySet == Set(xPhysicalName), s"$kind of s in $stats")
+          assert(sValues(xPhysicalName).toString == "5", s"$kind of s.x in $stats")
+        }
+        checkAnswer(sql(s"SELECT id FROM $tableName WHERE s.x = 5"), Row(1))
+      }
+    }
+  }
+
+  test("dataSkippingStatsColumns with special characters in a logical name that is another " +
+      "column's physical name") {
+    {
+      val tableName = "delta_table"
+      // Without column mapping a name can't contain a comma, so only `c` has one.
+      val (a, b, c) = ("a.!@#$%^", "b!@#$%^", "c.,!@#$%^")
+      withTable(tableName) {
+        // Upgrading to column mapping keeps `a` and `b` as the physical names of `a_old` and
+        // `b_old`.
+        sql(s"CREATE TABLE $tableName (id INT, `$a` INT, `$b` INT) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN `$a` TO a_old")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN `$b` TO b_old")
+        sql(s"ALTER TABLE $tableName ADD COLUMNS (`$a` INT, `$b` INT, `$c` INT)")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES (" +
+          s"'delta.dataSkippingStatsColumns' = '`$a`, `$b`, `$c`, a_old, b_old')")
+        sql(s"INSERT INTO $tableName (id, a_old, b_old, `$a`, `$b`, `$c`) " +
+          "VALUES (1, 100, 200, 5, 6, 7)")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(getPhysicalName("a_old", deltaLog) == a)
+        assert(getPhysicalName("b_old", deltaLog) == b)
+        val expected = Map(
+          getPhysicalName(s"`$a`", deltaLog) -> "5",
+          getPhysicalName(s"`$b`", deltaLog) -> "6",
+          getPhysicalName(s"`$c`", deltaLog) -> "7",
+          a -> "100",
+          b -> "200")
+        val stats = JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats)
+        Seq("minValues", "maxValues").foreach { kind =>
+          val values = stats(kind).asInstanceOf[Map[String, Any]]
+          assert(values.map { case (k, v) => k -> v.toString } == expected, s"$kind in $stats")
+        }
+        Seq(a -> 5, b -> 6, c -> 7).foreach { case (name, value) =>
+          checkAnswer(sql(s"SELECT id FROM $tableName WHERE `$name` = $value"), Row(1))
+        }
+      }
+    }
+  }
+
+  test("dataSkippingStatsColumns with a nested field whose logical name is another field's " +
+      "physical name") {
+    {
+      val tableName = "delta_table"
+      withTable(tableName) {
+        // Upgrading to column mapping keeps `x` as the physical name of `s.x_old`.
+        sql(s"CREATE TABLE $tableName (id INT, s STRUCT<x: INT>) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN s.x TO x_old")
+        sql(s"ALTER TABLE $tableName ADD COLUMNS (s.x INT)")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES (" +
+          "'delta.dataSkippingStatsColumns' = 's.x, s.x_old')")
+        sql(s"INSERT INTO $tableName (id, s) VALUES (1, named_struct('x_old', 100, 'x', 5))")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(getPhysicalName("s.x_old", deltaLog) == "x")
+        val sPhysicalName = getPhysicalName("s", deltaLog)
+        val xPhysicalName = getPhysicalName("s.x", deltaLog)
+        val stats = JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats)
+        Seq("minValues", "maxValues").foreach { kind =>
+          val values = stats(kind).asInstanceOf[Map[String, Any]]
+          val sValues = values(sPhysicalName).asInstanceOf[Map[String, Any]]
+            .map { case (k, v) => k -> v.toString }
+          assert(sValues == Map(xPhysicalName -> "5", "x" -> "100"), s"$kind of s in $stats")
+        }
+        checkAnswer(sql(s"SELECT id FROM $tableName WHERE s.x = 5"), Row(1))
+      }
+    }
+  }
+
+  test("dataSkippingStatsColumns with a struct whose logical name is another struct's physical " +
+      "name") {
+    {
+      val tableName = "delta_table"
+      withTable(tableName) {
+        // Upgrading to column mapping keeps `s` as the physical name of `s_old`.
+        sql(s"CREATE TABLE $tableName (id INT, s STRUCT<x: INT>) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN s TO s_old")
+        sql(s"ALTER TABLE $tableName ADD COLUMNS (s STRUCT<x: INT>)")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.dataSkippingStatsColumns' = 's')")
+        sql(s"INSERT INTO $tableName (id, s_old, s) VALUES " +
+          "(1, named_struct('x', 100), named_struct('x', 5))")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val sPhysicalName = getPhysicalName("s", deltaLog)
+        val xPhysicalName = getPhysicalName("s.x", deltaLog)
+        val stats = JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats)
+        Seq("minValues", "maxValues").foreach { kind =>
+          val values = stats(kind).asInstanceOf[Map[String, Any]]
+          assert(values.keySet == Set(sPhysicalName), s"$kind in $stats")
+          val sValues = values(sPhysicalName).asInstanceOf[Map[String, Any]]
+            .map { case (k, v) => k -> v.toString }
+          assert(sValues == Map(xPhysicalName -> "5"), s"$kind of s in $stats")
+        }
+        checkAnswer(sql(s"SELECT id FROM $tableName WHERE s.x = 5"), Row(1))
+      }
+    }
+  }
+
+  test("dataSkippingStatsColumns with two columns that swap names") {
+    {
+      val tableName = "delta_table"
+      withTable(tableName) {
+        sql(s"CREATE TABLE $tableName (id INT, a INT, b INT) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        // Afterwards `a` has the physical name `b` and `b` has the physical name `a`.
+        sql(s"ALTER TABLE $tableName RENAME COLUMN a TO tmp")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN b TO a")
+        sql(s"ALTER TABLE $tableName RENAME COLUMN tmp TO b")
+        sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.dataSkippingStatsColumns' = 'a, b')")
+        sql(s"INSERT INTO $tableName (id, a, b) VALUES (1, 5, 100)")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        assert(getPhysicalName("a", deltaLog) == "b")
+        assert(getPhysicalName("b", deltaLog) == "a")
+        val stats = JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats)
+        Seq("minValues", "maxValues").foreach { kind =>
+          val values = stats(kind).asInstanceOf[Map[String, Any]]
+          assert(values.map { case (k, v) => k -> v.toString } == Map("b" -> "5", "a" -> "100"),
+            s"$kind in $stats")
+        }
+        checkAnswer(sql(s"SELECT id FROM $tableName WHERE a = 5"), Row(1))
+        checkAnswer(sql(s"SELECT id FROM $tableName WHERE b = 100"), Row(1))
+      }
+    }
+  }
+
+  /**
+   * Creates `tableName` with stats on `id`, `amount` and `amount_old`, where upgrading to column
+   * mapping keeps `amount` as the physical name of `amount_old`.
+   */
+  private def createAmountCollisionTable(tableName: String): Unit = {
+    sql(s"CREATE TABLE $tableName (id INT, amount INT) USING delta " +
+      "TBLPROPERTIES ('delta.columnMapping.mode' = 'none')")
+    sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+    sql(s"ALTER TABLE $tableName RENAME COLUMN amount TO amount_old")
+    sql(s"ALTER TABLE $tableName ADD COLUMNS (amount INT)")
+    sql(s"ALTER TABLE $tableName SET TBLPROPERTIES (" +
+      "'delta.dataSkippingStatsColumns' = 'id, amount, amount_old')")
+  }
+
+  /**
+   * Asserts that every file of `tableName` with stats, other than `excludedPaths`, has MIN and MAX
+   * 5 for `amount` and 100 for `amount_old`, the only values written to the table.
+   */
+  private def checkAmountCollisionStats(
+      tableName: String,
+      excludedPaths: Set[String] = Set.empty): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    val amountPhysicalName = getPhysicalName("amount", deltaLog)
+    val allStats = deltaLog.update().allFiles.collect().toSeq
+      .filterNot(file => excludedPaths.contains(file.path))
+      .flatMap(file => Option(file.stats))
+      .map(JsonUtils.fromJson[Map[String, Any]](_))
+      .filter(_.contains("minValues"))
+    assert(allStats.nonEmpty, s"no checked file of $tableName has stats")
+    allStats.foreach { stats =>
+      Seq("minValues", "maxValues").foreach { kind =>
+        val values = stats(kind).asInstanceOf[Map[String, Any]]
+        assert(values(amountPhysicalName).toString == "5", s"$kind of amount in $stats")
+        assert(values("amount").toString == "100", s"$kind of amount_old in $stats")
+      }
+    }
+  }
+
+  // The files from before the command are excluded, so the stats checked are the command's.
+  Seq(
+    "UPDATE" -> "UPDATE %s SET id = id + 10",
+    "MERGE" -> ("MERGE INTO %s t USING (SELECT 1 AS key) s ON t.id = s.key " +
+      "WHEN MATCHED THEN UPDATE SET t.id = t.id + 10"),
+    "OPTIMIZE" -> "OPTIMIZE %s"
+  ).foreach { case (command, statement) =>
+    test(s"$command writes the stats of a logical name that is another column's physical name") {
+      {
+        val tableName = "delta_table"
+        withTable(tableName) {
+          createAmountCollisionTable(tableName)
+          sql(s"INSERT INTO $tableName (id, amount_old, amount) VALUES (1, 100, 5)")
+          sql(s"INSERT INTO $tableName (id, amount_old, amount) VALUES (2, 100, 5)")
+          val filesBefore = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+            .allFiles.collect().map(_.path).toSet
+          sql(statement.format(tableName))
+          checkAmountCollisionStats(tableName, excludedPaths = filesBefore)
+          checkAnswer(sql(s"SELECT count(*) FROM $tableName WHERE amount = 5"), Row(2))
+        }
+      }
+    }
+  }
+
+  test("MIN and MAX from stats of a logical name that is another column's physical name") {
+    {
+      val tableName = "delta_table"
+      withTable(tableName) {
+        createAmountCollisionTable(tableName)
+        sql(s"INSERT INTO $tableName (id, amount_old, amount) VALUES (1, 100, 5)")
+        withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_METADATA_QUERY_ENABLED.key -> "true") {
+          val minMax = sql(s"SELECT MIN(amount), MAX(amount) FROM $tableName")
+          // A LocalRelation instead of a scan: the answer comes from the stats.
+          val plan = minMax.queryExecution.optimizedPlan
+          assert(plan.collectLeaves().map(_.nodeName) == Seq("LocalRelation"), plan)
+          checkAnswer(minMax, Row(5, 5))
+        }
+      }
+    }
+  }
+
+  test("recomputed stats of a logical name that is another column's physical name match the " +
+      "written stats") {
+    {
+      val tableName = "delta_table"
+      withTable(tableName) {
+        createAmountCollisionTable(tableName)
+        sql(s"INSERT INTO $tableName (id, amount_old, amount) VALUES (1, 100, 5)")
+        checkAmountCollisionStats(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        def stats(): Map[String, Any] =
+          JsonUtils.fromJson[Map[String, Any]](deltaLog.update().allFiles.head().stats) -
+            "tightBounds"
+        val written = stats()
+        StatisticsCollection.recompute(spark, deltaLog)
+        assert(stats() == written)
+      }
+    }
+  }
+
   test("Change Columns with delta statistics column") {
     Seq(
       "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
@@ -928,15 +1254,8 @@ class StatsCollectionSuite
         nullable = true,
         metadata = new MetadataBuilder().build())
 
-      // Use empty schemaNames so that schemaNames.contains(fullPath) returns false.
-      // This forces the function to proceed to the physical name check.
-      val emptySchemaNames = Seq.empty[String]
-      val fullPath = "testColumn"
-
       val goodResult = StatisticsCollection.convertToPhysicalName(
-        fullPath = fullPath,
         field = fieldWithPhysicalName,
-        schemaNames = emptySchemaNames,
         mappingMode = mappingMode)
 
       assert(goodResult.name == "col_12345_physical")
@@ -945,9 +1264,7 @@ class StatsCollectionSuite
       // Test with a field that does not have a physical name, expect ColumnMappingException.
       val exception = intercept[ColumnMappingException] {
         StatisticsCollection.convertToPhysicalName(
-          fullPath = fullPath,
           field = fieldWithoutPhysicalName,
-          schemaNames = emptySchemaNames,
           mappingMode = mappingMode)
       }
 

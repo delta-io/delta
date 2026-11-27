@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.amt
 import java.util.concurrent.TimeUnit
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable
 import scala.concurrent.duration.Duration
 
 import org.apache.spark.sql.delta.RowIndexFilterProvider
@@ -31,20 +30,17 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, BackReference, Check
 import org.apache.spark.sql.delta.actions.FileAction.UniqueFileActionTuple
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.spark.sql.delta.util.threads.NonFateSharingFuture
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.paths.SparkPath
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.functions.{col, lit, struct}
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -105,26 +101,67 @@ trait AMTCheckpointProviderBase
  * A [[CheckpointProvider]] backed by an AMT (Adaptive Metadata Tree) manifest tree.
  *
  * This provider is only for inline manifest-commit checkpoints, and this is not intended for
- * standalone checkpoint which also refers to an AMT.
+ * standalone checkpoint which also refers to an AMT. State reconstruction builds each `AddFile`
+ * field as a column over the persisted manifest rows (see `AMTManifestReaderImpl.addFileColumn`).
  *
  * @param manifestCommitVersion The version of the manifest commit that wrote this checkpoint.
  * @param checkpointAction The inline-emitted Checkpoint action this tree was committed with;
  *                         carries the version, contentRoot, and inline non-file state.
- * @param leaves           The root's `DATA_MANIFEST` pointer entries, one per reachable leaf.
- *                         Each entry's `location` is stored table-root-relative; use
- *                         [[liveLeafManifestAbsolutePaths]] to resolve it against the table root.
  * @param tableRoot        The table's data path.
+ * @param rootInfo         The root's leaf pointers and optional prefetched rows.
  */
-abstract class AMTCheckpointProvider(
+final class AMTCheckpointProvider(
     override val manifestCommitVersion: Long,
     override val checkpointAction: Checkpoint,
-    val leaves: Seq[DataManifestEntry],
-    override val tableRoot: Path)
+    override val tableRoot: Path,
+    private val rootInfo: AMTRootInfo)
   extends AMTCheckpointProviderBase
   with AMTCheckpointProviderImpl
 {
+  /**
+   * The root's `DATA_MANIFEST` pointer entries, one per reachable leaf. Each entry's `location` is
+   * stored table-root-relative; use [[liveLeafManifestAbsolutePaths]] to resolve it against the
+   * table root.
+   */
+  val leaves: Seq[DataManifestEntry] = rootInfo.leaves
+
   override private[delta] def numLeaves: Long =
     checkpointAction.contentRoot.numLeaves.getOrElse(leaves.size.toLong)
+
+  override protected def rootLiveAddSingleActions(
+      spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] =
+    toAddSingleActions(
+      manifestReader.withStatuses(rootEntries(spark, deltaLog), Tracking.Status.liveEntryStatuses),
+      baseRowId = col("tracking.first_row_id"))
+
+  /**
+   * Like `AMTManifestReaderImpl.rootEntries`, but reuses the prefetched root if possible, with
+   * the same columns, so that the rows union with leaf entry rows.
+   */
+  private[amt] def rootEntries(spark: SparkSession, deltaLog: DeltaLog): DataFrame =
+    rootInfo.toDF(spark).map { root =>
+      val persistedSchema =
+        AMTSingleAction.persistedSchema(checkpointAction.metaData, checkpointAction.protocol)
+      val columns = persistedSchema.fieldNames.toIndexedSeq.map(col) :+
+        lit(SparkPath.fromPath(rootFile.getPath).urlEncoded).as("leafPath") :+
+        // The shared back-reference expression requires a non-null pos, unused for root entries.
+        lit(0L).as("pos")
+      manifestReader.withRootEntryContext(manifestReader.dataEntries(root.select(columns: _*)))
+    }.getOrElse(manifestReader.rootEntries(deltaLog, Seq(rootFile)))
+
+  override protected def leafLiveAddSingleActions(
+      spark: SparkSession,
+      deltaLog: DeltaLog): Dataset[SingleAction] =
+    toAddSingleActions(
+      manifestReader.withStatuses(
+        manifestReader.leafEntriesWithRowIdPrefix(spark, deltaLog, liveLeavesWithManifestFilters),
+        Tracking.Status.liveEntryStatuses),
+      baseRowId = manifestReader.inheritedBaseRowId)
+
+  /** Reuses prefetched root for incremental writes as well as snapshot state reconstruction. */
+  override private[amt] def readLiveRootDataEntries(
+      spark: SparkSession, deltaLog: DeltaLog): Seq[AddFile] =
+    rootLiveAddSingleActions(spark, deltaLog).collect().toSeq.map(_.add)
 }
 
 /**
@@ -196,16 +233,13 @@ abstract class LazyCompleteAMTCheckpointProvider(
 trait AMTCheckpointProviderImpl extends CheckpointProvider {
   self: AMTCheckpointProvider =>
 
-  import AMTCheckpointProvider.{AMTDataEntryExtended, DataEntryResolverProvider}
+  import AMTManifestReader.SingleManifest
 
   /** The table version the manifest tree describes. */
   def checkpointVersion: Long = checkpointAction.version
 
   /** Pointer to the root manifest parquet. */
   private def contentRoot: ContentRoot = checkpointAction.contentRoot
-
-  /** Absolute [[Path]] to the root manifest parquet, resolved against the table root. */
-  private val rootManifestAbsolutePath: Path = contentRoot.getAbsolutePath(tableRoot)
 
   /** The live leaf pointers which must have all the live [[DataEntry]]s. */
   protected lazy val liveLeaves: Seq[DataManifestEntry] =
@@ -236,12 +270,17 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
   /**
    * The full action set of this checkpoint as a distributed [[Dataset]] of [[SingleAction]]: the
    * live file `AddFile`s reconstructed from the AMT(root + leaves), unioned with the inline
-   * non-content actions (protocol, metadata, domain metadata, txns) built on the driver.
+   * non-content actions (protocol, metadata, domain metadata, txns) built on the driver, and
+   * the txns and domain metadata carried by the checkpoint's non-content sidecars (read lazily).
    */
   private def allActions(spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
     val nonFileActions = spark.createDataset(nonContentSingleActions)
-    liveAddSingleActions(spark, deltaLog).union(nonFileActions)
+    val allActionsDFExceptNonContentSidecars =
+      liveAddSingleActions(spark, deltaLog).union(nonFileActions)
+    AMTNonContentSidecarReader.loadSidecarActions(spark, deltaLog, checkpointAction)
+      .map(allActionsDFExceptNonContentSidecars.union)
+      .getOrElse(allActionsDFExceptNonContentSidecars)
   }
 
   /** The inline, non-content actions carried directly on the [[Checkpoint]] action. */
@@ -287,65 +326,8 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     }
 
   /**
-   * Reads all live DATA entries of the given leaves, computes their row-ID prefix over each
-   * unfiltered leaf, then applies status filtering and each leaf's row-index filter, if any. A
-   * leaf without a filter is read unfiltered. The returned entries retain the computed prefix.
-   */
-  protected def loadLeafDataEntriesWithRowIdPrefix(
-      spark: SparkSession,
-      deltaLog: DeltaLog,
-      leavesWithRowIndexFilters: Seq[(DataManifestEntry, Option[RowIndexFilterProvider])])
-      : Dataset[AMTDataEntryExtended] = {
-    val index = manifestReader.leafFileIndex(spark, leavesWithRowIndexFilters)
-    val withPrefix = loadEntriesWithExtendedMetadata(
-        deltaLog, index, checkpointAction.metaData, checkpointAction.protocol,
-        includeRowIndexFilterMarker = true)
-      .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
-      .withColumn(
-        AMTManifestReader.PRECEDING_RECORDS_COLUMN,
-        manifestReader.precedingNullRowIdRecords(fieldPrefix = "entry."))
-      .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
-    asExtendedEntries(manifestReader.filterOutRowIndexFilterEntries(withPrefix))
-  }
-
-  /**
-   * Reads visible DATA entries when no row-ID inheritance is needed.
-   */
-  protected def liveDataEntries(
-      deltaLog: DeltaLog, index: DeltaLogFileIndex): Dataset[AMTDataEntryExtended] =
-    asExtendedEntries(
-      loadEntriesWithExtendedMetadata(
-          deltaLog, index, checkpointAction.metaData, checkpointAction.protocol)
-        .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
-        .where(col("entry.tracking.status").isin(Tracking.Status.liveEntryStatuses.toSeq: _*))
-        .withColumn(AMTManifestReader.PRECEDING_RECORDS_COLUMN, lit(0L)))
-
-  /**
-   * Converts manifest entries into the `AddFile` actions of the reconstructed state. Each leaf
-   * entry carries a back reference to its position in its leaf and has its inheritance resolved.
-   *
-   * @param entries The live DATA entries to convert, read from the root or from leaves, each with
-   *                its read location and `first_row_id` prefix sum.
-   * @param resolverProvider The [[DataEntryResolverProvider]] for the leaves `entries` were read
-   *                         from.
-   */
-  protected def toAddSingleActions(
-      entries: Dataset[AMTDataEntryExtended],
-      resolverProvider: DataEntryResolverProvider): Dataset[SingleAction] = {
-    import org.apache.spark.sql.delta.implicits._
-    entries.mapPartitions { iter =>
-      val resolver = resolverProvider.createResolver()
-      iter.map { entryWithLoc =>
-        val (add, leafLocation) = resolver.resolve(entryWithLoc)
-        SingleAction(add = add.copy(
-          backReference = leafLocation.map(BackReference(_, entryWithLoc.pos.toInt))))
-      }
-    }
-  }
-
-  /**
-   * Like the conversion above, but converts live DATA entry rows, with their entry context, as
-   * columns.
+   * Converts live DATA entry rows, with their entry context, into the `AddFile` actions of the
+   * reconstructed state, as columns.
    *
    * @param baseRowId The entry's first row ID; leaf entries may inherit it from their parent.
    */
@@ -355,12 +337,6 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     entriesWithAdd.select(Action.logSchema.fields.toIndexedSeq.map { field =>
       (if (field.name == "add") col("add") else lit(null).cast(field.dataType)).as(field.name)
     }: _*).as[SingleAction]
-  }
-
-  private def asExtendedEntries(df: DataFrame): Dataset[AMTDataEntryExtended] = {
-    implicit val encoder: Encoder[AMTDataEntryExtended] =
-      AMTCheckpointProvider.amtDataEntryExtendedEncoder
-    df.as[AMTDataEntryExtended]
   }
 
   /**
@@ -516,60 +492,6 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       numActionsRegeneratingBackref = actions.count(needsReStamp))
   }
 
-  /**
-   * Like [[AMTCheckpointProvider.loadEntries]], but also captures each row's physical location.
-   * The optional row-index-filter marker is carried through manifest decoding so callers can apply
-   * it after computing any row-ID prefix.
-   */
-  private def loadEntriesWithExtendedMetadata(
-      deltaLog: DeltaLog,
-      index: DeltaLogFileIndex,
-      metadata: Metadata,
-      protocol: Protocol,
-      includeRowIndexFilterMarker: Boolean = false): DataFrame = {
-    import org.apache.spark.sql.delta.implicits._
-    val persistedSchema = AMTSingleAction.persistedSchema(metadata, protocol)
-    val readSchema =
-      if (includeRowIndexFilterMarker) manifestReader.rowIndexFilterReadSchema(persistedSchema)
-      else persistedSchema
-    val markerColumns =
-      if (includeRowIndexFilterMarker) Seq(manifestReader.rowIndexFilterMarkerColumn)
-      else Seq.empty
-    val persisted = deltaLog.loadIndex(index, readSchema)
-      .select(
-        (persistedSchema.fieldNames.toIndexedSeq.map(col) :+
-          col(s"$METADATA_NAME.$FILE_PATH").as("leafPath") :+
-          col(s"$METADATA_NAME.${ParquetFileFormat.ROW_INDEX}").as("pos")) ++ markerColumns: _*)
-    val decodedMarkerColumns =
-      if (includeRowIndexFilterMarker) Seq(col(manifestReader.rowIndexFilterMarkerColumnName))
-      else Seq.empty
-    val withPartition = AMTPartitionValues.forRead(persisted, metadata.partitionSchema)
-    AMTContentStats.forRead(withPartition, metadata, protocol)
-      .select(
-        (Seq(
-          struct(amtSingleActionEncoder.schema.fieldNames.toIndexedSeq.map(col): _*).as("entry"),
-          col("leafPath"),
-          col("pos")) ++ decodedMarkerColumns): _*)
-  }
-
-  /**
-   * Builds the [[DataEntryResolverProvider]] for DATA entries read from the root or from
-   * `parentLeaves`.
-   *
-   * @param parentLeaves The leaf pointers the scanned leaf entries were read from.
-   */
-  protected def dataEntryResolverProvider(
-      parentLeaves: Seq[DataManifestEntry]): DataEntryResolverProvider = {
-    val tableRootString = tableRoot.toString
-    DataEntryResolverProvider(
-      tableRoot = tableRoot,
-      urlEncodedRootManifestPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded,
-      parentTrackingByLeafLocation = parentLeaves.map { leaf =>
-        AMTUtils.relativizeLocation(tableRootString, leaf.getAbsolutePath(tableRoot).toString) ->
-          InheritableTracking(leaf)
-      }.toMap)
-  }
-
   ////////////////////////////////
   // Change file reconstruction //
   ////////////////////////////////
@@ -590,7 +512,11 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       dataChange: Boolean,
       commitTimestamp: Long,
       ordered: Boolean = true): Seq[FileAction] =
-    toChangeActions(reconstructChangeFiles(spark, deltaLog), dataChange, commitTimestamp, ordered)
+    toSingleActions(
+        manifestReader.loadFilteredChangeEntries(spark, deltaLog, changeManifests),
+        dataChange,
+        commitTimestamp,
+        ordered)
       .collect().toSeq
       .map(_.unwrap.asInstanceOf[FileAction])
 
@@ -603,17 +529,21 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
       deltaLog: DeltaLog,
       dataChange: Boolean,
       commitTimestamp: Long): Iterator[FileAction] =
-    toChangeActions(
-        reconstructChangeFiles(spark, deltaLog), dataChange, commitTimestamp, ordered = true)
+    toSingleActions(
+        manifestReader.loadFilteredChangeEntries(spark, deltaLog, changeManifests),
+        dataChange,
+        commitTimestamp,
+        ordered = true)
       .toLocalIterator().asScala
       .map(_.unwrap.asInstanceOf[FileAction])
 
   /**
-   * The changed files of the commit this tree describes.
+   * The manifests that record the changes of the commit this tree describes:
+   *  - the root, whose DATA entries record the changes to root-resident files;
+   *  - the leaves the commit wrote, except those holding only EXISTING entries;
+   *  - the carried leaves the commit deleted or replaced entries of, read only at those positions.
    */
-  private[amt] def reconstructChangeFiles(
-      spark: SparkSession,
-      deltaLog: DeltaLog): DataFrame = {
+  private[amt] def changeManifests: Seq[SingleManifest] = {
     val addedLeaves = leaves.filter { leaf =>
       leaf.tracking.status == Tracking.Status.Added && !holdsOnlyExistingEntries(leaf)
     }
@@ -621,19 +551,29 @@ trait AMTCheckpointProviderImpl extends CheckpointProvider {
     val changedPositionsLeaves = leaves.filter(_.changedPositionsBitmaps.nonEmpty)
     assert(changedPositionsLeaves.forall(_.tracking.status != Tracking.Status.Added))
 
-    manifestReader.loadChangeFiles(spark, deltaLog, rootFile, addedLeaves, changedPositionsLeaves)
+    val rootManifest =
+      SingleManifest(manifestCommitVersion, rootFile, leafOpt = None, changedPositions = false)
+    val addedLeafManifests = addedLeaves.map { leaf =>
+      SingleManifest(
+        manifestCommitVersion, leaf.toFileStatus(tableRoot), Some(leaf), changedPositions = false)
+    }
+    val changedPositionsLeafManifests = changedPositionsLeaves.map { leaf =>
+      SingleManifest(
+        manifestCommitVersion, leaf.toFileStatus(tableRoot), Some(leaf), changedPositions = true)
+    }
+    rootManifest +: (addedLeafManifests ++ changedPositionsLeafManifests)
   }
 
   /**
-   * The AddFile and RemoveFile actions of [[reconstructChangeFiles]], stamped
+   * The AddFile and RemoveFile actions of `changeEntries`, read from [[changeManifests]], stamped
    * with the commit-level `dataChange` and `commitTimestamp`, and optionally ordered.
    */
-  private def toChangeActions(
-      changeFiles: DataFrame,
+  private def toSingleActions(
+      changeEntries: DataFrame,
       dataChange: Boolean,
       commitTimestamp: Long,
       ordered: Boolean): Dataset[SingleAction] =
-    manifestReader.toChangeActions(changeFiles, dataChange, commitTimestamp, ordered)
+    manifestReader.toSingleActions(changeEntries, dataChange, commitTimestamp, ordered)
 
   /**
    * Whether every entry of `leaf` is EXISTING, per its `manifest_info` counts. Such a leaf holds
@@ -686,128 +626,24 @@ object AMTCheckpointProvider extends DeltaLogging {
         isAdd = action.isInstanceOf[AddFile])
   }
 
-  /**
-   * An [[AMTSingleAction]] entry paired with its physical read location in its manifest parquet.
-   *
-   * @param entry    The manifest content entry.
-   * @param leafPath The URL-encoded absolute path of the manifest parquet the entry was read from
-   *                 (Spark's `_metadata.file_path`).
-   * @param pos      The 0-based position of the entry inside the manifest (Spark's
-   *                 `_metadata.row_index`).
-   * @param precedingNullFirstRowIdRecords The entry's `first_row_id` prefix sum.
-   */
-  case class AMTDataEntryExtended(
-      entry: AMTSingleAction,
-      leafPath: String,
-      pos: Long,
-      precedingNullFirstRowIdRecords: Long)
-
-  private[amt] lazy val amtDataEntryExtendedEncoder: Encoder[AMTDataEntryExtended] =
-    new DeltaEncoder[AMTDataEntryExtended].get
-
-  /**
-   * Everything needed to convert [[AMTDataEntryExtended]] DataEntries read from the root or from
-   * leaves into [[AddFile]]s with their tracking resolved.
-   *
-   * @param tableRoot                    The table's data path.
-   * @param urlEncodedRootManifestPath   The URL-encoded absolute path of the root manifest, which
-   *                                     tells root entries apart from leaf entries.
-   * @param parentTrackingByLeafLocation The inheritable tracking of each leaf the entries were read
-   *                                     from, keyed by the leaf's `location` relativized against
-   *                                     `tableRoot`.
-   */
-  private[amt] case class DataEntryResolverProvider(
-      tableRoot: Path,
-      urlEncodedRootManifestPath: String,
-      parentTrackingByLeafLocation: Map[String, InheritableTracking]) {
-
-    /** Creates the [[DataEntryResolver]] for one partition. Call it on the executor. */
-    def createResolver(): DataEntryResolver = new DataEntryResolver(this)
-  }
-
-  /**
-   * Resolves the DataEntries of one partition (see [[DataEntryResolverProvider]]). All entries of
-   * a leaf share its path, so each distinct leaf path is relativized once per partition rather than
-   * once per entry.
-   */
-  private[amt] final class DataEntryResolver(provider: DataEntryResolverProvider) {
-    private val tableRootString = provider.tableRoot.toString
-
-    /** Cache for each URL-encoded leaf path to (its raw relative path, its tracking). */
-    private val leafByUrlEncodedPath = mutable.HashMap.empty[String, (String, InheritableTracking)]
-
-    /** The uncoded relative path and parent tracking of the leaf at `urlEncodedPath`. */
-    private def getOrCacheLeaf(urlEncodedPath: String): (String, InheritableTracking) =
-      leafByUrlEncodedPath.getOrElseUpdate(urlEncodedPath, {
-        val leafUncodedRelPath = AMTUtils.relativizeLocation(
-          tableRootString, SparkPath.fromUrlString(urlEncodedPath).toPath.toString)
-        (leafUncodedRelPath, provider.parentTrackingByLeafLocation(leafUncodedRelPath))
-      })
-
-    /**
-     * Converts `entryWithLoc` into an [[AddFile]] with its tracking resolved. It also returns the
-     * uncoded relative path of the leaf the entry was read from, or None for a root entry.
-     */
-    def resolve(entryWithLoc: AMTDataEntryExtended): (AddFile, Option[String]) =
-      entryWithLoc.entry.unwrap match {
-        case data: DataEntry =>
-          if (entryWithLoc.leafPath == provider.urlEncodedRootManifestPath) {
-            // No inheritence for root entries.
-            (data.toAddFile(provider.tableRoot), None)
-          } else {
-            // Resolve inheritence for leaf entries.
-            val (leafUncodedRelPath, parentTracking) = getOrCacheLeaf(
-              entryWithLoc.leafPath
-            )
-            val resolvedTracking = Tracking.resolve(
-              childTracking = data.tracking,
-              parentTracking = parentTracking,
-              prefixSumRecordCountForNullFirstRowId = entryWithLoc.precedingNullFirstRowIdRecords,
-              childEntryLocationForLogging = data.location)
-            (
-              data.copy(tracking = resolvedTracking).toAddFile(provider.tableRoot),
-              Some(leafUncodedRelPath)
-            )
-          }
-        case other => throw new IllegalStateException(
-          s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
-      }
-  }
-
-  /**
-   * A provider over the given tree: a [[ColumnarAMTCheckpointProvider]] when
-   * [[DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED]] is set in the given session, a
-   * [[PerRowAMTCheckpointProvider]] otherwise.
-   */
+  /** A provider over the given tree, without prefetched root rows. */
   def apply(
-      spark: SparkSession,
       manifestCommitVersion: Long,
       checkpointAction: Checkpoint,
       leaves: Seq[DataManifestEntry],
       tableRoot: Path): AMTCheckpointProvider =
     apply(
-      spark,
       manifestCommitVersion,
       checkpointAction,
       new AMTRootInfo(leaves, cachedRows = None),
       tableRoot)
 
   def apply(
-      spark: SparkSession,
       manifestCommitVersion: Long,
       checkpointAction: Checkpoint,
       rootInfo: AMTRootInfo,
-      tableRoot: Path): AMTCheckpointProvider = {
-    val columnar = spark.sessionState.conf
-      .getConf(DeltaSQLConf.AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED)
-    if (columnar) {
-      new ColumnarAMTCheckpointProvider(
-        manifestCommitVersion, checkpointAction, tableRoot, rootInfo)
-    } else {
-      new PerRowAMTCheckpointProvider(
-        manifestCommitVersion, checkpointAction, rootInfo.leaves, tableRoot)
-    }
-  }
+      tableRoot: Path): AMTCheckpointProvider =
+    new AMTCheckpointProvider(manifestCommitVersion, checkpointAction, tableRoot, rootInfo)
 
   /**
    * Builds a provider from an emitted [[Checkpoint]] action by reading the leaf pointers out of the
@@ -825,7 +661,6 @@ object AMTCheckpointProvider extends DeltaLogging {
       manifestCommitVersion: Long): AMTCheckpointProvider = {
     val rootInfo = loadRootFromCheckpoint(spark, deltaLog, checkpoint, manifestCommitVersion)
     AMTCheckpointProvider(
-      spark = spark,
       manifestCommitVersion = manifestCommitVersion,
       checkpointAction = checkpoint,
       rootInfo = rootInfo,
@@ -840,8 +675,6 @@ object AMTCheckpointProvider extends DeltaLogging {
     val startNanos = System.nanoTime()
     val tableRoot = deltaLog.dataPath
     val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
-    val index =
-      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
     val root = {
       val persistedSchema =
         AMTSingleAction.persistedSchema(checkpoint.metaData, checkpoint.protocol)
@@ -849,12 +682,13 @@ object AMTCheckpointProvider extends DeltaLogging {
       val readSchema = StructType(persistedSchema.map { field =>
         if (field.name == "content_type") field.copy(nullable = true) else field
       })
+      val shouldCacheRoot = checkpoint.contentRoot.numRootEntries.exists { numRootEntries =>
+        AMTUtils.shouldCacheRootRows(spark, numRootEntries)
+      }
+      val index =
+        DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
       val persisted = deltaLog.loadIndex(index, readSchema)
-      // Decide before collecting rows so large roots only return leaf pointers to the driver.
-      val cacheRoot = AMTUtils.shouldCacheRootRows(
-        spark,
-        Snapshot.getParquetFileSchemaAndRowCount(spark, deltaLog, rootFile)._2)
-      val collectedRows = if (cacheRoot) {
+      val collectedRows = if (shouldCacheRoot) {
         Some(persisted.queryExecution.executedPlan.executeCollect().toSeq)
       } else {
         None
@@ -867,7 +701,7 @@ object AMTCheckpointProvider extends DeltaLogging {
         col("content_type").isNull ||
           col("content_type") =!= lit(AMTSingleAction.ContentType.Type.Data))
       val decodedPointers = decodeEntries(pointers, checkpoint.metaData, checkpoint.protocol)
-      val pointersToCollect = if (cacheRoot) {
+      val pointersToCollect = if (shouldCacheRoot) {
         // Evaluate these projections locally even when the general optimizer disables this rule.
         val localPointers =
           AMTUtils.convertToLocalRelationFully(decodedPointers.queryExecution.analyzed)
@@ -877,8 +711,7 @@ object AMTCheckpointProvider extends DeltaLogging {
       }
       val leaves = pointersToCollect
         .collect().toSeq.map(_.unwrap.asInstanceOf[DataManifestEntry])
-      val cachedRows = collectedRows.map(persistedSchema -> _)
-      new AMTRootInfo(leaves, cachedRows)
+      new AMTRootInfo(leaves, collectedRows.map(persistedSchema -> _))
     }
     recordDeltaEvent(
       deltaLog,
@@ -898,46 +731,14 @@ object AMTCheckpointProvider extends DeltaLogging {
    * Builds a provider from an [[AMTWriteResult]] without reading the root manifest from storage.
    */
   def fromWriteResult(
-      spark: SparkSession,
       deltaLog: DeltaLog,
       writeResult: AMTWriteResult,
       manifestCommitVersion: Long): AMTCheckpointProvider = {
     AMTCheckpointProvider(
-      spark = spark,
       manifestCommitVersion = manifestCommitVersion,
       checkpointAction = writeResult.checkpoint,
       rootInfo = writeResult.rootInfo,
       tableRoot = deltaLog.dataPath)
-  }
-
-  /** Reads the AMT root and returns the live [[DataEntry]]s tracked by root. */
-  private[amt] def readLiveRootDataEntries(
-      deltaLog: DeltaLog,
-      checkpoint: Checkpoint): Seq[AddFile] = {
-    val tableRoot = deltaLog.dataPath
-    val rootFile = checkpoint.contentRoot.toFileStatus(tableRoot)
-    val index =
-      DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Array(rootFile))
-    loadEntries(deltaLog, index, checkpoint.metaData, checkpoint.protocol).collect()
-      .toSeq
-      .filter(_.content_type == AMTSingleAction.ContentType.Type.Data)
-      .map(_.unwrap.asInstanceOf[DataEntry])
-      .filter(e => Tracking.Status.liveEntryStatuses.contains(e.tracking.status))
-      .map(_.toAddFile(tableRoot))
-  }
-
-  /**
-   * Reads AMT manifest parquet files (root or leaves) into a [[Dataset]] of
-   * [[AMTSingleAction]].
-   */
-  private def loadEntries(
-      deltaLog: DeltaLog,
-      index: DeltaLogFileIndex,
-      metadata: Metadata,
-      protocol: Protocol): Dataset[AMTSingleAction] = {
-    val persistedSchema =
-      AMTSingleAction.persistedSchema(metadata, protocol)
-    decodeEntries(deltaLog.loadIndex(index, persistedSchema), metadata, protocol)
   }
 
   /** Decodes persisted rows after callers have selected the entries they need. */

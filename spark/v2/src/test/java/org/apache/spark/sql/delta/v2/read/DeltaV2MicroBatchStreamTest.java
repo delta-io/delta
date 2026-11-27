@@ -54,6 +54,7 @@ import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.connector.read.streaming.ReadLimit;
 import org.apache.spark.sql.delta.*;
 import org.apache.spark.sql.delta.actions.Action;
+import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.actions.FileAction;
 import org.apache.spark.sql.delta.actions.Protocol;
 import org.apache.spark.sql.delta.actions.Protocol$;
@@ -103,6 +104,28 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     return createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
   }
 
+  /** A stream on the given table manager, so that a test can spy on its log store. */
+  private DeltaV2MicroBatchStream createTestStream(
+      DeltaV2TableManager tableManager, Snapshot snapshot) {
+    String snapshotPath = snapshot.dataPath().toString();
+    return new DeltaV2MicroBatchStream(
+        tableManager,
+        snapshot,
+        spark.sessionState().newHadoopConf(),
+        spark,
+        emptyDeltaOptions(),
+        snapshotPath,
+        snapshot.schema(),
+        new StructType(),
+        new StructType(),
+        new StructType(),
+        new org.apache.spark.sql.sources.Filter[0],
+        Map$.MODULE$.empty(),
+        Option.empty(),
+        snapshotPath + "/_checkpoint",
+        DeltaV2QueryContext$.MODULE$.empty());
+  }
+
   private DeltaOptions emptyDeltaOptions() {
     return new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
   }
@@ -119,23 +142,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
                 spark, tablePath, Collections.emptyMap(), Option.empty()));
     Snapshot snapshot = tableManager.loadLatestSnapshot(DeltaV2QueryContext$.MODULE$.empty());
     String snapshotPath = snapshot.dataPath().toString();
-    DeltaV2MicroBatchStream stream =
-        new DeltaV2MicroBatchStream(
-            tableManager,
-            snapshot,
-            spark.sessionState().newHadoopConf(),
-            spark,
-            emptyDeltaOptions(),
-            snapshotPath,
-            snapshot.schema(),
-            new StructType(),
-            new StructType(),
-            new StructType(),
-            new org.apache.spark.sql.sources.Filter[0],
-            Map$.MODULE$.empty(),
-            Option.empty(),
-            snapshotPath + "/_checkpoint",
-            DeltaV2QueryContext$.MODULE$.empty());
+    DeltaV2MicroBatchStream stream = createTestStream(tableManager, snapshot);
     Protocol protocol;
     if (scenario.equals("unsupportedVersion")) {
       protocol = Protocol$.MODULE$.apply(99, 7);
@@ -199,6 +206,80 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       for (ClosableIterator<String> reader : readers) {
         verify(reader, atLeastOnce()).close();
       }
+    } finally {
+      stream.stop();
+    }
+  }
+
+  @ParameterizedTest(name = "inMemory={0}, endAtLastCommitStart={1}")
+  @CsvSource({"true, false", "true, true", "false, false", "false, true"})
+  void fileChangesReadEachCommitOnceWhenItFitsInMemory(
+      boolean inMemory, boolean endAtLastCommitStart, @TempDir File tempDir) throws Exception {
+    int readsPerCommit = inMemory ? 1 : 2;
+    // The production default keeps small commits in memory, and 0 streams every commit.
+    withSQLConf(
+        DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD().key(),
+        inMemory ? DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD().defaultValueString() : "0",
+        () -> checkCommitReads(readsPerCommit, endAtLastCommitStart, tempDir));
+  }
+
+  private void checkCommitReads(int readsPerCommit, boolean endAtLastCommitStart, File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    createEmptyTestTable(tablePath, "stream_reads_" + System.nanoTime());
+    DeltaV2TableManager tableManager =
+        spy(
+            DeltaV2TableManagerCache$.MODULE$.forTable(
+                spark, tablePath, Collections.emptyMap(), Option.empty()));
+    Snapshot snapshot = tableManager.loadLatestSnapshot(DeltaV2QueryContext$.MODULE$.empty());
+    DeltaV2MicroBatchStream stream = createTestStream(tableManager, snapshot);
+    long firstVersion = snapshot.version() + 1;
+    long lastVersion = firstVersion + 1;
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (1, 'first')", tablePath));
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (2, 'second')", tablePath));
+    String tableId = DeltaLog.forTable(spark, new Path(tablePath)).tableId();
+    long baseIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaSourceOffset lastCommitStart =
+        new DeltaSourceOffset(tableId, lastVersion, baseIndex, /* isInitialSnapshot= */ false);
+    LogStore logStore = spy(tableManager.logStore());
+    List<String> readFiles = new ArrayList<>();
+    doAnswer(
+            invocation -> {
+              readFiles.add(invocation.<FileStatus>getArgument(0).getPath().getName());
+              return invocation.callRealMethod();
+            })
+        .when(logStore)
+        .readAsIterator(any(FileStatus.class), any(Configuration.class));
+    doReturn(logStore).when(tableManager).logStore();
+
+    try {
+      List<Long> fileVersions = new ArrayList<>();
+      try (ClosableIterator<IndexedFile> changes =
+          stream.getFileChanges(
+              firstVersion,
+              baseIndex,
+              /* isInitialSnapshot= */ false,
+              endAtLastCommitStart ? Optional.of(lastCommitStart) : Optional.empty())) {
+        while (changes.hasNext()) {
+          IndexedFile file = changes.next();
+          if (file.hasFileAction()) {
+            fileVersions.add(file.version());
+          }
+        }
+      }
+      assertEquals(
+          endAtLastCommitStart ? List.of(firstVersion) : List.of(firstVersion, lastVersion),
+          fileVersions.stream().distinct().collect(Collectors.toList()));
+      // As in V1, a commit below the threshold is read once and replayed from memory, and a
+      // larger one is read again. A batch that ends at the start of a commit also reads that
+      // commit, so an error anywhere in it fails the batch.
+      List<String> expected = new ArrayList<>();
+      for (long version = firstVersion; version <= lastVersion; version++) {
+        for (int read = 0; read < readsPerCommit; read++) {
+          expected.add(String.format("%020d.json", version));
+        }
+      }
+      assertEquals(expected, readFiles);
     } finally {
       stream.stop();
     }
@@ -538,7 +619,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       while (kernelChanges.hasNext()) {
         kernelFilesList.add(kernelChanges.next());
       }
-      compareFileChanges(deltaFilesList, kernelFilesList);
+      compareFileChangesAndStats(deltaFilesList, kernelFilesList);
     }
   }
 
@@ -727,7 +808,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       while (kernelChanges.hasNext()) {
         kernelFilesList.add(kernelChanges.next());
       }
-      compareFileChanges(deltaFilesList, kernelFilesList);
+      compareFileChangesAndStats(deltaFilesList, kernelFilesList);
     }
   }
 
@@ -819,6 +900,109 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     }
   }
 
+  /**
+   * Like {@link #compareFileChanges}, and also checks that dsv1 and dsv2 keep the same {@code
+   * AddFile.stats} (both clear them). Not for CDC, where dsv2 keeps the stats.
+   */
+  private static void compareFileChangesAndStats(
+      List<IndexedFile> deltaSourceFiles, List<IndexedFile> kernelFiles) {
+    compareFileChanges(deltaSourceFiles, kernelFiles);
+    for (int i = 0; i < deltaSourceFiles.size(); i++) {
+      AddFile deltaAdd = deltaSourceFiles.get(i).add();
+      AddFile kernelAdd = kernelFiles.get(i).add();
+      assertEquals(
+          deltaAdd != null ? deltaAdd.stats() : null,
+          kernelAdd != null ? kernelAdd.stats() : null,
+          "AddFile stats mismatch at index " + i);
+    }
+  }
+
+  /**
+   * Checks that dsv2 getSnapshotAt returns the same in-commit timestamp as dsv1, and that the
+   * initial-snapshot read of getFileChanges gives the same files. Without a CRC file, the Kernel
+   * must read the in-commit timestamp from the commit file.
+   */
+  @ParameterizedTest(name = "ict={0}, withCrc={1}")
+  @CsvSource({"true, true", "true, false", "false, true"})
+  public void getSnapshotAtReturnsInCommitTimestampLikeDsv1(
+      boolean ictEnabled, boolean withCrc, @TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_snapshot_ict_" + System.nanoTime();
+    sql(
+        "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'"
+            + " TBLPROPERTIES ('delta.enableInCommitTimestamps' = '%s')",
+        testTableName, testTablePath, ictEnabled);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 2,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ false);
+    long version = 2L;
+    java.nio.file.Path crcFile =
+        java.nio.file.Paths.get(testTablePath, "_delta_log", String.format("%020d.crc", version));
+    assertTrue(Files.exists(crcFile), "Expected a CRC file at " + crcFile);
+    if (!withCrc) {
+      Files.delete(crcFile);
+    }
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    Option<Object> expectedTimestamp =
+        ictEnabled
+            ? Option.apply(
+                (Object)
+                    deltaLog
+                        .history()
+                        .getHistory(version, scala.Option.apply(version), scala.Option.empty())
+                        .apply(0)
+                        .timestamp()
+                        .getTime())
+            : Option.empty();
+
+    // dsv1
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    scala.Tuple2<scala.collection.Iterator<IndexedFile>, Option<Object>> dsv1Snapshot =
+        deltaSource.getSnapshotAt(version);
+    assertEquals(expectedTimestamp, dsv1Snapshot._2(), "dsv1 in-commit timestamp");
+    List<IndexedFile> dsv1SnapshotFiles = drain(dsv1Snapshot._1());
+    List<IndexedFile> dsv1Changes;
+    try (ClosableIterator<IndexedFile> changes =
+        deltaSource.getFileChanges(
+            version,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ true,
+            /* endOffset= */ Option.empty(),
+            /* verifyMetadataAction= */ true)) {
+      dsv1Changes = drain(changes);
+    }
+
+    // dsv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    scala.Tuple2<scala.collection.Iterator<IndexedFile>, Option<Object>> dsv2Snapshot =
+        stream.getSnapshotAt(version);
+    assertEquals(expectedTimestamp, dsv2Snapshot._2(), "dsv2 in-commit timestamp");
+    compareFileChanges(dsv1SnapshotFiles, drain(dsv2Snapshot._1()));
+    try (ClosableIterator<IndexedFile> dsv2Changes =
+        stream.getFileChanges(
+            version,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ true,
+            /* endOffset= */ Optional.empty())) {
+      compareFileChanges(dsv1Changes, drain(dsv2Changes));
+    }
+  }
+
+  private static List<IndexedFile> drain(scala.collection.Iterator<IndexedFile> files) {
+    List<IndexedFile> result = new ArrayList<>();
+    while (files.hasNext()) {
+      result.add(files.next());
+    }
+    return result;
+  }
+
   // ================================================================================================
   // Tests for commits with no data file changes
   // ================================================================================================
@@ -877,7 +1061,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       }
 
       // Compare results
-      compareFileChanges(deltaFilesList, kernelFilesList);
+      compareFileChangesAndStats(deltaFilesList, kernelFilesList);
     }
   }
 
@@ -953,6 +1137,77 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       assertEquals("DELETE", extractOperationName(deleteException.getMessage()));
       assertEquals("4", deleteException.getMessageParameters().get("version"));
     }
+  }
+
+  /**
+   * Verifies that DSv1 and DSv2 throw the same ignore-changes error for a commit that adds and
+   * removes data files, also when its commitInfo has no operation name.
+   */
+  @ParameterizedTest
+  @CsvSource({"withOperation", "withoutOperation"})
+  public void testGetFileChanges_changeCommitErrorMatchesDsv1(
+      String scenario, @TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    createEmptyTestTable(testTablePath, "test_change_error_" + System.nanoTime());
+    String commitInfo =
+        scenario.equals("withOperation")
+            ? "{\"commitInfo\":{\"timestamp\":0,\"operation\":\"UPDATE\",\"operationParameters\":"
+                + "{\"predicate\":\"[\\\"(id = 1)\\\"]\",\"mode\":\"Overwrite\"}}}"
+            : "{\"commitInfo\":{\"timestamp\":0}}";
+    Files.writeString(
+        new File(tempDir, "_delta_log/00000000000000000001.json").toPath(),
+        commitInfo
+            + "\n{\"add\":{\"path\":\"new.parquet\",\"partitionValues\":{},\"size\":1,"
+            + "\"modificationTime\":0,\"dataChange\":true}}\n"
+            + "{\"remove\":{\"path\":\"old.parquet\",\"deletionTimestamp\":0,"
+            + "\"dataChange\":true}}\n");
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    DeltaUnsupportedOperationException dsv1Error =
+        assertThrows(
+            DeltaUnsupportedOperationException.class,
+            () -> {
+              ClosableIterator<IndexedFile> changes =
+                  deltaSource.getFileChanges(
+                      1L,
+                      DeltaSourceOffset.BASE_INDEX(),
+                      false,
+                      endOffset,
+                      /* verifyMetadataAction= */ true);
+              try {
+                while (changes.hasNext()) {
+                  changes.next();
+                }
+              } finally {
+                changes.close();
+              }
+            });
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, createKernelContext(hadoopConf));
+    DeltaV2MicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    DeltaUnsupportedOperationException dsv2Error =
+        assertThrows(
+            DeltaUnsupportedOperationException.class,
+            () -> {
+              try (ClosableIterator<IndexedFile> changes =
+                  stream.getFileChanges(
+                      1L, DeltaSourceOffset.BASE_INDEX(), false, Optional.empty())) {
+                while (changes.hasNext()) {
+                  changes.next();
+                }
+              }
+            });
+
+    assertEquals("DELTA_SOURCE_TABLE_IGNORE_CHANGES", dsv2Error.getErrorClass());
+    assertEquals(dsv1Error.getMessage(), dsv2Error.getMessage());
+    String changeInfo = dsv2Error.getMessageParameters().get("changeInfo");
+    String expectedPrefix = scenario.equals("withOperation") ? "UPDATE (Map(" : "null (";
+    assertTrue(changeInfo.startsWith(expectedPrefix), changeInfo);
   }
 
   private void assertSentinel(ClosableIterator<IndexedFile> changes, long version, long index) {
@@ -1065,8 +1320,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             testDescription, dsv1SuccessfulCalls.get(), dsv2SuccessfulCalls.get()));
 
     // Verify both error messages reference the same CommitInfo operation name.
-    // We compare only the operation name (e.g. "MERGE", "DELETE") because the full
-    // operationParameters differ in key ordering and value quoting between V1 and V2.
+    // testGetFileChanges_changeCommitErrorMatchesDsv1 compares the full messages.
     String dsv1Op = extractOperationName(dsv1Exception.getMessage());
     String dsv2Op = extractOperationName(dsv2Exception.getMessage());
     assertEquals(
@@ -3743,7 +3997,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             IllegalArgumentException.class,
             () -> stream.latestOffset(startOffset, ReadLimit.allAvailable()));
     assertTrue(
-        ex.getMessage().contains("schema tracking log cannot tolerate missing commit files"),
+        ex.getMessage().contains("cannot tolerate missing commit files"),
         "Unexpected message: " + ex.getMessage());
   }
 

@@ -695,22 +695,12 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "entriesPerLeaf must be positive.")
       .createWithDefault(50000)
 
-  val AMT_COLUMNAR_STATE_RECONSTRUCTION_ENABLED =
-    buildConf("amt.columnarStateReconstruction.enabled")
-      .internal()
-      .doc("When enabled, AMT state reconstruction builds the AddFiles as column expressions " +
-        "over the persisted manifest rows instead of decoding and converting every manifest " +
-        "entry on the executors. Read when the AMT checkpoint provider is created.")
-      .booleanConf
-      .createWithDefault(false)
-
   val AMT_ROOT_CACHE_MAX_NUM_ENTRIES =
     buildConf("amt.rootCache.maxNumEntries")
       .internal()
-      .doc("Cache persisted AMT root rows only when columnar state reconstruction is enabled " +
-        "and the root has fewer entries than this threshold. Discovery reads the entry count " +
-        "from the Parquet footer. Writers use the number of rows written. Set to 0 to disable " +
-        "root row caching and skip the footer count check.")
+      .doc("Cache persisted AMT root rows when the root has fewer entries than this threshold. " +
+        "Discovery reads the entry count from the Parquet footer. Writers use the number of rows " +
+        "written. Set to 0 to disable root row caching and skip the footer count check.")
       .intConf
       .checkValue(_ >= 0, "amt.rootCache.maxNumEntries must be non-negative.")
       .createWithDefault(50000)
@@ -3534,6 +3524,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         """
           |If enabled, allow the column mapping to be removed from a table.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_FIND_LAST_CHECKPOINT_STOP_AT_NON_DELTA_FILES_ENABLED =
+    buildConf("findLastCompleteCheckpoint.stopAtNonDeltaFiles.enabled")
+      .internal()
+      .doc("If true, each window of the backward checkpoint search also stops its listing at " +
+        "the first .crc or compacted .json file after the window.")
       .booleanConf
       .createWithDefault(true)
 
