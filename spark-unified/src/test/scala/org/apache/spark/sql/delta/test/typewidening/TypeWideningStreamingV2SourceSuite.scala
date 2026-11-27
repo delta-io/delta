@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.typewidening.{
  *
  * The base lists every test from `TypeWideningStreamingSourceTests` as passing: V2 supports
  * type-widening streaming reads. Subclasses move specific tests back to `shouldFailTests` when
- * there is a concrete V2 limitation (e.g., partition-column schema bug, missing event logging).
+ * there is a concrete V2 limitation.
  */
 trait TypeWideningStreamingV2SourceSuiteBase extends V2ForceTest {
   self: TypeWideningStreamingSourceTestMixin =>
@@ -55,13 +55,12 @@ trait TypeWideningStreamingV2SourceSuiteBase extends V2ForceTest {
     "widening type change then restore back",
     "narrowing type changes are not supported",
     "arbitrary type changes are not supported",
-    "type change in delta source writing to a delta sink"
+    "type change in delta source writing to a delta sink",
+    "schema changed event is logged for type widening"
   )
 
   // Failures that affect both the schema-tracking and non-schema-tracking suites.
   override protected def shouldFailTests: Set[String] = Set(
-    // Delta log event is not supported in V2, so event-logging tests are not meaningful.
-    "schema changed event is logged for type widening",
     "schema changed event is not logged when there are no schema changes"
   )
 }

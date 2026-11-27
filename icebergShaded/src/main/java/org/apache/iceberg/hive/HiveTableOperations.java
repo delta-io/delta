@@ -59,7 +59,7 @@ import org.slf4j.LoggerFactory;
 /**
  * TODO we should be able to extract some more commonalities to BaseMetastoreTableOperations to
  * avoid code duplication between this class and Metacat Tables.
- * This class is directly copied from iceberg 1.11.0; The only change made are
+ * This class is directly copied from iceberg 1.12.0; The only change made are
  *  1) accept metadataUpdates in constructor apply those before writing metadata
  *  to support using schema/partitionSpec with field ids assigned by Delta lake;
  *  2) handle NoSuchIcebergTableException in doRefresh to regard a table entry

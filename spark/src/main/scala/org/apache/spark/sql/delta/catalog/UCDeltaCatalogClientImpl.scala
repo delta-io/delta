@@ -47,9 +47,10 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, MaterializedRowCommitVersion, MaterializedRowId, TableFeature}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, MaterializedRowCommitVersion, MaterializedRowId, TableFeature}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata, Protocol, RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
+import org.apache.spark.sql.delta.CatalogManagedTableMaintenanceOperation.ALLOWED_OPERATIONS_PROPERTY
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.IcebergConstants
@@ -435,7 +436,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
   /** Reject `delta.feature.catalogManaged` override to anything other than `supported`. */
   private def rejectCatalogManagedOverride(
       properties: util.Map[String, String], qualifiedName: String): Unit = {
-    val key = TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature)
+    val key = TableFeatureProtocolUtils.propertyKey(CatalogManagedTableFeature)
     val value = properties.get(key)
     if (value != null && value != FEATURE_PROP_SUPPORTED) {
       throw new IllegalArgumentException(
@@ -458,7 +459,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
     if (!provider.contains("delta")) {
       throw DeltaErrors.notADeltaTableException("REPLACE TABLE", qualified)
     }
-    val catalogManagedKey = TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature)
+    val catalogManagedKey = TableFeatureProtocolUtils.propertyKey(CatalogManagedTableFeature)
     val isCatalogManaged = Option(info.getMetadata.getConfiguration)
       .map(_.asScala.toMap)
       .exists(_.get(catalogManagedKey).contains(FEATURE_PROP_SUPPORTED))
@@ -617,12 +618,22 @@ private[catalog] class UCDeltaCatalogClientImpl(
             iceberg.getConvertedDeltaTimestamp
         )
       }.getOrElse(Map.empty[String, String])
+    val clientMaintenanceOperations = info.getClientMaintenanceOperations.asScala
+    val mergedStorageProperties = {
+      val merged = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps
+      // Only the catalog's list grants permission. A user-defined table property must not.
+      if (clientMaintenanceOperations.isEmpty) {
+        merged - ALLOWED_OPERATIONS_PROPERTY
+      } else {
+        merged + (ALLOWED_OPERATIONS_PROPERTY -> clientMaintenanceOperations.mkString(","))
+      }
+    }
     // Match UCSingleCatalog's V1Table shape: pack tableConfig + credentials + UniForm into
     // `storage.properties`, leave `catalogTable.properties` empty. Required for
     // downstream streaming/routing compatibility.
     val storage = CatalogStorageFormat.empty.copy(
       locationUri = Some(new URI(info.getLocation)),
-      properties = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps)
+      properties = mergedStorageProperties)
     val catalogTable = CatalogTable(
       identifier = TableIdentifier(ident.name(), ident.namespace().headOption, Some(catalogName)),
       tableType = fromUcTableType(info.getTableType),

@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -35,31 +35,9 @@ import org.apache.spark.sql.test.SharedSparkSession
 class DeltaLogMinorCompactionSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
+  with DeltaMinorCompactionTestUtils
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite {
-
-  /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
-  private def minorCompactDeltaLog(
-      tablePath: String,
-      startVersion: Long,
-      endVersion: Long): Unit = {
-    val deltaLog = DeltaLog.forTable(spark, tablePath)
-    val logReplay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = None,
-      minSetTransactionRetentionTimestamp = None)
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-
-    (startVersion to endVersion).foreach { versionToRead =>
-      val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
-      val actionsIterator = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
-      logReplay.append(versionToRead, actionsIterator)
-    }
-    deltaLog.store.write(
-      path = FileNames.compactedDeltaFile(deltaLog.logPath, startVersion, endVersion),
-      actions = logReplay.checkpoint.map(_.json).toIterator,
-      overwrite = true,
-      hadoopConf = hadoopConf)
-  }
+  with CatalogManagedTestBaseSuite {
 
   // Helper method to validate a commit.
   protected def validateCommit(
@@ -204,7 +182,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
 
         val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableDir)
         // Ensure all commits are backfilled after data generation.
-        CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
             spark,
             catalogTableOpt = None,
             snapshot = snapshot).foreach { tcc =>

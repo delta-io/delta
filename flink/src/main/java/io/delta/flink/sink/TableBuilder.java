@@ -238,10 +238,18 @@ public class TableBuilder {
   private DeltaCatalog createUnityCatalog() {
     Preconditions.checkArgument(endpoint != null);
     Preconditions.checkArgument(!(token == null && oauthUri == null));
+    boolean credentialVendingEnabled =
+        new TableConf(configurations).shouldFetchCredentialsFromCatalog();
     if (token != null) {
-      return new UnityCatalog(catalogName, endpoint, token);
+      return new UnityCatalog(catalogName, endpoint, token, credentialVendingEnabled);
     } else {
-      return new UnityCatalog(catalogName, endpoint, oauthUri, oauthClientId, oauthClientSecret);
+      return new UnityCatalog(
+          catalogName,
+          endpoint,
+          oauthUri,
+          oauthClientId,
+          oauthClientSecret,
+          credentialVendingEnabled);
     }
   }
 

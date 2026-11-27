@@ -16,7 +16,15 @@
 
 package io.delta.flink.table;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_ID_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_MODE_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY;
+import static io.delta.kernel.unitycatalog.UCCatalogManagedClient.UC_TABLE_ID_KEY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.flink.MockHttp;
@@ -24,9 +32,13 @@ import io.delta.flink.TestHelper;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterable;
 import java.net.URI;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 /** JUnit test suite for CCv2Table. */
@@ -56,21 +68,78 @@ class CatalogManagedTableTest extends TestHelper {
                       AbstractKernelTable.normalize(URI.create(dir.getAbsolutePath())),
                       table.getTablePath());
 
-                  CatalogManagedTable.CATALOG_MANAGED_REQUIRED_FEATURES_CONF.forEach(
-                      (key, value) -> assertEquals(value, table.conf.catalogConf().get(key)));
-                  assertEquals(uuid, table.conf.catalogConf().get("io.unitycatalog.tableId"));
+                  assertEquals(uuid, table.conf.catalogConf().get(UC_TABLE_ID_KEY));
+                  assertEquals("true", table.conf.catalogConf().get("delta.enableDeletionVectors"));
 
                   SnapshotImpl snapshot = (SnapshotImpl) table.snapshot().get();
-                  assertEquals(uuid, snapshot.getTableProperties().get("io.unitycatalog.tableId"));
+                  assertEquals(uuid, snapshot.getTableProperties().get(UC_TABLE_ID_KEY));
+                  assertEquals(
+                      "true", snapshot.getTableProperties().get("delta.enableDeletionVectors"));
 
                   assertTrue(
-                      CatalogManagedTable.CATALOG_MANAGED_REQUIRED_FEATURES_CONF.keySet().stream()
-                          .map(s -> s.replace("delta.feature.", ""))
-                          .allMatch(
-                              s ->
-                                  snapshot
-                                      .getProtocol()
-                                      .supportsFeature(TableFeatures.getTableFeature(s))));
+                      snapshot
+                          .getProtocol()
+                          .supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE));
+                }
+              });
+        });
+  }
+
+  @Test
+  void testCreateCatalogManagedTableWithAmbientCredentials() {
+    withTempDir(
+        dir -> {
+          String uuid = UUID.randomUUID().toString();
+          StructType schema = new StructType().add("id", IntegerType.INTEGER);
+          MockHttp.withMock(
+              MockHttp.forNewUCTable(uuid, dir.getAbsolutePath()),
+              mockHttp -> {
+                try (CatalogManagedTable table =
+                    new CatalogManagedTable(
+                        new UnityCatalog(
+                            "main", mockHttp.uri(), "", /* credentialVendingEnabled = */ false),
+                        "main.abc.def",
+                        Map.of(TableConf.CREDENTIALS_SOURCE.key(), "ambient"),
+                        schema,
+                        List.of(),
+                        mockHttp.uri(),
+                        "")) {
+                  table.open();
+                  mockHttp.verifyStagingCredentialRequests(0);
+                }
+              });
+        });
+  }
+
+  @Test
+  void testCommitCatalogManagedTable() {
+    withTempDir(
+        dir -> {
+          String uuid = UUID.randomUUID().toString();
+          StructType schema = new StructType().add("id", IntegerType.INTEGER);
+          MockHttp.withMock(
+              MockHttp.forNewUCTable(uuid, dir.getAbsolutePath()),
+              mockHttp -> {
+                try (CatalogManagedTable table =
+                    new CatalogManagedTable(
+                        new UnityCatalog("main", mockHttp.uri(), ""),
+                        "main.abc.def",
+                        Collections.emptyMap(),
+                        schema,
+                        List.of(),
+                        mockHttp.uri(),
+                        "")) {
+                  table.open();
+
+                  table.commit(
+                      CloseableIterable.emptyIterable(), "test-app", 1L, Collections.emptyMap());
+
+                  mockHttp.verifyPostRequest(
+                      "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/abc/tables/def");
+
+                  // Let asynchronous post-commit work finish before the mock and temp table close.
+                  table.generalThreadPool.shutdown();
+                  assertTrue(table.generalThreadPool.awaitTermination(10, TimeUnit.SECONDS));
                 }
               });
         });
@@ -91,5 +160,46 @@ class CatalogManagedTableTest extends TestHelper {
             "")) {
       checkSerializability(table);
     }
+  }
+
+  @Test
+  void testUpdateSchemaUsesDeltaTablesSetColumns() {
+    withTempDir(
+        dir -> {
+          String uuid = UUID.randomUUID().toString();
+          StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
+          StructType targetSchema = initialSchema.add("name", StringType.STRING);
+          MockHttp.withMock(
+              MockHttp.forNewUCTable(uuid, dir.getAbsolutePath()),
+              dummyHttp -> {
+                try (CatalogManagedTable table =
+                    new CatalogManagedTable(
+                        new UnityCatalog("main", dummyHttp.uri(), ""),
+                        "main.abc.def",
+                        Map.of(COLUMN_MAPPING_MODE_KEY, "name"),
+                        initialSchema,
+                        List.of(),
+                        dummyHttp.uri(),
+                        "")) {
+                  table.open();
+                  table.updateSchema(targetSchema);
+
+                  assertEquals(List.of("id", "name"), table.getSchema().fieldNames());
+                  StructField addedField = table.getSchema().at(1);
+                  assertNotNull(addedField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
+                  assertNotNull(
+                      addedField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+
+                  dummyHttp.verify(
+                      postRequestedFor(
+                              urlPathMatching(
+                                  "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/abc/tables/def"))
+                          .withRequestBody(
+                              matchingJsonPath("$.updates[?(@.action == 'set-columns')]"))
+                          .withRequestBody(
+                              matchingJsonPath("$.updates[?(@.action == 'add-commit')]")));
+                }
+              });
+        });
   }
 }

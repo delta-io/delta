@@ -35,9 +35,7 @@ import org.apache.spark.sql.types.{IntegerType, LongType, StringType}
  * Classic branches on the V2 enable mode and, under STRICT, on the Spark version:
  *   - AUTO: the V1 file index keeps df1's analysis-time schema but refreshes its data to the latest
  *     version; an incompatible schema change surfaces DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS.
- *   - STRICT 4.0: the V2 connector pins df1 to the snapshot captured when it was built, so the
- *     external change is invisible to df1.
- *   - STRICT 4.1+: [[DeltaV2Table.version]] lets Spark refresh df1 like AUTO; a widened column type
+ *   - STRICT: [[DeltaV2Table.version]] lets Spark refresh df1 like AUTO; a widened column type
  *     surfaces INCOMPATIBLE_TABLE_CHANGE_AFTER_ANALYSIS.
  *     TODO: once [[DeltaV2Table]] implements [[Table.id]] (SPARK-54157), a drop/recreate will also
  *     be detected as a different table.
@@ -54,7 +52,7 @@ trait DeltaJoinRefreshTests
       if (isConnect) {
         sparkVersionBucket match {
           case "4.2+" => checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100), Row(2, 200, 2, 200)))
-          case "4.1" | "4.0" =>
+          case "4.1" =>
             // Connect before 4.2: the self-join is ambiguous, fixed in 4.2.
             checkError(
               exception = intercept[SparkThrowable] { selfJoinDF.collect() },
@@ -62,10 +60,6 @@ trait DeltaJoinRefreshTests
         }
       } else {
         (v2EnableMode, sparkVersionBucket) match {
-          case ("STRICT", "4.0") =>
-            // Today 4.0 STRICT pins df1 to its analysis snapshot, so only the row present on both
-            // sides joins.
-            checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100)))
           case ("STRICT", _) =>
             // In 4.1+ with [[DeltaV2Table.version]] Spark refreshes both scans to the latest
             // version (like AUTO) and both rows join.
@@ -77,9 +71,9 @@ trait DeltaJoinRefreshTests
     }
   }
 
-  // Same-session counterpart of scenario 1. df1 is pinned (STRICT 4.0) or refreshed (STRICT 4.1+
-  // and AUTO) just as for an external write, so the join result matches; routing the write through
-  // the session does not change the refresh story.
+  // Same-session counterpart of scenario 1. df1 is refreshed (STRICT and AUTO) just as for an
+  // external write, so the join result matches; routing the write through the session does not
+  // change the refresh story.
   test("scenario 1 same-session: join after same-session write") {
     withInitialTable() { _ =>
       val df1 = spark.table("t")
@@ -89,7 +83,7 @@ trait DeltaJoinRefreshTests
       if (isConnect) {
         sparkVersionBucket match {
           case "4.2+" => checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100), Row(2, 200, 2, 200)))
-          case "4.1" | "4.0" =>
+          case "4.1" =>
             // Connect before 4.2: the self-join is ambiguous, fixed in 4.2.
             checkError(
               exception = intercept[SparkThrowable] { selfJoinDF.collect() },
@@ -97,10 +91,6 @@ trait DeltaJoinRefreshTests
         }
       } else {
         (v2EnableMode, sparkVersionBucket) match {
-          case ("STRICT", "4.0") =>
-            // 4.0 STRICT pins df1 to its analysis snapshot, so only the row present on both sides
-            // joins, exactly as for an external write.
-            checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100)))
           case ("STRICT", _) =>
             // In 4.1+ with [[DeltaV2Table.version]] Spark refreshes both scans (like AUTO), so both
             // rows join.
@@ -124,7 +114,7 @@ trait DeltaJoinRefreshTests
             // Connect re-resolves df1 with the new 3-column schema on both sides.
             checkAnswer(selfJoinDF,
               Seq(Row(1, 100, null, 1, 100, null), Row(2, 200, -1, 2, 200, -1)))
-          case "4.1" | "4.0" =>
+          case "4.1" =>
             // Connect before 4.2: the self-join is ambiguous, fixed in 4.2.
             checkError(
               exception = intercept[SparkThrowable] { selfJoinDF.collect() },
@@ -132,10 +122,6 @@ trait DeltaJoinRefreshTests
         }
       } else {
         (v2EnableMode, sparkVersionBucket) match {
-          case ("STRICT", "4.0") =>
-            // Today 4.0 STRICT pins df1 to its 2-column analysis snapshot, so only its original row
-            // joins.
-            checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100, null)))
           case ("STRICT", _) =>
             // In 4.1+ with [[DeltaV2Table.version]] Spark refreshes the
             // data but keeps df1's original schema (like AUTO), so both rows join projected to
@@ -163,7 +149,7 @@ trait DeltaJoinRefreshTests
             val rows = selfJoinDF.collect()
             assert(rows.length <= 1,
               s"expected empty or one joined row but got ${rows.mkString("[", ", ", "]")}")
-          case "4.1" | "4.0" =>
+          case "4.1" =>
             // Connect before 4.2: the self-join is ambiguous, fixed in 4.2.
             checkError(
               exception = intercept[SparkThrowable] { selfJoinDF.collect() },
@@ -171,10 +157,6 @@ trait DeltaJoinRefreshTests
         }
       } else {
         (v2EnableMode, sparkVersionBucket) match {
-          case ("STRICT", "4.0") =>
-            // Today 4.0 STRICT pins df1 to its analysis snapshot, so the external column drop is
-            // invisible to df1 and the join executes against the pinned rows.
-            checkAnswer(selfJoinDF, Seq(Row(1, 100, 1)))
           case ("STRICT", _) =>
             // 4.1+ STRICT reads unpartitioned column mapping tables, so df1 refreshes and detects
             // the incompatible column drop, raising an analysis exception.
@@ -205,7 +187,7 @@ trait DeltaJoinRefreshTests
               // new identity, so df1 detects the drop/recreate as a different table and this
               // assertion will fail.
               checkAnswer(selfJoinDF, Seq.empty)
-            case "4.1" | "4.0" =>
+            case "4.1" =>
               // Connect before 4.2: the self-join is ambiguous, fixed in 4.2.
               checkError(
                 exception = intercept[SparkThrowable] { selfJoinDF.collect() },
@@ -243,7 +225,7 @@ trait DeltaJoinRefreshTests
               val rows = selfJoinDF.collect()
               assert(rows.length <= 1,
                 s"expected empty or one joined row but got ${rows.mkString("[", ", ", "]")}")
-            case "4.1" | "4.0" =>
+            case "4.1" =>
               // Connect before 4.2: the self-join is ambiguous, fixed in 4.2.
               checkError(
                 exception = intercept[SparkThrowable] { selfJoinDF.collect() },
@@ -251,10 +233,6 @@ trait DeltaJoinRefreshTests
           }
         } else {
           (v2EnableMode, scenario, sparkVersionBucket) match {
-            case ("STRICT", _, "4.0") =>
-              // Today 4.0 STRICT pins df1 to its analysis snapshot, so the external drop and re-add
-              // is invisible to df1. df2 reads the re-added column and the pinned rows join.
-              checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, null)))
             case ("STRICT", 5, _) =>
               // 4.1+ STRICT refreshes and picks up the new schema for the same-type column re-add.
               checkAnswer(selfJoinDF, Seq(Row(1, null, 1, null)))
@@ -283,7 +261,7 @@ trait DeltaJoinRefreshTests
       if (isConnect) {
         sparkVersionBucket match {
           case "4.2+" => checkAnswer(selfJoinDF, Seq(Row(1, 100L, 1, 100L)))
-          case "4.1" | "4.0" =>
+          case "4.1" =>
             // Connect before 4.2: the self-join is ambiguous, fixed in 4.2.
             checkError(
               exception = intercept[SparkThrowable] { selfJoinDF.collect() },
@@ -291,9 +269,6 @@ trait DeltaJoinRefreshTests
         }
       } else {
         (v2EnableMode, sparkVersionBucket) match {
-          case ("STRICT", "4.0") =>
-            // Today 4.0 STRICT pins df1 to its pre-widening snapshot, so the change is invisible.
-            checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100)))
           case ("STRICT", _) =>
             // In 4.1+ with [[DeltaV2Table.version]] Spark refreshes and detects the widened column
             // type, which is incompatible with df1's analyzed plan; the V2 path raises Spark's

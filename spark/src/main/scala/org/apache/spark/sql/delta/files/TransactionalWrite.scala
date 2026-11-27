@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.stats.{
   StatsCollectionUtils
 }
 import org.apache.spark.sql.delta.util.TableParquetVersionOption
+import org.apache.spark.sql.delta.util.Utils
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
@@ -61,10 +62,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
   protected var hasWritten = false
 
-  private[delta] val deltaDataSubdir =
-    if (spark.sessionState.conf.getConf(DeltaSQLConf.WRITE_DATA_FILES_TO_SUBDIR)) {
-      Some("data")
-    } else None
+  private[delta] val deltaDataSubdir = TransactionalWrite.deltaDataSubdir(spark.sessionState.conf)
 
   // It's okay to make this a lazy val. Once this is read, the metadata will be marked as read
   // and can't be changed again within the transaction, otherwise it will throw an exception.
@@ -75,9 +73,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def getCommitter(outputPath: Path): DelayedCommitProtocol = {
     // We force the use of random prefixes in column mapping modes.
     // Note that here we need to use the txn metadata instead of the snapshot's metadata
-    val prefixLengthOpt = if (randomizeFilePrefixes || metadata.columnMappingMode != NoMapping) {
-      Some(randomPrefixLength)
-    } else None
+    val prefixLengthOpt = Utils.getRandomPrefixLengthOpt(
+      randomizeFilePrefixes, metadata.columnMappingMode, randomPrefixLength)
     new DelayedCommitProtocol("delta", outputPath.toString, prefixLengthOpt, deltaDataSubdir)
   }
 
@@ -85,7 +82,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def makeOutputNullable(output: Seq[Attribute]): Seq[Attribute] = {
     output.map {
       case ref: AttributeReference =>
-        val nullableDataType = SchemaUtils.typeAsNullable(ref.dataType)
+        val nullableDataType = SchemaUtils.typeAsFullyNullable(ref.dataType)
         ref.copy(dataType = nullableDataType, nullable = true)(ref.exprId, ref.qualifier)
       case attr => attr.withNullability(true)
     }
@@ -373,6 +370,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           }
         }
         override def outputAttributeSchema: StructType = outputStatsCollectionSchema.toStructType
+        override def outputUsesPhysicalNames: Boolean = true
         override val spark: SparkSession = data.sparkSession
         override val statsColumnSpec = StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
         override val protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
@@ -586,6 +584,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 }
 
 object TransactionalWrite {
+  private[delta] def deltaDataSubdir(conf: SQLConf): Option[String] =
+    if (conf.getConf(DeltaSQLConf.WRITE_DATA_FILES_TO_SUBDIR)) Some("data") else None
+
   def shouldOptimizeWrite(metadata: Metadata, sessionConf: SQLConf): Boolean = {
     sessionConf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED)
       .orElse(DeltaConfigs.OPTIMIZE_WRITE.fromMetaData(metadata))

@@ -28,16 +28,16 @@ class DeltaV2SourceRowTrackingSuite
 
   override protected def useDsv2: Boolean = true
 
+  override protected def assertNoV1Fallback: Boolean = true
+
   override protected def shouldPassTests: Set[String] = Set(
     "CDC stream on row-tracking table works when _metadata not selected",
     "CDC stream on row-tracking column-mapped table rejects _metadata.row_id"
   )
 
   override protected def shouldFailTests: Set[String] = Set(
-    // TODO: Requires Spark PR apache/spark#56133, which adds pruneColumns() to
-    // MicroBatchExecution for SupportsPushDownRequiredColumns sources. Without it
-    // _metadata is not added to requiredDataSchema, causing AIOOBE at executor
-    // runtime when codegen reads position N from an N-column batch.
+    // This inherited test expects _metadata.row_id to be unavailable, but the V2 connector
+    // exposes row-tracking metadata in streaming. Keep the V1-specific assertion ignored in V2.
     "_metadata.row_id is not available in streaming"
   )
 }

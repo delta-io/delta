@@ -7,6 +7,11 @@ on:
       - '**.txt'
   pull_request:
     branches: [master, branch-*]
+    # The default types plus labeled/unlabeled, so adding or removing the `full-ci` label
+    # re-runs the workflow with the matching matrix (see "PR matrix policy" below).
+    # Other label changes also re-run it. They are not skipped: the concurrency block below
+    # cancels the PR's in-flight run, so a skipped run would drop that run's results.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     paths-ignore:
       - '**.md'
       - '**.txt'
@@ -16,15 +21,55 @@ on:
         description: Optional suffix to force a distinct Spark Maven cache key
         required: false
         type: string
-# Every PR runs:
+
+# Cancel superseded runs on the same PR when new commits are pushed. Non-PR runs (pushes to
+# master / branch-*, manual dispatches) fall back to the unique run_id, so they are never
+# cancelled and every commit to master gets its own full CI result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+# Source-build jobs are commented out while all supported Spark versions use releases.
+# With no snapshot versions, enabled source-build jobs appear as skipped.
+# The merge bot can report these checks as failures and confuse contributors.
+# Uncomment both source-build jobs below when adding the next Spark snapshot, and add
+# source_spark_test to the summary job (see the comments there). Until then the summary
+# fails if a source-build version is configured, so it can't go untested by mistake.
+#
+# PR matrix policy (decided by project/scripts/spark_ci_matrix.py in generate-matrix):
+#   * Source-build Spark versions (e.g. Spark master): sharded tests always, in both modes
+#     below. They track unreleased Spark, so they are the most likely to break.
+#   * Full matrix: sharded tests on every published (non-source-build) Spark version. Used
+#     for pushes to master / branch-*, workflow_dispatch, PRs with the `full-ci` label, PRs
+#     that change build, Spark shim, CI or dependency files (FULL_MATRIX_PATTERNS in the
+#     script: build.sbt, project/**, build/**, **/scala-shims/**, **/java-shims/**, this
+#     workflow, .github/actions/**, run-tests.py, setup.py, lock files, ...), and whenever
+#     the PR's changed files can't be fetched.
+#   * Reduced matrix (all other PRs): sharded tests on the oldest and newest published Spark
+#     versions, plus a main+test compile (no tests) on each published version in between.
+#   Why: in a 30-day analysis of the earlier 4.0-4.3 matrix, real version-specific PR
+#   failures were almost all on the oldest Spark version (then 4.0): compile errors from APIs
+#   missing there, and runtime differences on the older versions (SQL syntax only in 4.2+,
+#   different exception classes). Testing oldest + newest and compiling the rest would have
+#   caught all of them. Most of those breakages were 4.0-only, so they no longer apply.
+#   Because job names depend on the matrix, branch protection should require the stable
+#   "DS: Spark tests summary" job rather than individual shards.
+#
+# Workflow jobs:
 # 1. generate-matrix: split Spark versions (from CrossSparkVersions.scala) into published
-#    vs source-build lists.
+#    vs source-build lists, and pick the PR test / compile versions (policy above).
 # 2. prepare_spark_source_cache: for each source-build Spark version, build Spark once and
-#    save the Maven cache (via the prepare-spark-env action with build-on-miss). This job is
-#    non-blocking; any source Spark build/cache failure is reported through source_spark_test.
-# 3. test: published Spark shards (4.0/4.1) without waiting on step 2.
-# 4. source_spark_test: source-built Spark shards (4.2 today) after step 2. It still runs if
-#    prepare_spark_source_cache fails, so the source-built Spark signal stays non-blocking.
+#    save the Maven cache (via the prepare-spark-env action with build-on-miss). This job
+#    doesn't fail the workflow itself; any source Spark build/cache failure is reported
+#    through source_spark_test.
+# 3. test: published Spark shards without waiting on step 2.
+# 4. source_spark_test: source-built Spark shards after step 2, for every source-build
+#    version in both matrix modes. It still runs if prepare_spark_source_cache fails, and
+#    the summary job makes its result blocking.
+# 5. compile: main+test compile of the Spark test projects (sparkGroup) for the Spark
+#    versions that the reduced PR matrix doesn't test. Skipped when there are none.
+# 6. summary: one stable check that passes only if every test, source-build test and
+#    compile job that should have run succeeded.
 #
 # test and source_spark_test share two composite actions:
 #   - .github/actions/prepare-spark-env: installs the JDK and, for source-build rows,
@@ -39,10 +84,18 @@ jobs:
   generate-matrix:
     name: "Generate Spark Versions Matrix"
     runs-on: ubuntu-24.04
+    # pull-requests: read lets the job list the PR's changed files.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       spark_versions: ${{ steps.generate.outputs.spark_versions }}
       source_build_spark_versions: ${{ steps.generate.outputs.source_build_spark_versions }}
       non_source_build_spark_versions: ${{ steps.generate.outputs.non_source_build_spark_versions }}
+      matrix_mode: ${{ steps.decide.outputs.mode }}
+      test_spark_versions: ${{ steps.decide.outputs.test_spark_versions }}
+      compile_spark_versions: ${{ steps.decide.outputs.compile_spark_versions }}
+      source_test_spark_versions: ${{ steps.decide.outputs.source_test_spark_versions }}
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: install java
@@ -63,42 +116,86 @@ jobs:
           echo "Generated Spark versions: $SPARK_VERSIONS"
           echo "Generated source-build Spark versions: $SOURCE_BUILD_SPARK_VERSIONS"
           echo "Generated non-source-build Spark versions: $NON_SOURCE_BUILD_SPARK_VERSIONS"
+      - name: Test PR matrix decision script
+        run: python3 -m unittest discover -s project/tests -p 'test_spark_ci_matrix.py'
+      - name: Get PR changed files
+        id: changed-files
+        if: github.event_name == 'pull_request'
+        # A failure here must not fail the job: the decision step falls back to the full matrix.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # One line per file: "<filename>" or "<filename>\t<previous_filename>" for renames.
+          gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[] | [.filename, (.previous_filename // empty)] | join("\t")' \
+            > "$RUNNER_TEMP/changed_files.tsv"
+          echo "Fetched $(wc -l < "$RUNNER_TEMP/changed_files.tsv") changed files"
+      - name: Decide PR test and compile Spark versions
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SPARK_VERSIONS: ${{ steps.generate.outputs.non_source_build_spark_versions }}
+          SOURCE_BUILD_SPARK_VERSIONS: ${{ steps.generate.outputs.source_build_spark_versions }}
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          # changed_files in the event payload; the script checks the fetched list is complete.
+          EXPECTED_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+          CHANGED_FILES_ERROR: ${{ github.event_name == 'pull_request' && steps.changed-files.outcome != 'success' && 'fetching PR files failed' || '' }}
+        run: |
+          python3 project/scripts/spark_ci_matrix.py \
+            --event-name "$EVENT_NAME" \
+            --spark-versions "$SPARK_VERSIONS" \
+            --source-build-spark-versions "$SOURCE_BUILD_SPARK_VERSIONS" \
+            --labels "$PR_LABELS" \
+            --changed-files-file "$RUNNER_TEMP/changed_files.tsv" \
+            --expected-changed-files "$EXPECTED_CHANGED_FILES" \
+            --changed-files-error "$CHANGED_FILES_ERROR"
 
   # Builds ~/.m2/repository/org/apache/spark once per source-build Spark version so the
   # sharded source_spark_test jobs all restore the same cache instead of rebuilding 8x.
-  prepare_spark_source_cache:
-    name: "Prepare Spark ${{ matrix.spark_version }} source cache"
-    runs-on: ubuntu-24.04
-    needs: generate-matrix
-    # Source-built Spark tracks unreleased APIs. Keep the producer non-blocking too,
-    # otherwise a checkout/build/cache-save failure blocks the whole workflow before
-    # source_spark_test can surface the same signal.
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        spark_version: ${{ fromJson(needs.generate-matrix.outputs.source_build_spark_versions) }}
-    steps:
-      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
-      - name: Prepare Spark environment (build + cache)
-        uses: ./.github/actions/prepare-spark-env
-        with:
-          spark-version: ${{ matrix.spark_version }}
-          use-spark-source-cache: 'true'
-          build-on-miss: 'true'
-          cache-key-suffix: ${{ github.event.inputs['source-cache-key-suffix'] || '' }}
+  # prepare_spark_source_cache:
+  #   # Static name: this job is skipped when no source-build version is configured, and a
+  #   # skipped job's matrix is never expanded (see the compile job). GitHub appends the
+  #   # matrix values when it runs, e.g. "Prepare Spark source cache (master)".
+  #   name: "Prepare Spark source cache"
+  #   runs-on: ubuntu-24.04
+  #   needs: generate-matrix
+  #   if: ${{ needs.generate-matrix.outputs.source_test_spark_versions != '[]' }}
+  #   # A checkout/build/cache-save failure here must not stop source_spark_test from
+  #   # running: it surfaces the same failure, and the summary job makes that blocking.
+  #   continue-on-error: true
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       spark_version: ${{ fromJson(needs.generate-matrix.outputs.source_test_spark_versions) }}
+  #   steps:
+  #     - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+  #     - name: Prepare Spark environment (build + cache)
+  #       uses: ./.github/actions/prepare-spark-env
+  #       with:
+  #         spark-version: ${{ matrix.spark_version }}
+  #         use-spark-source-cache: 'true'
+  #         build-on-miss: 'true'
+  #         cache-key-suffix: ${{ github.event.inputs['source-cache-key-suffix'] || '' }}
 
   # Published Spark artifacts only. This job does not depend on prepare_spark_source_cache.
+  # Its name keeps the matrix expressions: branch protection requires shard checks by these
+  # names (e.g. "DS: Spark 4.1, Scala 2.13.16, Shard 0"). test_spark_versions is empty, and
+  # the name would show unexpanded, only if no published Spark version is configured.
   test:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
     needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.test_spark_versions != '[]' }}
     strategy:
       fail-fast: false
       matrix:
         # Spark versions are dynamically generated from CrossSparkVersions.scala
-        # DO NOT hardcode versions here - they are automatically loaded from the build configuration
-        spark_version: ${{ fromJson(needs.generate-matrix.outputs.non_source_build_spark_versions) }}
+        # DO NOT hardcode versions here - they are automatically loaded from the build configuration.
+        # All non-source-build versions for the full matrix; oldest + newest on reduced PRs.
+        spark_version: ${{ fromJson(needs.generate-matrix.outputs.test_spark_versions) }}
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
@@ -118,36 +215,137 @@ jobs:
           # Important: This must be the same as the length of shards in matrix
           num-shards: '8'
 
-  # Validates source-built Spark for every PR using the SHA in this branch's metadata.
-  source_spark_test:
-    name: "DS Source Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
+  # Reduced PR matrix only: compile main and test sources of the sparkGroup projects (the
+  # projects the test shards build and test) for the Spark versions that aren't tested.
+  # Catches shim / API compile breaks on those versions without running tests.
+  # The name has no matrix expressions on purpose. The job is skipped whenever the compile
+  # list is empty (every full-matrix run), and GitHub never expands the matrix of a skipped
+  # job, so a templated name would show up raw. With a static name, GitHub appends the
+  # matrix values when it does expand, e.g. "DS: Spark compile-only (4.2, 2.13.16)".
+  compile:
+    name: "DS: Spark compile-only"
     runs-on: ubuntu-24.04
-    needs: [generate-matrix, prepare_spark_source_cache]
-    # Run even if the non-blocking prepare job failed. If no cache was produced, each
-    # shard fails during restore/verification under this already non-blocking job.
-    if: ${{ always() && needs.generate-matrix.result == 'success' }}
-    # Source-built Spark lanes track unreleased Spark APIs and remain non-blocking
-    # while still producing a full pass/fail signal for every PR.
-    continue-on-error: true
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.compile_spark_versions != '[]' }}
     strategy:
       fail-fast: false
       matrix:
-        spark_version: ${{ fromJson(needs.generate-matrix.outputs.source_build_spark_versions) }}
+        spark_version: ${{ fromJson(needs.generate-matrix.outputs.compile_spark_versions) }}
+        # Must match the Scala versions of the test job.
         scala: [2.13.16]
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
-      - name: Prepare Spark environment (restore source cache)
+      - name: Prepare Spark environment
         uses: ./.github/actions/prepare-spark-env
         with:
           spark-version: ${{ matrix.spark_version }}
-          use-spark-source-cache: 'true'
-          build-on-miss: 'false'
-          cache-key-suffix: ${{ github.event.inputs['source-cache-key-suffix'] || '' }}
-      - name: Run Delta Spark tests
-        uses: ./.github/actions/run-delta-spark-tests
+      # Same key and restore-keys as run-delta-spark-tests. Restore only: shard 0 of the
+      # master push run saves the cache for each Spark/Scala pair.
+      - name: Restore SBT cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          spark-version: ${{ matrix.spark_version }}
-          scala: ${{ matrix.scala }}
-          shard: ${{ matrix.shard }}
-          num-shards: '8'
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: delta-sbt-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}-${{ hashFiles('build.sbt', 'version.sbt', 'project/*.scala', 'project/*.sbt', 'project/project/*.sbt', 'project/build.properties', 'project/scripts/setup_unitycatalog_main.sh') }}
+          restore-keys: delta-sbt-v2-${{ runner.os }}-${{ runner.arch }}-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}-
+      # sparkUnityCatalog (in sparkGroup) needs the pinned unreleased UC build to resolve.
+      # SPARK_VERSION picks the UC Spark variant and its cache, as in run-delta-spark-tests.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
+        env:
+          SPARK_VERSION: ${{ matrix.spark_version }}
+      - name: Compile main and test sources
+        env:
+          SPARK_VERSION: ${{ matrix.spark_version }}
+          SCALA_VERSION: ${{ matrix.scala }}
+        run: |
+          # Same sbt flags as run-tests.py, with Test/compile instead of test.
+          build/sbt -DsparkVersion="$SPARK_VERSION" "++ $SCALA_VERSION" sparkGroup/Test/compile \
+            -J-XX:+UseG1GC -J-Xmx6G
+
+  # Single stable check for branch protection: the test/compile job names depend on the
+  # matrix, so require this job instead. It fails if the matrix couldn't be generated or
+  # any test shard, source-build test shard or compile job that should have run didn't
+  # succeed.
+  summary:
+    name: "DS: Spark tests summary"
+    runs-on: ubuntu-24.04
+    # When re-enabling the source-build jobs, use this instead:
+    # needs: [generate-matrix, test, compile, source_spark_test]
+    needs: [generate-matrix, test, compile]
+    if: ${{ always() }}
+    steps:
+      - name: Check Spark test and compile results
+        env:
+          GENERATE_RESULT: ${{ needs.generate-matrix.result }}
+          MATRIX_MODE: ${{ needs.generate-matrix.outputs.matrix_mode }}
+          TEST_VERSIONS: ${{ needs.generate-matrix.outputs.test_spark_versions }}
+          COMPILE_VERSIONS: ${{ needs.generate-matrix.outputs.compile_spark_versions }}
+          SOURCE_TEST_VERSIONS: ${{ needs.generate-matrix.outputs.source_test_spark_versions }}
+          TEST_RESULT: ${{ needs.test.result }}
+          COMPILE_RESULT: ${{ needs.compile.result }}
+          # Uncomment with the source-build jobs. While unset, it counts as 'skipped', which
+          # passes only when no source-build version is configured.
+          # SOURCE_TEST_RESULT: ${{ needs.source_spark_test.result }}
+        run: |
+          SOURCE_TEST_RESULT="${SOURCE_TEST_RESULT:-skipped}"
+          echo "Matrix mode: $MATRIX_MODE; tested: $TEST_VERSIONS; compiled: $COMPILE_VERSIONS; source-build tested: $SOURCE_TEST_VERSIONS"
+          echo "generate-matrix: $GENERATE_RESULT, test: $TEST_RESULT, compile: $COMPILE_RESULT, source_spark_test: $SOURCE_TEST_RESULT"
+          if [[ "$GENERATE_RESULT" != "success" ]]; then
+            echo "::error::generate-matrix did not succeed ($GENERATE_RESULT)"
+            exit 1
+          fi
+          # A job may only be skipped when its version list is empty.
+          check() {
+            local job="$1" result="$2" versions="$3"
+            if [[ "$result" == "success" ]]; then
+              return 0
+            fi
+            if [[ "$result" == "skipped" && "$versions" == "[]" ]]; then
+              return 0
+            fi
+            echo "::error::$job job result is '$result' (versions: $versions)"
+            return 1
+          }
+          status=0
+          check test "$TEST_RESULT" "$TEST_VERSIONS" || status=1
+          check compile "$COMPILE_RESULT" "$COMPILE_VERSIONS" || status=1
+          check source_spark_test "$SOURCE_TEST_RESULT" "$SOURCE_TEST_VERSIONS" || status=1
+          exit "$status"
+
+  # Validates source-built Spark for every PR using the SHA in this branch's metadata. Runs
+  # all shards for every source-build version in both matrix modes (see the policy above);
+  # the summary job makes the result blocking.
+  # source_spark_test:
+  #   # Static name for the same reason as prepare_spark_source_cache; GitHub appends the
+  #   # matrix values when it runs, e.g. "DS: Source Spark tests (master, 2.13.16, 0)".
+  #   name: "DS: Source Spark tests"
+  #   runs-on: ubuntu-24.04
+  #   needs: [generate-matrix, prepare_spark_source_cache]
+  #   # Run even if the prepare job failed. If no cache was produced, each shard fails during
+  #   # restore/verification.
+  #   if: ${{ always() && needs.generate-matrix.result == 'success' && needs.generate-matrix.outputs.source_test_spark_versions != '[]' }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       spark_version: ${{ fromJson(needs.generate-matrix.outputs.source_test_spark_versions) }}
+  #       scala: [2.13.16]
+  #       shard: [0, 1, 2, 3, 4, 5, 6, 7]
+  #   steps:
+  #     - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+  #     - name: Prepare Spark environment (restore source cache)
+  #       uses: ./.github/actions/prepare-spark-env
+  #       with:
+  #         spark-version: ${{ matrix.spark_version }}
+  #         use-spark-source-cache: 'true'
+  #         build-on-miss: 'false'
+  #         cache-key-suffix: ${{ github.event.inputs['source-cache-key-suffix'] || '' }}
+  #     - name: Run Delta Spark tests
+  #       uses: ./.github/actions/run-delta-spark-tests
+  #       with:
+  #         spark-version: ${{ matrix.spark_version }}
+  #         scala: ${{ matrix.scala }}
+  #         shard: ${{ matrix.shard }}
+  #         num-shards: '8'

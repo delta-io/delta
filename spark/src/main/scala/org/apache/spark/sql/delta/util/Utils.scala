@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.util
 
 import scala.util.Random
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaColumnMappingMode, DeltaConfigs, DeltaLog, NoMapping}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.hadoop.fs.Path
 
@@ -46,6 +46,37 @@ object Utils {
       DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(metadata)
     } else {
       0
+    }
+  }
+
+  /**
+   * Returns the length of the random prefix directory under which new data files of a Delta
+   * table are written, or None to write them without one. Callers use it to decide the
+   * directory prefix of the new data files they write.
+   *
+   * Unlike [[getRandomPrefixLength]], which only honors `delta.randomizeFilePrefixes`, this
+   * method also forces a random prefix when column mapping is enabled.
+   */
+  private[delta] def getRandomPrefixLengthOpt(metadata: Metadata): Option[Int] = {
+    getRandomPrefixLengthOpt(
+      randomizeFilePrefixes = DeltaConfigs.RANDOMIZE_FILE_PREFIXES.fromMetaData(metadata),
+      columnMappingMode = metadata.columnMappingMode,
+      randomPrefixLength = DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(metadata))
+  }
+
+  /**
+   * Same as `getRandomPrefixLengthOpt(metadata)`, for callers that have already read the table
+   * properties. `columnMappingMode` is evaluated only when `randomizeFilePrefixes` is false, and
+   * `randomPrefixLength` only when a random prefix is used.
+   */
+  private[delta] def getRandomPrefixLengthOpt(
+      randomizeFilePrefixes: Boolean,
+      columnMappingMode: => DeltaColumnMappingMode,
+      randomPrefixLength: => Int): Option[Int] = {
+    if (randomizeFilePrefixes || columnMappingMode != NoMapping) {
+      Some(randomPrefixLength)
+    } else {
+      None
     }
   }
 

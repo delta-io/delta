@@ -201,6 +201,20 @@ public class Metadata implements Serializable {
         VectorUtils.stringStringMapValue(newConfiguration));
   }
 
+  /** Returns a new Metadata object with the given description. */
+  public Metadata withDescription(String description) {
+    return new Metadata(
+        this.id,
+        this.name,
+        Optional.of(description),
+        this.format,
+        this.schemaString,
+        this.schema, // pass Lazy directly to avoid forcing evaluation
+        this.partitionColumns,
+        this.createdTime,
+        this.configurationMapValue);
+  }
+
   public Metadata withNewSchema(StructType schema) {
     return new Metadata(
         this.id,

@@ -18,18 +18,23 @@ package io.delta.storage.commit.uccommitcoordinator
 
 import java.net.{InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.util.{Collections, Optional, Set => JSet, UUID}
+import java.util.concurrent.atomic.AtomicInteger
 
 import scala.jdk.CollectionConverters._
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
-import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
-import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
+import io.delta.storage.LocalLogStore
+import io.delta.storage.commit.{Commit, CommitFailedException, TableDescriptor, TableIdentifier, UpdatedActions}
+import io.delta.storage.commit.actions.{AbstractCommitInfo, AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, FileUtil, Path}
 import org.apache.http.HttpStatus
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.scalatest.funsuite.AnyFunSuite
@@ -227,7 +232,72 @@ class UCDeltaTokenBasedRestClientSuite
       assert(parsed.get("fields").size() === 2)
       assert(parsed.get("fields").get(0).get("name").asText() === "date")
       assert(parsed.get("fields").get(1).get("type").asText() === "integer")
+      assert(info.getClientMaintenanceOperations.isEmpty)
+      assert(!info.getStorageProperties.containsKey("delta.clientMaintenanceOperations"))
     }
+  }
+
+  test("loadTable returns recognized client maintenance operations") {
+    val response = objectMapper.readTree(loadTableJson()).asInstanceOf[ObjectNode]
+    response.putArray("allowed-maintenance-operations")
+      .add("DATA_REORGANIZATION")
+      .add("DATA_CLEANUP")
+      .add("METADATA_CLEANUP")
+    deltaHandler = (exchange, _) => sendJson(
+      exchange,
+      HttpStatus.SC_OK,
+      objectMapper.writeValueAsString(response))
+
+    withClient { c =>
+      val info = c.loadTable(testIdentifier)
+      assert(info.getClientMaintenanceOperations.asScala.toSeq === Seq(
+        "DATA_REORGANIZATION", "DATA_CLEANUP", "METADATA_CLEANUP"))
+      assert(!info.getStorageProperties.containsKey("delta.clientMaintenanceOperations"))
+    }
+  }
+
+  test("credentialVending.enabled controls table and staging credential requests") {
+    val credentialRequests = new AtomicInteger()
+    deltaHandler = (exchange, _) => {
+      val path = exchange.getRequestURI.getPath
+      if (path.endsWith("/credentials")) {
+        credentialRequests.incrementAndGet()
+        val prefix =
+          if (path.contains("/staging-tables/")) "s3://bucket/staging"
+          else "s3://bucket/table"
+        sendJson(
+          exchange,
+          HttpStatus.SC_OK,
+          s"""{"storage-credentials":[{"prefix":"$prefix","operation":"READ_WRITE",""" +
+            """"expiration-time-ms":4102444800000,"config":{"s3.access-key-id":"ak",""" +
+            """"s3.secret-access-key":"sk","s3.session-token":"st"}}]}""")
+      } else if (path.endsWith("/staging-tables")) {
+        sendJson(
+          exchange,
+          HttpStatus.SC_OK,
+          s"""{"table-id":"$testTableId","table-type":"MANAGED",""" +
+            """"location":"s3://bucket/staging"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+
+    val config = clientConfig
+    config.put("credentialVending.enabled", "false")
+    val client = new UCDeltaTokenBasedRestClient(config, null)
+    try {
+      assert(client.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(client.createStagingTable(testIdentifier).getStorageProperties.isEmpty)
+    } finally {
+      client.close()
+    }
+    assert(credentialRequests.get() === 0)
+
+    withClient { c =>
+      assert(!c.loadTable(testIdentifier).getStorageProperties.isEmpty)
+      assert(!c.createStagingTable(testIdentifier).getStorageProperties.isEmpty)
+    }
+    assert(credentialRequests.get() === 2)
   }
 
   test("loadTable schema emits Delta camelCase wire format for array and map") {
@@ -577,6 +647,80 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
+  test("commit throws non-retryable CommitFailedException on 401 and 403") {
+    val ucError = """{"error":{"message":"Permission denied on table cat.sch.tbl"}}"""
+    Seq(HttpStatus.SC_UNAUTHORIZED, HttpStatus.SC_FORBIDDEN).foreach { status =>
+      deltaHandler = (exchange, _) => {
+        if (exchange.getRequestMethod == "POST") {
+          sendJson(exchange, status, ucError)
+        } else {
+          sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+        }
+      }
+      withClient { c =>
+        val e = intercept[CommitFailedException] {
+          c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+            Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+            Optional.empty(), Optional.empty(), Optional.empty(),
+            Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
+        }
+        assert(!e.getRetryable && !e.getConflict)
+        assert(e.getMessage.contains(s"HTTP $status"))
+        assert(e.getMessage.contains("Permission denied on table cat.sch.tbl"))
+      }
+    }
+  }
+
+  test("UCCommitCoordinatorClient sends the commit to UC once on 403") {
+    val posts = new AtomicInteger(0)
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST") {
+        // A second POST means the coordinator retried. Answer it with a 400 so the retry loop
+        // ends at once instead of sleeping through its backoff.
+        val status =
+          if (posts.incrementAndGet() == 1) HttpStatus.SC_FORBIDDEN else HttpStatus.SC_BAD_REQUEST
+        sendJson(exchange, status, """{"error":"Permission denied"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+    val tableDir = Files.createTempDirectory("uc-commit-403").toFile
+    try {
+      val hadoopConf = new Configuration()
+      val logStore = new LocalLogStore(hadoopConf)
+      val logPath = new Path(tableDir.getAbsolutePath, "_delta_log")
+      Files.createDirectories(tableDir.toPath.resolve("_delta_log/_staged_commits"))
+      logStore.write(
+        new Path(logPath, "00000000000000000000.json"),
+        Seq("{}").iterator.asJava,
+        false,
+        hadoopConf)
+      val tableDesc = new TableDescriptor(
+        logPath,
+        Optional.of(testIdentifier),
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> testTableId.toString).asJava)
+      val commitInfo = new AbstractCommitInfo {
+        override def getCommitTimestamp: Long = 5000L
+      }
+      val md = metadata()
+      val proto = protocol(1, 2)
+      val updatedActions = new UpdatedActions(commitInfo, md, proto, md, proto)
+
+      withClient { c =>
+        val coordinator = new UCCommitCoordinatorClient(Collections.emptyMap(), c)
+        val e = intercept[CommitFailedException] {
+          coordinator.commit(
+            logStore, hadoopConf, tableDesc, 1L, Seq("{}").iterator.asJava, updatedActions)
+        }
+        assert(!e.getRetryable && !e.getConflict)
+        assert(e.getMessage.contains("HTTP 403"))
+        assert(posts.get() === 1)
+      }
+    } finally {
+      FileUtil.fullyDelete(tableDir)
+    }
+  }
+
   test("commit throws InvalidTargetTableException on 404") {
     deltaHandler = (exchange, _) => {
       if (exchange.getRequestMethod == "POST") {
@@ -784,6 +928,48 @@ class UCDeltaTokenBasedRestClientSuite
       assert(commit.getFileStatus.getModificationTime === 2001L)
       assert(commit.getFileStatus.getPath.toString ===
         "s3://b/t/_delta_log/_staged_commits/00000000000000000002.uuid.json")
+    }
+  }
+
+  test("getCommits resolves published and staged commit file names to their directories") {
+    val commitsJson = Seq(
+      deltaCommitJson(1L, "00000000000000000001.json", 100L, 1000L, 1001L),
+      deltaCommitJson(2L, "00000000000000000002.uuid.json", 200L, 2000L, 2001L)
+    ).mkString("[", ",", "]")
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK,
+        loadTableJson(commitsJson = commitsJson, latestTableVersion = 2L))
+
+    withClient { c =>
+      val response = c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.empty(), Optional.empty())
+
+      assert(response.getCommits.asScala.map(_.getFileStatus.getPath.toString).toSeq === Seq(
+        "s3://b/t/_delta_log/00000000000000000001.json",
+        "s3://b/t/_delta_log/_staged_commits/00000000000000000002.uuid.json"))
+    }
+  }
+
+  test("getCommits rejects a commit whose file name does not match its version") {
+    val commitsJson = Seq(
+      deltaCommitJson(1L, "00000000000000000001.json", 100L, 1000L, 1001L),
+      deltaCommitJson(2L, "00000000000000000003.uuid.json", 200L, 2000L, 2001L)
+    ).mkString("[", ",", "]")
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK,
+        loadTableJson(commitsJson = commitsJson, latestTableVersion = 2L))
+
+    withClient { c =>
+      intercept[IllegalArgumentException] {
+        c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+
+      // Commits outside the requested range are filtered out before their paths are resolved.
+      val response = c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(java.lang.Long.valueOf(1L)), Optional.of(java.lang.Long.valueOf(1L)))
+      assert(response.getCommits.asScala.map(_.getFileStatus.getPath.toString).toSeq ===
+        Seq("s3://b/t/_delta_log/00000000000000000001.json"))
     }
   }
 

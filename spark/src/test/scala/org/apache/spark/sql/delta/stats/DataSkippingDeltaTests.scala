@@ -20,7 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.metering.ScanReport
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -48,13 +48,13 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     with DataSkippingDeltaTestsUtils
     with GivenWhenThen
     with ScanReportHelper
-    with CatalogOwnedTestBaseSuite
+    with CatalogManagedTestBaseSuite
     with DeltaSQLTestUtils {
 
   val defaultNumIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
     DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def checkpointAndCreateNewLogIfNecessary(log: DeltaLog): DeltaLog = log
 
@@ -242,6 +242,11 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       }
     }
   }
+}
+
+trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
+{
+  import deltaImplicits._
 
   testSkipping(
     "top level, single 1",
@@ -1055,7 +1060,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   }
 
   test("data skipping stats before and after optimize") {
-      assume(!catalogOwnedDefaultCreationEnabledInTests,
+      assume(!catalogManagedDefaultCreationEnabledInTests,
         "OPTIMIZE is blocked on catalog-managed tables")
       val t = "ds_stats_before_after_optimize"
       withTable(t) {
@@ -2367,12 +2372,11 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
 }
 
-trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 /** Tests code paths within DataSkippingReader.scala */
 trait DataSkippingDeltaV1Tests
   extends DataSkippingDeltaTests
 {
-  import testImplicits._
+  import deltaImplicits._
 
   test("data skipping flags") {
     val t = "ds_flags"

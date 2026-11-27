@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -30,7 +30,7 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   /**
    * Test whether `withNewTransaction` captures all delta read made within it and correctly
@@ -58,7 +58,7 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
     val tableName = "NewTransactionTest"
     require(currentThreadCommitOperation != null)
 
-    import testImplicits._
+    import deltaImplicits._
 
     test(s"withNewTransaction - $name") {
       withSQLConf(confs.toSeq: _*) { withTable(tableName) {
@@ -330,7 +330,7 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
     def nonTxnTable: DataFrame = spark.read.format("delta").load(nonTxnTablePath)
 
     def writeToNonTxnTable(ds: Dataset[java.lang.Long]): Unit = {
-      import testImplicits._
+      import deltaImplicits._
       ds.toDF("key").select('key, 'key as "value")
         .write.format("delta").mode("append").partitionBy("key").save(nonTxnTablePath)
       DeltaLog.forTable(spark, nonTxnTablePath).update(stalenessAcceptable = false)

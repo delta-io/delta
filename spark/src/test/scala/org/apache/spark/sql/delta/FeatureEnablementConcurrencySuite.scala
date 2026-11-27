@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.concurrent.atomic.AtomicLong
+
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{AddFile, Format, Metadata, Protocol}
 import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLockingTransactionExecutionObserver => TransactionObserver}
@@ -40,7 +42,8 @@ class FeatureEnablementConcurrencySuite
     with DeltaSQLCommandTest
     with ConflictResolutionTestUtils {
 
-  val testTableName = "test_feature_enablement_table"
+  private val nextTestTableId = new AtomicLong()
+  private var testTableName = ""
 
   /** Represents a transaction that alters a table property. */
   case class AlterTableProperty(
@@ -65,7 +68,11 @@ class FeatureEnablementConcurrencySuite
   private def createTestTable(
       properties: Seq[String] = Seq.empty,
       numPartitions: Int = 2): (DeltaLog, CatalogTable) = {
-    sql(s"DROP TABLE IF EXISTS $testTableName")
+    if (testTableName.nonEmpty) {
+      sql(s"DROP TABLE IF EXISTS $testTableName")
+    }
+    // Delta log cleanup can outlive a test, so each setup needs a distinct managed-table path.
+    testTableName = s"test_feature_enablement_table_${nextTestTableId.getAndIncrement()}"
     val propertiesString = if (properties.nonEmpty) properties.mkString(",") + "," else ""
     sql(
       s"""CREATE TABLE $testTableName (idCol bigint)
@@ -360,8 +367,8 @@ class FeatureEnablementConcurrencySuite
 
     // Tests 14-16: UC_TABLE_ID_KEY per-key validator. Mirroring the rebase path,
     // currentTransactionInfo.protocol reflects the winning commit's enabled
-    // CatalogOwnedTableFeature, so we construct a conflict checker with CO in protocol.
-    val coProtocol = Protocol.forTableFeature(CatalogOwnedTableFeature)
+    // CatalogManagedTableFeature, so we construct a conflict checker with CO in protocol.
+    val coProtocol = Protocol.forTableFeature(CatalogManagedTableFeature)
     val conflictCheckerWithCO = new ConflictChecker(
       spark,
       initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = coProtocol),
@@ -396,8 +403,8 @@ class FeatureEnablementConcurrencySuite
     assert(!result16.areValid)
   }
 
-  test("CatalogOwned and VacuumProtocolCheck features allow concurrent txns at upgrade") {
-    assert(!CatalogOwnedTableFeature.failConcurrentTransactionsAtUpgrade)
+  test("CatalogManaged and VacuumProtocolCheck features allow concurrent txns at upgrade") {
+    assert(!CatalogManagedTableFeature.failConcurrentTransactionsAtUpgrade)
     assert(!VacuumProtocolCheckTableFeature.failConcurrentTransactionsAtUpgrade)
   }
 

@@ -48,6 +48,7 @@ import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.DeltaCreateTableRequest;
 import io.unitycatalog.client.delta.model.DeltaDomainMetadataUpdates;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.model.DeltaMaintenanceOperation;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.DeltaRemoveDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.DeltaRemovePropertiesUpdate;
@@ -88,6 +89,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -105,6 +107,8 @@ import org.apache.hadoop.fs.Path;
 public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
   private static final int HTTP_BAD_REQUEST = 400;
+  private static final int HTTP_UNAUTHORIZED = 401;
+  private static final int HTTP_FORBIDDEN = 403;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
 
@@ -114,6 +118,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private final String baseUri;
   private final TokenProvider tokenProvider;
   private final Map<String, String> appVersions;
+  private final boolean credentialVendingEnabled;
   private final boolean credentialRenewalEnabled;
   private final boolean credentialScopedFsEnabled;
   private final Supplier<Configuration> hadoopConfSupplier;
@@ -125,6 +130,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
    *   <li>{@code uri} (required) -- the UC server endpoint.</li>
    *   <li>{@code auth.*} / {@code token} (legacy) -- authentication parameters.</li>
    *   <li>{@code appVersions.*} -- caller-supplied version entries.</li>
+   *   <li>{@code credentialVending.enabled} -- request temporary storage credentials while loading
+   *       or creating tables (default true).</li>
    *   <li>{@code renewCredential.enabled} -- enable credential renewal (default true).</li>
    *   <li>{@code credScopedFs.enabled} -- enable credential-scoped FS (default true).</li>
    * </ul>
@@ -159,6 +166,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     this.baseUri = baseUri;
     this.tokenProvider = tokenProvider;
     this.appVersions = appVersions;
+    this.credentialVendingEnabled = UCConfigUtils.isCredentialVendingEnabled(ucConfig);
     this.credentialRenewalEnabled = UCConfigUtils.isCredentialRenewalEnabled(ucConfig);
     this.credentialScopedFsEnabled = UCConfigUtils.isCredentialScopedFsEnabled(ucConfig);
     this.hadoopConfSupplier = hadoopConfSupplier != null ? hadoopConfSupplier : Configuration::new;
@@ -336,8 +344,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
               actualTableId));
     }
 
-    Path basePath = CoordinatedCommitsUtils.commitDirPath(
-        CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
+    Path logPath = CoordinatedCommitsUtils.logDirPath(new Path(tableUri));
     List<Commit> commits = new ArrayList<>();
     if (response.getCommits() != null) {
       for (DeltaCommit deltaCommit : response.getCommits()) {
@@ -348,7 +355,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         if (endVersion.isPresent() && version > endVersion.get()) {
           continue;
         }
-        commits.add(fromDeltaCommit(deltaCommit, basePath));
+        commits.add(fromDeltaCommit(deltaCommit, logPath));
       }
     }
 
@@ -358,15 +365,19 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return new UCDeltaGetCommitsResponse(commits, latestTableVersion, storageUniform);
   }
 
-  /** Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. */
-  private Commit fromDeltaCommit(DeltaCommit deltaCommit, Path basePath) {
+  /**
+   * Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. The commit may be staged or
+   * already published.
+   */
+  private Commit fromDeltaCommit(DeltaCommit deltaCommit, Path logPath) {
     FileStatus fileStatus = new FileStatus(
         deltaCommit.getFileSize(),
         false /* isdir */,
         0 /* block_replication */,
         0 /* blocksize */,
         deltaCommit.getFileModificationTimestamp(),
-        new Path(basePath, deltaCommit.getFileName()));
+        CoordinatedCommitsUtils.catalogCommitPath(
+            logPath, deltaCommit.getVersion(), deltaCommit.getFileName()));
     return new Commit(deltaCommit.getVersion(), fileStatus, deltaCommit.getTimestamp());
   }
 
@@ -613,6 +624,24 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
+    List<DeltaMaintenanceOperation> responseMaintenanceOperations =
+        response.getAllowedMaintenanceOperations();
+    List<String> clientMaintenanceOperations =
+        responseMaintenanceOperations == null
+            ? Collections.emptyList()
+            : responseMaintenanceOperations.stream()
+                .map(DeltaMaintenanceOperation::getValue)
+                .collect(Collectors.toList());
+    if (!credentialVendingEnabled) {
+      return new TableInfo(
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
+    }
     Map<String, String> storageProps;
     try {
       storageProps = fetchTableCredentials(catalog, schema, name, location);
@@ -621,13 +650,26 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)
       // so the caller can still build a CatalogTable.
       TableInfo withoutCreds = new TableInfo(
-          ucTableId, tableType, location, adapted, Collections.emptyMap(), uniformMetadata);
+          ucTableId,
+          tableType,
+          location,
+          adapted,
+          Collections.emptyMap(),
+          clientMaintenanceOperations,
+          uniformMetadata);
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
           e, withoutCreds);
     }
-    return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
+    return new TableInfo(
+        ucTableId,
+        tableType,
+        location,
+        adapted,
+        storageProps,
+        clientMaintenanceOperations,
+        uniformMetadata);
   }
 
   private static Optional<UniformMetadata> toStorageUniformMetadata(
@@ -673,7 +715,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String location = r.getLocation();
     UCDeltaModels.TableType tableType =
         UCDeltaModels.TableType.valueOf(r.getTableType().getValue());
-    Map<String, String> storageProps = fetchStagingCredentials(location, tableId.toString());
+    Map<String, String> storageProps = credentialVendingEnabled
+        ? fetchStagingCredentials(location, tableId.toString())
+        : Collections.emptyMap();
     return new UCDeltaModels.StagingTableInfo(
         tableId,
         tableType,
@@ -960,6 +1004,15 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
             false /* conflict */,
             String.format("Invalid updateTable request for %s.%s.%s: %s",
                 catalog, schema, table, responseBody),
+            e);
+      case HTTP_UNAUTHORIZED:
+      case HTTP_FORBIDDEN:
+        // Only a new token or a grant fixes these, so a retry cannot succeed.
+        throw new CommitFailedException(
+            false /* retryable */,
+            false /* conflict */,
+            String.format("Not authorized to update %s.%s.%s (HTTP %s): %s",
+                catalog, schema, table, statusCode, responseBody),
             e);
       case HTTP_CONFLICT:
         throw new CommitFailedException(

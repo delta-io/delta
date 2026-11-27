@@ -331,6 +331,7 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
     new StatisticsCollection {
       override val tableSchema: StructType = metadata.schema
       override val outputAttributeSchema: StructType = tableSchema
+      override val outputUsesPhysicalNames: Boolean = false
       // [[outputTableStatsSchema]] is the candidate schema to find statistics columns.
       override val outputTableStatsSchema: StructType = tableSchema
       override val statsColumnSpec = StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)

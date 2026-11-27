@@ -32,7 +32,7 @@ trait DeleteSQLMixin extends DeleteBaseMixin
 }
 
 trait DeleteSQLTests extends DeleteSQLMixin {
-  import testImplicits._
+  import deltaImplicits._
 
   // For EXPLAIN, which is not supported in OSS
   test("explain", ChecksPhysicalDeltaPlan()) {
@@ -107,7 +107,7 @@ trait DeleteSQLWithDeletionVectorsMixin extends DeleteSQLMixin
   with DeltaExcludedTestMixin
   with DeletionVectorsTestUtils
   with DeltaDMLTestUtilsPathBased {
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, delete = true)
   }

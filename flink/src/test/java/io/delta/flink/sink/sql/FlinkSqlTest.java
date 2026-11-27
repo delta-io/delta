@@ -34,6 +34,52 @@ import org.junit.jupiter.api.Test;
 class FlinkSqlTest extends TestHelper {
 
   @Test
+  void testGroupedAggregationPreservesEachRow() {
+    withTempDir(
+        dir -> {
+          TableEnvironment tEnv =
+              TableEnvironment.create(EnvironmentSettings.newInstance().inBatchMode().build());
+          tEnv.executeSql(
+              "CREATE TEMPORARY TABLE sink (\n"
+                  + "  group_id INT,\n"
+                  + "  item_count BIGINT\n"
+                  + ") WITH (\n"
+                  + "  'connector' = 'delta',\n"
+                  + "  'table_path' = '"
+                  + dir.getPath()
+                  + "'\n"
+                  + ")");
+
+          tEnv.executeSql(
+                  "INSERT INTO sink "
+                      + "SELECT group_id, COUNT(*) "
+                      + "FROM (VALUES (1), (2)) AS source(group_id) "
+                      + "GROUP BY group_id")
+              .await();
+
+          StructType schema =
+              new StructType()
+                  .add("group_id", IntegerType.INTEGER)
+                  .add("item_count", LongType.LONG);
+          verifyTableContent(
+              dir.getPath(),
+              (version, addfiles, properties) -> {
+                List<AddFile> actionList = new ArrayList<>();
+                addfiles.iterator().forEachRemaining(actionList::add);
+                Set<String> records =
+                    actionList.stream()
+                        .flatMap(
+                            addFile ->
+                                readParquet(dir.toPath().resolve(addFile.getPath()), schema)
+                                    .stream())
+                        .map(row -> row.getInt(0) + ":" + row.getLong(1))
+                        .collect(Collectors.toSet());
+                assertEquals(Set.of("1:1", "2:1"), records);
+              });
+        });
+  }
+
+  @Test
   void testLoadIntoHadoopTable() {
     withTempDir(
         dir -> {

@@ -104,7 +104,7 @@ class DeltaColumnMappingSuite extends QueryTest
   with GivenWhenThen
   with DeltaColumnMappingSuiteUtils {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected def withId(id: Long): Metadata =
     new MetadataBuilder()
@@ -778,28 +778,34 @@ class DeltaColumnMappingSuite extends QueryTest
   }
 
   testColumnMapping("update column mapped table invalid max id property is blocked") { mode =>
-    withTable("t1") {
-      createTableWithSQLAPI(
-        "t1",
-        Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
-        withColumnIds = true
-      )
+    withSQLConf(DeltaSQLConf.DELTA_COLUMN_MAPPING_CHECK_MAX_COLUMN_ID.key -> "true") {
+      withTable("t1") {
+        createTableWithSQLAPI(
+          "t1",
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode),
+          withColumnIds = true
+        )
 
-      val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-      // Get rid of max column id prop
-      assert {
-        intercept[DeltaAnalysisException] {
+        val log = DeltaLog.forTable(spark, TableIdentifier("t1"))
+        val originalMetadata = log.update().metadata
+        // Get rid of max column id prop
+        val missingMaxId = intercept[DeltaAnalysisException] {
           log.withNewTransaction { txn =>
             val existingMetadata = log.update().metadata
             txn.commit(existingMetadata.copy(configuration =
               existingMetadata.configuration - DeltaConfigs.COLUMN_MAPPING_MAX_ID.key) :: Nil,
               DeltaOperations.ManualUpdate)
           }
-        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET"
-      }
-      // Use an invalid max column id prop
-      assert {
-        intercept[DeltaAnalysisException] {
+        }
+        checkError(
+          exception = missingMaxId,
+          condition = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET",
+          sqlState = "42703",
+          parameters = Map("prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
+        assert(log.update().metadata === originalMetadata)
+
+        // Use an invalid max column id prop
+        val tooSmallMaxId = intercept[DeltaAnalysisException] {
           log.withNewTransaction { txn =>
             val existingMetadata = log.update().metadata
             txn.commit(existingMetadata.copy(configuration =
@@ -809,7 +815,16 @@ class DeltaColumnMappingSuite extends QueryTest
               )) :: Nil,
               DeltaOperations.ManualUpdate)
           }
-        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY"
+        }
+        checkError(
+          exception = tooSmallMaxId,
+          condition = "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY",
+          sqlState = "42703",
+          parameters = Map(
+            "prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key,
+            "tableMax" -> "1",
+            "fieldMax" -> "2"))
+        assert(log.update().metadata === originalMetadata)
       }
     }
   }
@@ -1100,7 +1115,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
   testColumnMapping(s"try modifying restricted max id property should fail") { mode =>
     withTable("t1") {
-      val e = intercept[UnsupportedOperationException] {
+      val e = intercept[DeltaUnsupportedOperationException] {
         createTableWithSQLAPI(
           "t1",
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode,
@@ -1108,8 +1123,11 @@ class DeltaColumnMappingSuite extends QueryTest
           withColumnIds = true,
           nested = true)
       }
-      assert(e.getMessage.contains(s"The Delta table configuration " +
-        s"${DeltaConfigs.COLUMN_MAPPING_MAX_ID.key} cannot be specified by the user"))
+      checkError(
+        exception = e,
+        condition = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        sqlState = "42939",
+        parameters = Map("prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
     }
 
     withTable("t1") {
@@ -1119,16 +1137,19 @@ class DeltaColumnMappingSuite extends QueryTest
           withColumnIds = true,
           nested = true)
 
-      val e2 = intercept[UnsupportedOperationException] {
+      val e2 = intercept[DeltaUnsupportedOperationException] {
         alterTableWithProps("t1", Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> "100"))
       }
 
-      assert(e2.getMessage.contains(s"The Delta table configuration " +
-        s"${DeltaConfigs.COLUMN_MAPPING_MAX_ID.key} cannot be specified by the user"))
+      checkError(
+        exception = e2,
+        condition = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        sqlState = "42939",
+        parameters = Map("prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
     }
 
     withTable("t1") {
-      val e = intercept[UnsupportedOperationException] {
+      val e = intercept[DeltaUnsupportedOperationException] {
         createTableWithDataFrameAPI(
           "t1",
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode,
@@ -1136,8 +1157,11 @@ class DeltaColumnMappingSuite extends QueryTest
           withColumnIds = true,
           nested = true)
       }
-      assert(e.getMessage.contains(s"The Delta table configuration " +
-        s"${DeltaConfigs.COLUMN_MAPPING_MAX_ID.key} cannot be specified by the user"))
+      checkError(
+        exception = e,
+        condition = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        sqlState = "42939",
+        parameters = Map("prop" -> DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
     }
   }
 
@@ -2276,9 +2300,38 @@ class DeltaColumnMappingSuite extends QueryTest
           option("delta.columnMapping.mode", null).save(tempPath.toString)
       }
       val supportedModes = DeltaColumnMapping.supportedModes.map(_.name).toSeq.mkString(", ")
-      assert(ex.getErrorClass === "DELTA_MODE_NOT_SUPPORTED")
-      assert(ex.getMessage.contains("Specified mode 'null' is not supported. " +
-        s"Supported modes are: $supportedModes"))
+      checkError(
+        exception = ex,
+        condition = "DELTA_MODE_NOT_SUPPORTED",
+        sqlState = "0AKDC",
+        parameters = Map("mode" -> null, "supportedModes" -> supportedModes))
+    }
+  }
+
+  test("column-mapping removal is blocked for a catalog-managed table") {
+    withSQLConf(DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL.key -> "true") {
+      withCatalogManagedTable() { tableName =>
+        spark.sql(
+          s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+            s"('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name')")
+        spark.sql(s"INSERT INTO $tableName VALUES (1)")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val snapshotBefore = deltaLog.update()
+
+        checkError(
+          intercept[DeltaUnsupportedOperationException] {
+            spark.sql(
+              s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+                s"('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'none')")
+          },
+          "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+          parameters = Map("operation" -> "DATA_REORGANIZATION"))
+
+        val snapshotAfter = deltaLog.update()
+        assert(snapshotAfter.version === snapshotBefore.version)
+        assert(snapshotAfter.metadata === snapshotBefore.metadata)
+        assert(snapshotAfter.allFiles.collect().toSet === snapshotBefore.allFiles.collect().toSet)
+      }
     }
   }
 

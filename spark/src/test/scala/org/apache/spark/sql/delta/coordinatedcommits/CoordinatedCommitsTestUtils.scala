@@ -22,7 +22,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable
 import scala.util.control.NonFatal
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.DeltaOperations._
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -34,6 +34,8 @@ import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.scalactic.source.Position
+import org.scalatest.Tag
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
@@ -41,7 +43,10 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
-// This trait is built to serve as a base trait for tests built for both CatalogOwned
+case object CatalogManagedMaintenanceIncompatible
+  extends Tag("CatalogManagedMaintenanceIncompatible")
+
+// This trait is built to serve as a base trait for tests built for both CatalogManaged
 // and commit-coordinators table feature.
 trait CommitCoordinatorUtilBase {
   /**
@@ -51,13 +56,13 @@ trait CommitCoordinatorUtilBase {
 
   /**
    * Runs the function `f` with commit coordinator table feature unset.
-   * Any table created in function `f` have CatalogOwned/CoordinatedCommits disabled by default.
+   * Any table created in function `f` have CatalogManaged/CoordinatedCommits disabled by default.
    */
   def withoutDefaultCCTableFeature(f: => Unit): Unit
 
   /**
    * Runs the function `f` with commit coordinator table feature set.
-   * Any table created in function `f` have CatalogOwned/CoordinatedCommits enabled by default.`
+   * Any table created in function `f` have CatalogManaged/CoordinatedCommits enabled by default.`
    */
   def withDefaultCCTableFeature(f: => Unit): Unit
 
@@ -74,29 +79,43 @@ trait CommitCoordinatorUtilBase {
   def propertiesString: String
 
   /**
-   * Returns true if this test is about CatalogOwned table feature.
+   * Returns true if this test is about CatalogManaged table feature.
    * Returns false if this test is about CoordinatedCommits tabel feature.
    */
-  def isCatalogOwnedTest: Boolean
+  def isCatalogManagedTest: Boolean
+
+  /** Old name of [[isCatalogManagedTest]], for code that still reads it. */
+  final def isCatalogOwnedTest: Boolean = isCatalogManagedTest
 
   /** Keeps track of the number of table names pointing to the location. */
   protected val locRefCount: mutable.Map[String, Int] = mutable.Map.empty
 }
 
-trait CatalogOwnedTestBaseSuite
+trait CatalogManagedTestBaseSuite
   extends SparkFunSuite
   with DeltaTestUtilsBase
   with CommitCoordinatorUtilBase
   with SharedSparkSession {
 
-  val defaultCatalogOwnedFeatureEnabledKey: String =
-    TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
+  val defaultCatalogManagedFeatureEnabledKey: String =
+    TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature)
 
-  // If this config is not overridden, newly created table is not CatalogOwned by default.
+  // If this config is not overridden, newly created table is not CatalogManaged by default.
+  // It returns the old name below. Override the old name until every reader reads this one.
+  def catalogManagedCoordinatorBackfillBatchSize: Option[Int] =
+    catalogOwnedCoordinatorBackfillBatchSize
+
+  /**
+   * Old name of [[catalogManagedCoordinatorBackfillBatchSize]], for suites that still override it.
+   */
   def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = None
 
-  def catalogOwnedDefaultCreationEnabledInTests: Boolean =
-    catalogOwnedCoordinatorBackfillBatchSize.nonEmpty
+  def catalogManagedDefaultCreationEnabledInTests: Boolean =
+    catalogManagedCoordinatorBackfillBatchSize.nonEmpty
+
+  /** Old name of [[catalogManagedDefaultCreationEnabledInTests]], for code that still reads it. */
+  final def catalogOwnedDefaultCreationEnabledInTests: Boolean =
+    catalogManagedDefaultCreationEnabledInTests
 
   /**
    * Returns the commit coordinator client for the specified catalog.
@@ -104,35 +123,35 @@ trait CatalogOwnedTestBaseSuite
    * @param catalogName The name of the catalog to get the commit coordinator client for.
    * @return The commit coordinator client for the specified catalog.
    */
-  protected def getCatalogOwnedCommitCoordinatorClient(
+  protected def getCatalogManagedCommitCoordinatorClient(
       catalogName: String): CommitCoordinatorClient = {
-    CatalogOwnedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
+    CatalogManagedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
       throw new IllegalStateException(
         s"Commit coordinator builder is not available for the specified catalog: $catalogName")
     }.buildForCatalog(spark, catalogName)
   }
 
   override protected def sparkConf: SparkConf = {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    if (catalogManagedDefaultCreationEnabledInTests) {
+      super.sparkConf.set(defaultCatalogManagedFeatureEnabledKey, "supported")
     } else {
       super.sparkConf
     }
   }
 
   override def clearBuilders(): Unit = {
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
   }
 
   override def propertiesString: String =
-    s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')"
+    s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')"
 
   override protected def beforeEach(): Unit = {
     super.beforeEach()
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-    catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
-      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+    CatalogManagedCommitCoordinatorProvider.clearBuilders()
+    catalogManagedCoordinatorBackfillBatchSize.foreach { batchSize =>
+      CatalogManagedCommitCoordinatorProvider.registerBuilder(
+        catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize)
       )
     }
@@ -148,34 +167,62 @@ trait CatalogOwnedTestBaseSuite
   }
 
   override def withDefaultCCTableFeature(f: => Unit): Unit = {
-    val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
-    spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    val oldConfig = spark.conf.getOption(defaultCatalogManagedFeatureEnabledKey)
+    spark.conf.set(defaultCatalogManagedFeatureEnabledKey, "supported")
     try { f } finally {
       if (oldConfig.isDefined) {
-        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
+        spark.conf.set(defaultCatalogManagedFeatureEnabledKey, oldConfig.get)
       } else {
-        spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
+        spark.conf.unset(defaultCatalogManagedFeatureEnabledKey)
       }
     }
   }
 
   override def withoutDefaultCCTableFeature(f: => Unit): Unit = {
-    val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
-    spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
+    val oldConfig = spark.conf.getOption(defaultCatalogManagedFeatureEnabledKey)
+    spark.conf.unset(defaultCatalogManagedFeatureEnabledKey)
     try { f } finally {
       if (oldConfig.isDefined) {
-        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
+        spark.conf.set(defaultCatalogManagedFeatureEnabledKey, oldConfig.get)
       }
+    }
+  }
+
+  override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(
+      implicit pos: Position): Unit = {
+    super.test(testName, testTags: _*) {
+      if (catalogManagedDefaultCreationEnabledInTests &&
+          testTags.contains(CatalogManagedMaintenanceIncompatible)) {
+        cancel("Maintenance operation is not supported for catalog-managed tables")
+      }
+      testFun
     }
   }
 
   override def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
     Seq(1, 2, 10).foreach { backfillBatchSize =>
       test(s"$testName [Backfill batch size: $backfillBatchSize]") {
-        CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-        CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+        CatalogManagedCommitCoordinatorProvider.clearBuilders()
+        CatalogManagedCommitCoordinatorProvider.registerBuilder(
           "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
         f(backfillBatchSize)
+      }
+    }
+  }
+
+  /** Run the test with:
+   * 1. Without catalog-managed commits
+   * 2. With catalog-managed commits at backfill batch sizes 1, 2, and 10
+   */
+  def testWithDifferentBackfillIntervalOptional(testName: String)(f: Option[Int] => Unit): Unit = {
+    test(s"$testName [Backfill batch size: None]") {
+      withoutDefaultCCTableFeature {
+        f(None)
+      }
+    }
+    testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
+      withDefaultCCTableFeature {
+        f(Some(backfillBatchSize))
       }
     }
   }
@@ -184,11 +231,11 @@ trait CatalogOwnedTestBaseSuite
    * Run the test against a [[TrackingCommitCoordinatorClient]] with backfill batch size =
    * `batchBackfillSize`
    */
-  def testWithCatalogOwned(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
+  def testWithCatalogManaged(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
     test(s"$testName [Backfill batch size: $backfillBatchSize]") {
-      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-        CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      CatalogManagedCommitCoordinatorProvider.clearBuilders()
+      CatalogManagedCommitCoordinatorProvider.registerBuilder(
+        CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
       withDefaultCCTableFeature {
         f
@@ -197,15 +244,15 @@ trait CatalogOwnedTestBaseSuite
   }
 
   override def registerBuilder(builder: CommitCoordinatorBuilder): Unit = {
-    assert(builder.isInstanceOf[CatalogOwnedCommitCoordinatorBuilder],
-      s"builder $builder(${builder.getName}) must be CatalogOwnedCommitCoordinatorBuilder")
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      "spark_catalog", builder.asInstanceOf[CatalogOwnedCommitCoordinatorBuilder])
+    assert(builder.isInstanceOf[CatalogManagedCommitCoordinatorBuilder],
+      s"builder $builder(${builder.getName}) must be CatalogManagedCommitCoordinatorBuilder")
+    CatalogManagedCommitCoordinatorProvider.registerBuilder(
+      "spark_catalog", builder.asInstanceOf[CatalogManagedCommitCoordinatorBuilder])
   }
 
-  override def isCatalogOwnedTest: Boolean = true
+  override def isCatalogManagedTest: Boolean = true
 
-  def deleteCatalogOwnedTableFromCommitCoordinator(tableName: String): Unit = {
+  def deleteCatalogManagedTableFromCommitCoordinator(tableName: String): Unit = {
     val location = try {
       spark.sql(s"describe detail $tableName")
         .select("location")
@@ -216,14 +263,14 @@ trait CatalogOwnedTestBaseSuite
         // Ignore if the table does not exist/broken.
         return
     }
-    deleteCatalogOwnedTableFromCommitCoordinator(path = new Path(location))
+    deleteCatalogManagedTableFromCommitCoordinator(path = new Path(location))
   }
 
-  def deleteCatalogOwnedTableFromCommitCoordinator(path: Path): Unit = {
+  def deleteCatalogManagedTableFromCommitCoordinator(path: Path): Unit = {
     val catalogName = "spark_catalog"
-    val cc = CatalogOwnedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
+    val cc = CatalogManagedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
       throw new IllegalStateException(
-        s"Unable to get CatalogOwnedCommitCoordinatorBuilder for table at path: ${path.toString}")
+        s"Unable to get CatalogManagedCommitCoordinatorBuilder for table at path: ${path.toString}")
     }.buildForCatalog(spark, catalogName)
 
     assert(
@@ -248,17 +295,23 @@ trait CatalogOwnedTestBaseSuite
   }
 
   /**
-   * Constructs the specific table properties for Catalog Owned tables.
+   * Old name of [[deleteCatalogManagedTableFromCommitCoordinator]], for suites that still call it.
+   */
+  final def deleteCatalogOwnedTableFromCommitCoordinator(tableName: String): Unit =
+    deleteCatalogManagedTableFromCommitCoordinator(tableName)
+
+  /**
+   * Constructs the specific table properties for Catalog Managed tables.
    *
    * @param spark The Spark session.
    * @param metadata The metadata of the CC table.
    * @return A map of CC specific table properties.
    */
-  def constructCatalogOwnedSpecificTableProperties(
+  def constructCatalogManagedSpecificTableProperties(
       spark: SparkSession,
       metadata: Metadata): Map[String, String] = {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      val qolConfs = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+    if (catalogManagedDefaultCreationEnabledInTests) {
+      val qolConfs = CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
         .collect {
           case (feature, config, value)
           => config.key -> value
@@ -285,13 +338,13 @@ trait CatalogOwnedTestBaseSuite
 
   /**
    * Returns the properties that are expected to show up in the table properties of a Delta table
-   * when catalog owned is enabled in tests.
+   * when catalog managed is enabled in tests.
    */
-  def extractCatalogOwnedSpecificPropertiesIfEnabled(
+  def extractCatalogManagedSpecificPropertiesIfEnabled(
       metadata: Metadata): Iterable[(String, String)] = {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      val CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS =
-        CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+    if (catalogManagedDefaultCreationEnabledInTests) {
+      val CATALOG_MANAGED_TABLE_QOL_PROPERTY_KEYS =
+        CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
           .map { case (_, config, _) => config.key }
           .filterNot(Set(
             DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key
@@ -300,7 +353,7 @@ trait CatalogOwnedTestBaseSuite
             MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
             MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP
           )
-      CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS.map { key =>
+      CATALOG_MANAGED_TABLE_QOL_PROPERTY_KEYS.map { key =>
         key -> metadata.configuration.getOrElse(key,
           fail( s"Expected $key to be defined in the table properties"))
       } ++
@@ -310,8 +363,8 @@ trait CatalogOwnedTestBaseSuite
     }
   }
 
-  protected def withClassicCheckpointPolicyForCatalogOwned(f: => Unit): Unit = {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+  protected def withClassicCheckpointPolicyForCatalogManaged(f: => Unit): Unit = {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       withSQLConf(
         DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.Classic.name) {
         f
@@ -326,8 +379,8 @@ trait CatalogOwnedTestBaseSuite
     DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
   }
 
-  protected def isICTEnabledForNewTablesCatalogOwned: Boolean = {
-    catalogOwnedCoordinatorBackfillBatchSize.nonEmpty ||
+  protected def isICTEnabledForNewTablesCatalogManaged: Boolean = {
+    catalogManagedCoordinatorBackfillBatchSize.nonEmpty ||
       spark.conf.getOption(
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")
   }
@@ -358,7 +411,7 @@ trait CatalogOwnedTestBaseSuite
   protected def validateOnlySpecifiedQoLTableFeaturesAndMetadataPresent(
       tableName: String,
       supportedTableFeatures: Set[TableFeature]): Unit = {
-    CatalogOwnedTableUtils.qolTableFeatureAndProperties.foreach {
+    CatalogManagedTableUtils.qolTableFeatureAndProperties.foreach {
       case (t, config, value) =>
         val isSpecifiedTableFeature = supportedTableFeatures.contains(t)
         validateTableFeatureAndMetadata(
@@ -394,7 +447,7 @@ trait CatalogOwnedTestBaseSuite
   }
 
   protected def validateQoLFeaturesEnablement(tableName: String, expected: Boolean): Unit = {
-    CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.foreach { case (t, config, value) =>
+    CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.foreach { case (t, config, value) =>
       validateTableFeatureAndMetadata(
         tableName,
         tableFeature = t,
@@ -438,6 +491,9 @@ trait CatalogOwnedTestBaseSuite
     tableIdToUse
   }
 }
+
+/** Old name of [[CatalogManagedTestBaseSuite]], for suites that still extend it. */
+trait CatalogOwnedTestBaseSuite extends CatalogManagedTestBaseSuite
 
 trait CoordinatedCommitsTestUtils
   extends DeltaTestUtilsBase
@@ -517,27 +573,7 @@ trait CoordinatedCommitsTestUtils
       s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '$coordinatedCommitsConfJson')"
   }
 
-  override def isCatalogOwnedTest: Boolean = false
-
-  /** Run the test with:
-   * 1. Without coordinated-commits
-   * 2. With coordinated-commits with different backfill batch sizes
-   */
-  def testWithDifferentBackfillIntervalOptional(testName: String)(f: Option[Int] => Unit): Unit = {
-    test(s"$testName [Backfill batch size: None]") {
-      f(None)
-    }
-    testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
-      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
-      withSQLConf(
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-            defaultCommitsCoordinatorName,
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
-            coordinatedCommitsCoordinatorJson) {
-        f(Some(backfillBatchSize))
-      }
-    }
-  }
+  override def isCatalogManagedTest: Boolean = false
 
   def getUpdatedActionsForZerothCommit(
       commitInfo: CommitInfo,
@@ -566,7 +602,7 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
     batchSize: Long,
     defaultCommitCoordinatorClientOpt: Option[CommitCoordinatorClient] = None,
     defaultCommitCoordinatorName: String = "tracking-in-memory")
-  extends CatalogOwnedCommitCoordinatorBuilder {
+  extends CatalogManagedCommitCoordinatorBuilder {
   lazy val trackingInMemoryCommitCoordinatorClient =
     defaultCommitCoordinatorClientOpt.getOrElse {
       new TrackingCommitCoordinatorClient(
@@ -780,14 +816,14 @@ trait CoordinatedCommitsBaseSuite
   }
 }
 
-trait WithCatalogOwnedBatch1 { self: CatalogOwnedTestBaseSuite =>
+trait WithCatalogOwnedBatch1 { self: CatalogManagedTestBaseSuite =>
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-trait WithCatalogOwnedBatch2 { self: CatalogOwnedTestBaseSuite =>
+trait WithCatalogOwnedBatch2 { self: CatalogManagedTestBaseSuite =>
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-trait WithCatalogOwnedBatch100 { self: CatalogOwnedTestBaseSuite =>
+trait WithCatalogOwnedBatch100 { self: CatalogManagedTestBaseSuite =>
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

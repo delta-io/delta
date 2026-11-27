@@ -470,6 +470,19 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           newProtocol
         );
         break;
+      } catch (CommitCompletionUnknownException ccue) {
+        if (hasSameContent(
+            logStore,
+            hadoopConf,
+            logPath,
+            CoordinatedCommitsUtils.getBackfilledDeltaFilePath(logPath, commitVersion),
+            commitFile.getPath())) {
+          eventData.put("alreadyBackfilledCommitCausedConflict", true);
+          break;
+        } else {
+          recordUsageLog.accept(Optional.of(ccue), UCCoordinatedCommitsUsageLogs.UC_COMMIT_STATS);
+          throw ccue;
+        }
       } catch (CommitFailedException cfe) {
         if (transientErrorRetryCount > 0 && cfe.getConflict() && cfe.getRetryable() &&
           hasSameContent(

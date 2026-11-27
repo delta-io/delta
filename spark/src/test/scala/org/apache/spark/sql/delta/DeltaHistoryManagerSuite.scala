@@ -30,7 +30,7 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, modifyCommitTimestamp}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -54,7 +54,7 @@ trait DeltaTimeTravelTestHelpers extends QueryTest
     with GivenWhenThen
     with DeltaSQLCommandTest
     with StatsUtils
-    with CatalogOwnedTestBaseSuite {
+    with CatalogManagedTestBaseSuite {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -168,7 +168,7 @@ trait DeltaTimeTravelTestHelpers extends QueryTest
 /** Delta time travel tests, built on the shared [[DeltaTimeTravelTestHelpers]]. */
 trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("time travel with partition changes and data skipping - should instantiate old schema") {
     withTempDir { dir =>
@@ -357,7 +357,7 @@ trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        if (catalogOwnedCoordinatorBackfillBatchSize.exists(_ > 2)) {
+        if (catalogManagedCoordinatorBackfillBatchSize.exists(_ > 2)) {
           assert(e2.getMessage.contains("No commits found at"))
         } else {
           assert(e2.getMessage.contains("No recreatable commits found at"))
@@ -419,7 +419,7 @@ trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTablesCatalogOwned) {
+    if (isICTEnabledForNewTablesCatalogManaged) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
@@ -581,7 +581,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
   }
 
   test("vacuumed version") {
-    assume(!catalogOwnedDefaultCreationEnabledInTests,
+    assume(!catalogManagedDefaultCreationEnabledInTests,
       "VACUUM is blocked on catalog-managed tables")
 
     quietly {
@@ -662,6 +662,68 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
     }
   }
 
+  test("getAllStagedAndCommittedFileActions returns add and remove actions across the commit range") {
+    val tblName = "delta_get_all_file_actions"
+    withTable(tblName) {
+      sql(s"CREATE TABLE $tblName (id INT) USING delta")
+      sql(s"INSERT INTO $tblName VALUES (1), (2), (3)")   // adds
+      sql(s"INSERT INTO $tblName VALUES (4), (5)")        // adds
+      sql(s"INSERT OVERWRITE $tblName VALUES (6)")        // removes the earlier files, adds new
+      val deltaLog = DeltaTableV2(spark, TableIdentifier(tblName)).deltaLog
+      val latest = deltaLog.update().version
+      val historyManager = deltaLog.history
+
+      {
+        val allActions = historyManager.getAllStagedAndCommittedFileActions(0, latest).collect()
+        assert(allActions.exists(_.add != null), "expected AddFile actions in the range")
+        assert(allActions.exists(_.remove != null), "expected RemoveFile actions in the range")
+
+        // Up to the version before the overwrite there are only adds (no removes yet), so the
+        // adds getAllStagedAndCommittedFileActions returns must equal the files of the snapshot as of that version.
+        val beforeOverwriteVersion = latest - 1
+        val beforeOverwrite = historyManager.getAllStagedAndCommittedFileActions(0, beforeOverwriteVersion).collect()
+        assert(!beforeOverwrite.exists(_.remove != null),
+          "no file was removed before the overwrite commit")
+        val addPathsBeforeOverwrite = beforeOverwrite.filter(_.add != null).map(_.add.path).toSet
+        val snapshotPaths =
+          deltaLog.getSnapshotAt(beforeOverwriteVersion).allFiles.collect().map(_.path).toSet
+        assert(addPathsBeforeOverwrite === snapshotPaths,
+          "adds up to the pre-overwrite version should equal that snapshot's files")
+
+        // An inverted range (startVersion > endVersion) is rejected.
+        intercept[IllegalArgumentException] {
+          historyManager.getAllStagedAndCommittedFileActions(latest + 1, latest)
+        }
+      }
+    }
+  }
+
+  test("getRemoveFileActions returns only the removes within the commit range") {
+    val tblName = "delta_get_remove_file_actions"
+    withTable(tblName) {
+      sql(s"CREATE TABLE $tblName (id INT) USING delta")
+      sql(s"INSERT INTO $tblName VALUES (1), (2), (3)")   // adds only
+      sql(s"INSERT OVERWRITE $tblName VALUES (4)")        // removes the earlier files
+      val deltaLog = DeltaTableV2(spark, TableIdentifier(tblName)).deltaLog
+      val latest = deltaLog.update().version
+      val historyManager = deltaLog.history
+
+      {
+        val removes = historyManager.getRemoveFileActions(0, latest).collect()
+        assert(removes.nonEmpty, "expected removed files in the range")
+        assert(removes.forall(_.path != null))
+
+        // A range that excludes the overwrite commit has no removes.
+        assert(historyManager.getRemoveFileActions(0, latest - 1).count() === 0)
+
+        // An inverted range (startVersion > endVersion) is rejected.
+        intercept[IllegalArgumentException] {
+          historyManager.getRemoveFileActions(latest + 1, latest)
+        }
+      }
+    }
+  }
+
   test("getCommitFromNonICTRange should handle empty history by throwing proper error") {
     val tblName = "delta_table"
     withTable(tblName) {
@@ -676,13 +738,15 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests {
         deltaLog.history.getCommitFromNonICTRange(0, 1, start)
       }
 
-      assert(e.getMessage.contains("DELTA_NO_COMMITS_FOUND"))
-      assert(e.getMessage.contains(deltaLog.logPath.toString))
+      checkError(
+        e,
+        "DELTA_NO_COMMITS_FOUND",
+        parameters = Map("logPath" -> deltaLog.logPath.toString))
     }
   }
 
   test("parallel search handles empty commits in a partition correctly") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("This test is not compatible with coordinated commits backfill timestamps.")
     }
     val tblName = "delta_table"

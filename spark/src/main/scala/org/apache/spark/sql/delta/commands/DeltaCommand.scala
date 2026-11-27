@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, NumRecordsStats, OptimisticTransaction, ResolvedPathBasedNonDeltaTable}
@@ -107,6 +108,21 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
     val nameToAddFileMap = candidateFiles.map(add =>
       DeltaFileOperations.absolutePath(basePath.toString, add.path).toString -> add).toMap
     assert(nameToAddFileMap.size == candidateFiles.length,
+      s"File name collisions found among:\n${candidateFiles.map(_.path).mkString("\n")}")
+    nameToAddFileMap
+  }
+
+  /**
+   * Generates a candidate map while also enforcing absolute-path uniqueness across earlier
+   * batches in the same partition.
+   */
+  def generateCandidateFileMap(
+      basePath: Path,
+      candidateFiles: Seq[AddFile],
+      seenAbsolutePaths: mutable.Set[String]): Map[String, AddFile] = {
+    val nameToAddFileMap = generateCandidateFileMap(basePath, candidateFiles)
+    val hasCollision = nameToAddFileMap.keysIterator.exists(path => !seenAbsolutePaths.add(path))
+    assert(!hasCollision,
       s"File name collisions found among:\n${candidateFiles.map(_.path).mkString("\n")}")
     nameToAddFileMap
   }
@@ -432,10 +448,7 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
       // check that both session configs are set
       numOptions = txnVersion.size + txnAppId.size
       if (numOptions != 0 && numOptions != 2) {
-        throw DeltaErrors.invalidIdempotentWritesOptionsException(
-          "Both spark.databricks.delta.write.txnAppId and " +
-            "spark.databricks.delta.write.txnVersion must be specified for " +
-            "idempotent Delta writes")
+        throw DeltaErrors.invalidIdempotentWritesMissingSessionConfsException()
       }
       fromSessionConf = true
     }

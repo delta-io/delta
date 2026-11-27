@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 
-import io.delta.spark.internal.v2.catalog.DeltaV2TableShims
+import org.apache.spark.sql.delta.v2.catalog.DeltaV2TableShims
 
 import org.apache.spark.sql.connector.catalog.{InMemoryRowLevelOperationTable, TableCapability}
 import org.apache.spark.sql.connector.expressions.Transform
@@ -41,8 +41,7 @@ class InMemorySparkTable(
 
   override def capabilities(): util.Set[TableCapability] = {
     val caps = new util.HashSet[TableCapability](super.capabilities())
-    val schemaEvolution = DeltaV2TableShims.schemaEvolutionCapability()
-    if (schemaEvolution.isPresent) caps.add(schemaEvolution.get)
+    DeltaV2TableShims.schemaEvolutionCapability().foreach(capability => caps.add(capability))
     caps
   }
 

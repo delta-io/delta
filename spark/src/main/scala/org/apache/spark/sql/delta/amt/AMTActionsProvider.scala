@@ -1,0 +1,114 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.spark.sql.delta.amt
+
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.actions.{AddFile, DomainMetadata, Metadata, Protocol, SetTransaction, SidecarFile}
+
+import org.apache.spark.sql.SparkSession
+
+/**
+ * The previous-AMT state that an incremental write builds the next manifest tree on top of.
+ *
+ * This is everything [[IncrementalAMTWriter]] needs from the "old" tree.
+ *
+ * @param metadata                          the old AMT's inline table metadata.
+ * @param protocol                          the old AMT's inline table protocol.
+ * @param inlineSetTransactions             the old AMT's inline `SetTransaction` actions only,
+ *                                          those carried directly on its checkpoint action; those
+ *                                          in `nonContentSidecars` are not included.
+ * @param inlineDomainMetadatas             the old AMT's inline `DomainMetadata` actions only,
+ *                                          those carried directly on its checkpoint action; those
+ *                                          in `nonContentSidecars` are not included.
+ * @param fileActionsFromRoot               the live root-resident file actions (leaf-resident files
+ *                                          are carried forward by pointer, not materialized here).
+ * @param allLeafs                          the root's `DATA_MANIFEST` leaf pointers, one per leaf.
+ * @param version                           the table version the old AMT describes.
+ * @param lastManifestCommitWithFullRewrite the last-full-rewrite marker carried forward into the
+ *                                          new tree's `ContentRoot`.
+ * @param nonContentSidecars                the old AMT's typed (txn / domain metadata) sidecars,
+ *                                          referenced but not read here.
+ */
+case class BaseAMTActionsResult(
+    metadata: Metadata,
+    protocol: Protocol,
+    inlineSetTransactions: Seq[SetTransaction],
+    inlineDomainMetadatas: Seq[DomainMetadata],
+    fileActionsFromRoot: Seq[AddFile],
+    allLeafs: Seq[DataManifestEntry],
+    version: Long,
+    lastManifestCommitWithFullRewrite: Option[Long],
+    nonContentSidecars: Seq[SidecarFile])
+
+/**
+ * Loads the previous-AMT state that [[IncrementalAMTWriter]] extends. Abstracting the source lets
+ * the writer build on top of any old-AMT representation, not just a resolved checkpoint provider.
+ */
+trait BaseAMTActionsProvider {
+  def load(): BaseAMTActionsResult
+}
+
+/**
+ * A [[BaseAMTActionsProvider]] backed by a Delta snapshot with no previous AMT.
+ *
+ * Currently supports only empty snapshots. Supporting nonempty snapshots requires preserving
+ * file tracking semantics and loading live files without collecting an unbounded snapshot on the
+ * driver.
+ */
+class BaseSnapshotActionsProvider(
+    snapshot: Snapshot) extends BaseAMTActionsProvider {
+  require(!snapshot.checkpointProvider.isInstanceOf[AMTCheckpointProviderBase],
+    "A snapshot-backed AMT base must not already have an AMT checkpoint.")
+  require(snapshot.numOfFiles == 0,
+    "The snapshot-backed AMT actions provider currently requires an empty snapshot.")
+
+  override def load(): BaseAMTActionsResult = {
+    BaseAMTActionsResult(
+      metadata = snapshot.metadata,
+      protocol = snapshot.protocol,
+      // A snapshot-backed base has no previous AMT, so its full sets count as inline.
+      inlineSetTransactions = snapshot.setTransactions,
+      inlineDomainMetadatas = snapshot.domainMetadata,
+      // Safe because of the empty-snapshot invariant above. A nonempty implementation must supply
+      // every live base file here without eagerly collecting an unbounded snapshot to the driver.
+      fileActionsFromRoot = Seq.empty,
+      allLeafs = Seq.empty,
+      version = snapshot.version,
+      lastManifestCommitWithFullRewrite = None,
+      nonContentSidecars = Seq.empty)
+  }
+}
+
+/** A [[BaseAMTActionsProvider]] backed by an already-resolved [[AMTCheckpointProvider]]. */
+class BaseAMTCheckpointActionsProvider(
+    spark: SparkSession,
+    deltaLog: DeltaLog,
+    checkpointProvider: AMTCheckpointProvider) extends BaseAMTActionsProvider {
+  override def load(): BaseAMTActionsResult = {
+    val checkpoint = checkpointProvider.checkpointAction
+    BaseAMTActionsResult(
+      metadata = checkpoint.metaData,
+      protocol = checkpoint.protocol,
+      inlineSetTransactions = checkpoint.txns,
+      inlineDomainMetadatas = checkpoint.domainMetadata,
+      fileActionsFromRoot = checkpointProvider.readLiveRootDataEntries(spark, deltaLog),
+      allLeafs = checkpointProvider.leaves,
+      version = checkpoint.contentRoot.version,
+      lastManifestCommitWithFullRewrite = checkpoint.contentRoot.lastManifestCommitWithFullRewrite,
+      nonContentSidecars = checkpoint.sidecars.filter(_.`type`.isDefined))
+  }
+}

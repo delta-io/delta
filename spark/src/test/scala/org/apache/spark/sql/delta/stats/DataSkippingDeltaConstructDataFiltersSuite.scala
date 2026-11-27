@@ -74,13 +74,29 @@ class DataSkippingDeltaConstructDataFiltersSuite
 
   test("Verify areAllLeavesLiteral can't be recursively called b/c it can cause stack overflow") {
     // Create a deeply nested Alias expression: Alias(Alias(Alias(...), "name3"), "name2"), "name1")
-    val depth = 100000 // Deep enough to cause stack overflow with default JVM stack size
+    val depth = 100000 // Deep enough to overflow the 256 KB stack of onSmallStack
     var nestedExpr: Expression = Literal.create("foo", StringType)
     for (i <- 1 to depth) {
       nestedExpr = Alias(nestedExpr, s"name$i")()
     }
 
-    assert(DataFiltersBuilder.areAllLeavesLiteral(nestedExpr))
+    // Runs f on a thread with a fixed 256 KB stack, so the result does not depend on the
+    // stack size of the test thread or on how the JIT compiles the recursion.
+    def onSmallStack[T](f: => T): T = {
+      var result: Option[T] = None
+      var error: Throwable = null
+      val thread = new Thread(
+        null,
+        () => try { result = Some(f) } catch { case t: Throwable => error = t },
+        "areAllLeavesLiteral-small-stack",
+        256 * 1024)
+      thread.start()
+      thread.join()
+      if (error != null) throw error
+      result.get
+    }
+
+    assert(onSmallStack(DataFiltersBuilder.areAllLeavesLiteral(nestedExpr)))
 
     // This should cause a StackOverflowError when areAllLeavesLiteral is called recursively
     def areAllLeavesLiteral(e: Expression): Boolean = e match {
@@ -90,7 +106,7 @@ class DataSkippingDeltaConstructDataFiltersSuite
     }
 
     intercept[StackOverflowError] {
-      areAllLeavesLiteral(nestedExpr)
+      onSmallStack(areAllLeavesLiteral(nestedExpr))
     }
   }
 

@@ -29,10 +29,10 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinition
 import com.databricks.spark.util.TagDefinitions._
-import org.apache.spark.sql.delta.v2.interop.DeltaV2TableManager
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTManifestReader
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
@@ -41,7 +41,7 @@ import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
-import org.apache.spark.sql.delta.util.{FileNames, PathWithFileSystem, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{DeltaFileSystemOptions, FileNames, PathWithFileSystem, Utils => DeltaUtils}
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -55,6 +55,7 @@ import org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper
 import org.apache.spark.sql.catalyst.util.FailFastMode
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.expressions.UserDefinedFunction
+import org.apache.spark.sql.functions.{coalesce, col}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -91,8 +92,7 @@ class DeltaLog private(
   with DeltaFileFormat
   with ProvidesUniFormConverters
   with ReadChecksum
-  with DeltaLoggingProvider
-  with DeltaV2TableManager {
+  with DeltaLoggingProvider {
 
   import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._
@@ -341,52 +341,165 @@ class DeltaLog private(
    * return an empty Iterator.
    * Callers are encouraged to use the other override which takes the endVersion if available to
    * avoid I/O and improve performance of this method.
+   *
+   * @param startVersion the first version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`. There is performance benefit on
+   *                                    AMT tables when set. This only takes effect when
+   *                                    [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled.
    */
   def getChanges(
       startVersion: Long,
       catalogTableOpt: Option[CatalogTable] = None,
-      failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(
-        startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
-      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
-    }
-  }
-
-  private[sql] def getChanges(
-      startVersion: Long,
-      endVersion: Long,
-      catalogTableOpt: Option[CatalogTable],
-      failOnDataLoss: Boolean): Iterator[(Long, Seq[Action])] = {
-    getChangeLogFiles(
-        startVersion,
-        endVersion,
-        catalogTableOpt,
-        failOnDataLoss).map { case (version, status) =>
-      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      failOnDataLoss: Boolean = false,
+      skipNoDataChangeFileActions: Boolean = false): Iterator[(Long, Seq[Action])] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)) {
+      getSingleCommitIterator(startVersion, catalogTableOpt, failOnDataLoss)
+        .map(_.asInstanceOf[SingleCommit])
+        .map { commit =>
+          (commit.version, commit.getActions(skipNoDataChangeFileActions))
+        }
+    } else {
+      getChangeLogFiles(
+          startVersion, catalogTableOpt, failOnDataLoss).map { case (version, status) =>
+        (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      }
     }
   }
 
   /**
-   * Lazily get all commits starting from "startVersion" (inclusive) as [[SingleCommit]]
+   * Get all actions over [startVersion, endVersion] (both inclusive).
+   *
+   * @param startVersion the first version to read.
+   * @param endVersion the last version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`. There is performance benefit on
+   *                                    AMT tables when set. This only takes effect when
+   *                                    [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled.
+   */
+  private[sql] def getChanges(
+      startVersion: Long,
+      endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean,
+      skipNoDataChangeFileActions: Boolean): Iterator[(Long, Seq[Action])] = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)) {
+      getSingleCommitIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss)
+        .map(_.asInstanceOf[SingleCommit])
+        .map { commit =>
+          (commit.version, commit.getActions(skipNoDataChangeFileActions))
+        }
+    } else {
+      getChangeLogFiles(
+          startVersion,
+          endVersion,
+          catalogTableOpt,
+          failOnDataLoss).map { case (version, status) =>
+        (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+      }
+    }
+  }
+
+  /**
+   * All actions over [startVersion, endVersion] (both inclusive) as a [[DataFrame]] of
+   * [[Action.logSchema]] columns plus [[DeltaLogFileIndex.COMMIT_VERSION_COLUMN]], the distributed
+   * counterpart of [[getChanges]]. When [[DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED]] is enabled,
+   * the AddFile and RemoveFile actions of an inline AMT manifest commit come from its tree, not
+   * from its log file.
+   *
+   * @param startVersion the first version to read.
+   * @param endVersion the last version to read.
+   * @param catalogTableOpt the table's catalog entry, needed to list a catalog-managed table's
+   *                        commits.
+   * @param failOnDataLoss whether to throw when a version after `startVersion` is missing.
+   * @param skipNoDataChangeFileActions whether to omit the AddFile and RemoveFile actions that
+   *                                    `dataChange = false`.
+   * @param manifestCommitVersionsHintOpt a hint of the versions of all the inline manifest commits
+   *                                      in the range. When defined, only the log files of these
+   *                                      commits are read to find the trees. Callers should only
+   *                                      pass in this parameter when they know AMT and the
+   *                                      versions of all the inline manifest commits in the range.
+   */
+  def loadChangesDf(
+      startVersion: Long,
+      endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean,
+      skipNoDataChangeFileActions: Boolean,
+      manifestCommitVersionsHintOpt: Option[Set[Long]] = None): DataFrame = {
+    val singleCommitRead =
+      spark.sessionState.conf.getConf(DeltaSQLConf.AMT_SINGLE_COMMIT_READ_ENABLED)
+    val isFileAction = col("add").isNotNull || col("remove").isNotNull
+    val actions = if (singleCommitRead) {
+      val commits =
+        getSingleCommitIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss)
+          .map(_.asInstanceOf[SingleCommit])
+          .toSeq
+      val commitJsonActions = loadIndex(SingleCommit.logFileIndex(commits), Action.logSchema)
+      val manifestCommitCandidates = manifestCommitVersionsHintOpt match {
+        case Some(versions) => commits.filter(commit => versions.contains(commit.version))
+        case None => commits
+      }
+      val manifestCommits =
+        DeltaFileProviderUtils.parallelReadDeltaFiles(spark, manifestCommitCandidates) { commit =>
+          commit.asInstanceOf[SingleCommit].toAMTManifestCommit()
+        }.flatten
+      val manifestCommitVersions = manifestCommits.map(_.provider.manifestCommitVersion)
+      val manifestCommitsWithDataChange =
+        if (skipNoDataChangeFileActions) manifestCommits.filter(_.dataChange)
+        else manifestCommits
+      // Drop the inline manifest commits' file actions from the log files; the trees supply them.
+      val filter =
+        col(DeltaLogFileIndex.COMMIT_VERSION_COLUMN).isin(manifestCommitVersions: _*) &&
+          isFileAction
+      val logActions = commitJsonActions.where(!filter)
+      AMTManifestReader
+        .loadActionsFromAMTManifestCommits(spark, this, manifestCommitsWithDataChange)
+        .map(logActions.unionByName(_))
+        .getOrElse(logActions)
+    } else {
+      val logFiles = getChangeLogFiles(startVersion, endVersion, catalogTableOpt, failOnDataLoss)
+        .map(_._2)
+        .toArray
+      val index = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logFiles)
+      loadIndex(index, Action.logSchema)
+    }
+    // Filter out the data changing file actions still present at this point.
+    // This is for those actions in JSON commits.
+    if (skipNoDataChangeFileActions) {
+      actions.where(!isFileAction || coalesce(col("add.dataChange"), col("remove.dataChange")))
+    } else {
+      actions
+    }
+  }
+
+  /**
+   * Lazily get all commits starting from "startVersion" (inclusive) as [[DeltaSingleCommit]]
    * handles, without exposing the underlying log files. If startVersion doesn't exist, return an
    * empty Iterator. This is the streaming counterpart of [[getChanges]]
    *
    * Callers are encouraged to use the other override which takes the endVersion if available to
    * avoid I/O and improve performance of this method.
    */
-  private[sql] def getChangesIterator(
+  private[sql] def getSingleCommitIterator(
       startVersion: Long,
       catalogTableOpt: Option[CatalogTable] = None,
-      failOnDataLoss: Boolean = false): Iterator[SingleCommit] =
+      failOnDataLoss: Boolean = false): Iterator[DeltaSingleCommit] =
     getChangeLogFiles(startVersion, catalogTableOpt, failOnDataLoss).map {
       case (version, status) => SingleCommit(this, version, status)
     }
 
-  private[sql] def getChangesIterator(
+  private[sql] def getSingleCommitIterator(
       startVersion: Long,
       endVersion: Long,
       catalogTableOpt: Option[CatalogTable],
-      failOnDataLoss: Boolean): Iterator[SingleCommit] =
+      failOnDataLoss: Boolean): Iterator[DeltaSingleCommit] =
     getChangeLogFiles(startVersion, endVersion, catalogTableOpt, failOnDataLoss).map {
       case (version, status) => SingleCommit(this, version, status)
     }
@@ -396,12 +509,13 @@ class DeltaLog private(
    * [[FileStatus]].
    *
    * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
-   * callers should use [[getChangesIterator]] instead, which returns [[SingleCommit]] handles and
-   * keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
+   * callers should use [[getSingleCommitIterator]] instead, which returns [[DeltaSingleCommit]]
+   * handles and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata
+   * Tree).
    */
   @deprecated(
     "This method exposes the log's raw file statuses and will be removed in the " +
-    "future. Use getChanges and variants instead"
+    "future. Use getSingleCommitIterator instead"
   )
   private[sql] def getChangeLogFiles(
       startVersion: Long,
@@ -439,12 +553,13 @@ class DeltaLog private(
    * avoid I/O and improve performance of this method.
    *
    * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
-   * callers should use [[getChangesIterator]] instead, which returns [[SingleCommit]] handles and
-   * keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
+   * callers should use [[getSingleCommitIterator]] instead, which returns [[DeltaSingleCommit]]
+   * handles and keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata
+   * Tree).
    */
   @deprecated(
     "This method exposes the log's raw file statuses and will be removed in the " +
-    "future. Use getChanges and variants instead"
+    "future. Use getSingleCommitIterator instead"
   )
   def getChangeLogFiles(
       startVersion: Long,
@@ -500,98 +615,6 @@ class DeltaLog private(
    * --------------------- */
 
   /**
-   * Asserts the highest protocol supported by this client is not less than what required by the
-   * table for performing read or write operations. This ensures the client to support a
-   * greater-or-equal protocol versions and recognizes/supports all features enabled by the table.
-   *
-   * The operation type to be checked is passed as a string in `readOrWrite`. Valid values are
-   * `read` and `write`.
-   */
-  private def protocolCheck(tableProtocol: Protocol, readOrWrite: String): Unit = {
-    val unsupportedTestFeatures =
-      if (spark.conf.get(DeltaSQLConf.UNSUPPORTED_TESTING_FEATURES_ENABLED)) {
-        TableFeature.testUnsupportedFeatures.toSeq
-      } else {
-        Seq.empty
-      }
-
-    // Spark 4.0 does not support the parquet variant logical type annotation. When
-    // the config is enabled, treat the variant table features as unsupported to block
-    // all interactions with variant tables on Spark 4.0 clients.
-    val unsupportedVariantFeatures =
-      if (org.apache.spark.SPARK_VERSION.startsWith("4.0") &&
-          spark.conf.get(DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40)) {
-        Seq(
-          VariantTypeTableFeature,
-          VariantTypePreviewTableFeature,
-          VariantShreddingTableFeature,
-          VariantShreddingPreviewTableFeature)
-      } else {
-        Seq.empty
-      }
-
-    val clientSupportedProtocol =
-      Action.supportedProtocolVersion(
-        featuresToExclude = unsupportedTestFeatures ++ unsupportedVariantFeatures)
-    // Depending on the operation, pull related protocol versions out of Protocol objects.
-    // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
-    val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
-      case "read" => (
-        Action.supportedReaderVersionNumbers,
-        tableProtocol.minReaderVersion,
-        (f: Protocol) => f.readerFeatureNames)
-      case "write" => (
-        Action.supportedWriterVersionNumbers,
-        tableProtocol.minWriterVersion,
-        (f: Protocol) => f.writerFeatureNames)
-      case _ =>
-        throw new IllegalArgumentException("Table operation must be either `read` or `write`.")
-    }
-
-    // Check is complete when both the protocol version and all referenced features are supported.
-    val clientSupportedFeatureNames = getEnabledFeatures(clientSupportedProtocol)
-    val tableEnabledFeatureNames = getEnabledFeatures(tableProtocol)
-    if (tableEnabledFeatureNames.subsetOf(clientSupportedFeatureNames) &&
-      clientSupportedVersions.contains(tableRequiredVersion)) {
-      return
-    }
-
-    // Otherwise, either the protocol version, or few features referenced by the table, is
-    // unsupported.
-    val clientUnsupportedFeatureNames =
-      tableEnabledFeatureNames.diff(clientSupportedFeatureNames)
-    // Prepare event log constants and the appropriate error message handler.
-    val (opType, versionKey, unsupportedFeaturesException) = readOrWrite match {
-      case "read" => (
-          "delta.protocol.failure.read",
-          "minReaderVersion",
-          DeltaErrors.unsupportedReaderTableFeaturesInTableException _)
-      case "write" => (
-          "delta.protocol.failure.write",
-          "minWriterVersion",
-          DeltaErrors.unsupportedWriterTableFeaturesInTableException _)
-    }
-    recordDeltaEvent(
-      this,
-      opType,
-      data = Map(
-        "clientVersion" -> clientSupportedVersions.max,
-        versionKey -> tableRequiredVersion,
-        "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
-        "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
-    if (!clientSupportedVersions.contains(tableRequiredVersion)) {
-      throw new InvalidProtocolVersionException(
-        dataPath.toString(),
-        tableProtocol.minReaderVersion,
-        tableProtocol.minWriterVersion,
-        Action.supportedReaderVersionNumbers.toSeq,
-        Action.supportedWriterVersionNumbers.toSeq)
-    } else {
-      throw unsupportedFeaturesException(dataPath.toString(), clientUnsupportedFeatureNames)
-    }
-  }
-
-  /**
    * Asserts that the table's protocol enabled all features that are active in the metadata.
    *
    * A mismatch shouldn't happen when the table has gone through a proper write process because we
@@ -612,20 +635,17 @@ class DeltaLog private(
     }
   }
 
-  /**
-   * Asserts that the client is up to date with the protocol and allowed to read the table that is
-   * using the given `protocol`.
-   */
   def protocolRead(protocol: Protocol): Unit = {
-    protocolCheck(protocol, "read")
+    Protocol.protocolRead(spark, protocol, dataPath.toString, this)
   }
+
 
   /**
    * Asserts that the client is up to date with the protocol and allowed to write to the table
    * that is using the given `protocol`.
    */
   def protocolWrite(protocol: Protocol): Unit = {
-    protocolCheck(protocol, "write")
+    Protocol.protocolCheck(spark, protocol, "write", dataPath.toString, this)
   }
 
   /* ---------------------------------------- *
@@ -1060,15 +1080,7 @@ object DeltaLog extends DeltaLogging {
       spark: SparkSession,
       options: Map[String, String],
       rootPath: Path): Path = {
-    val fileSystemOptions: Map[String, String] =
-      if (spark.sessionState.conf.getConf(
-        DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-        options.filterKeys { k =>
-          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
-        }.toMap
-      } else {
-        Map.empty
-      }
+    val fileSystemOptions = DeltaFileSystemOptions.buildFsOptions(spark, options)
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
     // scalastyle:on deltahadoopconfiguration
@@ -1100,25 +1112,8 @@ object DeltaLog extends DeltaLogging {
       initialCatalogTable: Option[CatalogTable],
       clock: Clock
   ): DeltaLog = {
-    // Construct the filesystem options based on the DataFrameReader/Writer options, and if it's
-    // a catalog based table, we need combine both options and catalog-based table storage
-    // properties since all cloud credential information are stored in storage properties.
-    val catalogTableStorageProps = initialCatalogTable
-      .map(t => t.storage.properties.filter { case (k, _) =>
-          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
-        })
-      .getOrElse(Map.empty)
-    val fileSystemOptions: Map[String, String] =
-      if (spark.sessionState.conf.getConf(
-          DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
-        // We pick up only file system options so that we don't pass any parquet or json options to
-        // the code that reads Delta transaction logs.
-        catalogTableStorageProps ++ options.filterKeys { k =>
-          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
-        }.toMap
-      } else {
-        catalogTableStorageProps
-      }
+    val fileSystemOptions =
+      DeltaFileSystemOptions.buildFsOptions(spark, options, initialCatalogTable)
 
     // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
@@ -1277,19 +1272,12 @@ object DeltaLog extends DeltaLogging {
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil,
       shouldRewritePartitionFilters: Boolean = true): DataFrame = {
-
-    val rewrittenFilters = if (shouldRewritePartitionFilters) {
-      rewritePartitionFilters(
-        partitionSchema,
-        files.sparkSession.sessionState.conf.resolver,
-        partitionFilters,
-        partitionColumnPrefixes)
-    } else {
-      partitionFilters
-    }
-    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    val columnFilter = Column(expr)
-    files.filter(columnFilter)
+    DeltaLogUtils.filterFileList(
+      partitionSchema,
+      files,
+      partitionFilters,
+      partitionColumnPrefixes,
+      shouldRewritePartitionFilters)
   }
 
   /**
@@ -1306,26 +1294,8 @@ object DeltaLog extends DeltaLogging {
       resolver: Resolver,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
-    partitionFilters
-      .map(_.transformUp {
-      case a: Attribute =>
-        // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
-        // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
-        val unquoted = a.name.stripPrefix("`").stripSuffix("`")
-        val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
-        partitionCol match {
-          case Some(f: StructField) =>
-            val name = DeltaColumnMapping.getPhysicalName(f)
-            Cast(
-              UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
-              f.dataType)
-          case None =>
-            // This should not be able to happen, but the case was present in the original code so
-            // we kept it to be safe.
-            log.error(s"Partition filter referenced column ${a.name} not in the partition schema")
-            UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
-        }
-    })
+    DeltaLogUtils.rewritePartitionFilters(
+      partitionSchema, resolver, partitionFilters, partitionColumnPrefixes)
   }
 
 
@@ -1373,5 +1343,74 @@ object DeltaLog extends DeltaLogging {
         hadoopPath.toUri.toString
       }
     }
+  }
+}
+
+/** Partition-filtering helpers shared by DeltaLog and snapshot readers. */
+object DeltaLogUtils extends DeltaLogging {
+
+  /**
+   * Filters the given [[Dataset]] by the given `partitionFilters`, returning those that match.
+   * @param files The active files in the log state, which contain partition value information
+   * @param partitionFilters Filters on the partition columns
+   * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
+   * @param shouldRewritePartitionFilters Whether to rewrite `partitionFilters` to be over the
+   *                                      [[AddFile]] schema
+   */
+  def filterFileList(
+      partitionSchema: StructType,
+      files: DataFrame,
+      partitionFilters: Seq[Expression],
+      partitionColumnPrefixes: Seq[String] = Nil,
+      shouldRewritePartitionFilters: Boolean = true): DataFrame = {
+
+    val rewrittenFilters = if (shouldRewritePartitionFilters) {
+      rewritePartitionFilters(
+        partitionSchema,
+        files.sparkSession.sessionState.conf.resolver,
+        partitionFilters,
+        partitionColumnPrefixes)
+    } else {
+      partitionFilters
+    }
+    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
+    val columnFilter = Column(expr)
+    files.filter(columnFilter)
+  }
+
+  /**
+   * Rewrite the given `partitionFilters` to be used for filtering partition values.
+   * We need to explicitly resolve the partitioning columns here because the partition columns
+   * are stored as keys of a Map type instead of attributes in the AddFile schema and thus
+   * cannot be resolved automatically.
+   *
+   * @param partitionFilters Filters on the partition columns
+   * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
+   */
+  def rewritePartitionFilters(
+      partitionSchema: StructType,
+      resolver: Resolver,
+      partitionFilters: Seq[Expression],
+      partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
+    partitionFilters
+      .map(_.transformUp {
+      case a: Attribute =>
+        // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
+        // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
+        val unquoted = a.name.stripPrefix("`").stripSuffix("`")
+        val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
+        partitionCol match {
+          case Some(f: StructField) =>
+            val name = DeltaColumnMapping.getPhysicalName(f)
+            Cast(
+              UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
+              f.dataType)
+          case None =>
+            // This should not be able to happen, but the case was present in the original code so
+            // we kept it to be safe.
+            log.error(s"Partition filter referenced column ${a.name} not in the partition schema")
+            UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
+        }
+    })
   }
 }

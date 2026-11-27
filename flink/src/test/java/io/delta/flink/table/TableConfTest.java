@@ -18,6 +18,7 @@ package io.delta.flink.table;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashMap;
@@ -66,5 +67,19 @@ class TableConfTest {
     conf.update(Map.of("fs.gs.project.id", "my-project"));
 
     assertEquals(Map.of("fs.gs.project.id", "my-project"), conf.engineConf());
+  }
+
+  @Test
+  void testCredentialSourceControlsCatalogCredentialVending() {
+    assertTrue(new TableConf(Map.of()).shouldFetchCredentialsFromCatalog());
+    assertTrue(
+        new TableConf(Map.of("credentials.source", "uc")).shouldFetchCredentialsFromCatalog());
+    assertFalse(
+        new TableConf(Map.of("credentials.source", "ambient")).shouldFetchCredentialsFromCatalog());
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new TableConf(Map.of("credentials.source", "unknown"))
+                .shouldFetchCredentialsFromCatalog());
   }
 }

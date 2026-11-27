@@ -166,7 +166,7 @@ Delta Standalone supports reads and writes to S3 in two different modes: Single-
 
 ##### Single-cluster setup (default)
 
-By default, Delta Standalone supports concurrent reads from multiple clusters. However, concurrent writes to S3 must originate from a single cluster to provide transactional guarantees. This is because S3 currently does not provide mutual exclusion, that is, there is no way to ensure that only one writer is able to create a file.
+By default, Delta Standalone supports concurrent reads from multiple clusters. However, concurrent writes to S3 must originate from a single cluster to provide transactional guarantees. The default Standalone LogStore does not coordinate writes across independent JVMs. S3 supports conditional writes, but the automatic native selection described in [Native S3 setup](/delta-storage/#native-s3-setup) applies to Delta Lake Spark.
 
 <Aside
   type="danger"

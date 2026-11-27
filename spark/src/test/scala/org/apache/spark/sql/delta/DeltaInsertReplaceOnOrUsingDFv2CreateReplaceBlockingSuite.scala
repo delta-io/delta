@@ -36,7 +36,7 @@ class DeltaInsertReplaceOnOrUsingDFv2CreateReplaceBlockingSuite
     .set(DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key, "true")
     .set(DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key, "true")
 
-  import testImplicits._
+  import deltaImplicits._
 
   private def createTable(tableName: String, tableCols: Seq[String]): Unit = {
     sql(s"CREATE TABLE $tableName ${tableCols.mkString("(", ",", ")")} USING delta")

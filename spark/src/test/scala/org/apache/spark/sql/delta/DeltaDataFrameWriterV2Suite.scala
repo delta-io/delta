@@ -32,18 +32,17 @@ import org.apache.spark.sql.connector.catalog.{CatalogManager, CatalogV2Util, Id
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{LongType, StringType, StructType}
-import org.apache.spark.util.Utils
 
 // These tests are copied from Apache Spark (minus partition by expressions) and should work exactly
 // the same with Delta minus some writer options
 trait OpenSourceDataFrameWriterV2Tests
-    extends QueryTest
-    with SharedSparkSession
-    with BeforeAndAfter {
+  extends QueryTest
+    with DeltaSQLCommandTest
+    with BeforeAndAfter
+    with DeltaTableProvider {
 
-  import testImplicits._
+  import deltaImplicits._
 
   before {
     val df = spark.createDataFrame(Seq((1L, "a"), (2L, "b"), (3L, "c"))).toDF("id", "data")
@@ -73,8 +72,16 @@ trait OpenSourceDataFrameWriterV2Tests
       .toMap
   }
 
+  protected def assertPartitionedById(table: Table): Unit = {
+    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+  }
+
+  protected def assertUnpartitioned(table: Table): Unit = {
+    assert(table.partitioning.isEmpty)
+  }
+
   test("Append: basic append") {
-    spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+    spark.sql(createTableSQL("table_name", "id bigint, data string"))
 
     checkAnswer(spark.table("table_name"), Seq.empty)
 
@@ -92,7 +99,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Append: by name not position") {
-    spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+    spark.sql(createTableSQL("table_name", "id bigint, data string"))
 
     checkAnswer(spark.table("table_name"), Seq.empty)
 
@@ -117,7 +124,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
   test("Overwrite: overwrite by expression: true") {
     spark.sql(
-      "CREATE TABLE table_name (id bigint, data string) USING delta PARTITIONED BY (id)")
+      createTableSQL("table_name", "id bigint, data string", partitionBy = "PARTITIONED BY (id)"))
 
     checkAnswer(spark.table("table_name"), Seq.empty)
 
@@ -136,7 +143,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
   test("Overwrite: overwrite by expression: id = 3") {
     spark.sql(
-      "CREATE TABLE table_name (id bigint, data string) USING delta PARTITIONED BY (id)")
+      createTableSQL("table_name", "id bigint, data string", partitionBy = "PARTITIONED BY (id)"))
 
     checkAnswer(spark.table("table_name"), Seq.empty)
 
@@ -149,10 +156,14 @@ trait OpenSourceDataFrameWriterV2Tests
     val e = intercept[AnalysisException] {
       spark.table("source2").writeTo("table_name").overwrite($"id" === 3)
     }
-    assert(e.getErrorClass == "DELTA_REPLACE_WHERE_MISMATCH")
-    assert(e.getMessage.startsWith(
-      "[DELTA_REPLACE_WHERE_MISMATCH] Written data does not conform to partial table overwrite " +
-        "condition or constraint"))
+    checkError(
+      exception = e,
+      condition = "DELTA_REPLACE_WHERE_MISMATCH.INVARIANT_VIOLATION",
+      sqlState = Some("44000"),
+      parameters = Map(
+        "replaceWhere" -> "\\(id = 3L\\)",
+        "invariantViolationMessage" -> "(?s).*"),
+      matchPVals = true)
 
     checkAnswer(
       spark.table("table_name"),
@@ -160,7 +171,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Overwrite: by name not position") {
-    spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+    spark.sql(createTableSQL("table_name", "id bigint, data string"))
 
     checkAnswer(spark.table("table_name"), Seq.empty)
 
@@ -186,7 +197,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
   test("OverwritePartitions: overwrite conflicting partitions") {
     spark.sql(
-      "CREATE TABLE table_name (id bigint, data string) USING delta PARTITIONED BY (id)")
+      createTableSQL("table_name", "id bigint, data string", partitionBy = "PARTITIONED BY (id)"))
 
     checkAnswer(spark.table("table_name"), Seq.empty)
 
@@ -205,7 +216,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("OverwritePartitions: overwrite all rows if not partitioned") {
-    spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+    spark.sql(createTableSQL("table_name", "id bigint, data string"))
 
     checkAnswer(spark.table("table_name"), Seq.empty)
 
@@ -223,7 +234,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("OverwritePartitions: by name not position") {
-    spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+    spark.sql(createTableSQL("table_name", "id bigint, data string"))
 
     checkAnswer(spark.table("table_name"), Seq.empty)
 
@@ -248,7 +259,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Create: basic behavior") {
-    spark.table("source").writeTo("table_name").using("delta").create()
+    spark.table("source").writeTo("table_name").using(tableProvider).create()
 
     checkAnswer(
       spark.table("table_name"),
@@ -263,7 +274,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Create: with using") {
-    spark.table("source").writeTo("table_name").using("delta").create()
+    spark.table("source").writeTo("table_name").using(tableProvider).create()
 
     checkAnswer(
       spark.table("table_name"),
@@ -279,7 +290,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
   test("Create: with property") {
     spark.table("source").writeTo("table_name")
-      .tableProperty("prop", "value").using("delta").create()
+      .tableProperty("prop", "value").using(tableProvider).create()
 
     checkAnswer(
       spark.table("table_name"),
@@ -294,7 +305,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("Create: identity partitioned table") {
-    spark.table("source").writeTo("table_name").using("delta").partitionedBy($"id").create()
+    spark.table("source").writeTo("table_name").using(tableProvider).partitionedBy($"id").create()
 
     checkAnswer(
       spark.table("table_name"),
@@ -304,16 +315,16 @@ trait OpenSourceDataFrameWriterV2Tests
 
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
   }
 
   test("Create: fail if table already exists") {
     spark.sql(
-      "CREATE TABLE table_name (id bigint, data string) USING delta PARTITIONED BY (id)")
+      createTableSQL("table_name", "id bigint, data string", partitionBy = "PARTITIONED BY (id)"))
 
     val exc = intercept[TableAlreadyExistsException] {
-      spark.table("source").writeTo("table_name").using("delta").create()
+      spark.table("source").writeTo("table_name").using(tableProvider).create()
     }
 
     assert(exc.getMessage.contains("table_name"))
@@ -323,13 +334,13 @@ trait OpenSourceDataFrameWriterV2Tests
     // table should not have been changed
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
   }
 
   test("Replace: basic behavior") {
     spark.sql(
-      "CREATE TABLE table_name (id bigint, data string) USING delta PARTITIONED BY (id)")
+      createTableSQL("table_name", "id bigint, data string", partitionBy = "PARTITIONED BY (id)"))
     spark.sql("INSERT INTO TABLE table_name SELECT * FROM source")
 
     checkAnswer(
@@ -341,12 +352,12 @@ trait OpenSourceDataFrameWriterV2Tests
     // validate the initial table
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
 
     spark.table("source2")
       .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-      .writeTo("table_name").using("delta")
+      .writeTo("table_name").using(tableProvider)
       .tableProperty("deLta.aPpeNdonly", "true").replace()
 
     checkAnswer(
@@ -361,12 +372,12 @@ trait OpenSourceDataFrameWriterV2Tests
       .add("id", LongType)
       .add("data", StringType)
       .add("even_or_odd", StringType))
-    assert(replaced.partitioning.isEmpty)
+    assertUnpartitioned(replaced)
     assert(getProperties(replaced) === Map("delta.appendOnly" -> "true"))
   }
 
   test("Replace: partitioned table") {
-    spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+    spark.sql(createTableSQL("table_name", "id bigint, data string"))
     spark.sql("INSERT INTO TABLE table_name SELECT * FROM source")
 
     checkAnswer(
@@ -383,7 +394,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
     spark.table("source2")
       .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-      .writeTo("table_name").using("delta")
+      .writeTo("table_name").using(tableProvider)
       .partitionedBy($"id")
       .replace()
 
@@ -399,13 +410,13 @@ trait OpenSourceDataFrameWriterV2Tests
       .add("id", LongType)
       .add("data", StringType)
       .add("even_or_odd", StringType))
-    assert(replaced.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(replaced)
     assert(getProperties(replaced).isEmpty)
   }
 
   test("Replace: fail if table does not exist") {
     val exc = intercept[AnalysisException] {
-      spark.table("source").writeTo("table_name").using("delta").replace()
+      spark.table("source").writeTo("table_name").using(tableProvider).replace()
     }
 
     checkError(exc, "TABLE_OR_VIEW_NOT_FOUND", Some("42P01"),
@@ -413,7 +424,7 @@ trait OpenSourceDataFrameWriterV2Tests
   }
 
   test("CreateOrReplace: table does not exist") {
-    spark.table("source2").writeTo("table_name").using("delta").createOrReplace()
+    spark.table("source2").writeTo("table_name").using(tableProvider).createOrReplace()
 
     checkAnswer(
       spark.table("table_name"),
@@ -430,7 +441,7 @@ trait OpenSourceDataFrameWriterV2Tests
 
   test("CreateOrReplace: table exists") {
     spark.sql(
-      "CREATE TABLE table_name (id bigint, data string) USING delta PARTITIONED BY (id)")
+      createTableSQL("table_name", "id bigint, data string", partitionBy = "PARTITIONED BY (id)"))
     spark.sql("INSERT INTO TABLE table_name SELECT * FROM source")
 
     checkAnswer(
@@ -442,12 +453,12 @@ trait OpenSourceDataFrameWriterV2Tests
     // validate the initial table
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
 
     spark.table("source2")
       .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-      .writeTo("table_name").using("delta").createOrReplace()
+      .writeTo("table_name").using(tableProvider).createOrReplace()
 
     checkAnswer(
       spark.table("table_name"),
@@ -461,7 +472,7 @@ trait OpenSourceDataFrameWriterV2Tests
       .add("id", LongType)
       .add("data", StringType)
       .add("even_or_odd", StringType))
-    assert(replaced.partitioning.isEmpty)
+    assertUnpartitioned(replaced)
     assert(getProperties(replaced).isEmpty)
   }
 
@@ -471,7 +482,7 @@ trait OpenSourceDataFrameWriterV2Tests
         .withColumn("ts", lit("2019-06-01 10:00:00.000000").cast("timestamp"))
         .writeTo("table_name")
         .partitionedBy(years($"ts"))
-        .using("delta")
+        .using(tableProvider)
         .create()
     }
     assert(e.getMessage.contains("Partitioning by expressions"))
@@ -483,7 +494,7 @@ trait OpenSourceDataFrameWriterV2Tests
         .withColumn("ts", lit("2019-06-01 10:00:00.000000").cast("timestamp"))
         .writeTo("table_name")
         .partitionedBy(months($"ts"))
-        .using("delta")
+        .using(tableProvider)
         .create()
     }
     assert(e.getMessage.contains("Partitioning by expressions"))
@@ -495,7 +506,7 @@ trait OpenSourceDataFrameWriterV2Tests
         .withColumn("ts", lit("2019-06-01 10:00:00.000000").cast("timestamp"))
         .writeTo("table_name")
         .partitionedBy(days($"ts"))
-        .using("delta")
+        .using(tableProvider)
         .create()
     }
     assert(e.getMessage.contains("Partitioning by expressions"))
@@ -507,7 +518,7 @@ trait OpenSourceDataFrameWriterV2Tests
         .withColumn("ts", lit("2019-06-01 10:00:00.000000").cast("timestamp"))
         .writeTo("table_name")
         .partitionedBy(hours($"ts"))
-        .using("delta")
+        .using(tableProvider)
         .create()
     }
     assert(e.getMessage.contains("Partitioning by expressions"))
@@ -518,7 +529,7 @@ trait OpenSourceDataFrameWriterV2Tests
       spark.table("source")
         .writeTo("table_name")
         .partitionedBy(bucket(4, $"id"))
-        .using("delta")
+        .using(tableProvider)
         .create()
     }
     assert(e.getMessage.contains("is not supported for Delta tables"))
@@ -529,10 +540,217 @@ class DeltaDataFrameWriterV2Suite
   extends OpenSourceDataFrameWriterV2Tests
   with DeltaSQLCommandTest {
 
-  import testImplicits._
+  import deltaImplicits._
+
+  import org.apache.spark.sql.delta.sources.DeltaSQLConf.{
+    REPLACEWHERE_CONSTRAINT_CHECK_ENABLED,
+    REPLACEWHERE_DATACOLUMNS_ENABLED,
+    REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED
+  }
+
+  private object OverwriteApi extends Enumeration {
+    val SQL, DATAFRAME_WRITER_V2, REPLACE_WHERE_OPTION = Value
+  }
+
+  private def overwriteTable(
+      api: OverwriteApi.Value,
+      predicate: String,
+      replacement: Dataset[Row]): Unit = {
+    api match {
+      case OverwriteApi.SQL =>
+        withTempView("replacement") {
+          replacement.createOrReplaceTempView("replacement")
+          spark.sql(s"INSERT INTO table_name REPLACE WHERE $predicate SELECT * FROM replacement")
+        }
+      case OverwriteApi.DATAFRAME_WRITER_V2 =>
+        replacement.writeTo("table_name").overwrite(expr(predicate))
+      case OverwriteApi.REPLACE_WHERE_OPTION =>
+        replacement.write.format(writeFormat).mode("overwrite")
+          .option("replaceWhere", predicate).saveAsTable("table_name")
+    }
+  }
+
+  private def withLiteralStringPredicateConf(enabled: Boolean)(f: => Unit): Unit = {
+    withSQLConf(
+        REPLACEWHERE_LITERAL_STRING_PREDICATES_ENABLED.key -> enabled.toString,
+        "spark.databricks.delta.v2.enableMode" -> "NONE",
+        REPLACEWHERE_DATACOLUMNS_ENABLED.key -> "true",
+        REPLACEWHERE_CONSTRAINT_CHECK_ENABLED.key -> "true",
+        SQLConf.ESCAPED_STRING_LITERALS.key -> "false") {
+      f
+    }
+  }
+
+  for {
+    api <- OverwriteApi.values
+    enabled <- Seq(true, false)
+  } {
+    test(s"Overwrite: literal string predicates: startsWith percent ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql(createTableSQL("table_name", "id int, value string"))
+          Seq((1, "%first"), (2, "%second"), (3, "plain"), (4, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "%first")).toDF("id", "value")
+
+          overwriteTable(api, "startswith(value, '%')", replacement)
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(3, "plain"), Row(4, null), Row(10, "%first")))
+          } else {
+            checkAnswer(spark.table("table_name"), Seq(Row(4, null), Row(10, "%first")))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: endsWith underscore ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql(createTableSQL("table_name", "id int, value string"))
+          Seq((1, "first_"), (2, "second_"), (3, "plain"), (4, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "first_")).toDF("id", "value")
+
+          overwriteTable(api, "endswith(value, '_')", replacement)
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(3, "plain"), Row(4, null), Row(10, "first_")))
+          } else {
+            checkAnswer(spark.table("table_name"), Seq(Row(4, null), Row(10, "first_")))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: contains backslash ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql(createTableSQL("table_name", "id int, value string"))
+          Seq((1, "a\\b"), (2, "c\\d"), (3, "plain"), (4, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "a\\b")).toDF("id", "value")
+          val predicate = """contains(value, r'\')"""
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            overwriteTable(api, predicate, replacement)
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(3, "plain"), Row(4, null), Row(10, "a\\b")))
+          } else {
+            val error = intercept[AnalysisException] {
+              overwriteTable(api, predicate, replacement)
+            }
+            assert(
+              error.getErrorClass.stripSuffix(".INVARIANT_VIOLATION") ==
+                "DELTA_REPLACE_WHERE_MISMATCH")
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(1, "a\\b"), Row(2, "c\\d"), Row(3, "plain"), Row(4, null)))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: contains percent ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql(createTableSQL("table_name", "id int, value string"))
+          Seq((1, "%first"), (2, "second%"), (3, "plain"), (4, ""), (5, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "%new")).toDF("id", "value")
+
+          overwriteTable(api, "contains(value, '%')", replacement)
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            checkAnswer(
+              spark.table("table_name"),
+              Seq(Row(3, "plain"), Row(4, ""), Row(5, null), Row(10, "%new")))
+          } else {
+            checkAnswer(spark.table("table_name"), Seq(Row(5, null), Row(10, "%new")))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: mixed incoming rows ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql(createTableSQL("table_name", "id int, value string"))
+          Seq((1, "%old"), (2, "plain"), (3, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "%new"), (11, "plain")).toDF("id", "value")
+
+          if (enabled || api == OverwriteApi.REPLACE_WHERE_OPTION) {
+            val path = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
+              .asInstanceOf[DeltaTableV2].path
+            val log = DeltaLog.forTable(spark, path)
+            val version = log.update().version
+            val error = intercept[AnalysisException] {
+              overwriteTable(api, "contains(value, '%')", replacement)
+            }
+            assert(
+              error.getErrorClass.stripSuffix(".INVARIANT_VIOLATION") ==
+                "DELTA_REPLACE_WHERE_MISMATCH")
+            assert(log.update().version == version)
+            checkAnswer(
+              spark.table("table_name"), Seq(Row(1, "%old"), Row(2, "plain"), Row(3, null)))
+          } else {
+            overwriteTable(api, "contains(value, '%')", replacement)
+            checkAnswer(
+              spark.table("table_name"), Seq(Row(3, null), Row(10, "%new"), Row(11, "plain")))
+          }
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: brackets and braces ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql(createTableSQL("table_name", "id int, value string"))
+          Seq((1, "[a]"), (2, "a{2}"), (3, "[a-c]"), (4, "[^a]"), (5, "^"), (6, "-"),
+            (20, "a"), (21, "aa"), (22, "b"), (23, "c"), (24, "plain"))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "[a]"), (11, "a{2}"), (12, "[a-c]"), (13, "[^a]"),
+            (14, "^"), (15, "-")).toDF("id", "value")
+          val predicate = "contains(value, '[a]') OR contains(value, 'a{2}') OR " +
+            "contains(value, '[a-c]') OR contains(value, '[^a]') OR " +
+            "contains(value, '^') OR contains(value, '-')"
+
+          overwriteTable(api, predicate, replacement)
+
+          checkAnswer(
+            spark.table("table_name"),
+            Seq(Row(10, "[a]"), Row(11, "a{2}"), Row(12, "[a-c]"), Row(13, "[^a]"),
+              Row(14, "^"), Row(15, "-"), Row(20, "a"), Row(21, "aa"), Row(22, "b"),
+              Row(23, "c"), Row(24, "plain")))
+        }
+      }
+    }
+
+    test(s"Overwrite: literal string predicates: LIKE prefix wildcard ($api, enabled=$enabled)") {
+      withLiteralStringPredicateConf(enabled) {
+        withTable("table_name") {
+          spark.sql(createTableSQL("table_name", "id int, value string"))
+          Seq((1, "alice"), (2, "a%b"), (3, "a_b"), (4, "a"), (5, "plain"), (6, null))
+            .toDF("id", "value").writeTo("table_name").append()
+          val replacement = Seq((10, "anna")).toDF("id", "value")
+
+          overwriteTable(api, "value LIKE 'a%'", replacement)
+
+          checkAnswer(
+            spark.table("table_name"), Seq(Row(5, "plain"), Row(6, null), Row(10, "anna")))
+        }
+      }
+    }
+  }
 
   test("Append: basic append by path") {
-    spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+    spark.sql(createTableSQL("table_name", "id bigint, data string"))
 
     checkAnswer(spark.table("table_name"), Seq.empty)
     val location = catalog.loadTable(Identifier.of(Array("default"), "table_name"))
@@ -554,10 +772,10 @@ class DeltaDataFrameWriterV2Suite
   test("Create: basic behavior by path") {
     withTempDir { tempDir =>
       val dir = tempDir.getCanonicalPath
-      spark.table("source").writeTo(s"delta.`$dir`").using("delta").create()
+      spark.table("source").writeTo(s"delta.`$dir`").using(tableProvider).create()
 
       checkAnswer(
-        spark.read.format("delta").load(dir),
+        spark.read.format(writeFormat).load(dir),
         Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
 
       val table = catalog.loadTable(Identifier.of(Array("delta"), dir))
@@ -571,7 +789,7 @@ class DeltaDataFrameWriterV2Suite
 
   test("Create: using empty dataframe") {
     spark.table("source").where("false")
-      .writeTo("table_name").using("delta")
+      .writeTo("table_name").using(tableProvider)
       .tableProperty("delta.appendOnly", "true")
       .partitionedBy($"id").create()
 
@@ -581,13 +799,13 @@ class DeltaDataFrameWriterV2Suite
 
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table) === Map("delta.appendOnly" -> "true"))
   }
 
   test("Replace: basic behavior using empty df") {
     spark.sql(
-      "CREATE TABLE table_name (id bigint, data string) USING delta PARTITIONED BY (id)")
+      createTableSQL("table_name", "id bigint, data string", partitionBy = "PARTITIONED BY (id)"))
     spark.sql("INSERT INTO TABLE table_name SELECT * FROM source")
 
     checkAnswer(
@@ -599,12 +817,12 @@ class DeltaDataFrameWriterV2Suite
     // validate the initial table
     assert(table.name === s"${catalogPrefix}default.table_name")
     assert(table.schema === new StructType().add("id", LongType).add("data", StringType))
-    assert(table.partitioning === Seq(IdentityTransform(FieldReference("id"))))
+    assertPartitionedById(table)
     assert(getProperties(table).isEmpty)
 
     spark.table("source2").where("false")
       .withColumn("even_or_odd", when(($"id" % 2) === 0, "even").otherwise("odd"))
-      .writeTo("table_name").using("delta")
+      .writeTo("table_name").using(tableProvider)
       .tableProperty("deLta.aPpeNdonly", "true").replace()
 
     checkAnswer(
@@ -619,13 +837,13 @@ class DeltaDataFrameWriterV2Suite
         .add("id", LongType)
         .add("data", StringType)
         .add("even_or_odd", StringType))
-    assert(replaced.partitioning.isEmpty)
+    assertUnpartitioned(replaced)
     assert(getProperties(replaced) === Map("delta.appendOnly" -> "true"))
   }
 
   test("throw error with createOrReplace and Replace if overwriteSchema=false") {
     spark.sql(
-      "CREATE TABLE table_name (id bigint, data string) USING delta PARTITIONED BY (id)")
+      createTableSQL("table_name", "id bigint, data string", partitionBy = "PARTITIONED BY (id)"))
     spark.sql("INSERT INTO TABLE table_name SELECT * FROM source")
 
     checkAnswer(
@@ -638,7 +856,7 @@ class DeltaDataFrameWriterV2Suite
         f: CreateTableWriter[_] => CreateTableWriter[_]): Unit = {
       val e = intercept[IllegalArgumentException] {
         val dfwV2 = df.writeTo("table_name")
-          .using("delta")
+          .using(tableProvider)
           .option("overwriteSchema", "false")
         f(dfwV2).replace()
       }
@@ -646,7 +864,7 @@ class DeltaDataFrameWriterV2Suite
 
       val e2 = intercept[IllegalArgumentException] {
         val dfwV2 = df.writeTo("table_name")
-            .using("delta")
+            .using(tableProvider)
             .option("overwriteSchema", "false")
         f(dfwV2).createOrReplace()
       }
@@ -675,9 +893,9 @@ class DeltaDataFrameWriterV2Suite
   test("saveAsTable overwrite mode should not do implicit casting") {
     val table = "not_implicit_casting"
     withTable(table) {
-      spark.sql(s"CREATE TABLE $table(id bigint, p int) USING delta PARTITIONED BY (p)")
+      spark.sql(s"CREATE TABLE $table(id bigint, p int) USING $tableProvider PARTITIONED BY (p)")
       val e = intercept[DeltaAnalysisException] {
-        Seq(1 -> 1).toDF("id", "p").write.mode("overwrite").format("delta").saveAsTable(table)
+        Seq(1 -> 1).toDF("id", "p").write.mode("overwrite").format(writeFormat).saveAsTable(table)
       }
       checkError(
         e.getCause.asInstanceOf[DeltaAnalysisException],
@@ -689,9 +907,9 @@ class DeltaDataFrameWriterV2Suite
   test("implicit casting supported for saveAsTable append and writeTo operations") {
     val table = "implicit_casting"
     withTable(table) {
-      spark.sql(s"CREATE TABLE $table(id bigint, p int) USING delta PARTITIONED BY (p)")
+      spark.sql(s"CREATE TABLE $table(id bigint, p int) USING $tableProvider PARTITIONED BY (p)")
       // All of these should succeed with implicit casting (int -> bigint)
-      Seq(1 -> 1).toDF("id", "p").write.mode("append").format("delta").saveAsTable(table)
+      Seq(1 -> 1).toDF("id", "p").write.mode("append").format(writeFormat).saveAsTable(table)
       Seq(1 -> 1).toDF("id", "p").writeTo(table).append()
       Seq(1 -> 1).toDF("id", "p").writeTo(table).overwrite($"p" === 1)
       Seq(1 -> 1).toDF("id", "p").writeTo(table).overwritePartitions()
@@ -702,7 +920,8 @@ class DeltaDataFrameWriterV2Suite
     val table = "allow_missing_columns"
     withTable(table) {
       spark.sql(
-        s"CREATE TABLE $table(col1 int, col2 int, col3 int) USING delta PARTITIONED BY (col3)")
+        s"CREATE TABLE $table(col1 int, col2 int, col3 int) USING $tableProvider " +
+          "PARTITIONED BY (col3)")
 
       // append
       Seq((0, 10)).toDF("col1", "col3").writeTo(table).append()
@@ -731,7 +950,7 @@ class DeltaDataFrameWriterV2Suite
   test("Append: writeTo with replaceUsing option just appends") {
     withSQLConf(
         DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
-      spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+      spark.sql(createTableSQL("table_name", "id bigint, data string"))
 
       spark.table("source").writeTo("table_name").append()
 
@@ -758,7 +977,7 @@ class DeltaDataFrameWriterV2Suite
   test("Append: writeTo with replaceOn and targetAlias option just appends") {
     withSQLConf(
         DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
-      spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+      spark.sql(createTableSQL("table_name", "id bigint, data string"))
 
       spark.table("source").writeTo("table_name").append()
 

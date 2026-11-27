@@ -46,7 +46,7 @@ class InvariantEnforcementSuite extends QueryTest
     with DeltaSQLTestUtils {
 
 
-  import testImplicits._
+  import deltaImplicits._
 
   private def tableWithSchema(schema: StructType)(f: String => Unit): Unit = {
     withTempDir { tempDir =>

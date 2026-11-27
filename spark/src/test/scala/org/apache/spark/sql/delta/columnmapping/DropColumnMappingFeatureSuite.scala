@@ -18,8 +18,14 @@ package org.apache.spark.sql.delta.columnmapping
 
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ColumnMappingTableFeature
+import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.DeltaColumnMappingUnsupportedException
+import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.DeltaConfigs._
+import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaTableFeatureException
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
@@ -164,7 +170,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
       "spark.databricks.delta.vacuum.enforceDeletedFileAndLogRetentionDurationCompatibility" ->
         "false") {
       // Verify the input data is as expected.
-      val originalData = spark.table(tableName = testTableName).select(logicalColumnName).collect()
+      val originalData = spark.table(tableName = testTableName).collect()
       // Add a schema comment and verify it is preserved after the rewrite.
       val comment = "test comment"
       sql(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")

@@ -162,7 +162,8 @@ trait IdentityColumnDMLSuiteBase
         sql(s"INSERT INTO $target (id2, value) VALUES(1, 1), (4, 4), (7, 7), (10, 10)")
         highWaterMark = validateIdentity(target, 4, start, step, 1, 10, highWaterMark)
 
-        val idBeforeMerge1 = sql(s"SELECT id FROM $target WHERE id2 in (1, 4, 7, 10)")
+        val idBeforeMerge1 =
+          sql(s"SELECT id FROM $target WHERE id2 in (1, 4, 7, 10)").collect()
         sql(
           s"""
              |MERGE INTO $target
@@ -178,7 +179,13 @@ trait IdentityColumnDMLSuiteBase
           Row(true)
         )
 
-        val idBeforeMerge2 = sql(s"SELECT id FROM $target WHERE id2 in (1, 4, 7, 9, 10)")
+        checkAnswer(
+          sql(s"SELECT id2, value, value2 FROM $target"),
+          Seq(Row(1L, 1, null), Row(4L, 4, null), Row(7L, 7, null),
+            Row(9L, null, 99), Row(10L, 10, null)))
+
+        val idBeforeMerge2 =
+          sql(s"SELECT id FROM $target WHERE id2 in (1, 4, 7, 9, 10)").collect()
         sql(s"INSERT OVERWRITE $source VALUES(9, 999), (11, 1100)")
         val events = Log4jUsageLogger.track {
           sql(
@@ -197,6 +204,10 @@ trait IdentityColumnDMLSuiteBase
           sql(s"SELECT COUNT(DISTINCT id) == COUNT(*) FROM $target"),
           Row(true)
         )
+        checkAnswer(
+          sql(s"SELECT id2, value, value2 FROM $target"),
+          Seq(Row(1L, 1, null), Row(4L, 4, null), Row(7L, 7, null),
+            Row(9L, 999, 99), Row(10L, 10, null), Row(11L, null, 1100)))
         val mergeStats = events.filter { e =>
           e.metric == MetricDefinitions.EVENT_TAHOE.name &&
             e.tags.get("opType").contains("delta.dml.merge.stats")

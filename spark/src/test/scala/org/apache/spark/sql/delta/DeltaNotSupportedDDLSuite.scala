@@ -35,9 +35,10 @@ class DeltaNotSupportedDDLSuite
 
 
 abstract class DeltaNotSupportedDDLBase extends QueryTest
-    with DeltaSQLTestUtils {
+    with DeltaSQLTestUtils
+    with DeltaTableProvider {
 
-  val format = "delta"
+  val format = tableProvider
 
   val nonPartitionedTableName = "deltaTbl"
 

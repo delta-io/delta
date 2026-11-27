@@ -37,7 +37,7 @@ class VersionChecksumHistogramCompatSuite
   with DeltaSQLCommandTest
   with SharedSparkSession {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("CRC with spec-compliant fileSizeHistogram field (Kernel format) is readable") {
     // Delta spec and Kernel (Java/Rust) use "fileSizeHistogram" as the JSON field name.

@@ -412,7 +412,7 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
         TableType.EXTERNAL,
         tableName ->
             assertThrowsWithCauseContaining(
-                "Upgrading to CatalogOwned table is not yet supported",
+                "Upgrading to CatalogManaged table is not yet supported",
                 () ->
                     sql(
                         "ALTER TABLE %s SET TBLPROPERTIES "
@@ -500,7 +500,7 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
 
   private TableInfo loadTableInfoViaUc(String tableName) throws Exception {
     return new io.unitycatalog.client.api.TablesApi(unityCatalogInfo().createApiClient())
-        .getTable(tableName, false, false);
+        .getTable(tableName, false, false, false);
   }
 
   private String tableProperty(String tableName, String key) {

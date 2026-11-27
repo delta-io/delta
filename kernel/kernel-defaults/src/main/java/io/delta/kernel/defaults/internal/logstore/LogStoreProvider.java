@@ -32,6 +32,7 @@ public class LogStoreProvider {
   private static final Set<String> AZURE_SCHEMES =
       unmodifiableSet("abfs", "abfss", "adl", "wasb", "wasbs");
   private static final Set<String> GCS_SCHEMES = unmodifiableSet("gs");
+  private static final Set<String> GFS_SCHEMES = unmodifiableSet("gfs");
 
   /**
    * Get the {@link LogStore} instance for the given scheme and configuration. Callers can set
@@ -45,6 +46,7 @@ public class LogStoreProvider {
    *   <li>{@code s3, s3a, s3n}: {@link S3SingleDriverLogStore}
    *   <li>{@code abfs, abfss, adl, wasb, wasbs}: {@link AzureLogStore}
    *   <li>{@code gs}: {@link GCSLogStore}
+   *   <li>{@code gfs}: {@link GooseFSLogStore}
    *   <li>{@code hdfs, file}: {@link HDFSLogStore}
    *   <li>remaining: {@link HDFSLogStore}
    * </ul>
@@ -72,6 +74,8 @@ public class LogStoreProvider {
       defaultClassName = AzureLogStore.class.getName();
     } else if (GCS_SCHEMES.contains(schemeLower)) {
       defaultClassName = GCSLogStore.class.getName();
+    } else if (GFS_SCHEMES.contains(schemeLower)) {
+      defaultClassName = GooseFSLogStore.class.getName();
     }
 
     return createLogStore(defaultClassName, hadoopConf, "(default for file scheme)");

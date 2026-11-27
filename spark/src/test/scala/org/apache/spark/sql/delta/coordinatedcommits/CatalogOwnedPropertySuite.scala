@@ -31,59 +31,59 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 class CatalogOwnedPropertySuite extends QueryTest
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   // Register the mock commit coordinator builder for testing, but don't enable
-  // CatalogOwned by default (tests explicitly enable it when needed).
+  // CatalogManaged by default (tests explicitly enable it when needed).
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(3)
-  override def catalogOwnedDefaultCreationEnabledInTests: Boolean = false
+  override def catalogManagedDefaultCreationEnabledInTests: Boolean = false
 
   /**
-   * Validate if the table is catalog owned or not by checking the following:
-   * 1) [[Snapshot.isCatalogOwned]] === expected
+   * Validate if the table is catalog managed or not by checking the following:
+   * 1) [[Snapshot.isCatalogManaged]] === expected
    * 2) [[Metadata.configuration]] contains [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]]
-   * 3) [[Protocol.readerAndWriterFeatureNames]] contains [[CatalogOwnedTableFeature.name]]
+   * 3) [[Protocol.readerAndWriterFeatureNames]] contains [[CatalogManagedTableFeature.name]]
    *    and its dependent features.
    *
    * @param tableName The name of the table to validate.
-   * @param expected The expected value of whether the table is catalog owned or not.
+   * @param expected The expected value of whether the table is catalog managed or not.
    */
-  private def validateCatalogOwnedAndUCTableId(tableName: String, expected: Boolean): Unit = {
+  private def validateCatalogManagedAndUCTableId(tableName: String, expected: Boolean): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(tableName))
-    assert(snapshot.isCatalogOwned === expected)
+    assert(snapshot.isCatalogManaged === expected)
     assert(snapshot.metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
       === expected)
-    // CatalogOwned enabled table should have the protocol version of (3, 7),
+    // CatalogManaged enabled table should have the protocol version of (3, 7),
     // since the table can't have a [[ReaderWriterTableFeature]] w/o this version.
     if (expected) {
-      // Only verify protocol version for expected CatalogOwned table.
+      // Only verify protocol version for expected CatalogManaged table.
       validateProtocolMinReaderWriterVersion(
         tableName,
         expectedMinReaderVersion = 3,
         expectedMinWriterVersion = 7)
       // Check dependent features as well.
-      CatalogOwnedTableFeature.requiredFeatures.foreach { feature =>
+      CatalogManagedTableFeature.requiredFeatures.foreach { feature =>
         assert(snapshot.protocol.readerAndWriterFeatureNames.contains(feature.name),
           s"Table $tableName should have ${feature.name} in protocol.")
       }
     }
   }
 
-  private def createTableAndValidateCatalogOwned(
+  private def createTableAndValidateCatalogManaged(
       tableName: String,
-      withCatalogOwned: Boolean): Unit = {
-    val createTableSQLStr = if (withCatalogOwned) {
+      withCatalogManaged: Boolean): Unit = {
+    val createTableSQLStr = if (withCatalogManaged) {
       s"CREATE TABLE $tableName (id LONG) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')"
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')"
     } else {
       s"CREATE TABLE $tableName (id LONG) USING delta"
     }
     sql(createTableSQLStr)
     // Manually insert UC_TABLE_ID to mock UC integration behavior.
-    if (withCatalogOwned) {
+    if (withCatalogManaged) {
       addUCTableIdToTable(tableSource = Right(tableName))
     }
-    validateCatalogOwnedAndUCTableId(tableName, expected = withCatalogOwned)
+    validateCatalogManagedAndUCTableId(tableName, expected = withCatalogManaged)
   }
 
   private def getUCTableIdFromTable(tableName: String): String = {
@@ -120,7 +120,7 @@ class CatalogOwnedPropertySuite extends QueryTest
     // E.g., If the 0th commit enables ICT, then we will not need the above
     //       two properties for the table in subsequent commits.
     // See [[InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo]] for details.
-    CatalogOwnedTableUtils.ICT_TABLE_PROPERTY_KEYS.filter { k =>
+    CatalogManagedTableUtils.ICT_TABLE_PROPERTY_KEYS.filter { k =>
       k != DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key
     }.foreach { key =>
       assert(conf.contains(key) === expectedEnablementInfo)
@@ -147,15 +147,15 @@ class CatalogOwnedPropertySuite extends QueryTest
   }
 
   test("[REPLACE] table UUID & table feature should retain for target " +
-      "catalog-owned table during REPLACE TABLE") {
+      "catalog-managed table during REPLACE TABLE") {
     withTable("t1") {
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableId1 = getUCTableIdFromTable(tableName = "t1")
 
-      // Target table should remain a catalog-owned table with same `ucTableId`
+      // Target table should remain a catalog-managed table with same `ucTableId`
       sql("REPLACE TABLE t1 (id LONG) USING delta")
       val ucTableId2 = getUCTableIdFromTable(tableName = "t1")
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
 
       // [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]] should be the same before and after REPLACE
       assert(ucTableId1 === ucTableId2)
@@ -165,7 +165,7 @@ class CatalogOwnedPropertySuite extends QueryTest
   test("[REPLACE] Specifying table UUID for target table should be blocked " +
       "during REPLACE TABLE") {
     withTable("t1") {
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
 
       val error = intercept[DeltaUnsupportedOperationException] {
         sql("REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
@@ -176,14 +176,14 @@ class CatalogOwnedPropertySuite extends QueryTest
     }
   }
 
-  test("[RTAS] Specifying table UUID when creating catalog-owned " +
+  test("[RTAS] Specifying table UUID when creating catalog-managed " +
       " table via RTAS should be blocked") {
     withTable("t1", "t2") {
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = false)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = false)
       sql("INSERT INTO t1 VALUES (1)")
       sql("INSERT INTO t1 VALUES (2)")
 
-      createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t2", withCatalogManaged = true)
       val ucTableIdOriginal = getUCTableIdFromTable(tableName = "t2")
 
       val error = intercept[DeltaUnsupportedOperationException] {
@@ -196,7 +196,7 @@ class CatalogOwnedPropertySuite extends QueryTest
 
       // Normal RTAS should not be blocked
       sql(s"REPLACE TABLE t2 USING delta AS SELECT * FROM t1")
-      validateCatalogOwnedAndUCTableId(tableName = "t2", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t2", expected = true)
       val ucTableIdAfterRTAS = getUCTableIdFromTable(tableName = "t2")
       assert(ucTableIdOriginal === ucTableIdAfterRTAS)
       checkAnswer(sql("SELECT * FROM t2"), Seq(Row(1), Row(2)))
@@ -207,11 +207,11 @@ class CatalogOwnedPropertySuite extends QueryTest
       "be blocked during REPLACE TABLE") {
     withTable("t1") {
       // Normal delta table.
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = false)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = false)
 
       val error = intercept[DeltaUnsupportedOperationException] {
         sql("REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
-          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+          s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
       }
       checkError(
         exception = error,
@@ -226,17 +226,17 @@ class CatalogOwnedPropertySuite extends QueryTest
       "succeed as a no-op during REPLACE TABLE") {
     withTable("t1") {
       // CatalogManaged enabled table.
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
       val versionBefore = getSnapshotVersion(tableName = "t1")
 
       // Specifying CatalogManaged on an already CatalogManaged table should succeed.
       // The CatalogManaged properties are treated as a no-op.
       sql("REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
 
       // Validate the table is still CatalogManaged with the same ucTableId.
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       val ucTableIdAfter = getUCTableIdFromTable(tableName = "t1")
       assert(ucTableIdBefore === ucTableIdAfter)
       assert(getSnapshotVersion(tableName = "t1") === versionBefore + 1)
@@ -247,15 +247,15 @@ class CatalogOwnedPropertySuite extends QueryTest
       "be blocked during RTAS") {
     withTable("t1", "t2") {
       // Normal delta table.
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = false)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = false)
 
       // Source RTAS table.
-      createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = false)
+      createTableAndValidateCatalogManaged(tableName = "t2", withCatalogManaged = false)
       sql("INSERT INTO t2 VALUES (1), (2)")
 
       val error = intercept[DeltaUnsupportedOperationException] {
         sql("REPLACE TABLE t1 USING delta TBLPROPERTIES " +
-          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported') " +
+          s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported') " +
           s"AS SELECT * FROM t2")
       }
       checkError(
@@ -271,21 +271,21 @@ class CatalogOwnedPropertySuite extends QueryTest
       "succeed as a no-op during RTAS") {
     withTable("t1", "t2") {
       // CatalogManaged enabled table.
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
       val versionBefore = getSnapshotVersion(tableName = "t1")
 
       // Source RTAS table.
-      createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = false)
+      createTableAndValidateCatalogManaged(tableName = "t2", withCatalogManaged = false)
       sql("INSERT INTO t2 VALUES (1), (2)")
 
       // Specifying CatalogManaged on an already CatalogManaged table should succeed.
       sql("REPLACE TABLE t1 USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported') " +
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported') " +
         s"AS SELECT * FROM t2")
 
       // Validate the table is still CatalogManaged with the same ucTableId.
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       val ucTableIdAfter = getUCTableIdFromTable(tableName = "t1")
       assert(ucTableIdBefore === ucTableIdAfter)
       assert(getSnapshotVersion(tableName = "t1") === versionBefore + 1)
@@ -295,7 +295,7 @@ class CatalogOwnedPropertySuite extends QueryTest
 
   test("[RTAS] failed replace preserves existing catalog-managed table data and version") {
     withTable("t1") {
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
       sql("INSERT INTO t1 VALUES (1), (2)")
       val versionBefore = getSnapshotVersion(tableName = "t1")
@@ -308,7 +308,7 @@ class CatalogOwnedPropertySuite extends QueryTest
             |""".stripMargin)
       }
 
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       assert(getUCTableIdFromTable(tableName = "t1") === ucTableIdBefore)
       assert(getSnapshotVersion(tableName = "t1") === versionBefore)
       checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1), Row(2)))
@@ -317,17 +317,17 @@ class CatalogOwnedPropertySuite extends QueryTest
 
   test("[RTAS] replacing an existing catalog-managed table preserves UC identity") {
     withTable("t1", "t2") {
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
       sql("INSERT INTO t1 VALUES (10)")
       val versionBefore = getSnapshotVersion(tableName = "t1")
 
-      createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = false)
+      createTableAndValidateCatalogManaged(tableName = "t2", withCatalogManaged = false)
       sql("INSERT INTO t2 VALUES (1), (2)")
 
       sql("REPLACE TABLE t1 USING delta AS SELECT * FROM t2")
 
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       assert(getUCTableIdFromTable(tableName = "t1") === ucTableIdBefore)
       assert(getSnapshotVersion(tableName = "t1") === versionBefore + 1)
       checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1), Row(2)))
@@ -338,11 +338,11 @@ class CatalogOwnedPropertySuite extends QueryTest
     withTable("t1") {
       // CREATE OR REPLACE on non-existing table with CatalogManaged should create a CC table.
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
       // Mock UC integration behavior by inserting UC_TABLE_ID.
       addUCTableIdToTable(tableSource = Right("t1"))
 
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       sql("INSERT INTO t1 VALUES (1), (2)")
       checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1), Row(2)))
     }
@@ -352,17 +352,17 @@ class CatalogOwnedPropertySuite extends QueryTest
       "should succeed as a no-op") {
     withTable("t1") {
       // Create a CatalogManaged table first.
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
       sql("INSERT INTO t1 VALUES (1)")
       val versionBefore = getSnapshotVersion(tableName = "t1")
 
       // CREATE OR REPLACE with CatalogManaged on existing CatalogManaged table should succeed.
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
 
       // Validate the table is still CatalogManaged with the same ucTableId.
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       val ucTableIdAfter = getUCTableIdFromTable(tableName = "t1")
       assert(ucTableIdBefore === ucTableIdAfter)
       assert(getSnapshotVersion(tableName = "t1") === versionBefore + 1)
@@ -371,16 +371,16 @@ class CatalogOwnedPropertySuite extends QueryTest
 
   test("[CREATE OR REPLACE] replacing an existing catalog-managed table is atomic") {
     withTable("t1") {
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
       sql("INSERT INTO t1 VALUES (1)")
       val versionBefore = getSnapshotVersion(tableName = "t1")
 
       sql("CREATE OR REPLACE TABLE t1 USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported') AS " +
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported') AS " +
         "SELECT 2 AS id")
 
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       assert(getUCTableIdFromTable(tableName = "t1") === ucTableIdBefore)
       assert(getSnapshotVersion(tableName = "t1") === versionBefore + 1)
       checkAnswer(sql("SELECT * FROM t1"), Seq(Row(2)))
@@ -389,14 +389,14 @@ class CatalogOwnedPropertySuite extends QueryTest
 
   test("[REPLACE] replacing an existing catalog-managed table preserves UC identity") {
     withTable("t1") {
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
       sql("INSERT INTO t1 VALUES (1)")
       val versionBefore = getSnapshotVersion(tableName = "t1")
 
       sql("REPLACE TABLE t1 (id LONG) USING delta")
 
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       assert(getUCTableIdFromTable(tableName = "t1") === ucTableIdBefore)
       assert(getSnapshotVersion(tableName = "t1") === versionBefore + 1)
       checkAnswer(sql("SELECT * FROM t1"), Seq.empty)
@@ -406,21 +406,21 @@ class CatalogOwnedPropertySuite extends QueryTest
   test("[CREATE OR REPLACE] specifying table UUID for existing catalog-managed table " +
       "should be blocked") {
     withTable("t1") {
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
       sql("INSERT INTO t1 VALUES (1)")
       val versionBefore = getSnapshotVersion(tableName = "t1")
 
       val error = intercept[DeltaUnsupportedOperationException] {
         sql("CREATE OR REPLACE TABLE t1 USING delta TBLPROPERTIES " +
-          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported', " +
+          s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported', " +
           s"'${UCCommitCoordinatorClient.UC_TABLE_ID_KEY}' = '${UUID.randomUUID().toString}') " +
           "AS SELECT 2 AS id")
       }
       checkError(error, "DELTA_CANNOT_MODIFY_TABLE_PROPERTY", "42939",
         Map("prop" -> "io.unitycatalog.tableId"))
 
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       assert(getUCTableIdFromTable(tableName = "t1") === ucTableIdBefore)
       assert(getSnapshotVersion(tableName = "t1") === versionBefore)
       checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1)))
@@ -431,13 +431,13 @@ class CatalogOwnedPropertySuite extends QueryTest
       "should be blocked") {
     withTable("t1") {
       // Create a non-CatalogManaged table first.
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = false)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = false)
       sql("INSERT INTO t1 VALUES (1)")
 
       // CREATE OR REPLACE with CatalogManaged on existing non-CatalogManaged table should fail.
       val error = intercept[DeltaUnsupportedOperationException] {
         sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
-          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+          s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
       }
       checkError(
         exception = error,
@@ -447,7 +447,7 @@ class CatalogOwnedPropertySuite extends QueryTest
         matchPVals = true)
 
       // Original table should remain unchanged.
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = false)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = false)
       checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1)))
     }
   }
@@ -457,25 +457,25 @@ class CatalogOwnedPropertySuite extends QueryTest
     withTable("t1") {
       // First CREATE OR REPLACE creates the table.
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
       // Mock UC integration behavior by inserting UC_TABLE_ID.
       addUCTableIdToTable(tableSource = Right("t1"))
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       val ucTableIdFirst = getUCTableIdFromTable(tableName = "t1")
       sql("INSERT INTO t1 VALUES (1)")
       checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1)))
 
       // Second CREATE OR REPLACE should succeed as a no-op for CC properties.
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       val ucTableIdSecond = getUCTableIdFromTable(tableName = "t1")
       assert(ucTableIdFirst === ucTableIdSecond)
 
       // Third CREATE OR REPLACE should also succeed when the metadata is unchanged.
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported')")
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       val ucTableIdThird = getUCTableIdFromTable(tableName = "t1")
       assert(ucTableIdFirst === ucTableIdThird)
 
@@ -486,8 +486,8 @@ class CatalogOwnedPropertySuite extends QueryTest
   }
   test("[CREATE LIKE] Specifying table UUID should be blocked") {
     withTable("t1", "t2", "t3") {
-      // Source catalog-owned table
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      // Source catalog-managed table
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
 
       val error1 = intercept[UnsupportedOperationException] {
         sql(s"CREATE TABLE t2 LIKE t1 TBLPROPERTIES " +
@@ -511,9 +511,9 @@ class CatalogOwnedPropertySuite extends QueryTest
   }
 
   test("[REPLACE] Protocol should not be downgraded when adding new table feature " +
-      "to existing CatalogOwned enabled table") {
+      "to existing CatalogManaged enabled table") {
     withTable("t1", "t2") {
-      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t1", withCatalogManaged = true)
       val ucTableIdBeforeReplace = getUCTableIdFromTable(tableName = "t1")
       sql("CREATE TABLE t2 (col1 LONG) USING delta")
       sql("INSERT INTO t2 VALUES (1)")
@@ -522,7 +522,7 @@ class CatalogOwnedPropertySuite extends QueryTest
       sql("REPLACE TABLE t1 USING delta CLUSTER BY (col1) " +
         "TBLPROPERTIES ('delta.dataSkippingNumIndexedCols' = '1') " +
         "AS SELECT * FROM t2")
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = true)
       val ucTableIdAfterReplace = getUCTableIdFromTable(tableName = "t1")
       assert(ucTableIdBeforeReplace === ucTableIdAfterReplace)
       checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1), Row(2)))
@@ -530,14 +530,14 @@ class CatalogOwnedPropertySuite extends QueryTest
       val readerWriterFeatureNames =
         log.unsafeVolatileSnapshot.protocol.readerAndWriterFeatureNames
       assert(readerWriterFeatureNames.contains(ClusteringTableFeature.name) &&
-        readerWriterFeatureNames.contains(CatalogOwnedTableFeature.name))
+        readerWriterFeatureNames.contains(CatalogManagedTableFeature.name))
     }
   }
 
   test("[REPLACE] ICT should not be present after replacing existing normal delta " +
       "table w/o ICT w/ default spark configuration") {
     withSQLConf(
-        TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature) -> "supported") {
+        TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature) -> "supported") {
       withTable("t1", "t2") {
         withoutDefaultCCTableFeature {
           sql("CREATE TABLE t1 (id LONG) USING delta")
@@ -554,7 +554,7 @@ class CatalogOwnedPropertySuite extends QueryTest
           tableName = "t2",
           expected = false,
           expectedEnablementInfo = false)
-        validateCatalogOwnedAndUCTableId(tableName = "t2", expected = false)
+        validateCatalogManagedAndUCTableId(tableName = "t2", expected = false)
         sql("INSERT INTO t2 VALUES (3), (4)")
         checkAnswer(sql("SELECT * FROM t2"), Seq(Row(1), Row(2), Row(3), Row(4)))
       }
@@ -564,7 +564,7 @@ class CatalogOwnedPropertySuite extends QueryTest
   test("[REPLACE] ICT-related properties should not be present after replacing existing " +
       "normal delta table w/ ICT w/ default spark configuration") {
     withSQLConf(
-        TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature) -> "supported") {
+        TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature) -> "supported") {
       withTable("t1", "t2", "t3") {
         withoutDefaultCCTableFeature {
           sql("CREATE TABLE t1 (id LONG) USING delta")
@@ -601,7 +601,7 @@ class CatalogOwnedPropertySuite extends QueryTest
             expectedEnablementInfo = false)
           // ICT table feature will be preserved after REPLACE.
           validateInCommitTimestampTableFeature(tableName = tableName, expected = true)
-          validateCatalogOwnedAndUCTableId(tableName = tableName, expected = false)
+          validateCatalogManagedAndUCTableId(tableName = tableName, expected = false)
         }
         sql("INSERT INTO t2 VALUES (4), (5)")
         sql("INSERT INTO t3 VALUES (5)")
@@ -614,7 +614,7 @@ class CatalogOwnedPropertySuite extends QueryTest
   test("[REPLACE] ICT should be present after replacing existing normal delta " +
       "table w/o ICT w/ default spark configuration w/ explicitly overrides") {
     withSQLConf(
-        TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature) -> "supported") {
+        TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature) -> "supported") {
       withTable("t1", "t2", "t3") {
         withoutDefaultCCTableFeature {
           sql("CREATE TABLE t1 (id LONG) USING delta")
@@ -636,7 +636,7 @@ class CatalogOwnedPropertySuite extends QueryTest
                  | AS SELECT * FROM t1
               """.stripMargin)
           checkAnswer(sql(s"SELECT * FROM $tableName"), Seq(Row(1), Row(2)))
-          validateCatalogOwnedAndUCTableId(tableName = tableName, expected = false)
+          validateCatalogManagedAndUCTableId(tableName = tableName, expected = false)
           sql(s"INSERT INTO $tableName VALUES (3), (4)")
           checkAnswer(sql(s"SELECT * FROM $tableName"), Seq(Row(1), Row(2), Row(3), Row(4)))
           // ICT enablement info is present in both `t2` and `t3`.
@@ -663,19 +663,19 @@ class CatalogOwnedPropertySuite extends QueryTest
           tableName = tableName,
           expected = false,
           expectedEnablementInfo = false)
-        validateCatalogOwnedAndUCTableId(tableName, expected = false)
+        validateCatalogManagedAndUCTableId(tableName, expected = false)
       }
 
       // w/ default CO enabled
       withSQLConf(
-          TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature) -> "supported",
+          TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature) -> "supported",
           DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "true") {
         sql("REPLACE TABLE t2 USING delta AS SELECT * FROM t1")
         validateInCommitTimestampPresent(
           tableName = "t2",
           expected = true,
           expectedEnablementInfo = true)
-        validateCatalogOwnedAndUCTableId(tableName = "t2", expected = false)
+        validateCatalogManagedAndUCTableId(tableName = "t2", expected = false)
       }
 
       // w/o default CO enabled
@@ -685,7 +685,7 @@ class CatalogOwnedPropertySuite extends QueryTest
           tableName = "t3",
           expected = true,
           expectedEnablementInfo = true)
-        validateCatalogOwnedAndUCTableId(tableName = "t3", expected = false)
+        validateCatalogManagedAndUCTableId(tableName = "t3", expected = false)
       }
 
       Seq("t1", "t2", "t3").foreach { tableName =>
@@ -713,13 +713,13 @@ class CatalogOwnedPropertySuite extends QueryTest
         tableName = "t1",
         expectedMinReaderVersion = 1,
         expectedMinWriterVersion = 2)
-      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = false)
-      CatalogOwnedTableFeature.requiredFeatures.foreach { feature =>
+      validateCatalogManagedAndUCTableId(tableName = "t1", expected = false)
+      CatalogManagedTableFeature.requiredFeatures.foreach { feature =>
         assert(!featuresBeforeReplaceT1.contains(feature.name))
       }
 
       // Create a CC table w/ protocol (3, 7).
-      createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = true)
+      createTableAndValidateCatalogManaged(tableName = "t2", withCatalogManaged = true)
       val featuresBeforeReplaceT2 = getReaderAndWriterFeatureNamesFromTable(tableName = "t2")
 
       // Insert initial data.
@@ -740,11 +740,11 @@ class CatalogOwnedPropertySuite extends QueryTest
           expectedMinReaderVersion = 1,
           expectedMinWriterVersion = 2)
         assert(featuresBeforeReplaceT1 === featuresAfterReplaceT1)
-        validateCatalogOwnedAndUCTableId(tableName = "t1", expected = false)
+        validateCatalogManagedAndUCTableId(tableName = "t1", expected = false)
 
         val featuresAfterReplaceT2 = getReaderAndWriterFeatureNamesFromTable(tableName = "t2")
         assert(featuresBeforeReplaceT2 === featuresAfterReplaceT2)
-        validateCatalogOwnedAndUCTableId(tableName = "t2", expected = true)
+        validateCatalogManagedAndUCTableId(tableName = "t2", expected = true)
       }
     }
   }

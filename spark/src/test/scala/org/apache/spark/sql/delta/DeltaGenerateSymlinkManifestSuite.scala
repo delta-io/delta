@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.DeltaOperations.Delete
 import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.conf.Configuration
@@ -36,7 +36,6 @@ import org.apache.spark.SparkThrowable
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.test.SharedSparkSession
 // scalastyle:on import.ordering.noEmptyLine
 
 class DeltaGenerateSymlinkManifestSuite
@@ -45,10 +44,11 @@ class DeltaGenerateSymlinkManifestSuite
 
 trait DeltaGenerateSymlinkManifestSuiteBase
   extends DeltaGenerateSymlinkManifestTestHelper
+  with DeltaSQLTestUtils
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
 
-  import testImplicits._
+  import deltaImplicits._
 
   test("basic case: SQL command - path-based table") {
     withTempDir { tablePath =>
@@ -75,6 +75,35 @@ trait DeltaGenerateSymlinkManifestSuiteBase
 
       spark.sql(s"GENERATE symlink_ForMat_Manifest FOR TABLE $tableName")
       assertManifest(tableName, expectSameFiles = true, expectedNumFiles = 7)
+    }
+  }
+
+  test("symlink manifest generation is blocked for a catalog-managed table") {
+    withCatalogManagedTable(createTable = false) { tableName =>
+      spark.sql(s"CREATE TABLE $tableName (id INT) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogManagedTableFeature.name}' = 'supported', " +
+        "'delta.enableDeletionVectors' = 'false')")
+      assertManifest(tableName, expectSameFiles = false, expectedNumFiles = 0)
+
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          spark.sql(s"GENERATE symlink_format_manifest FOR TABLE $tableName")
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "GENERATE_SYMLINK_FORMAT_MANIFEST"))
+      assertManifest(tableName, expectSameFiles = false, expectedNumFiles = 0)
+
+      spark.sql(
+        s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.SYMLINK_FORMAT_MANIFEST_ENABLED.key}' = 'true')")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val versionBefore = deltaLog.update().version
+
+      spark.sql(s"INSERT INTO $tableName VALUES (1)")
+
+      assert(deltaLog.update().version === versionBefore + 1)
+      assertManifest(tableName, expectSameFiles = false, expectedNumFiles = 0)
+      checkAnswer(spark.table(tableName), Row(1))
     }
   }
 
@@ -699,9 +728,8 @@ trait DeltaGenerateSymlinkManifestSuiteBase
 
 trait DeltaGenerateSymlinkManifestTestHelper
   extends QueryTest
-  with SharedSparkSession {
-
-  import testImplicits._
+    with DeltaSQLCommandTest {
+  import deltaImplicits._
 
   protected def assertManifest(
     tablePath: File,
@@ -756,10 +784,9 @@ trait DeltaGenerateSymlinkManifestTestHelper
         DeltaFileOperations.absolutePath(tablePath.toString, addFile.path).toString
       }
       .toSeq
-      .toDF("file")
 
     if (expectSameFiles) {
-      checkAnswer(filesInManifest, filesInLog)
+      checkAnswer(filesInManifest, filesInLog.map(Row(_)))
 
       // Validate that each file in the manifest is actually present in table. This mainly checks
       // whether the file names in manifest are not escaped and therefore are readable directly
@@ -770,7 +797,7 @@ trait DeltaGenerateSymlinkManifestTestHelper
         assert(fs.exists(new Path(p)), s"path $p in manifest not found in file system")
       }
     } else {
-      assert(filesInManifest.as[String].collect().toSet != filesInLog.as[String].collect().toSet)
+      assert(filesInManifest.as[String].collect().toSet != filesInLog.toSet)
     }
 
     // If there are partitioned files, make sure the partitions values read from them are the
@@ -781,7 +808,7 @@ trait DeltaGenerateSymlinkManifestTestHelper
         .selectExpr(partitionCols: _*).distinct()
       val partitionsInData = spark.read.format("delta").load(tablePath.toString)
         .selectExpr(partitionCols: _*).distinct()
-      checkAnswer(partitionsInManifest, partitionsInData)
+      checkAnswer(partitionsInManifest, partitionsInData.collect())
     }
   }
 
@@ -874,4 +901,3 @@ class SymlinkManifestFailureTestFileSystem extends RawLocalFileSystem {
 object SymlinkManifestFailureTestFileSystem {
   val SCHEME = "testScheme"
 }
-

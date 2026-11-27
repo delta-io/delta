@@ -84,7 +84,7 @@ public class ChecksumUtils {
    * actions across the folded range (e.g. many rewrites).
    */
   @VisibleForTesting static final int MAX_SEEN_IDENTITIES = 1000;
-
+  // Operations supported by incremental CRC computation.
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
           new HashSet<>(
@@ -93,12 +93,59 @@ public class ChecksumUtils {
                   "MERGE",
                   "UPDATE",
                   "DELETE",
+                  "TRUNCATE",
                   "OPTIMIZE",
                   "CREATE TABLE",
                   "REPLACE TABLE",
                   "CREATE TABLE AS SELECT",
                   "REPLACE TABLE AS SELECT",
-                  "CREATE OR REPLACE TABLE AS SELECT")));
+                  "CREATE OR REPLACE TABLE AS SELECT",
+                  "ADD COLUMNS",
+                  "DROP COLUMNS",
+                  "RENAME COLUMN",
+                  "CHANGE COLUMN",
+                  "CHANGE COLUMNS",
+                  "REPLACE COLUMNS",
+                  "UPDATE SCHEMA",
+                  "REMOVE COLUMN MAPPING",
+                  "SET TBLPROPERTIES",
+                  "ADD CONSTRAINT",
+                  "DROP CONSTRAINT",
+                  "UPGRADE PROTOCOL",
+                  "DROP FEATURE",
+                  "COMPUTE STATS",
+                  "RECOMPRESSION",
+                  "REORG",
+                  "VACUUM START",
+                  "VACUUM END",
+                  "REPAIR METADATA",
+                  "CLUSTER BY",
+                  "REPLACE PARTITIONED BY WITH CLUSTER BY",
+                  "LIQUID BACKFILL",
+                  "LIQUID TAGGING",
+                  "ROW TRACKING BACKFILL",
+                  "ROW TRACKING UNBACKFILL",
+                  "Deletion Vector Tombstones",
+                  "Empty Commit",
+                  "DOMAIN METADATA CLEANUP")));
+
+  // Operations re-add existing files to update their metadata. Skipping them
+  // for incremental CRC stats computations.
+  private static final Set<String> IGNORE_ADD_FILE_OPS =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(
+                  "COMPUTE STATS",
+                  "ROW TRACKING BACKFILL",
+                  "ROW TRACKING UNBACKFILL",
+                  "DROP FEATURE",
+                  "LIQUID BACKFILL",
+                  "LIQUID TAGGING",
+                  "REPLACE PARTITIONED BY WITH CLUSTER BY")));
+
+  // These tombstones refer to auxiliary DV files, skipping them for CRC stats computation
+  private static final Set<String> IGNORE_REMOVE_FILE_OPS =
+      Collections.singleton("Deletion Vector Tombstones");
 
   /**
    * Computes the state of a Delta table and writes a checksum file for the provided snapshot's
@@ -322,7 +369,7 @@ public class ChecksumUtils {
               "unexpected remove row found when "
                   + "setting minFileRetentionTimestampMillis to infinite future");
           // Step 2: Process add files, domain metadata, metadata, protocol, and transactions
-          processAddRecord(addVector, state, i);
+          processAddRecord(addVector, state, i, false /* ignoreAggregateStats */);
           processDomainMetadataRecord(domainMetadataVector, state, i);
           processMetadataRecord(metadataVector, state, i);
           processProtocolRecord(protocolVector, state, i);
@@ -448,6 +495,9 @@ public class ChecksumUtils {
     try (CloseableIterator<ActionWrapper> iterator =
         new ActionsIterator(engine, deltaFiles, readSchema, java.util.Optional.empty())) {
       Optional<Long> lastSeenVersion = Optional.empty();
+      // A commit can span several batches; retain its policy until the next version begins.
+      boolean ignoreAddFiles = false;
+      boolean ignoreRemoveFiles = false;
       while (iterator.hasNext()) {
         ActionWrapper currentAction = iterator.next();
         ColumnarBatch batch = currentAction.getColumnarBatch();
@@ -491,32 +541,37 @@ public class ChecksumUtils {
               return Optional.empty();
             }
 
+            String operation = commitInfo.getOperation().get();
+            ignoreAddFiles = IGNORE_ADD_FILE_OPS.contains(operation);
+            ignoreRemoveFiles = IGNORE_REMOVE_FILE_OPS.contains(operation);
             lastSeenVersion = Optional.of(newVersion);
             continue;
           }
 
           // Process the row
           if (!addVector.isNullAt(i)) {
-            processAddRecord(addVector, state, i);
+            processAddRecord(addVector, state, i, ignoreAddFiles);
           }
 
           // Process remove file records
           if (!removeVector.isNullAt(i)) {
-            ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
-            if (sizeVector.isNullAt(i)) {
-              logger.info(
-                  "Falling back to full replay after {}ms: "
-                      + "detected remove without file size in version {}",
-                  System.currentTimeMillis() - startTime,
-                  newVersion);
-              return Optional.empty();
+            if (!ignoreRemoveFiles) {
+              ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
+              if (sizeVector.isNullAt(i)) {
+                logger.info(
+                    "Falling back to full replay after {}ms: "
+                        + "detected remove without file size in version {}",
+                    System.currentTimeMillis() - startTime,
+                    newVersion);
+                return Optional.empty();
+              }
+              long fileSize = sizeVector.getLong(i);
+              state.tableSizeByte.add(-fileSize);
+              state.removedFileSizeHistogram.insert(fileSize);
+              state.fileCount.decrement();
+              // Subtract the removed file's deletion-vector metrics.
+              applyDeletionVectorMetrics(removeVector, REMOVE_DV_INDEX, state, i, DvDelta.REMOVE);
             }
-            long fileSize = sizeVector.getLong(i);
-            state.tableSizeByte.add(-fileSize);
-            state.removedFileSizeHistogram.insert(fileSize);
-            state.fileCount.decrement();
-            // Subtract the removed file's deletion-vector metrics.
-            applyDeletionVectorMetrics(removeVector, REMOVE_DV_INDEX, state, i, DvDelta.REMOVE);
 
             if (state.collectAllFiles) {
               RemoveFile removeFile = new RemoveFile(StructRow.fromStructVector(removeVector, i));
@@ -598,18 +653,21 @@ public class ChecksumUtils {
   }
 
   /** Processes an add file record and updates the state tracker. */
-  private static void processAddRecord(ColumnVector addVector, StateTracker state, int rowId) {
+  private static void processAddRecord(
+      ColumnVector addVector, StateTracker state, int rowId, boolean ignoreAggregateStats) {
     if (!addVector.isNullAt(rowId)) {
-      ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
-      checkState(!sizeVector.isNullAt(rowId), "Add record has null file size");
+      if (!ignoreAggregateStats) {
+        ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
+        checkState(!sizeVector.isNullAt(rowId), "Add record has null file size");
 
-      long fileSize = sizeVector.getLong(rowId);
-      checkState(fileSize >= 0, "Add record has negative file size: " + fileSize);
+        long fileSize = sizeVector.getLong(rowId);
+        checkState(fileSize >= 0, "Add record has negative file size: " + fileSize);
 
-      state.tableSizeByte.add(fileSize);
-      state.addedFileSizeHistogram.insert(fileSize);
-      state.fileCount.increment();
-      applyDeletionVectorMetrics(addVector, ADD_DV_INDEX, state, rowId, DvDelta.ADD);
+        state.tableSizeByte.add(fileSize);
+        state.addedFileSizeHistogram.insert(fileSize);
+        state.fileCount.increment();
+        applyDeletionVectorMetrics(addVector, ADD_DV_INDEX, state, rowId, DvDelta.ADD);
+      }
 
       if (state.collectAllFiles) {
         state.recordAddFile(new AddFile(StructRow.fromStructVector(addVector, rowId)));

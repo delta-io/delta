@@ -51,7 +51,9 @@ public class DeltaWriterResultAggregator
     implements OneInputStreamOperator<
         CommittableMessage<DeltaWriterResult>, CommittableMessage<DeltaCommittable>> {
   private static final Logger LOG = LoggerFactory.getLogger(DeltaWriterResultAggregator.class);
+  private static final long NO_PENDING_CHECKPOINT = -1;
   private final Collection<DeltaWriterResult> results;
+  private long pendingCheckpointId = NO_PENDING_CHECKPOINT;
 
   public DeltaWriterResultAggregator() {
     results = new ArrayList<>();
@@ -70,12 +72,24 @@ public class DeltaWriterResultAggregator
   @Override
   public void finish() throws IOException {
     LOG.debug("Finishing");
-    prepareSnapshotPreBarrier(Long.MAX_VALUE);
+    if (pendingCheckpointId != NO_PENDING_CHECKPOINT) {
+      // Preserve the upstream ID so the final checkpoint can commit bounded-input rows.
+      prepareSnapshotPreBarrier(pendingCheckpointId);
+    }
   }
 
   @Override
   public void prepareSnapshotPreBarrier(long checkpointId) throws IOException {
     LOG.debug("Aggregating on checkpoint {}", checkpointId);
+
+    if (pendingCheckpointId != NO_PENDING_CHECKPOINT) {
+      Preconditions.checkState(
+          pendingCheckpointId == checkpointId,
+          "Cannot aggregate results from checkpoint "
+              + pendingCheckpointId
+              + " into checkpoint "
+              + checkpointId);
+    }
 
     DeltaWriterResult merged =
         results.stream()
@@ -100,16 +114,31 @@ public class DeltaWriterResultAggregator
         checkpointId,
         committable.getDeltaActions().size());
     results.clear();
+    pendingCheckpointId = NO_PENDING_CHECKPOINT;
   }
 
   @Override
   public void processElement(StreamRecord<CommittableMessage<DeltaWriterResult>> element)
       throws Exception {
     // TODO control buffer size
-    if (element.isRecord() && element.getValue() instanceof CommittableWithLineage) {
-      LOG.debug("Received writerResult: {}", element.getValue());
-      results.add(
-          ((CommittableWithLineage<DeltaWriterResult>) element.getValue()).getCommittable());
+    if (element.isRecord()) {
+      CommittableMessage<DeltaWriterResult> message = element.getValue();
+      if (pendingCheckpointId == NO_PENDING_CHECKPOINT) {
+        pendingCheckpointId = message.getCheckpointId();
+      }
+      Preconditions.checkState(
+          pendingCheckpointId == message.getCheckpointId(),
+          "Received results from checkpoints "
+              + pendingCheckpointId
+              + " and "
+              + message.getCheckpointId()
+              + " in one aggregation");
+
+      if (!(message instanceof CommittableWithLineage)) {
+        return;
+      }
+      LOG.debug("Received writerResult: {}", message);
+      results.add(((CommittableWithLineage<DeltaWriterResult>) message).getCommittable());
     }
   }
 }

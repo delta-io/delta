@@ -16,10 +16,14 @@
 
 package io.delta.kernel.internal.commitrange;
 
+import static io.delta.kernel.internal.DeltaErrors.commitActionIterationNotSupported;
+import static io.delta.kernel.internal.DeltaErrors.missingCommitVersion;
+import static io.delta.kernel.internal.DeltaErrors.startVersionNotFound;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.CommitActions;
+import io.delta.kernel.CommitFileStatus;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
@@ -33,6 +37,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -47,6 +52,12 @@ public class CommitRangeImpl implements CommitRange {
   private final long startVersion;
   private final long endVersion;
   private final List<ParsedDeltaData> deltas;
+  // Version of the first logical commit after the range, if one was observed while the range
+  // stopped short of its end. Only used to prove that a version in the range is missing; that
+  // commit is never part of the range.
+  private final Optional<Long> nextVersionAfterEnd;
+  private final boolean commitRangeValidation;
+  private final boolean failOnDataLoss;
 
   public CommitRangeImpl(
       Path dataPath,
@@ -54,16 +65,28 @@ public class CommitRangeImpl implements CommitRange {
       Optional<CommitRangeBuilder.CommitBoundary> endBoundaryOpt,
       long startVersion,
       long endVersion,
-      List<ParsedDeltaData> deltas) {
-    checkArgument(startVersion <= endVersion, "must have startVersion <= endVersion");
+      List<ParsedDeltaData> deltas,
+      Optional<Long> nextVersionAfterEnd,
+      boolean commitRangeValidation,
+      boolean failOnDataLoss) {
+    // Only a validated range must be non-empty and ordered. A relaxed range may be empty, and
+    // may even have startVersion > endVersion.
     checkArgument(
-        deltas.size() == endVersion - startVersion + 1, "deltaFiles size must match size of range");
+        !commitRangeValidation || startVersion <= endVersion,
+        "must have startVersion <= endVersion");
+    checkArgument(
+        !commitRangeValidation || deltas.size() == endVersion - startVersion + 1,
+        "deltaFiles size must match size of range");
     this.dataPath = requireNonNull(dataPath, "dataPath cannot be null");
     this.startBoundary = requireNonNull(startBoundary, "startBoundary cannot be null");
     this.endBoundaryOpt = requireNonNull(endBoundaryOpt, "endSpecOpt cannot be null");
     this.startVersion = startVersion;
     this.endVersion = endVersion;
     this.deltas = requireNonNull(deltas, "deltas cannot be null");
+    this.nextVersionAfterEnd =
+        requireNonNull(nextVersionAfterEnd, "nextVersionAfterEnd cannot be null");
+    this.commitRangeValidation = commitRangeValidation;
+    this.failOnDataLoss = failOnDataLoss;
   }
 
   ////////////////////////////////////////
@@ -88,6 +111,59 @@ public class CommitRangeImpl implements CommitRange {
   @Override
   public Optional<CommitRangeBuilder.CommitBoundary> getQueryEndBoundary() {
     return endBoundaryOpt;
+  }
+
+  @Override
+  public CloseableIterator<CommitFileStatus> getCommitFiles() {
+    return new CloseableIterator<CommitFileStatus>() {
+      private int index;
+      private long expectedVersion = startVersion;
+      private boolean done;
+
+      @Override
+      public boolean hasNext() {
+        if (done) {
+          return false;
+        }
+        boolean inRange = index < deltas.size();
+        // A missing version is only reported when a later commit that was actually observed
+        // proves it is missing. Without one, a missing suffix of the range is not an error.
+        Optional<Long> observedVersion =
+            inRange ? Optional.of(deltas.get(index).getVersion()) : nextVersionAfterEnd;
+        if (failOnDataLoss
+            && observedVersion.isPresent()
+            && observedVersion.get() != expectedVersion) {
+          done = true;
+          if (index == 0) {
+            throw startVersionNotFound(dataPath.toString(), startVersion, observedVersion);
+          }
+          throw missingCommitVersion(dataPath.toString(), expectedVersion);
+        }
+        if (!inRange) {
+          done = true;
+        }
+        return inRange;
+      }
+
+      @Override
+      public CommitFileStatus next() {
+        if (!hasNext()) {
+          throw new NoSuchElementException();
+        }
+        ParsedDeltaData delta = deltas.get(index++);
+        if (delta.getVersion() == Long.MAX_VALUE) {
+          done = true;
+        } else {
+          expectedVersion = delta.getVersion() + 1;
+        }
+        return new CommitFileStatus(delta.getVersion(), delta.getFileStatus());
+      }
+
+      @Override
+      public void close() {
+        done = true;
+      }
+    };
   }
 
   @VisibleForTesting
@@ -135,6 +211,9 @@ public class CommitRangeImpl implements CommitRange {
 
   private void validateParameters(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    if (!commitRangeValidation) {
+      throw commitActionIterationNotSupported();
+    }
     requireNonNull(engine, "engine cannot be null");
     requireNonNull(startSnapshot, "startSnapshot cannot be null");
     requireNonNull(actionSet, "actionSet cannot be null");

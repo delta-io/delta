@@ -58,11 +58,18 @@ def get_args():
         required=False,
         default=None,
         help="Delta Kernel version to use (passed as -DkernelVersion to SBT)")
-    return parser.parse_args()
+    parser.add_argument(
+        "--no-clean",
+        action="store_true",
+        help="Reuse compiled Scala/Java outputs; sbt still recompiles changed sources and runs tests")
+    args = parser.parse_args()
+    if args.no_clean and args.group == "spark-python":
+        parser.error("--no-clean applies only to Scala/Java tests")
+    return args
 
 
 def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None,
-                  spark_version=None, kernel_version=None):
+                  spark_version=None, kernel_version=None, clean=True):
     print("##### Running SBT tests #####")
     print(f"[run-tests.py] run_sbt_tests: spark_version={spark_version!r}, "
           f"kernel_version={kernel_version!r}")
@@ -76,7 +83,8 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     if kernel_version:
         cmd.append(f"-DkernelVersion={kernel_version}")
 
-    cmd.append("clean")
+    if clean:
+        cmd.append("clean")
 
     test_cmd = "test"
     if shard:
@@ -216,7 +224,7 @@ def pull_or_build_docker_image(root_dir):
     return test_env_image_tag
 
 
-def run_tests_in_docker(image_tag, test_group, kernel_version=None):
+def run_tests_in_docker(image_tag, test_group, kernel_version=None, clean=True):
     """
     Run the necessary tests in a docker container made from the given image.
     It starts the container with the delta repo mounted in it, and then
@@ -251,6 +259,8 @@ def run_tests_in_docker(image_tag, test_group, kernel_version=None):
         test_script_args += " --group %s" % test_group
     if kernel_version:
         test_script_args += " --kernel-version %s" % kernel_version
+    if not clean:
+        test_script_args += " --no-clean"
     print(f"[run-tests.py] run_tests_in_docker: forwarding to container: "
           f"test_group={test_group!r}, kernel_version={kernel_version!r}")
 
@@ -305,7 +315,7 @@ if __name__ == "__main__":
     if os.getenv("USE_DOCKER") is not None:
         test_env_image_tag = pull_or_build_docker_image(root_dir)
         kernel_version = args.kernel_version or os.getenv("KERNEL_VERSION")
-        run_tests_in_docker(test_env_image_tag, args.group, kernel_version)
+        run_tests_in_docker(test_env_image_tag, args.group, kernel_version, clean=not args.no_clean)
     elif args.group == "spark-python":
         kernel_version = args.kernel_version or os.getenv("KERNEL_VERSION")
         run_python_tests(root_dir, kernel_version)
@@ -314,4 +324,4 @@ if __name__ == "__main__":
         spark_version = args.spark_version or os.getenv("SPARK_VERSION")
         kernel_version = args.kernel_version or os.getenv("KERNEL_VERSION")
         run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard,
-                      spark_version, kernel_version)
+                      spark_version, kernel_version, clean=not args.no_clean)

@@ -22,7 +22,7 @@ import java.io.File
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DescribeDeltaHistoryCommand
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -39,20 +39,18 @@ import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{BooleanType, LongType, MapType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.util.Utils
 
 trait DescribeDeltaHistorySuiteBase
   extends QueryTest
-  with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
   with MergeIntoMetricsBase
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with WriteOptionsTestBase {
 
-  import testImplicits._
+  import deltaImplicits._
 
   protected val evolvabilityResource = {
     new File("src/test/resources/delta/history/delta-0.2.0").getAbsolutePath()
@@ -113,14 +111,14 @@ trait DescribeDeltaHistorySuiteBase
       val propertyDf = df.select(Seq($"operationParameters.properties"): _*)
       val actualPropertiesJson = propertyDf.take(1).head.getString(0)
       val actualProperties = JsonUtils.fromJson[Map[String, String]](actualPropertiesJson)
-      if (catalogOwnedDefaultCreationEnabledInTests) {
+      if (catalogManagedDefaultCreationEnabledInTests) {
         // We need to filter out the following two properties b/c
         // they are generated as part of [[RowTrackingFeature]] enablement,
         // the values of which are non-deterministic so we only verify the
         // existence.
         assert(actualProperties.contains(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP) &&
           actualProperties.contains(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP),
-          "RowTracking should be enabled as part of CatalogOwned QoL features, " +
+          "RowTracking should be enabled as part of CatalogManaged QoL features, " +
           s"expecting ${MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP} and " +
           s"${MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP} to be present. " +
           s"The `actualProperties`: $actualProperties")
@@ -192,24 +190,24 @@ trait DescribeDeltaHistorySuiteBase
       .asInstanceOf[Map[String, String]]
   }
 
-  // Returns necessary delta property json expected for the test. If Catalog-Owned is enabled,
+  // Returns necessary delta property json expected for the test. If Catalog-Managed is enabled,
   // a few properties will be automatically populated, and this method will take care of it.
   protected def getProperties(
       extraProperty: Option[Map[String, String]] = None): Map[String, String] = {
-    val catalogOwnedProperty = if (catalogOwnedDefaultCreationEnabledInTests) {
-      CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
+    val catalogManagedProperty = if (catalogManagedDefaultCreationEnabledInTests) {
+      CatalogManagedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
         case (feature, config, value)
         => config.key -> value
       }.toMap ++
       // DV is explicitly disabled here b/c the current suite is incompatible
-      // w/ DV, and we automatically enable it as part of CatalogOwned QoL features.
+      // w/ DV, and we automatically enable it as part of CatalogManaged QoL features.
       Map(s"${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}" -> "false")
     } else {
       Map.empty[String, String]
     }
     // For history command, the output omits the empty config value, so we also need to
     // manually omit the value here.
-    val properties = catalogOwnedProperty.filterNot { case (_, value) => value == "{}" }
+    val properties = catalogManagedProperty.filterNot { case (_, value) => value == "{}" }
     val finalProperties = extraProperty.map(properties ++ _).getOrElse(properties)
     finalProperties.asInstanceOf[Map[String, String]]
   }
@@ -2021,8 +2019,8 @@ case class WriteOptionsAssertion(
  * Shared test utilities for validating write options in DESCRIBE HISTORY / commit stats.
  */
 trait WriteOptionsTestBase {
-  this: QueryTest with SharedSparkSession =>
-  import testImplicits._
+  this: DeltaSQLCommandTest =>
+  import deltaImplicits._
 
   // Execute a write operation and run assertions.
   protected def executePathWriteTest(write: String => Unit)(assertions: WriteOptionsAssertion): Unit

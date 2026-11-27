@@ -18,9 +18,10 @@ package org.apache.spark.sql.delta.rowtracking
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, RowCommitVersion, RowId}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTableProvider, RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -31,7 +32,8 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{LongType, StructType}
 
 class RowTrackingReadWriteSuite extends RowIdTestUtils
-  with ParquetTest {
+  with ParquetTest
+  with DeltaTableProvider {
 
   private val testTableName = "target"
 
@@ -59,7 +61,7 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
       withRowTrackingEnabled(enabled = true) {
         val numRows = 5L
         spark.range(numRows).toDF(testDataColumnName)
-          .write.format("delta").saveAsTable(testTableName)
+          .write.format(writeFormat).saveAsTable(testTableName)
 
         try {
           // Confirm that the materialized columns are not present in the Parquet file(s).
@@ -279,7 +281,7 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
           .toDF(testDataColumnName)
           .withMaterializedRowIdColumn(columnName, lit(1L))
           .write
-          .format("delta")
+          .format(writeFormat)
           .mode("append")
           .saveAsTable(testTableName)
       }
@@ -297,7 +299,7 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
           .toDF(testDataColumnName)
           .withMaterializedRowCommitVersionColumn(columnName, lit(2L))
           .write
-          .format("delta")
+          .format(writeFormat)
           .mode("append")
           .saveAsTable(testTableName)
       }
@@ -363,6 +365,33 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
       }
     }
   }
+  for (v2Mode <- Seq("NONE", "STRICT")) {
+    test(s"row_id reachable via __metadata when a user _metadata column collides " +
+        s"(v2Mode=$v2Mode)") {
+      withConf(DeltaSQLConf.V2_ENABLE_MODE.key -> v2Mode) {
+        withTable(testTableName) {
+          withRowTrackingEnabled(enabled = true) {
+            val tableSchema = StructType.fromDDL(s"id LONG, ${FileFormat.METADATA_NAME} STRING")
+            spark.createDataFrame(
+                Seq(Row(1L, "a"), Row(2L, "b")).asJava,
+                tableSchema)
+              .write.format("delta").mode("append").saveAsTable(testTableName)
+
+            // The user column still resolves as plain `_metadata`, and the collision-renamed
+            // metadata struct exposes row_id under `__metadata`.
+            withAllParquetReaders {
+              checkAnswer(
+                spark.table(testTableName).selectExpr(
+                  "id",
+                  FileFormat.METADATA_NAME,
+                  s"_${FileFormat.METADATA_NAME}.${RowId.ROW_ID} AS row_id"),
+                Seq(Row(1L, "a", 0L), Row(2L, "b", 1L)))
+            }
+          }
+        }
+      }
+    }
+  }
 
   private def writeWithMaterializedRowCommitVersionColumns(
       df: DataFrame,
@@ -371,7 +400,7 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
     withRowTrackingEnabled(enabled = true) {
       // Create the table if it does not exist already.
       df.limit(n = 0)
-        .write.format("delta").mode("append").saveAsTable(testTableName)
+        .write.format(writeFormat).mode("append").saveAsTable(testTableName)
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
       val materializedRowIdColumnName =
@@ -385,7 +414,7 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
           materializedRowCommitVersionName, rowCommitVersionColumn)
         .write
         .mode("append")
-        .format("delta")
+        .format(writeFormat)
         .saveAsTable(testTableName)
     }
   }

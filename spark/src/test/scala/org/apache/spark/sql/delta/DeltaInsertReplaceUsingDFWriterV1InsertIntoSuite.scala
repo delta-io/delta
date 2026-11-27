@@ -131,6 +131,29 @@ class DeltaInsertReplaceUsingDFWriterV1InsertIntoSuite
     }
   }
 
+  test("insertInto: replaceUsing matches keys after TIMESTAMP-to-DATE insertion casts") {
+    withSQLConf(
+        DeltaSQLConf.REPLACE_USING_CAST_MATCHING_KEYS_ENABLED.key -> "true",
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> SQLConf.StoreAssignmentPolicy.ANSI.toString) {
+      withTempDir { dir =>
+        val path = dir.getAbsolutePath
+        sql("SELECT DATE '2025-09-23' AS id, 'target' AS value " +
+          "UNION ALL SELECT DATE '2025-09-24', 'unmatched'")
+          .write.format("delta").save(path)
+
+        writeReplaceUsingDF(
+          sourceDF = sql("SELECT TIMESTAMP '2025-09-23 07:55:51' AS id, 'source' AS value"),
+          target = path,
+          replaceUsingCols = "id")
+
+        checkAnswer(
+          spark.read.format("delta").load(path),
+          sql("SELECT DATE '2025-09-23' AS id, 'source' AS value " +
+            "UNION ALL SELECT DATE '2025-09-24', 'unmatched'"))
+      }
+    }
+  }
+
   test("insertInto: replaceUsing with implicit type widening (Int source to Long target)") {
     withTempDir { dir =>
       val path = dir.getAbsolutePath

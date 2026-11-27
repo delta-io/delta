@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, DeletionVectorDescriptor, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.util.FileNames
+import com.google.common.hash.Hashing
 import io.delta.sharing.client.util.JsonUtils
 import io.delta.sharing.spark.DeltaSharingUtils.{DeltaSharingTableMetadata, FAKE_CHECKPOINT_BYTE_ARRAY}
 import org.apache.hadoop.fs._
@@ -34,6 +35,7 @@ import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
 import org.apache.spark.SparkEnv
+import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.internal.Logging
 import org.apache.spark.storage.BlockId
 
@@ -239,16 +241,39 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
   val SCHEME = DeltaSharingLogFileSystemConstants.SCHEME
 
-  // The constant added as prefix to all delta sharing block ids.
-  private val BLOCK_ID_TEST_PREFIX = "test_"
+  private val LEGACY_BLOCK_ID_PREFIX = "test_"
 
   // It starts with test_ to match the prefix of TestBlockId.
   // In the meantime, we'll investigate in an option to add a general purposed BlockId subclass
   // and use it in delta sharing.
   val DELTA_SHARING_LOG_BLOCK_ID_PREFIX = "test_delta-sharing-log:"
 
+  private val DELTA_LOG_MARKER = "/_delta_log"
+
+  private def hashPath(path: String): String = {
+    Hashing.sha256().hashString(path, StandardCharsets.UTF_8).toString
+  }
+
+  private def deltaLogScope(path: String): String = {
+    val markerIndex = path.indexOf(s"$DELTA_LOG_MARKER/")
+    if (markerIndex < 0) path else path.substring(0, markerIndex + DELTA_LOG_MARKER.length)
+  }
+
+  private def blockIdPrefix(deltaLogPath: String): String = {
+    s"$DELTA_SHARING_LOG_BLOCK_ID_PREFIX${hashPath(deltaLogPath)}_"
+  }
+
   def getDeltaSharingLogBlockId(path: String): BlockId = {
-    BlockId(BLOCK_ID_TEST_PREFIX + path)
+    // DiskBlockManager uses the block name as a local filename. A log URI contains slashes,
+    // so it cannot be used directly when the block is written to disk.
+    val scope = deltaLogScope(path)
+    val relativePath = path.stripPrefix(scope)
+    val suffix = if (relativePath.isEmpty) {
+      "listing"
+    } else {
+      relativePath.stripPrefix("/")
+    }
+    BlockId(blockIdPrefix(scope) + suffix)
   }
 
   /**
@@ -355,14 +380,12 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
    *                     with other queries.
    */
   def tryToCleanUpDeltaLog(deltaLogPath: String): Unit = {
+    val legacyPrefix = LEGACY_BLOCK_ID_PREFIX + deltaLogPath
+    val flatPrefix = blockIdPrefix(deltaLogPath)
     def shouldCleanUp(blockId: BlockId): Boolean = {
-      if (!blockId.name.startsWith(DELTA_SHARING_LOG_BLOCK_ID_PREFIX)) {
-        return false
-      }
-      val blockName = blockId.name
       // deltaLogPath is constructed per query with credential scope id as prefix and a uuid as
       // suffix, which is very unique to the query and won't interfere with other queries.
-      blockName.startsWith(BLOCK_ID_TEST_PREFIX + deltaLogPath)
+      blockId.name.startsWith(legacyPrefix) || blockId.name.startsWith(flatPrefix)
     }
 
     val blockManager = SparkEnv.get.blockManager
@@ -463,14 +486,18 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       return
     }
 
+    val legacyPrefix = LEGACY_BLOCK_ID_PREFIX + deltaLogPath
+    val flatPrefix = blockIdPrefix(deltaLogPath)
     def shouldCleanUp(blockId: BlockId): Boolean = {
-      if (!blockId.name.startsWith(DELTA_SHARING_LOG_BLOCK_ID_PREFIX)) {
-        return false
+      if (blockId.name.startsWith(legacyPrefix)) {
+        FileNames.getFileVersionOpt(new Path(blockId.name.stripPrefix(LEGACY_BLOCK_ID_PREFIX)))
+          .exists(_ <= maxVersion)
+      } else if (blockId.name.startsWith(flatPrefix)) {
+        val relativePath = blockId.name.stripPrefix(flatPrefix)
+        FileNames.getFileVersionOpt(new Path(deltaLogPath, relativePath)).exists(_ <= maxVersion)
+      } else {
+        false
       }
-      val blockName = blockId.name
-      blockName.startsWith(BLOCK_ID_TEST_PREFIX + deltaLogPath) && FileNames
-        .getFileVersionOpt(new Path(blockName.stripPrefix(BLOCK_ID_TEST_PREFIX)))
-        .exists(_ <= maxVersion)
     }
 
     val blockManager = SparkEnv.get.blockManager
@@ -851,11 +878,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       }
     }
 
-    val encodedTablePath = DeltaSharingLogFileSystem.encode(customTablePath)
-
-    // Always use 0.json for snapshot queries.
-    val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
-    val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString
+    val (deltaLogPath, jsonFilePath) = snapshotDeltaLogPathsAtVersionZero(customTablePath)
     DeltaSharingUtils.overrideIteratorBlock[String](
       getDeltaSharingLogBlockId(jsonFilePath),
       jsonLogSeq.result().toIterator
@@ -879,6 +902,36 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       minVersion = 0,
       maxVersion = 0
     )
+  }
+
+  /** Paths of the `_delta_log` listing and `0.json` blocks written for `customTablePath`. */
+  private def snapshotDeltaLogPathsAtVersionZero(customTablePath: String): (String, String) = {
+    val encodedTablePath = DeltaSharingLogFileSystem.encode(customTablePath)
+    val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
+    val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString
+    (deltaLogPath, jsonFilePath)
+  }
+
+  /**
+   * Whether the snapshot log for `customTablePath` can be reused: its urls are in
+   * [[CachedTableManager]] and its blocks in the BlockManager. False on any error.
+   */
+  def isSnapshotDeltaLogReusable(customTablePath: String): Boolean = {
+    try {
+      // Throws if the urls are not cached.
+      CachedTableManager.INSTANCE.getQueryStateSize(customTablePath)
+      val (deltaLogPath, jsonFilePath) = snapshotDeltaLogPathsAtVersionZero(customTablePath)
+      val blockManager = SparkEnv.get.blockManager
+      // getStatus takes no read lock and doesn't deserialize the block.
+      Seq(deltaLogPath, jsonFilePath).forall { path =>
+        blockManager.getStatus(getDeltaSharingLogBlockId(path)).isDefined
+      }
+    } catch {
+      case _: IllegalStateException => false // The urls are not cached.
+      case NonFatal(e) =>
+        logWarning(log"Failed to check whether a snapshot delta log is reusable", e)
+        false
+    }
   }
 
   // Create a delta log directory with protocol and metadata at version 0.
