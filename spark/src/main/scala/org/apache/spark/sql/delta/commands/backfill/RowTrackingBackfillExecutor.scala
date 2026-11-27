@@ -36,6 +36,14 @@ class RowTrackingBackfillExecutor(
 
   override def constructBatch(files: Seq[AddFile]): BackfillBatch =
     RowTrackingBackfillBatch(files)
+
+  /**
+   * The table supports row tracking before the backfill starts (see
+   * [[RowTrackingBackfillCommand]]), so every later commit assigns base row IDs to the files it
+   * adds. The only exception is a commit while row ID generation is suspended, and a backfill
+   * batch fails while it is suspended.
+   */
+  override protected def canPlanBatchesFromSingleScan: Boolean = true
 }
 
 private[delta] object RowTrackingBackfillExecutor extends DeltaLogging {
