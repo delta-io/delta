@@ -337,7 +337,10 @@ trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
         case l: LogicalRDD if l.rdd.name == "mergeMaterializedSource" => true
         case _ => false
       }
-      if (materializedSourceExists) {
+      // MERGE also reads the join keys of the materialized source, in a plan without a join, to
+      // prune target files (see `MergeIntoCommandBase.getSourceKeyFilePruningPredicates`).
+      val isJoin = p.optimized.exists(_.isInstanceOf[Join])
+      if (materializedSourceExists && isJoin) {
         // If it is a plan with materialized source, there should be exactly one join
         // of target and source. We collect resolved hints from analyzed plans, and the hint
         // applied to the join from optimized plan.
