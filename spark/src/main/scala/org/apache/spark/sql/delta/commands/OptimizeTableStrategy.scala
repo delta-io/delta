@@ -21,13 +21,15 @@ import org.apache.spark.sql.delta.skipping.clustering.ZCube
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.commands.OptimizeTableStrategy.DummyBinInfo
-import org.apache.spark.sql.delta.commands.optimize.{AddFileWithNumRecords, DeletionVectorStats, OptimizeStats, ZOrderFileStats, ZOrderStats}
+import org.apache.spark.sql.delta.commands.optimize.{AddFileWithNumRecords, ClusteringColumnFileOrdering, DeletionVectorStats, OptimizeStats, ZOrderFileStats, ZOrderStats}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.{DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE, DELTA_OPTIMIZE_CLUSTERING_TARGET_CUBE_SIZE}
 import org.apache.spark.sql.delta.zorder.ZCubeInfo
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.functions.{coalesce, col, lit, sum}
 
 object OptimizeTableMode extends Enumeration {
   type OptimizeTableMode = Value
@@ -45,6 +47,14 @@ trait OptimizeTableStrategy {
    * Utility method to get max bin size in bytes to group files into.
    */
   def maxBinSize: Long
+
+  /**
+   * Utility method to prepare all files selected for optimization, before they are grouped by
+   * partition and passed to [[prepareFilesPerPartition]].
+   *
+   * @return Prepared files for the subsequent optimization.
+   */
+  def prepareFiles(inputFiles: Seq[AddFile]): Seq[AddFile] = inputFiles
 
   /**
    * Utility method to prepare files in a partition for optimization.
@@ -93,7 +103,7 @@ trait OptimizeTableStrategy {
       bins: Seq[Bin]): Unit
 }
 
-object OptimizeTableStrategy {
+object OptimizeTableStrategy extends DeltaLogging {
   // A trait representing the context for a Bin.
   sealed trait BinInfo
 
@@ -109,14 +119,45 @@ object OptimizeTableStrategy {
       optimizeContext: DeltaOptimizeContext,
       zOrderBy: Seq[String]): OptimizeTableStrategy = getMode(snapshot, zOrderBy) match {
     case OptimizeTableMode.CLUSTERING =>
-      ClusteringStrategy(
-        sparkSession,
-        ClusteringColumnInfo.extractLogicalNames(snapshot),
-        optimizeContext)
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+      if (useLightweightClustering(sparkSession, snapshot, optimizeContext)) {
+        LightweightClusteringStrategy(sparkSession, snapshot, clusteringColumns, optimizeContext)
+      } else {
+        ClusteringStrategy(sparkSession, clusteringColumns, optimizeContext)
+      }
     case OptimizeTableMode.ZORDER => ZOrderStrategy(sparkSession, zOrderBy)
     case OptimizeTableMode.COMPACTION =>
       CompactionStrategy(sparkSession, optimizeContext)
     case other => throw new UnsupportedOperationException(s"Unsupported mode $other")
+  }
+
+  /**
+   * Whether OPTIMIZE on a clustered table should run lightweight compaction instead of
+   * clustering: the table has some unclustered data, but less than
+   * [[DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_MAX_UNCLUSTERED_BYTES]]. Without any
+   * unclustered data, clustering still runs so that partial Z-cubes can be merged.
+   */
+  private def useLightweightClustering(
+      sparkSession: SparkSession,
+      snapshot: Snapshot,
+      optimizeContext: DeltaOptimizeContext): Boolean = {
+    val conf = sparkSession.sessionState.conf
+    if (!conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_ENABLED) ||
+        optimizeContext.isFull || optimizeContext.reorg.nonEmpty) {
+      return false
+    }
+    val unclusteredBytes = snapshot.allFiles
+      .where(col("clusteringProvider").isNull)
+      .select(coalesce(sum(col("size")), lit(0L)))
+      .head()
+      .getLong(0)
+    val threshold =
+      conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_MAX_UNCLUSTERED_BYTES)
+    val useLightweight = unclusteredBytes > 0 && unclusteredBytes < threshold
+    logInfo(s"Clustered table has $unclusteredBytes bytes of unclustered data, threshold for " +
+      s"clustering is $threshold bytes: " +
+      (if (useLightweight) "running lightweight compaction" else "clustering"))
+    useLightweight
   }
 
   private def getMode(snapshot: Snapshot, zOrderBy: Seq[String]): OptimizeTableMode.Value = {
@@ -150,6 +191,59 @@ case class CompactionStrategy(
   override def curve: String = {
     throw new UnsupportedOperationException("Compaction doesn't support clustering.")
   }
+
+  override def updateOptimizeStats(
+      optimizeStats: OptimizeStats,
+      removedFiles: Seq[RemoveFile],
+      bins: Seq[Bin]): Unit = {}
+}
+
+/**
+ * Implements lightweight compaction for clustered tables, used instead of [[ClusteringStrategy]]
+ * while the table has little unclustered data (see
+ * [[DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_ENABLED]]).
+ *
+ * Clustering rewrites the new data together with all partial Z-cubes and sorts every row, so
+ * running it often on small amounts of new data rewrites the same data many times. Instead, this
+ * strategy only compacts small unclustered files, like [[CompactionStrategy]], and leaves
+ * clustered files untouched. The files are grouped by the min/max statistics of one clustering
+ * column (see [[ClusteringColumnFileOrdering]]) so that each output file covers a narrow range of
+ * that column, and rows are not sorted. The output files stay unclustered, so they are clustered
+ * once the table has accumulated enough unclustered data.
+ */
+case class LightweightClusteringStrategy(
+    override val sparkSession: SparkSession,
+    snapshot: Snapshot,
+    clusteringColumns: Seq[String],
+    optimizeContext: DeltaOptimizeContext) extends OptimizeTableStrategy with DeltaLogging {
+
+  override val optimizeTableMode: OptimizeTableMode.Value = OptimizeTableMode.COMPACTION
+
+  override val maxBinSize: Long = {
+    optimizeContext.maxFileSize.getOrElse(
+      sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_FILE_SIZE))
+  }
+
+  override def curve: String = {
+    throw new UnsupportedOperationException("Lightweight compaction doesn't sort rows.")
+  }
+
+  override def prepareFiles(inputFiles: Seq[AddFile]): Seq[AddFile] = {
+    val conf = sparkSession.sessionState.conf
+    val (orderedFiles, column) = ClusteringColumnFileOrdering.order(
+      sparkSession,
+      snapshot,
+      inputFiles.filter(_.clusteringProvider.isEmpty),
+      clusteringColumns,
+      conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_COLUMN),
+      conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_LIGHTWEIGHT_MAX_RELATIVE_FILE_RANGE))
+    logInfo(s"Lightweight compaction of ${orderedFiles.size} unclustered files, grouped by " +
+      column.map(c => s"the statistics of column $c").getOrElse("size"))
+    orderedFiles
+  }
+
+  // The files were already ordered by prepareFiles. Clustered tables are unpartitioned.
+  override def prepareFilesPerPartition(inputFiles: Seq[AddFile]): Seq[AddFile] = inputFiles
 
   override def updateOptimizeStats(
       optimizeStats: OptimizeStats,
