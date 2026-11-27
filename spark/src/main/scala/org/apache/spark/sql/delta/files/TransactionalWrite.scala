@@ -370,6 +370,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           }
         }
         override def outputAttributeSchema: StructType = outputStatsCollectionSchema.toStructType
+        override def outputUsesPhysicalNames: Boolean = true
         override val spark: SparkSession = data.sparkSession
         override val statsColumnSpec = StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
         override val protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
