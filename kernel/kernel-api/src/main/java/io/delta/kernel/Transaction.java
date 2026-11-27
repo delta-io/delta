@@ -19,7 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.dataSchemaMismatch;
 import static io.delta.kernel.internal.DeltaErrors.partitionColumnMissingInData;
 import static io.delta.kernel.internal.TransactionImpl.getStatisticsColumns;
 import static io.delta.kernel.internal.data.TransactionStateRow.*;
-import static io.delta.kernel.internal.util.ColumnMapping.blockIfColumnMappingEnabled;
+import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
 import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -175,10 +175,6 @@ public interface Transaction {
       Row transactionState,
       CloseableIterator<FilteredColumnarBatch> dataIter,
       Map<String, Literal> partitionValues) {
-
-    // Note: `partitionValues` are not used as of now in this API, but taking the partition
-    // values as input forces the connector to not pass data from multiple partitions this
-    // API in a single call.
     StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
     validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
@@ -193,13 +189,16 @@ public interface Transaction {
     Protocol protocol = getProtocol(transactionState);
     boolean materializePartitionColumnsEnabled =
         protocol.supportsFeature(TableFeatures.MATERIALIZE_PARTITION_COLUMNS_W_FEATURE);
-    blockIfColumnMappingEnabled(transactionState);
+    ColumnMapping.ColumnMappingMode columnMappingMode =
+        TransactionStateRow.getColumnMappingMode(transactionState);
+    boolean columnMappingEnabled = isColumnMappingModeEnabled(columnMappingMode);
+    StructType physicalSchema =
+        columnMappingEnabled ? TransactionStateRow.getPhysicalSchema(transactionState) : null;
     blockIfVariantDataTypeIsDefined(tableSchema);
     // We recognize the AllowColumnDefaults feature for Iceberg v3
     // but do not support writing with it yet
     ColumnDefaults.blockWriteIfEnabled(transactionState);
 
-    // TODO: set the correct schema once writing into column mapping enabled table is supported.
     String tablePath = getTablePath(transactionState);
     return dataIter.map(
         filteredBatch -> {
@@ -208,11 +207,21 @@ public interface Transaction {
             throw dataSchemaMismatch(tablePath, tableSchema, data.getSchema());
           }
 
+          // Rename columns to their physical names when column mapping is enabled. Must happen
+          // before the partition-column drop/move loops so those loops find physical names.
+          if (columnMappingEnabled) {
+            data = data.withNewSchema(physicalSchema);
+          }
+
           if (isIcebergCompatEnabled || materializePartitionColumnsEnabled) {
             // Move partition columns to the end of the schema for iceberg compat enabled tables
             // or when materialize partition columns feature is enabled.
             for (String partitionColName : partitionColNames) {
-              int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
+              String physicalPartColName =
+                  columnMappingEnabled
+                      ? ColumnMapping.getPhysicalName(tableSchema.get(partitionColName))
+                      : partitionColName;
+              int partitionColIndex = findColIndex(data.getSchema(), physicalPartColName);
               if (partitionColIndex < 0) {
                 throw partitionColumnMissingInData(tablePath, partitionColName);
               }
@@ -228,7 +237,11 @@ public interface Transaction {
             // Remove partition columns entirely for non-materialized partitions, and non-iceberg
             // compat tables.
             for (String partitionColName : partitionColNames) {
-              int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
+              String physicalPartColName =
+                  columnMappingEnabled
+                      ? ColumnMapping.getPhysicalName(tableSchema.get(partitionColName))
+                      : partitionColName;
+              int partitionColIndex = findColIndex(data.getSchema(), physicalPartColName);
               if (partitionColIndex < 0) {
                 throw partitionColumnMissingInData(tablePath, partitionColName);
               }
