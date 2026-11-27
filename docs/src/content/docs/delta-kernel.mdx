@@ -804,7 +804,7 @@ This [method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta
 Any implementation must adhere to the following guarantees.
 
 - Implementation must handle all possible variations of expressions. If the implementation encounters an expression type that it does not know how to handle, then it must throw a specific language-dependent exception.
-  - Java: [NotSupportedException](https://docs.oracle.com/javaee/7/api/latest/javax/resource/NotSupportedException.html)
+  - Java: [NotSupportedException](https://docs.oracle.com/javaee/7/api/javax/resource/NotSupportedException.html)
 - The `ColumnarBatch`es on which the generated `ExpressionEvaluator` is going to be used are guaranteed to have the schema provided during generation. Hence, it is safe to bind the expression evaluation logic to column ordinals instead of column names, thus making the actual evaluation faster.
 
 #### Step 2.5: Implement `JsonHandler`
