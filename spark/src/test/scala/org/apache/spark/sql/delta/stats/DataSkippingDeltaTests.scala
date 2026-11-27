@@ -1064,17 +1064,16 @@ trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
         "OPTIMIZE is blocked on catalog-managed tables")
       val t = "ds_stats_before_after_optimize"
       withTable(t) {
-        val (numTuples, numFiles) = (10, 2)
-        val data = spark.range(0, numTuples, 1, 2).repartition(numFiles)
+        val data = spark.range(0, 11, 1, numPartitions = 2)
         data.write.format("delta").saveAsTable(t)
         var r = checkpointAndCreateNewLogIfNecessary(
           DeltaLog.forTable(spark, TableIdentifier(t)))
         def rStats: DataFrame =
           getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
-        checkAnswer(rStats, Seq(Row(4, 0, 8), Row(6, 1, 9)))
+        checkAnswer(rStats, Seq(Row(5, 0, 4), Row(6, 5, 10)))
         val optimizeDf = sql(s"OPTIMIZE $t")
-        checkAnswer(rStats, Seq(Row(10, 0, 9)))
+        checkAnswer(rStats, Seq(Row(11, 0, 10)))
       }
   }
 
@@ -2385,7 +2384,7 @@ trait DataSkippingDeltaV1Tests
       def rStats: DataFrame =
         getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
-      val data = spark.range(10).repartition(2)
+      val data = spark.range(0, 11, 1, numPartitions = 2)
 
       Given("appending data without collecting stats")
       withSQLConf(
@@ -2399,7 +2398,7 @@ trait DataSkippingDeltaV1Tests
       withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
         data.write.format("delta").mode("append").saveAsTable(t)
         checkAnswer(rStats,
-          Seq(Row(null, null, null), Row(null, null, null), Row(4, 0, 8), Row(6, 1, 9)))
+          Seq(Row(null, null, null), Row(null, null, null), Row(5, 0, 4), Row(6, 5, 10)))
       }
 
       Given("querying reservoir without using stats")
