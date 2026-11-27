@@ -218,6 +218,8 @@ case class ClusteringStrategy(
       // REORG has already selected the files it must rewrite (e.g. the files with deletion vectors
       // for PURGE), so rewrite all of them. applyMinZCube picks the files incremental clustering
       // should re-cluster, and would drop files that belong to a single ZCube or to a large one.
+      // It would also drop files clustered by other clustering columns or by another clustering
+      // provider. REORG re-clusters those files by the current clustering columns instead.
       sortedFiles.foreach { file =>
         clusteringStatsCollector.inputStats.updateStats(file)
         clusteringStatsCollector.outputStats.updateStats(file)
