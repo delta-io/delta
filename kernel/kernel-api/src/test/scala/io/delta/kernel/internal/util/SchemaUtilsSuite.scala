@@ -17,6 +17,7 @@ package io.delta.kernel.internal.util
 
 import java.util
 import java.util.{Locale, Optional}
+import java.util.Collections
 import java.util.Collections.emptySet
 
 import scala.collection.JavaConverters._
@@ -24,6 +25,7 @@ import scala.collection.JavaConverters.mapAsJavaMapConverter
 import scala.reflect.ClassTag
 
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
@@ -1280,6 +1282,51 @@ class SchemaUtilsSuite extends AnyFunSuite {
         dummyProtocol,
         emptySet(),
         false /* allowNewRequiredFields */ )
+    }
+  }
+
+  test("validateUpdatedSchema matches dropped clustering columns by full physical path") {
+    // `s.x` and `t.x` share the leaf physical name `col-x`; only `s.x` is a clustering column
+    def nested(xId: Int, yId: Int): StructType = new StructType()
+      .add("x", INTEGER, true, fieldMetadata(xId, "col-x"))
+      .add("y", INTEGER, true, fieldMetadata(yId))
+    val schemaBefore = new StructType()
+      .add("s", nested(2, 3), true, fieldMetadata(1))
+      .add("t", nested(5, 6), true, fieldMetadata(4))
+    val clusteringColumns = Collections.singleton(new Column(Array("col-1", "col-x")))
+
+    def dropX(parent: String): StructType = {
+      val parentField = schemaBefore.get(parent)
+      val remaining = parentField.getDataType.asInstanceOf[StructType].fields().asScala
+        .filter(_.getName != "x")
+      schemaBefore.fields().asScala.foldLeft(new StructType()) { (schema, field) =>
+        if (field.getName == parent) {
+          schema.add(field.withDataType(new StructType(remaining.asJava)))
+        } else {
+          schema.add(field)
+        }
+      }
+    }
+
+    // Dropping t.x is allowed
+    validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(schemaBefore),
+      metadata(dropX("t")),
+      dummyProtocol,
+      clusteringColumns,
+      false /* allowNewRequiredFields */ )
+
+    // Dropping s.x, or its parent s, is rejected
+    Seq(dropX("s"), new StructType().add(schemaBefore.get("t"))).foreach { schemaAfter =>
+      val e = intercept[KernelException] {
+        validateUpdatedSchemaAndGetUpdatedSchema(
+          metadata(schemaBefore),
+          metadata(schemaAfter),
+          dummyProtocol,
+          clusteringColumns,
+          false /* allowNewRequiredFields */ )
+      }
+      assert(e.getMessage == "Cannot drop clustering column x")
     }
   }
 
