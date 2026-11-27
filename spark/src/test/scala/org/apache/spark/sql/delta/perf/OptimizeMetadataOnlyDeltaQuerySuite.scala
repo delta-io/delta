@@ -34,6 +34,7 @@ import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 
 class OptimizeMetadataOnlyDeltaQuerySuite
@@ -732,6 +733,28 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       checkResultsAndOptimizedPlan(
         s"SELECT COUNT(*) FROM delta.`$tempPath`",
         "LocalRelation [none#0L]")
+    }
+  }
+
+  // Related issue: https://github.com/delta-io/delta/issues/4201
+  test("optimization works on sub-queries involving dates regardless of their java date format") {
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      spark.sql("SELECT DATE '2000-01-01' as DATE_COL").write.format("delta").save(tempPath)
+
+      val query = s"SELECT 'ABC' FROM delta.`$tempPath` WHERE (SELECT MIN(DATE_COL) " +
+        s"FROM delta.`$tempPath`) = DATE_COL"
+      val expectedOptimizedPlan = "Project [ABC AS #0]\n" +
+        "+- Filter (isnotnull(none#0) AND (none#0 = scalar-subquery#0 []))\n" +
+        "   :  +- LocalRelation [none#0]\n   +- Relation [none#0] parquet"
+
+      withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
+        checkResultsAndOptimizedPlan(query, expectedOptimizedPlan)
+      }
+
+      withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "false") {
+        checkResultsAndOptimizedPlan(query, expectedOptimizedPlan)
+      }
     }
   }
 
