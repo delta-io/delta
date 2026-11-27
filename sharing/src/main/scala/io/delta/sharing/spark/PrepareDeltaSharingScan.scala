@@ -17,6 +17,7 @@
 package io.delta.sharing.spark
 
 import org.apache.spark.sql.delta.{DeltaTableUtils => SqlDeltaTableUtils}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{PreparedDeltaFileIndex, PrepareDeltaScan}
 import io.delta.sharing.client.util.ConfUtils
@@ -25,6 +26,7 @@ import io.delta.sharing.spark.DeltaSharingFileIndex
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
  * Before query planning, we prepare any scans over delta sharing tables by pushing
@@ -32,6 +34,20 @@ import org.apache.spark.sql.catalyst.plans.logical._
  * files and gather more accurate statistics for CBO and metering.
  */
 class PrepareDeltaSharingScan(override val spark: SparkSession) extends PrepareDeltaScan(spark) {
+
+  /**
+   * Only skip writes that target a Delta table, since those get planned again later through a
+   * V1 fallback. Writes to other tables (e.g. Iceberg) are not re-planned, so we still need to
+   * prepare the scan here, otherwise deleted rows won't be filtered out.
+   */
+  override protected def shouldSkipV2WritePlan(plan: LogicalPlan): Boolean = plan match {
+    case w: V2WriteCommand =>
+      w.table match {
+        case r: DataSourceV2Relation => r.table.isInstanceOf[DeltaTableV2]
+        case _ => false
+      }
+    case _ => false
+  }
 
   /**
    * Prepares delta sharing scans sequentially.
