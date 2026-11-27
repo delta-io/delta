@@ -313,7 +313,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             rowIdColumnExpressionOpt ++
             rowCommitVersionColumnExpressionOpt ++
             Seq(incrCountExpr) ++
-            (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
+            (if (cdcEnabled) Some(Literal(CDC_TYPE_DELETE)) else None)
         case _: DeltaMergeIntoNotMatchedBySourceDeleteClause =>
           val incrCountExpr = {
             if (shouldCountDeletedRows) {
@@ -334,7 +334,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             rowIdColumnExpressionOpt ++
             rowCommitVersionColumnExpressionOpt ++
             Seq(incrCountExpr) ++
-            (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
+            (if (cdcEnabled) Some(Literal(CDC_TYPE_DELETE)) else None)
         case i: DeltaMergeIntoNotMatchedInsertClause =>
           val incrInsertedCountExpr = incrementMetricsAndReturnBool(
             names = Seq("numTargetRowsInserted"),
@@ -488,7 +488,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         struct(updatePreimageCdcOutput: _*),
         struct(outputCols: _*))),
 
-      EqualNullSafe(expression(cdcTypeCol), CDC_TYPE_DELETE) -> expression(array(
+      EqualNullSafe(expression(cdcTypeCol), Literal(CDC_TYPE_DELETE)) -> expression(array(
         struct(deleteCdcOutput: _*)))),
 
       // If none of the CDC cases apply (true for purely rewritten target rows, dropped source

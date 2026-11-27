@@ -94,7 +94,7 @@ object CDCDeletionVectorHelper {
         // Skip disk read if the DV is already inline.
         val dvBase64 = if (aDv.isInline) addDvOpt.get
                        else readAndSerializeInline(dvStore, aDv, dataPath)
-        results += ((CDCReader.CDC_TYPE_DELETE_STRING, dvBase64))
+        results += ((CDCReader.CDC_TYPE_DELETE, dvBase64))
 
       case (Some(rDv), None) =>
         // Remove with DV, Add without DV -> rows in removeDv are re-added.
@@ -111,7 +111,7 @@ object CDCDeletionVectorHelper {
           CDCReader.diffDeletionVectors(rDv, aDv, dvStore, dataPath)
 
         if (!deletedRows.isEmpty) {
-          results += ((CDCReader.CDC_TYPE_DELETE_STRING, serializeInline(deletedRows, dataPath)))
+          results += ((CDCReader.CDC_TYPE_DELETE, serializeInline(deletedRows, dataPath)))
         }
 
         if (!readdedRows.isEmpty) {

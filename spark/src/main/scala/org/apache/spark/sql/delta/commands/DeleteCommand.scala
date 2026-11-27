@@ -478,7 +478,7 @@ case class DeleteCommand(
           .filter(Column(incrTouchedCountExpr))
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
-            Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
+            Column(If(filterCondition, CDC_TYPE_NOT_CDC, Literal(CDC_TYPE_DELETE)))
           )
       } else {
         baseData

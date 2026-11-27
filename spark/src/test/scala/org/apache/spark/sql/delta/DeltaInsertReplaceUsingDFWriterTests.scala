@@ -212,8 +212,8 @@ trait DeltaInsertReplaceUsingDFWriterTests
       val changesDF = CDCReader.changesToBatchDF(deltaLog, version, version, spark)
         .select("id", "value", CDCReader.CDC_TYPE_COLUMN_NAME)
       val expectedCDC =
-        Seq((1, "target", CDCReader.CDC_TYPE_DELETE_STRING),
-            (2, "target", CDCReader.CDC_TYPE_DELETE_STRING),
+        Seq((1, "target", CDCReader.CDC_TYPE_DELETE),
+            (2, "target", CDCReader.CDC_TYPE_DELETE),
             (1, "source", CDCReader.CDC_TYPE_INSERT),
             (2, "source", CDCReader.CDC_TYPE_INSERT))
           .toDF("id", "value", CDCReader.CDC_TYPE_COLUMN_NAME)
@@ -244,7 +244,7 @@ trait DeltaInsertReplaceUsingDFWriterTests
       val changesDF = CDCReader.changesToBatchDF(deltaLog, version, version, spark)
         .select("id", "key", "value", CDCReader.CDC_TYPE_COLUMN_NAME)
       val expectedCDC =
-        Seq((1, "a", "target", CDCReader.CDC_TYPE_DELETE_STRING),
+        Seq((1, "a", "target", CDCReader.CDC_TYPE_DELETE),
             (1, "a", "source", CDCReader.CDC_TYPE_INSERT))
           .toDF("id", "key", "value", CDCReader.CDC_TYPE_COLUMN_NAME)
       checkAnswer(changesDF, expectedCDC)
@@ -277,7 +277,7 @@ trait DeltaInsertReplaceUsingDFWriterTests
         .select("id", "value", CDCReader.CDC_TYPE_COLUMN_NAME)
       // Target row id=1 should appear as DELETE exactly once
       val deleteCount = changesDF
-        .filter(col(CDCReader.CDC_TYPE_COLUMN_NAME) === CDCReader.CDC_TYPE_DELETE_STRING)
+        .filter(col(CDCReader.CDC_TYPE_COLUMN_NAME) === CDCReader.CDC_TYPE_DELETE)
         .count()
       assert(deleteCount === 1, "Expected exactly one DELETE CDC record for the matched target row")
     }
@@ -310,7 +310,7 @@ trait DeltaInsertReplaceUsingDFWriterTests
         .select("id", "value", CDCReader.CDC_TYPE_COLUMN_NAME)
       // Only id=1 should have DELETE CDC, NULL rows should not be deleted
       val deleteCDC = changesDF
-        .filter(col(CDCReader.CDC_TYPE_COLUMN_NAME) === CDCReader.CDC_TYPE_DELETE_STRING)
+        .filter(col(CDCReader.CDC_TYPE_COLUMN_NAME) === CDCReader.CDC_TYPE_DELETE)
       checkAnswer(deleteCDC.select("id", "value"),
         Seq(Row(1, "target")))
     }

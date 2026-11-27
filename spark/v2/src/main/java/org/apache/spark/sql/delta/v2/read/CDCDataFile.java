@@ -73,7 +73,7 @@ public class CDCDataFile {
         /* addFile= */ null,
         removeFile,
         /* addCDCFile= */ null,
-        CDCReader.CDC_TYPE_DELETE_STRING(),
+        CDCReader.CDC_TYPE_DELETE(),
         commitTimestamp,
         /* dvBase64Override= */ null);
   }

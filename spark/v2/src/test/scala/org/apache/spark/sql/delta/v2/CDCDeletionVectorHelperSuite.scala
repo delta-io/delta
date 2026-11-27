@@ -48,7 +48,7 @@ class CDCDeletionVectorHelperSuite extends SparkFunSuite {
     val result = CDCDeletionVectorHelper.computeDVDiff(addDvBase64, null, conf, dummyPath)
 
     assert(result.length === 1)
-    assert(result(0)._1 === CDCReader.CDC_TYPE_DELETE_STRING)
+    assert(result(0)._1 === CDCReader.CDC_TYPE_DELETE)
     // Inline shortcut: the same base64 value is returned without re-serialization.
     assert(result(0)._2 === addDvBase64)
   }
@@ -69,7 +69,7 @@ class CDCDeletionVectorHelperSuite extends SparkFunSuite {
     val result = CDCDeletionVectorHelper.computeDVDiff(addDvBase64, removeDvBase64, conf, dummyPath)
 
     assert(result.length === 1)
-    assert(result(0)._1 === CDCReader.CDC_TYPE_DELETE_STRING)
+    assert(result(0)._1 === CDCReader.CDC_TYPE_DELETE)
     val bitmap = readBitmap(result(0)._2)
     assert(bitmap.cardinality === 1L)
     assert(bitmap.contains(1L), "only the newly deleted row 1 should appear")
@@ -96,7 +96,7 @@ class CDCDeletionVectorHelperSuite extends SparkFunSuite {
 
     assert(result.length === 2)
     val types = result.map(_._1).toSet
-    assert(types === Set(CDCReader.CDC_TYPE_DELETE_STRING, CDCReader.CDC_TYPE_INSERT))
+    assert(types === Set(CDCReader.CDC_TYPE_DELETE, CDCReader.CDC_TYPE_INSERT))
   }
 
   test("bothNull: throws IllegalArgumentException") {

@@ -753,7 +753,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     CDCDataFile cdcFile =
         CDCDataFile.fromDVDiff(
             createTestAddFile("data.parquet", 1024, 100L, Optional.of(TEST_DV)),
-            CDCReader.CDC_TYPE_DELETE_STRING(),
+            CDCReader.CDC_TYPE_DELETE(),
             /* commitTimestamp= */ 1000L,
             "override==");
 

@@ -941,7 +941,7 @@ class DeltaFastDropFeatureSuite
 
         val deleteCountInDropFeature = CDCReader
           .changesToBatchDF(deltaLog, versionBeforeDrop + 1, deltaLog.update().version, spark)
-          .filter(s"${CDCReader.CDC_TYPE_COLUMN_NAME} = '${CDCReader.CDC_TYPE_DELETE_STRING}'")
+          .filter(s"${CDCReader.CDC_TYPE_COLUMN_NAME} = '${CDCReader.CDC_TYPE_DELETE}'")
           .count()
         assert(deleteCountInDropFeature === 0)
       }
