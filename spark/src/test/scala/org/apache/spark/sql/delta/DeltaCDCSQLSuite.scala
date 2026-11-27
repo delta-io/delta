@@ -28,6 +28,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeTestUtils._
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.LongType
 
 class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtils {
@@ -371,6 +372,47 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
             .withColumn("_change_type", lit("insert"))
             .withColumn("_commit_version", (col("id") / 10).cast(LongType))
         )
+      }
+    }
+  }
+
+  test("timestamp arguments use the session time zone, not the JVM default") {
+    // The starting/ending TimestampType arguments of table_changes are rendered to the CDC
+    // timestamp option and re-parsed in the session time zone. Rendering them in a different
+    // (JVM default) time zone would shift the CDC window by the zone offset. Pin the session
+    // time zone to UTC and run under a different JVM default zone to guard against that.
+    val hour = 60L * 60L * 1000L
+    val day = 24L * hour
+    Seq(UTC, LA).foreach { jvmZone =>
+      withDefaultTimeZone(jvmZone) {
+        withSQLConf(SQLConf.SESSION_LOCAL_TIMEZONE.key -> "UTC") {
+          withTable("tbl") {
+            createTblWithThreeVersions(tblName = Some("tbl"))
+            val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+
+            // Keep the commits within the deleted-file retention window (7 days).
+            val base = System.currentTimeMillis() - 5 * day
+            modifyCommitTimestamp(deltaLog, 0, base)
+            modifyCommitTimestamp(deltaLog, 1, base + day)
+            modifyCommitTimestamp(deltaLog, 2, base + 2 * day)
+            DeltaLog.clearCache()
+
+            // Start at version 0's commit and end just after version 1, so the window is
+            // versions 0 and 1. A boundary rendered in the JVM zone instead of the session
+            // zone would be off by hours and select the wrong versions.
+            val startMillis = base
+            val endMillis = base + day + hour
+            val readDf = sql(
+              s"SELECT * FROM table_changes('tbl', timestamp_millis($startMillis), " +
+                s"timestamp_millis($endMillis))")
+            checkCDCAnswer(
+              DeltaLog.forTable(spark, TableIdentifier("tbl")),
+              readDf,
+              spark.range(20)
+                .withColumn("_change_type", lit("insert"))
+                .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+          }
+        }
       }
     }
   }
