@@ -530,6 +530,30 @@ trait DeltaSourceOffsetLogic extends DeltaLogging {
     result
   }
 
+  /**
+   * Returns the file changes after (`fromVersion`, `fromIndex`), cut by the admission `limits`.
+   * Used for a non-CDC read.
+   */
+  protected def getFileChangesWithAdmissionLimits(
+      fromVersion: Long,
+      fromIndex: Long,
+      isInitialSnapshot: Boolean,
+      limits: Option[DeltaSource.AdmissionLimits]
+  ): ClosableIterator[IndexedFile] = {
+    val changes = getFileChanges(fromVersion, fromIndex, isInitialSnapshot)
+
+    // Take each change until we've seen the configured number of addFiles. Some changes don't
+    // represent file additions; we retain them for offset tracking, but they don't count towards
+    // the maxFilesPerTrigger conf.
+    if (limits.isEmpty) {
+      changes
+    } else {
+      val admissionControl = limits.get
+      changes.withClose { it => it.takeWhile { admissionControl.admit(_) }
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Trigger.AvailableNow
   // ---------------------------------------------------------------------------------------------

@@ -663,18 +663,13 @@ private[read] class DeltaV2MicroBatchStream(
         })
     }
 
-    var changes: ClosableIterator[IndexedFile] =
-        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, endOffset = None)
-
-    // Take each change until we've seen the configured number of addFiles. Some changes don't
-    // represent file additions; we retain them for offset tracking, but they don't count toward
-    // the maxFilesPerTrigger conf.
-    if (limits.isPresent()) {
-      val admissionLimits: DeltaSource.AdmissionLimits = limits.get()
-      changes =
-          new IteratorCloseOps(changes)
-              .withClose(iterator => iterator.takeWhile(file => admissionLimits.admit(file)))
-    }
+    val changes: ClosableIterator[IndexedFile] =
+        getFileChangesWithAdmissionLimits(
+            fromVersion,
+            fromIndex,
+            isInitialSnapshot,
+            ScalaUtils.toScalaOption(limits)
+        )
 
     // Stop before any schema change barrier if detected.
     // Mirrors v1's stopIndexedFileIteratorAtSchemaChangeBarrier call in
