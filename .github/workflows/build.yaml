@@ -1,15 +1,12 @@
 name: "Delta Build"
 on:
-  push:
-    branches: [master, branch-*]
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
+  workflow_call:
   pull_request:
     branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
+
 jobs:
   test:
     name: "Build Test"
