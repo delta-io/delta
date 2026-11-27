@@ -439,9 +439,9 @@ class DeltaTableV2 private(
     deltaTableV2
   }
 
-  // Filter fs.* keys from CatalogTable storage properties and from options before stringifying,
-  // to prevent catalog-injected or user-supplied credentials from leaking into exception messages,
-  // EXPLAIN output, and logs.
+  // Filter credential-bearing keys (see [[HIDDEN_STORAGE_PROPERTY_PREFIXES]]) from CatalogTable
+  // storage properties and from options before stringifying, to prevent catalog-injected or
+  // user-supplied credentials from leaking into exception messages, EXPLAIN output, and logs.
   override def toString: String = {
     val safeCatalogTable = catalogTable.map { ct =>
       ct.copy(storage = ct.storage.copy(properties =
@@ -463,8 +463,13 @@ object DeltaTableV2 {
    * properties returned by [[DeltaTableV2.properties()]]. These are Hadoop filesystem
    * configuration options that may contain sensitive credentials (access keys, session
    * tokens, etc.) injected by catalogs at table-load time.
+   *
+   * This is the same set of prefixes ([[DeltaTableUtils.validDeltaTableHadoopPrefixes]], i.e.
+   * `fs.` and `dfs.`) that Delta extracts from storage properties to configure filesystem
+   * access, so everything treated as a credential when used is also hidden when displayed.
    */
-  private[delta] val HIDDEN_STORAGE_PROPERTY_PREFIXES: Seq[String] = Seq("fs.")
+  private[delta] val HIDDEN_STORAGE_PROPERTY_PREFIXES: Seq[String] =
+    DeltaTableUtils.validDeltaTableHadoopPrefixes
 
   def unapply(deltaTable: DeltaTableV2): Option[(
       SparkSession,
