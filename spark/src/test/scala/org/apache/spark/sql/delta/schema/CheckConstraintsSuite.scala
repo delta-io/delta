@@ -140,24 +140,34 @@ class CheckConstraintsSuite extends QueryTest
 
   test("Checking incorrect constraints added through table property in CREATE TABLE errors out") {
     val tableName = "test_tbl"
-    withTable(tableName) {
-      sql(createTableSQL(
-        tableName,
-        "id INT, event_date DATE",
-        props = Map("delta.constraints.ch" -> "event_date < 2025-06-12")))
+    def createTable(): Unit = sql(createTableSQL(
+      tableName,
+      "id INT, event_date DATE",
+      props = Map("delta.constraints.ch" -> "event_date < 2025-06-12")))
+    def checkDataTypeMismatch(e: SparkThrowable): Unit = checkError(
+      exception = e,
+      condition = "DATATYPE_MISMATCH.BINARY_OP_DIFF_TYPES",
+      sqlState = Some("42K09"),
+      parameters = Map(
+        "sqlExpr" -> "\"(event_date < ((2025 - 6) - 12))\"",
+        "left" -> "\"DATE\"",
+        "right" -> "\"INT\""),
+      queryContext = Array(ExpectedContext("event_date < 2025-06-12", 0, 22)))
 
-      val e = intercept[SparkThrowable] {
-        sql(s"INSERT INTO $tableName VALUES(1, '2025-06-11')")
+    // By default, the constraint is validated when the table is created.
+    withTable(tableName) {
+      checkDataTypeMismatch(intercept[SparkThrowable] { createTable() })
+    }
+
+    // Without validation at create time, the constraint fails when data is written.
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.OFF.toString) {
+      withTable(tableName) {
+        createTable()
+        checkDataTypeMismatch(intercept[SparkThrowable] {
+          sql(s"INSERT INTO $tableName VALUES(1, '2025-06-11')")
+        })
       }
-      checkError(
-        exception = e,
-        condition = "DATATYPE_MISMATCH.BINARY_OP_DIFF_TYPES",
-        sqlState = Some("42K09"),
-        parameters = Map(
-          "sqlExpr" -> "\"(event_date < ((2025 - 6) - 12))\"",
-          "left" -> "\"DATE\"",
-          "right" -> "\"INT\""),
-        queryContext = Array(ExpectedContext("event_date < 2025-06-12", 0, 22)))
     }
   }
 

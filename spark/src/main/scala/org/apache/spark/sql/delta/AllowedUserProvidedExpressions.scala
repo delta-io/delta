@@ -21,6 +21,7 @@ import scala.reflect.ClassTag
 import org.apache.spark.sql.delta.shims.GeoTypesShim
 
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.variant.VariantGet
 import org.apache.spark.sql.catalyst.expressions.xml._
 
 /** This class defines the list of expressions that can be used when providing custom expressions.
@@ -396,6 +397,16 @@ object AllowedUserProvidedExpressions {
     expression[ArrayCompact]("array_compact"),
     expression[ArrayAppend]("array_append"),
     expression[ArrayPrepend]("array_prepend"),
-    expression[ArrayInsert]("array_insert")
+    expression[ArrayInsert]("array_insert"),
+
+    // Variant functions
+    expression[VariantGet]("variant_get"),
+
+    // Replacements of allowed `RuntimeReplaceable` expressions, which are kept as children
+    // of the original expression in the analyzed plan.
+    // Replacement of `assert_true`.
+    expression[RaiseError]("raise_error"),
+    // Replacement of `decode`.
+    expression[StringDecode]("stringdecode")
   ) ++ GeoTypesShim.geoExpressions
 }
