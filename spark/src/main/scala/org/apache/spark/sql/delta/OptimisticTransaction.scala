@@ -987,8 +987,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
    * coordinator details (and other associated Coordinated Commits properties) from the original
    * table during a REPLACE. And if the table had a coordinator, existing ICT properties are also
    * retained; otherwise, default ICT properties are included.
-   * TODO (YumingxuanGuo): Remove this once the exact semantic on default Coordinated Commits
-   *   configurations is finalized.
+   * TODO (YumingxuanGuo): Remove the Coordinated Commits retention once the exact semantic on
+   *   default Coordinated Commits configurations is finalized.
+   *
+   * This function also retains [[DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION]]
+   * unless the command sets it. The property holds a version of this table's log, and REPLACE
+   * keeps that log. This retention stays when the TODO is resolved.
    */
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
     assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
@@ -1044,6 +1048,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
     if (existingCCConfs.nonEmpty || isCatalogManagedEnabledBeforeReplace) {
       val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       newConfs = newConfsWithoutICT ++ existingICTConfs
+    }
+    if (spark.conf.get(DeltaSQLConf.RETAIN_CHECKPOINT_PROTECTION_VERSION_DURING_REPLACE_TABLE)) {
+      val existingCheckpointProtectionConf = snapshot.metadata.configuration.filter {
+        case (k, _) => k == DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+      }
+      // A value that the command sets takes precedence.
+      newConfs = existingCheckpointProtectionConf ++ newConfs
     }
     newMetadata = Some(newMetadata.get.copy(configuration = newConfs))
   }
