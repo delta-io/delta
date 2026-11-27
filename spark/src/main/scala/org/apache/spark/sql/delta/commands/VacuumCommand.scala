@@ -933,37 +933,43 @@ trait VacuumCommandImpl extends DeltaCommand {
     // cluster is idle. When enabled, list it as a separate branch instead: its sub-directories are
     // spread across tasks and its listing runs concurrently with the main table listing. The set
     // of listed files is identical either way.
-    val changeDataPath = new Path(basePath, CDCReader.CDC_LOCATION)
-    val fs = changeDataPath.getFileSystem(hadoopConf.value.value)
+    val changeDataDirName = CDCReader.CDC_LOCATION
+    val changeDataPath = new Path(basePath, changeDataDirName)
     val listChangeDataSeparately = applyHiddenFilters &&
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_LIST_CHANGE_DATA_DIR_SEPARATELY) &&
-      fs.exists(changeDataPath)
-
-    // When listing `_change_data` separately, exclude it from the main tree so it is not listed
-    // twice. `hiddenDirNameFilter` receives the directory's name component, so matching
-    // CDC_LOCATION only excludes the top-level `_change_data` directory.
-    val mainDirFilter: String => Boolean =
-      if (listChangeDataSeparately) {
-        (name: String) => hiddenDirFilter(name) || name == CDCReader.CDC_LOCATION
-      } else {
-        hiddenDirFilter
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_LIST_CHANGE_DATA_DIR_SEPARATELY)
+    // One metadata call: `None` when the directory doesn't exist or `_change_data` is a file, which
+    // then stays on the inline path.
+    val changeDataDirStatus = if (listChangeDataSeparately) {
+      val fs = changeDataPath.getFileSystem(hadoopConf.value.value)
+      try {
+        Some(fs.getFileStatus(changeDataPath)).filter(_.isDirectory)
+      } catch {
+        case _: FileNotFoundException => None
       }
+    } else {
+      None
+    }
 
+    // When listing `_change_data` separately, exclude it from the main listing so it is not listed
+    // twice. The filter only applies to the table root's children: a `_change_data` directory
+    // deeper in the tree is still part of the main listing.
     val mainListing = DeltaFileOperations.recursiveListDirs(
       spark,
       Seq(basePath),
       hadoopConf,
-      hiddenDirNameFilter = mainDirFilter,
+      hiddenDirNameFilter = hiddenDirFilter,
       hiddenFileNameFilter = hiddenFileFilter,
-      fileListingParallelism = parallelism
+      fileListingParallelism = parallelism,
+      firstLevelHiddenDirNameFilter =
+        if (changeDataDirStatus.isDefined) _ == changeDataDirName else _ => false
     )
 
-    val listing = if (listChangeDataSeparately) {
+    val listing = changeDataDirStatus.map { changeDataDir =>
       // `recursiveListDirs` emits the *contents* of its roots, not the roots themselves, so emit
       // the `_change_data` directory entry explicitly to preserve parity with the inline listing
       // (empty-directory cleanup must be able to see it).
-      val changeDataDir = spark.createDataset(
-        Seq(SerializableFileStatus.fromStatus(fs.getFileStatus(changeDataPath))))
+      val changeDataDirEntry = spark.createDataset(
+        Seq(SerializableFileStatus.fromStatus(changeDataDir)))
       val changeDataListing = DeltaFileOperations.recursiveListDirs(
         spark,
         Seq(changeDataPath.toString),
@@ -972,10 +978,8 @@ trait VacuumCommandImpl extends DeltaCommand {
         hiddenFileNameFilter = hiddenFileFilter,
         fileListingParallelism = parallelism
       )
-      mainListing.union(changeDataDir).union(changeDataListing)
-    } else {
-      mainListing
-    }
+      mainListing.union(changeDataDirEntry).union(changeDataListing)
+    }.getOrElse(mainListing)
 
     val files = listing
       .map { f =>

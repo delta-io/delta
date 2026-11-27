@@ -236,6 +236,10 @@ object DeltaFileOperations extends DeltaLogging {
    *                          that are children to the path will be listed. If false, the paths are
    *                          treated as filenames, and files under the same folder with filenames
    *                          after the path will be listed instead.
+   * @param firstLevelHiddenDirNameFilter A function that returns true when a directory listed
+   *                                      directly under `subDirs` should be excluded from results,
+   *                                      in addition to `hiddenDirNameFilter`. Unlike
+   *                                      `hiddenDirNameFilter`, it is not applied at deeper levels.
    */
   def recursiveListDirs(
       spark: SparkSession,
@@ -244,7 +248,9 @@ object DeltaFileOperations extends DeltaLogging {
       hiddenDirNameFilter: String => Boolean = defaultHiddenFileFilter,
       hiddenFileNameFilter: String => Boolean = defaultHiddenFileFilter,
       fileListingParallelism: Option[Int] = None,
-      listAsDirectories: Boolean = true): Dataset[SerializableFileStatus] = {
+      listAsDirectories: Boolean = true,
+      firstLevelHiddenDirNameFilter: String => Boolean = _ => false)
+      : Dataset[SerializableFileStatus] = {
     import org.apache.spark.sql.delta.implicits._
     if (subDirs.isEmpty) return spark.emptyDataset[SerializableFileStatus]
     val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
@@ -258,7 +264,8 @@ object DeltaFileOperations extends DeltaLogging {
         hadoopConf.value.value,
         dirs,
         recurse = false,
-        hiddenDirNameFilter, hiddenFileNameFilter, listAsDirectories)
+        (name: String) => hiddenDirNameFilter(name) || firstLevelHiddenDirNameFilter(name),
+        hiddenFileNameFilter, listAsDirectories)
     }.repartition(listParallelism) // Initial list of subDirs may be small
 
     val allDirsAndFiles = dirsAndFiles.mapPartitions { firstLevelDirsAndFiles =>

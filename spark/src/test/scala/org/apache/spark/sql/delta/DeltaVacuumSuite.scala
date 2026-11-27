@@ -55,7 +55,7 @@ import org.apache.spark.sql.functions.{col, expr, lit}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
-import org.apache.spark.util.{ManualClock, SerializableConfiguration, ThreadUtils}
+import org.apache.spark.util.{ManualClock, ThreadUtils}
 
 trait DeltaVacuumSuiteBase extends QueryTest
   with SharedSparkSession
@@ -512,66 +512,6 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
     super.sparkConf.set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "2")
   }
 
-  private def broadcastHadoopConf(): org.apache.spark.broadcast.Broadcast[
-      SerializableConfiguration] = {
-    // scalastyle:off deltahadoopconfiguration
-    val conf = spark.sessionState.newHadoopConf()
-    // scalastyle:on deltahadoopconfiguration
-    spark.sparkContext.broadcast(new SerializableConfiguration(conf))
-  }
-
-  test("listing _change_data as a separate branch yields the same files and directories") {
-    withTempDir { tempDir =>
-      // A table-shaped tree: data partitions plus a _change_data directory that itself mirrors the
-      // partitioning and nests deeper. Listing _change_data as its own branch (and excluding it
-      // from the main tree) must produce exactly the same set as listing everything inline.
-      val base = tempDir.getAbsolutePath
-      def mkFile(rel: String): Unit = {
-        val f = new File(base, rel)
-        f.getParentFile.mkdirs()
-        FileUtils.write(f, "x")
-      }
-      mkFile("f0.txt")
-      mkFile("part=1/f1.txt")
-      mkFile("part=2/f2.txt")
-      mkFile("_change_data/cdc0.txt")
-      mkFile("_change_data/part=1/cdc1.txt")
-      mkFile("_change_data/part=2/deep/cdc2.txt")
-
-      val hadoopConf = broadcastHadoopConf()
-      def collectSet(
-          ds: org.apache.spark.sql.Dataset[SerializableFileStatus]): Set[(String, Boolean)] =
-        ds.collect().map(f => (f.path, f.isDir)).toSet
-
-      // Everything listed inline (nothing hidden) -- the current behavior.
-      val inline = collectSet(DeltaFileOperations.recursiveListDirs(
-        spark, Seq(new Path(base).toString), hadoopConf,
-        hiddenDirNameFilter = _ => false, hiddenFileNameFilter = _ => false))
-
-      // Main tree with _change_data excluded, plus a separate _change_data branch (and its own
-      // directory entry) -- mirrors VacuumCommand.getFilesFromFilesystem.
-      implicit val statusEncoder: org.apache.spark.sql.Encoder[SerializableFileStatus] =
-        org.apache.spark.sql.Encoders.product[SerializableFileStatus]
-      val cdcPath = new Path(base, "_change_data")
-      val fs = cdcPath.getFileSystem(hadoopConf.value.value)
-      val mainOnly = DeltaFileOperations.recursiveListDirs(
-        spark, Seq(new Path(base).toString), hadoopConf,
-        hiddenDirNameFilter = (name: String) => name == "_change_data",
-        hiddenFileNameFilter = _ => false)
-      val cdcDir = spark.createDataset(
-        Seq(SerializableFileStatus.fromStatus(fs.getFileStatus(cdcPath))))
-      val cdcListing = DeltaFileOperations.recursiveListDirs(
-        spark, Seq(cdcPath.toString), hadoopConf,
-        hiddenDirNameFilter = _ => false, hiddenFileNameFilter = _ => false)
-      val separate = collectSet(mainOnly.union(cdcDir).union(cdcListing))
-
-      assert(separate === inline,
-        s"only-in-separate=${separate -- inline}\nonly-in-inline=${inline -- separate}")
-      // Sanity check: the deeply nested _change_data file was actually discovered.
-      assert(inline.exists(_._1.endsWith("cdc2.txt")), s"deep CDC file missing: $inline")
-    }
-  }
-
   testFullVacuumOnly(
     "VACUUM removes the same untracked _change_data files whether listed separately or inline") {
     Seq(true, false).foreach { separately =>
@@ -584,17 +524,22 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
           // the separate _change_data branch must recurse past its first level to find it.
           val cdcShallow = "_change_data/cdc-shallow.txt"
           val cdcNested = "_change_data/part=1/deep/cdc-nested.txt"
+          // Only the table root's `_change_data` is listed separately. A directory with the same
+          // name deeper in the tree must still be listed by the main listing.
+          val cdcBelowPartition = "part=1/_change_data/orphan.txt"
           val untrackedData = "data/untracked.txt"
           gcTest(table, new ManualClock())(
             CreateFile(committed, commitToActionLog = true),
             CreateFile(cdcShallow, commitToActionLog = false),
             CreateFile(cdcNested, commitToActionLog = false),
+            CreateFile(cdcBelowPartition, commitToActionLog = false),
             CreateFile(untrackedData, commitToActionLog = false),
-            CheckFiles(Seq(committed, cdcShallow, cdcNested, untrackedData)),
+            CheckFiles(Seq(committed, cdcShallow, cdcNested, cdcBelowPartition, untrackedData)),
             // The SQL VACUUM path uses the wall clock, so the epoch-0 files are past retention.
             ExecuteVacuumInSQL(s"'$tempDir'", Seq(tempDir.toString)),
             CheckFiles(Seq(committed)),
-            CheckFiles(Seq(cdcShallow, cdcNested, untrackedData), exist = false))
+            CheckFiles(
+              Seq(cdcShallow, cdcNested, cdcBelowPartition, untrackedData), exist = false))
         }
       }
     }
