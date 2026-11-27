@@ -27,7 +27,7 @@ import scala.collection.JavaConverters._
 import scala.math.min
 import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, Metadata, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -236,6 +236,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val validFiles = validFilesResult.validFiles // Extract DataFrame
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
+      val partitionDirectoryColumns = partitionDirectoryColumnNames(snapshot.metadata)
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
       val isAdaptiveMetadataTable =
         AMTUtils.amtSupported(snapshot.protocol, isPreviewCompatible = true)
@@ -263,7 +264,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         inventory match {
         case Some(inventoryDF) =>
           val files = getFilesFromInventory(
-            basePath, partitionColumns, inventoryDF, shouldIcebergMetadataDirBeHidden)
+            basePath, partitionDirectoryColumns, inventoryDF, shouldIcebergMetadataDirBeHidden)
           (files, None, None)
         case _ if vacuumType == VacuumType.LITE =>
           getFilesFromDeltaLog(spark, snapshot, basePath, hadoopConf,
@@ -892,6 +893,24 @@ trait VacuumCommandImpl extends DeltaCommand {
   }
 
   /**
+   * Column names whose `<name>=<value>` directories VACUUM looks into, even when the name starts
+   * with `_` or `.`: the current partition columns and every other top-level column of the
+   * table, by logical and by physical name. When a table stops partitioning by a column (it is
+   * re-partitioned or converted to clustering), or a partition column is renamed under column
+   * mapping, the files written under the old partitioning stay in that column's directories.
+   * Their tombstones expire like any other, so VACUUM must still find them there.
+   *
+   * Only names starting with `_` or `.` are returned; directories with other names are never
+   * hidden.
+   */
+  private[delta] def partitionDirectoryColumnNames(metadata: Metadata): Seq[String] = {
+    val columnNames = metadata.partitionColumns ++ metadata.schema.fields.flatMap { field =>
+      Seq(field.name, DeltaColumnMapping.getPhysicalName(field))
+    }
+    columnNames.filter(name => name.startsWith("_") || name.startsWith(".")).distinct
+  }
+
+  /**
    * Returns files from filesystem via recursive directory listing.
    *
    * @param spark SparkSession
@@ -914,12 +933,12 @@ trait VacuumCommandImpl extends DeltaCommand {
     import org.apache.spark.sql.delta.implicits._
 
     val basePath = deltaLog.dataPath.toString
-    val partitionColumns = snapshot.metadata.partitionColumns
+    val partitionDirectoryColumns = partitionDirectoryColumnNames(snapshot.metadata)
 
     val (hiddenDirFilter, hiddenFileFilter) = if (applyHiddenFilters) {
       // Apply filters to exclude _delta_log and other hidden directories
       val filter = DeltaTableUtils.isHiddenDirectory(
-        partitionColumns, _: String, shouldIcebergMetadataDirBeHidden)
+        partitionDirectoryColumns, _: String, shouldIcebergMetadataDirBeHidden)
       (filter, filter)
     } else {
       // Include all directories and files
