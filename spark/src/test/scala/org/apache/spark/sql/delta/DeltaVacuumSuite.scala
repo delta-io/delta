@@ -512,6 +512,39 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest
     super.sparkConf.set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "2")
   }
 
+  testFullVacuumOnly(
+    "VACUUM removes the same untracked _change_data files whether listed separately or inline") {
+    Seq(true, false).foreach { separately =>
+      withSQLConf(
+          DeltaSQLConf.DELTA_VACUUM_LIST_CHANGE_DATA_DIR_SEPARATELY.key -> separately.toString) {
+        withEnvironment { (tempDir, _) =>
+          val table = DeltaTableV2(spark, tempDir)
+          val committed = "committed.txt"
+          // Untracked change-data files, including one nested to mimic a partitioned CDF layout, so
+          // the separate _change_data branch must recurse past its first level to find it.
+          val cdcShallow = "_change_data/cdc-shallow.txt"
+          val cdcNested = "_change_data/part=1/deep/cdc-nested.txt"
+          // Only the table root's `_change_data` is listed separately. A directory with the same
+          // name deeper in the tree must still be listed by the main listing.
+          val cdcBelowPartition = "part=1/_change_data/orphan.txt"
+          val untrackedData = "data/untracked.txt"
+          gcTest(table, new ManualClock())(
+            CreateFile(committed, commitToActionLog = true),
+            CreateFile(cdcShallow, commitToActionLog = false),
+            CreateFile(cdcNested, commitToActionLog = false),
+            CreateFile(cdcBelowPartition, commitToActionLog = false),
+            CreateFile(untrackedData, commitToActionLog = false),
+            CheckFiles(Seq(committed, cdcShallow, cdcNested, cdcBelowPartition, untrackedData)),
+            // The SQL VACUUM path uses the wall clock, so the epoch-0 files are past retention.
+            ExecuteVacuumInSQL(s"'$tempDir'", Seq(tempDir.toString)),
+            CheckFiles(Seq(committed)),
+            CheckFiles(
+              Seq(cdcShallow, cdcNested, cdcBelowPartition, untrackedData), exist = false))
+        }
+      }
+    }
+  }
+
   testQuietly("basic case - SQL command on path-based tables with direct 'path'") {
     withEnvironment { (tempDir, _) =>
       val table = DeltaTableV2(spark, tempDir)
