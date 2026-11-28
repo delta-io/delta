@@ -19,8 +19,9 @@ package org.apache.spark.sql.delta.skipping.clustering
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtilsBase
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo, ClusteringFileStats, ClusteringStats}
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.zorder.ZCubeInfo
@@ -185,6 +186,112 @@ class IncrementalZCubeClusteringSuite extends QueryTest
         val files4 = getFiles(table)
         assertClustered(table, files4)
         assert(getZCubeIds(table).size === 1)
+      }
+    }
+  }
+
+  private def filesWithDeletionVectors(table: String): Set[AddFile] =
+    getFiles(table).filter(_.deletionVector != null)
+
+  private def withDeletionVectorClusteredTable(
+      clusterBy: String = "col1, col2")(f: => Unit): Unit = {
+    withClusteredTable(
+      table = table,
+      schema = "col1 int, col2 int",
+      clusterBy = clusterBy,
+      tableProperties = Map(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "true"))(f)
+  }
+
+  private def runReorgPurge(table: String): OptimizeMetrics =
+    sql(s"REORG TABLE $table APPLY (PURGE)").select($"metrics.*").as[OptimizeMetrics].head()
+
+  test("REORG APPLY (PURGE) rewrites deletion vector files of a single ZCube") {
+    withSQLConf(SQLConf.MAX_RECORDS_PER_FILE.key -> "2") {
+      withDeletionVectorClusteredTable() {
+        addFiles(table, numFiles = 4)
+        runOptimize(table) { metrics =>
+          assert(metrics.numFilesAdded === 2)
+        }
+        assert(getZCubeIds(table).size === 1)
+
+        sql(s"DELETE FROM $table WHERE col1 = 1")
+        val filesWithDVs = filesWithDeletionVectors(table)
+        assert(filesWithDVs.size === 1)
+        val filesWithoutDVs = getFiles(table) -- filesWithDVs
+
+        // OPTIMIZE leaves a single ZCube alone, but REORG must still rewrite its files with DVs.
+        assert(runReorgPurge(table).numFilesRemoved === 1)
+        val files = getFiles(table)
+        assert(filesWithDeletionVectors(table).isEmpty)
+        assert(filesWithoutDVs.subsetOf(files), "REORG should only rewrite files with DVs")
+        assert(files.toSeq.map(_.numPhysicalRecords.get).sum === 3)
+        assertClustered(table, files)
+        checkAnswer(sql(s"SELECT col1, col2 FROM $table"), Seq((2, 2), (3, 3), (4, 4)).toDF())
+      }
+    }
+  }
+
+  test("REORG APPLY (PURGE) rewrites deletion vector files of large ZCubes") {
+    withSQLConf(SQLConf.MAX_RECORDS_PER_FILE.key -> "2") {
+      withDeletionVectorClusteredTable() {
+        addFiles(table, numFiles = 4)
+        runOptimize(table) { _ => }
+        addFiles(table, numFiles = 4)
+        // Treat the first ZCube as large so that new files are clustered into a second ZCube.
+        withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> 1.toString) {
+          runOptimize(table) { _ => }
+        }
+        assert(getZCubeIds(table).size === 2)
+
+        sql(s"DELETE FROM $table WHERE col1 = 1")
+        val filesWithDVs = filesWithDeletionVectors(table)
+        assert(filesWithDVs.size === 2)
+        val filesWithoutDVs = getFiles(table) -- filesWithDVs
+
+        // Both ZCubes are large for OPTIMIZE, but REORG must still rewrite their files with DVs.
+        withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> 1.toString) {
+          assert(runReorgPurge(table).numFilesRemoved === 2)
+        }
+        val files = getFiles(table)
+        assert(filesWithDeletionVectors(table).isEmpty)
+        assert(filesWithoutDVs.subsetOf(files), "REORG should only rewrite files with DVs")
+        assert(files.toSeq.map(_.numPhysicalRecords.get).sum === 6)
+        assertClustered(table, files)
+        checkAnswer(
+          sql(s"SELECT col1, col2 FROM $table"),
+          Seq((2, 2), (3, 3), (4, 4), (2, 2), (3, 3), (4, 4)).toDF())
+      }
+    }
+  }
+
+  test("REORG APPLY (PURGE) rewrites deletion vector files clustered by other columns") {
+    withSQLConf(SQLConf.MAX_RECORDS_PER_FILE.key -> "2") {
+      withDeletionVectorClusteredTable(clusterBy = "col1") {
+        addFiles(table, numFiles = 4)
+        runOptimize(table) { metrics =>
+          assert(metrics.numFilesAdded === 2)
+        }
+        val zCubeIdsBefore = getZCubeIds(table)
+        sql(s"ALTER TABLE $table CLUSTER BY (col2)")
+
+        sql(s"DELETE FROM $table WHERE col1 = 1")
+        val filesWithDVs = filesWithDeletionVectors(table)
+        assert(filesWithDVs.size === 1)
+        val filesWithoutDVs = getFiles(table) -- filesWithDVs
+
+        // Without FULL, OPTIMIZE skips files clustered by other clustering columns, but REORG must
+        // still rewrite the ones with DVs. It re-clusters them by the current clustering columns.
+        assert(runReorgPurge(table).numFilesRemoved === 1)
+        val files = getFiles(table)
+        assert(filesWithDeletionVectors(table).isEmpty)
+        assert(filesWithoutDVs.subsetOf(files), "REORG should only rewrite files with DVs")
+        val rewrittenFiles = files -- filesWithoutDVs
+        assert(rewrittenFiles.nonEmpty)
+        assertClustered(table, rewrittenFiles)
+        val rewrittenZCubeIds = rewrittenFiles.flatMap(ZCubeInfo.getForFile).map(_.zCubeID)
+        assert(rewrittenZCubeIds.intersect(zCubeIdsBefore).isEmpty)
+        assert(files.toSeq.map(_.numPhysicalRecords.get).sum === 3)
+        checkAnswer(sql(s"SELECT col1, col2 FROM $table"), Seq((2, 2), (3, 3), (4, 4)).toDF())
       }
     }
   }
