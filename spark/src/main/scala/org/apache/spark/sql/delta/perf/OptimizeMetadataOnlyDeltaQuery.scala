@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.perf
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
@@ -24,6 +25,7 @@ import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable, Snapshot}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
@@ -259,8 +261,11 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     } else {
       val partitionedColumnsValues = partitionedColumns.map { partitionedColumn =>
         val physicalName = partitionedColumn._2
-        col(s"partitionValues.`$physicalName`")
-          .cast(partitionedColumn._1.dataType).as(physicalName)
+        val value = col(s"partitionValues.`$physicalName`").expr
+        // Match the parsing of partition values when reading the table.
+        val parsedValue = Cast(
+          value, partitionedColumn._1.dataType, timeZoneId = None, ansiEnabled = false)
+        Column(parsedValue).as(physicalName)
       }
 
       val partitionedColumnsAgg = partitionedColumns.flatMap { partitionedColumn =>

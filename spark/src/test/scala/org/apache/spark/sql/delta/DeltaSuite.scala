@@ -106,6 +106,37 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  for (ansiEnabled <- Seq("true", "false")) {
+    test(s"malformed partition values in filters and DELETE with ANSI $ansiEnabled") {
+      withSQLConf(
+          SQLConf.ANSI_ENABLED.key -> ansiEnabled,
+          DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          Seq((1, 1), (2, 1), (3, 2)).toDF("id", "part").coalesce(1)
+            .write.format("delta").partitionBy("part").save(path)
+
+          val deltaLog = DeltaLog.forTable(spark, path)
+          val snapshot = deltaLog.update()
+          val partitionField = snapshot.metadata.partitionSchema("part")
+          val partitionKey = DeltaColumnMapping.getPhysicalName(partitionField)
+          val file = snapshot.allFiles.collect().find(_.partitionValues(partitionKey) == "1").get
+          // Re-add the file with a partition value that does not parse as INT.
+          deltaLog.startTransaction().commit(
+            Seq(file.copy(partitionValues = Map(partitionKey -> "abc"))),
+            DeltaOperations.ManualUpdate)
+
+          val table = spark.read.format("delta").load(path)
+          checkAnswer(table.where("part IS NULL"), Seq(Row(1, null), Row(2, null)))
+          checkAnswer(table.where("part IS NULL AND id = 1"), Row(1, null))
+
+          sql(s"DELETE FROM delta.`$path` WHERE part IS NULL AND id = 1")
+          checkAnswer(spark.read.format("delta").load(path), Seq(Row(2, null), Row(3, 2)))
+        }
+      }
+    }
+  }
+
   test("query with predicates should skip partitions") {
     withTempDir { tempDir =>
       val testPath = tempDir.getCanonicalPath
